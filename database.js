@@ -98,16 +98,31 @@ const STORAGE_API_BASE=(window.STORE_PROFIT_API_BASE || (
   (location.hostname==="localhost"||location.hostname==="127.0.0.1") &&
   location.port && location.port!=="8080" ? "http://localhost:8080" : ""
 )).replace(/\/$/,"");
-function storageApiEnabled(){return !!STORAGE_API_BASE||location.protocol==="http:"||location.protocol==="https:";}
+const STORAGE_SAME_ORIGIN_API=!STORAGE_API_BASE&&(location.protocol==="http:"||location.protocol==="https:")&&location.port==="8080";
+const STORAGE_API_TIMEOUT_MS=1800;
+let STORAGE_API_DOWN=false;
+function storageApiEnabled(){return !STORAGE_API_DOWN&&(!!STORAGE_API_BASE||STORAGE_SAME_ORIGIN_API);}
 function storageApiUrl(path){return (STORAGE_API_BASE||"")+path;}
+async function storageApiFetch(path,options){
+  const ctrl=typeof AbortController!=="undefined"?new AbortController():null;
+  const timer=ctrl?setTimeout(()=>ctrl.abort(),STORAGE_API_TIMEOUT_MS):null;
+  try{
+    return await fetch(storageApiUrl(path),{...(options||{}),signal:ctrl?ctrl.signal:undefined});
+  }catch(e){
+    STORAGE_API_DOWN=true;
+    throw e;
+  }finally{
+    if(timer)clearTimeout(timer);
+  }
+}
 async function storageApiGet(k){
-  const r=await fetch(storageApiUrl("/api/storage?key="+encodeURIComponent(k)));
+  const r=await storageApiFetch("/api/storage?key="+encodeURIComponent(k));
   if(!r.ok)return {hit:false,value:null};
   const d=await r.json();
   return {hit:true,value:d&&d.value!=null?JSON.parse(d.value):null};
 }
 async function storageApiSet(k,value){
-  const r=await fetch(storageApiUrl("/api/storage"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:k,value})});
+  const r=await storageApiFetch("/api/storage",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:k,value})});
   return r.ok;
 }
 
@@ -120,9 +135,24 @@ const CLOUD_ENV="lirun-d7gmuh3pq317dc3ad"; // 已接入腾讯云开发 CloudBase
 const CLOUD_KV="kv";           // 数据库集合名：每个数据键存为一个文档 {_id:key, value:...}
 const CLOUD_DIR="expense/";    // 报销截图在云存储中的目录
 let CLOUDAPP=null,CLOUDDB=null,CLOUD_OK=false,CLOUD_URLCACHE={};
+let CLOUD_SDK_PROMISE=null;
+function cloudLoadSdk(){
+  if(typeof cloudbase!=="undefined")return Promise.resolve(true);
+  if(CLOUD_SDK_PROMISE)return CLOUD_SDK_PROMISE;
+  CLOUD_SDK_PROMISE=new Promise(resolve=>{
+    const s=document.createElement("script");
+    s.src="./cloudbase.full.js";
+    s.async=true;
+    s.onload=()=>resolve(typeof cloudbase!=="undefined");
+    s.onerror=()=>resolve(false);
+    document.head.appendChild(s);
+  });
+  return CLOUD_SDK_PROMISE;
+}
 async function cloudInit(){
+  if(storageApiEnabled()){console.info("后端 API 模式，跳过 CloudBase 初始化");return false;}
   if(!CLOUD_ENV)return false;
-  if(typeof cloudbase==="undefined"){console.warn("CloudBase SDK 未加载（需联网且在 HTTPS 域名下）");return false;}
+  if(typeof cloudbase==="undefined"&&!(await cloudLoadSdk())){console.warn("CloudBase SDK 未加载（需联网且在 HTTPS 域名下）");return false;}
   try{
     CLOUDAPP=cloudbase.init({env:CLOUD_ENV});
     await CLOUDAPP.auth().signInAnonymously();   // 匿名登录（控制台需开启）

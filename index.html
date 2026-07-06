@@ -4,9 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>门店利润系统 · 38店</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet">
 <style>
   :root{
     --bg:#F2F3F5; --surface:#FFFFFF; --ink:#1C1D22; --muted:#8A8F9A; --line:#ECEEF1;
@@ -305,10 +302,6 @@
     .kpis{grid-template-columns:1fr}
   }
 </style>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<!-- 腾讯云开发 CloudBase Web SDK：用于多端共享数据 + 报销截图云存储（未配置环境ID时不影响本地使用） -->
-<script src="./cloudbase.full.js"></script>
 </head>
 <body>
 
@@ -594,18 +587,56 @@
 /* 运行时状态（种子数据与存储层见 ./database.js） */
 let STORES=[], ENTRIES={}, LOGS=[], PIN=null, AUTHED=false;
 let INSPECTIONS=[];  // 督导巡检记录
+const XLSX_CDN="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+const JSPDF_CDN="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+const SCRIPT_LOADS={};
+function loadScriptOnce(src,ok){
+  if(ok&&ok())return Promise.resolve(true);
+  if(SCRIPT_LOADS[src])return SCRIPT_LOADS[src];
+  SCRIPT_LOADS[src]=new Promise(resolve=>{
+    const s=document.createElement("script");
+    s.src=src;
+    s.async=true;
+    s.onload=()=>resolve(!ok||ok());
+    s.onerror=()=>{delete SCRIPT_LOADS[src];resolve(false);};
+    document.head.appendChild(s);
+  });
+  return SCRIPT_LOADS[src];
+}
+async function ensureXlsx(){
+  if(window.XLSX)return true;
+  toast("正在加载Excel组件…");
+  const ok=await loadScriptOnce(XLSX_CDN,()=>!!window.XLSX);
+  if(!ok)toast("Excel组件加载失败，请检查网络后重试");
+  return ok;
+}
+async function ensureJsPdf(){
+  if(window.jspdf&&window.jspdf.jsPDF)return true;
+  toast("正在加载PDF组件…");
+  const ok=await loadScriptOnce(JSPDF_CDN,()=>!!(window.jspdf&&window.jspdf.jsPDF));
+  if(!ok)toast("PDF组件加载失败，请检查网络后重试");
+  return ok;
+}
 /* ---------- init / auth ---------- */
 async function init(){
   await cloudInit();   // 尝试连接 CloudBase（未配置或失败则自动用本地存储，不阻断启动）
-  PIN=await sGet("app_pin");
-  let st=await sGet("stores");
+  const [savedPin,savedStores,savedEntries,savedSalary,savedExpenses,savedSchema]=await Promise.all([
+    sGet("app_pin"),
+    sGet("stores"),
+    sGet("entries"),
+    sGet("salary"),
+    sGet("expenses"),
+    sGet("schema_v")
+  ]);
+  PIN=savedPin;
+  let st=savedStores;
   if(!st){st=seedStores();await sSet("stores",st);}
   STORES=st;
-  ENTRIES=await sGet("entries")||{};
-  SALARY=await sGet("salary")||[];
-  EXPENSES=await sGet("expenses")||[];
+  ENTRIES=savedEntries||{};
+  SALARY=savedSalary||[];
+  EXPENSES=savedExpenses||[];
   // 一次性迁移：写入霸王茶姬9家、瑞幸14家真实门店及瑞幸1-5月数据
-  const sv=await sGet("schema_v")||1;
+  const sv=savedSchema||1;
   if(sv<3){
     STORES=STORES.filter(s=>s.brand!=="霸王茶姬"&&s.brand!=="瑞幸咖啡");
     BW_STORES.forEach(s=>STORES.push({...s}));
@@ -704,9 +735,14 @@ async function init(){
     SALARY_SEED_Q1.forEach(e=>{ if(!_have.has(e.id)) SALARY.push({...e}); });
     await sSet("salary",SALARY); await sSet("schema_v",18);
   }
-  LOGS=await sGet("logs")||[];
-  INSPECTIONS=await sGet("inspections")||[];
-  ACCOUNTS=await sGet("accounts")||[];
+  const [savedLogs,savedInspections,savedAccounts]=await Promise.all([
+    sGet("logs"),
+    sGet("inspections"),
+    sGet("accounts")
+  ]);
+  LOGS=savedLogs||[];
+  INSPECTIONS=savedInspections||[];
+  ACCOUNTS=savedAccounts||[];
   if(!ACCOUNTS.length){ ACCOUNTS=defaultAccounts(); await sSet("accounts",ACCOUNTS); } // 首次自动生成默认账号（管理员/老板/各店店长）
   { const _adm=ACCOUNTS.find(a=>a.role==="管理员"); if(_adm&&_adm.pass==="admin888"){ _adm.pass="123"; await sSet("accounts",ACCOUNTS); } } // 一次性：旧默认管理员密码 admin888 → 123
   document.getElementById("loading").style.display="none";
@@ -918,8 +954,9 @@ function wbToText(wb){
   });
   return {text:out.slice(0,16000),isWallet};
 }
-document.getElementById("xlFile").onchange=e=>{
+document.getElementById("xlFile").onchange=async e=>{
   const f=e.target.files[0];if(!f)return;
+  if(!await ensureXlsx()){e.target.value="";return;}
   const st=document.getElementById("aiStatus");st.textContent="📊 正在读取 "+f.name+" …";
   const r=new FileReader();
   r.onload=()=>{
@@ -1125,9 +1162,10 @@ const STMT_ROWS=[["sales","营业总收入"],["refund","退款金额"],["discoun
   ["gross","毛利润"],["grossMargin","毛利率"],
   ["rent","房租"],["labor","人工工资"],["utility","水电费"],["property","物业费"],["commission","平台佣金"],["promo","推广费"],["repair","维修费"],["equip","设备费"],["exp_other","其他费用"],["expSum","费用合计"],
   ["net","净利润"],["margin","净利率"]];
-function exportReportSingle(){
+async function exportReportSingle(){
   const s=STORES.find(x=>x.id===REPORT_SID), e=ENTRIES[eKey(REPORT_SID,REPORT_MONTH)];
   if(!e){toast("无数据");return;}
+  if(!await ensureXlsx())return;
   const c=calc(e);
   const aoa=[["项目","金额（元）"]];
   STMT_ROWS.forEach(([k,l])=>{
@@ -1138,10 +1176,11 @@ function exportReportSingle(){
   const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,"利润表");
   XLSX.writeFile(wb,`${s.name}_${REPORT_MONTH}_利润表.xlsx`); toast("已导出利润表");
 }
-function exportReportAll(){
+async function exportReportAll(){
   const m=REPORT_MONTH;
   const rows=visibleStores().map(s=>({s,e:ENTRIES[eKey(s.id,m)]})).filter(x=>x.e).map(x=>({s:x.s,c:calc(x.e)}));
   if(!rows.length){toast("无数据");return;}
+  if(!await ensureXlsx())return;
   rows.sort((a,b)=>b.c.net-a.c.net);
   const head=["门店编号","门店名称","品牌","营业总收入","退款","优惠","实收收入","原材料","包材","损耗","其他成本","成本合计","毛利润","毛利率","房租","人工","水电","物业","平台佣金","推广","维修","设备","其他费用","费用合计","净利润","净利率"];
   const aoa=[head];
@@ -1297,8 +1336,8 @@ function expBuildPageCanvas(r, dataURL, idx, total, title){
   });
 }
 async function expExportPdf(){
+  if(!await ensureJsPdf())return;
   const jp=window.jspdf&&window.jspdf.jsPDF;
-  if(!jp){toast("PDF组件未加载（需联网）");return;}
   const recs=expScope().filter(r=>r.img);
   if(!recs.length){toast("当前筛选下没有可导出的照片");return;}
   if(CLOUD_OK){const need=recs.filter(r=>typeof r.img==="string"&&r.img.indexOf("cloud://")===0&&!CLOUD_URLCACHE[r.img]);if(need.length){toast("正在准备云端截图…");await cloudResolveImgs(need);}}
@@ -1970,13 +2009,7 @@ function renderInspDetail(body,id){
 // 动态加载 ExcelJS（用于导出带照片的 Excel，浏览器端经 CDN 加载）
 function inspLoadExcelJS(){
   if(window.ExcelJS) return Promise.resolve(true);
-  return new Promise(res=>{
-    const s=document.createElement("script");
-    s.src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js";
-    s.onload=()=>res(!!window.ExcelJS); s.onerror=()=>res(false);
-    document.head.appendChild(s);
-    setTimeout(()=>res(!!window.ExcelJS),12000); // 超时保底
-  });
+  return loadScriptOnce("https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js",()=>!!window.ExcelJS);
 }
 function inspDownloadBlob(blob,name){
   const url=URL.createObjectURL(blob); const a=document.createElement("a");
@@ -1993,7 +2026,7 @@ async function inspExport(id){
     try{ await inspExportRich(r,s); return; }
     catch(e){ console.error("带照片导出失败，回退基础版",e); }
   }
-  inspExportBasic(r,s);
+  await inspExportBasic(r,s);
   toast(hasPhoto?"已导出（在线组件不可用，本次未含照片）":"已导出巡检表");
 }
 // 带照片的专业版（ExcelJS）：对齐门店巡检表版式，维度分组+扣分+现场照片
@@ -2065,7 +2098,8 @@ async function inspExportRich(r,s){
   toast("巡检表已导出"+((r.deductions||[]).some(d=>d.photo)?"（含照片）":""));
 }
 // 保底版（SheetJS，纯文字无照片）
-function inspExportBasic(r,s){
+async function inspExportBasic(r,s){
+  if(!await ensureXlsx())return;
   const aoa=[[`${r.brand} · ${s?s.name:r.sid} 巡检表`],[],["巡检日期",r.date||"","督导",r.inspector||""],
     ["满分",r.fullScore||100,"得分",inspScore(r)],["结果",inspPassed(r)?"合格":"不合格（红线）","扣分合计",-(r.deductions||[]).reduce((a,x)=>a+(+x.deduct||0),0)],[]];
   if((r.redlines||[]).length){ aoa.push(["触发红线（一票否决）"]); r.redlines.forEach(x=>aoa.push(["",x.item])); aoa.push([]); }
@@ -2731,7 +2765,7 @@ function renderLogs(){
 document.getElementById("clearLogsBtn").onclick=async()=>{if(!confirm("清空全部操作日志？"))return;LOGS=[];await sSet("logs",LOGS);renderLogs();toast("已清空日志");};
 
 /* ---------- 数据导出中心 ---------- */
-function xlsxDownload(aoa,sheet,fname){const ws=XLSX.utils.aoa_to_sheet(aoa);ws["!cols"]=aoa[0].map(()=>({wch:12}));const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,sheet);XLSX.writeFile(wb,fname);toast("已导出 "+fname);}
+async function xlsxDownload(aoa,sheet,fname){if(!await ensureXlsx())return;const ws=XLSX.utils.aoa_to_sheet(aoa);ws["!cols"]=aoa[0].map(()=>({wch:12}));const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,sheet);XLSX.writeFile(wb,fname);toast("已导出 "+fname);}
 function eachEntry(){const out=[];visibleStores().forEach(s=>{Object.keys(ENTRIES).filter(k=>k.startsWith(s.id+"|")).sort().forEach(k=>out.push({s,m:k.split("|")[1],c:calc(ENTRIES[k])}));});return out;}
 function exportIncomeDetail(){const r=eachEntry();if(!r.length){toast("无数据");return;}xlsxDownload([["门店编号","门店","品牌","月份","营业总收入","退款金额","优惠金额","实收收入"],...r.map(x=>[x.s.code||x.s.id,x.s.name,x.s.brand,x.m,Math.round(x.c.sales),Math.round(x.c.refund),Math.round(x.c.discount),Math.round(x.c.income)])],"收入明细","收入明细表.xlsx");}
 function exportCostDetail(){const r=eachEntry();if(!r.length){toast("无数据");return;}xlsxDownload([["门店编号","门店","品牌","月份","原材料","包材","损耗","其他成本","成本合计"],...r.map(x=>[x.s.code||x.s.id,x.s.name,x.s.brand,x.m,Math.round(x.c.material),Math.round(x.c.packaging),Math.round(x.c.loss),Math.round(x.c.cost_other),Math.round(x.c.costSum)])],"成本明细","成本明细表.xlsx");}
