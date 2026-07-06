@@ -1,6 +1,8 @@
 # 门店利润系统
 
-这是门店利润系统。当前前端页面仍可直接打开使用；项目正在逐步迁移为 Java + MySQL 前后端分离架构。
+这是门店利润系统。当前最新版本以旧版页面为主线，并由 Java Spring Boot 后端托管，数据写入 MySQL。
+
+当前版本说明见 [CURRENT_VERSION.md](./CURRENT_VERSION.md)。
 
 ## 文件说明
 
@@ -8,13 +10,19 @@
 - `database.js`: 基础数据、账号和数据访问层
 - `cloudbase.full.js`: 腾讯云 CloudBase SDK
 - `store-data-backup.json`: 门店数据备份文件，可在系统内导入恢复
-- `backend/`: Java Spring Boot 后端，提供 MySQL 持久化和兼容存储接口
-- `web/`: 新版前端工作台，全面重构阶段 1 骨架
+- `backend/`: Java Spring Boot 后端，提供 MySQL 持久化、兼容存储接口，并托管当前旧版前端
+- `web/`: 新版前端工作台实验目录，当前不作为主版本
 - `docs/`: 后端迁移设计和实施计划
 
 ## 本地使用
 
-双击 `index.html`，或使用任意静态服务器打开本目录。
+推荐启动后端后访问：
+
+```text
+http://127.0.0.1:8080/index.html
+```
+
+旧版页面也仍可直接打开，但直接打开时会回退到浏览器本地存储，不是当前推荐方式。
 
 默认登录密码：
 
@@ -24,7 +32,7 @@
 
 ## 部署
 
-前端仍可静态部署。后端迁移期间，推荐本地启动 `backend/`，让前端优先通过 `/api/storage` 读写 MySQL。
+当前推荐部署方式是启动 `backend/`，由 Spring Boot 同时提供旧版页面和 `/api/storage` 后端接口。
 
 ## 后端开发
 
@@ -51,23 +59,17 @@ mvn spring-boot:run
 http://localhost:8080/api/health
 ```
 
-前端可以用任意静态服务器打开，例如在项目根目录运行：
-
-```powershell
-python -m http.server 5500
-```
-
-然后访问：
+访问：
 
 ```text
-http://localhost:5500/index.html
+http://127.0.0.1:8080/index.html
 ```
 
-此时前端会优先调用 `http://localhost:8080/api/storage`。如果直接双击 `index.html`，仍会回退到本地存储。
+此时旧版前端会同源调用 `/api/storage`，数据写入 MySQL。
 
 ## 新版前端工作台
 
-全面重构期间，新前端放在 `web/`，不影响旧 `index.html`。
+新版前端放在 `web/`，当前只作为实验目录，不作为最新主版本。
 
 ```powershell
 cd web
