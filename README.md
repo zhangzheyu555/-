@@ -9,6 +9,7 @@
 - `cloudbase.full.js`: 腾讯云 CloudBase SDK
 - `store-data-backup.json`: 门店数据备份文件，可在系统内导入恢复
 - `backend/`: Java Spring Boot 后端，提供 MySQL 持久化和兼容存储接口
+- `web/`: 新版前端工作台，全面重构阶段 1 骨架
 - `docs/`: 后端迁移设计和实施计划
 
 ## 本地使用
@@ -63,3 +64,21 @@ http://localhost:5500/index.html
 ```
 
 此时前端会优先调用 `http://localhost:8080/api/storage`。如果直接双击 `index.html`，仍会回退到本地存储。
+
+## 新版前端工作台
+
+全面重构期间，新前端放在 `web/`，不影响旧 `index.html`。
+
+```powershell
+cd web
+npm install
+npm run dev
+```
+
+访问：
+
+```text
+http://127.0.0.1:5173
+```
+
+新前端开发服务器会把 `/api` 代理到 `http://localhost:8080`。

@@ -8,5 +8,9 @@ backend/src/main/resources/application-local.yml
 backend/target/
 .playwright-cli/
 .superpowers/
+node_modules/
+web/node_modules/
+web/dist/
+web/tsconfig.tsbuildinfo
 .idea/
 *.iml
