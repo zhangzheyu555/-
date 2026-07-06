@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
 public class DeepSeekProperties {
   private String apiKey = "";
   private String baseUrl = "https://api.deepseek.com";
-  private String model = "deepseek-v4-flash";
+  private String model = "deepseek-chat";
   private int maxTokens = 800;
   private double temperature = 0.2;
   private Duration timeout = Duration.ofSeconds(30);

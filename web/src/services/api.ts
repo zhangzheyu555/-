@@ -173,6 +173,18 @@ export type ProfitEntryPayload = Pick<
   | 'note'
 >;
 
+export interface AssistantTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface AssistantReply {
+  answer: string;
+  aiUsed: boolean;
+  blocked: boolean;
+  source: string;
+}
+
 export function authToken() {
   return localStorage.getItem(TOKEN_KEY);
 }
@@ -247,4 +259,12 @@ export async function fetchProfitEntry(storeId: string, month: string) {
 
 export async function saveProfitEntry(payload: ProfitEntryPayload) {
   await api.put<ApiResponse<void>>('/finance/entries', payload);
+}
+
+export async function chatWithAssistant(message: string, history: AssistantTurn[]) {
+  const { data } = await api.post<ApiResponse<AssistantReply>>('/assistant/chat', {
+    message,
+    history
+  });
+  return data.data;
 }
