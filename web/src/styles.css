@@ -39,7 +39,7 @@ button {
 .app-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-columns: 232px minmax(0, 1fr);
 }
 
 .sidebar {
@@ -57,7 +57,7 @@ button {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 4px 8px 20px;
+  padding: 4px 8px 16px;
 }
 
 .brand-lockup strong {
@@ -83,7 +83,7 @@ button {
 }
 
 .nav-group {
-  margin-bottom: 18px;
+  margin-bottom: 14px;
 }
 
 .nav-group-title {
@@ -97,12 +97,12 @@ button {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 38px;
+  height: 34px;
   padding: 0 11px;
   border-radius: 9px;
   color: #d7dce6;
   text-decoration: none;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 650;
   margin-bottom: 4px;
 }
@@ -120,19 +120,19 @@ button {
 
 .workspace {
   min-width: 0;
-  padding: 20px 24px 32px;
+  padding: 16px 20px 28px;
 }
 
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
-  margin-bottom: 20px;
+  gap: 14px;
+  margin-bottom: 16px;
 }
 
 .page-title {
-  font-size: 22px;
+  font-size: 19px;
   font-weight: 850;
   letter-spacing: 0;
 }
@@ -140,7 +140,7 @@ button {
 .page-subtitle {
   margin-top: 3px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .topbar-actions {
@@ -154,7 +154,7 @@ button {
   align-items: center;
   gap: 8px;
   width: 300px;
-  height: 40px;
+  height: 36px;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -187,8 +187,8 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   border-radius: 10px;
   border: 1px solid var(--line);
   background: var(--panel);
@@ -202,7 +202,7 @@ button {
 }
 
 .user-chip {
-  height: 40px;
+  height: 36px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -210,17 +210,15 @@ button {
   border-radius: 10px;
   background: var(--panel);
   border: 1px solid var(--line);
-  font-size: 13px;
-}
-
-.user-chip strong {
+  font-size: 12px;
+  font-weight: 800;
   color: var(--primary-strong);
 }
 
 .view-stack {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .filter-bar {
@@ -231,7 +229,7 @@ button {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 12px;
+  padding: 10px;
   box-shadow: var(--shadow);
 }
 
@@ -306,8 +304,8 @@ button {
 }
 
 .metric-card {
-  padding: 16px;
-  min-height: 112px;
+  padding: 14px;
+  min-height: 96px;
 }
 
 .metric-label {
@@ -317,8 +315,8 @@ button {
 }
 
 .metric-value {
-  margin-top: 10px;
-  font-size: 24px;
+  margin-top: 8px;
+  font-size: 21px;
   font-weight: 850;
 }
 
@@ -332,7 +330,7 @@ button {
 .entry-grid,
 .assistant-layout {
   display: grid;
-  gap: 16px;
+  gap: 12px;
 }
 
 .content-grid {
@@ -348,7 +346,7 @@ button {
 }
 
 .panel {
-  padding: 16px;
+  padding: 14px;
 }
 
 .wide-panel {
@@ -360,7 +358,7 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 
 .panel-head h2 {
@@ -801,7 +799,7 @@ button {
 }
 
 .assistant-panel {
-  min-height: calc(100vh - 136px);
+  min-height: calc(100vh - 112px);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
 }
@@ -809,15 +807,15 @@ button {
 .chat-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   overflow: auto;
   padding-right: 4px;
 }
 
 .chat-message {
-  max-width: 86%;
+  max-width: 82%;
   border-radius: 12px;
-  padding: 14px;
+  padding: 11px 12px;
   background: #f4f6fa;
 }
 
@@ -829,15 +827,15 @@ button {
 
 .chat-message strong {
   display: block;
-  font-size: 13px;
+  font-size: 12px;
   margin-bottom: 6px;
 }
 
 .chat-message p {
   margin: 0;
   white-space: pre-line;
-  line-height: 1.72;
-  font-size: 14px;
+  line-height: 1.62;
+  font-size: 13px;
 }
 
 .chat-input {
@@ -858,12 +856,12 @@ button {
 .quick-list {
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: 8px;
 }
 
 .quick-list button {
   text-align: left;
-  min-height: 38px;
+  min-height: 34px;
   border: 1px solid var(--line);
   border-radius: 9px;
   background: #fff;
@@ -871,7 +869,14 @@ button {
   padding: 8px 10px;
 }
 
-@media (max-width: 1100px) {
+.placeholder-panel p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+@media (max-width: 860px) {
   .app-shell {
     grid-template-columns: 1fr;
   }

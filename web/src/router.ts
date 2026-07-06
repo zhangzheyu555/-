@@ -7,6 +7,8 @@ import LoginView from './views/LoginView.vue';
 import ExportView from './views/ExportView.vue';
 import LogsView from './views/LogsView.vue';
 import UserPermissionsView from './views/UserPermissionsView.vue';
+import InspectionsView from './views/InspectionsView.vue';
+import SettingsView from './views/SettingsView.vue';
 import { authToken } from './services/api';
 
 const router = createRouter({
@@ -20,7 +22,9 @@ const router = createRouter({
     { path: '/stores', component: StoreDirectoryView, meta: { title: '门店档案' } },
     { path: '/assistant', component: AssistantView, meta: { title: '数据助手' } },
     { path: '/users', component: UserPermissionsView, meta: { title: '用户权限' } },
-    { path: '/logs', component: LogsView, meta: { title: '操作日志' } }
+    { path: '/logs', component: LogsView, meta: { title: '操作日志' } },
+    { path: '/inspections', component: InspectionsView, meta: { title: '督导巡店' } },
+    { path: '/settings', component: SettingsView, meta: { title: '系统配置' } }
   ]
 });
 

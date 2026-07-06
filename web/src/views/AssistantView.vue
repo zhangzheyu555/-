@@ -53,8 +53,8 @@ const messages = ref<ChatMessage[]>([
 const quickQuestions = ['7月净利润排名前十', '1-5月各店净利润排名', '哪些门店亏损', '保利店7月经营明细', '7月营业收入最高的门店'];
 const sourceLabel = computed(() => {
   const last = [...messages.value].reverse().find((message) => message.role === 'assistant');
-  if (last?.source === 'deepseek') return 'DeepSeek';
-  if (last?.source === 'local-fallback') return '本地兜底';
+  if (last?.source === 'deepseek') return '智能回答';
+  if (last?.source === 'local-fallback') return '系统回答';
   return '系统内回答';
 });
 

@@ -35,8 +35,7 @@
             <RefreshCw />
           </button>
           <div class="user-chip">
-            <span>{{ session.user?.displayName || '管理员' }}</span>
-            <strong>{{ session.user?.roleLabel || '管理员' }}</strong>
+            <span>{{ userLabel }}</span>
           </div>
           <button class="icon-button" title="退出登录" @click="handleLogout">
             <LogOut />
@@ -99,7 +98,7 @@ const navGroups = [
     name: '门店运营',
     items: [
       { label: '门店档案', path: '/stores', icon: Building2 },
-      { label: '督导巡店', path: '/dashboard', icon: ClipboardCheck }
+      { label: '督导巡店', path: '/inspections', icon: ClipboardCheck }
     ]
   },
   {
@@ -107,10 +106,19 @@ const navGroups = [
     items: [
       { label: '用户权限', path: '/users', icon: Users },
       { label: '操作日志', path: '/logs', icon: History },
-      { label: '系统配置', path: '/dashboard', icon: Settings }
+      { label: '系统配置', path: '/settings', icon: Settings }
     ]
   }
 ];
+
+const userLabel = computed(() => {
+  const displayName = session.user?.displayName || '';
+  const roleLabel = session.user?.roleLabel || '';
+  if (displayName && roleLabel && displayName !== roleLabel) {
+    return `${displayName} · ${roleLabel}`;
+  }
+  return displayName || roleLabel || '管理员';
+});
 
 onMounted(async () => {
   await session.bootstrap();
