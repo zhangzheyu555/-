@@ -39,7 +39,7 @@ button {
 .app-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 232px minmax(0, 1fr);
+  grid-template-columns: clamp(280px, 20.5vw, 392px) minmax(0, 1fr);
 }
 
 .sidebar {
@@ -48,7 +48,7 @@ button {
   height: 100vh;
   background: #242832;
   color: #fff;
-  padding: 18px 14px;
+  padding: clamp(18px, 2vw, 40px) clamp(14px, 1.45vw, 28px);
   display: flex;
   flex-direction: column;
 }
@@ -56,23 +56,23 @@ button {
 .brand-lockup {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 4px 8px 16px;
+  gap: clamp(10px, 1vw, 16px);
+  padding: 4px 8px clamp(26px, 2vw, 38px);
 }
 
 .brand-lockup strong {
   display: block;
-  font-size: 16px;
+  font-size: clamp(18px, 1.45vw, 28px);
 }
 
 .brand-lockup span {
   color: #a9b0bf;
-  font-size: 12px;
+  font-size: clamp(13px, 1.05vw, 19px);
 }
 
 .brand-mark {
-  width: 34px;
-  height: 34px;
+  width: clamp(38px, 2.8vw, 54px);
+  height: clamp(38px, 2.8vw, 54px);
   border-radius: 9px;
   background: linear-gradient(135deg, #f2a45e 0%, #ef7e3d 45%, #343039 100%);
 }
@@ -83,33 +83,33 @@ button {
 }
 
 .nav-group {
-  margin-bottom: 14px;
+  margin-bottom: clamp(18px, 2.2vw, 42px);
 }
 
 .nav-group-title {
   color: #8f98aa;
-  font-size: 12px;
+  font-size: clamp(13px, 1vw, 18px);
   font-weight: 700;
-  padding: 0 10px 8px;
+  padding: 0 10px clamp(8px, 1vw, 18px);
 }
 
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  height: 34px;
-  padding: 0 11px;
-  border-radius: 9px;
+  gap: clamp(10px, 1vw, 16px);
+  height: clamp(40px, 3.15vw, 60px);
+  padding: 0 clamp(12px, 1.3vw, 22px);
+  border-radius: 12px;
   color: #d7dce6;
   text-decoration: none;
-  font-size: 13px;
+  font-size: clamp(15px, 1.15vw, 22px);
   font-weight: 650;
-  margin-bottom: 4px;
+  margin-bottom: clamp(6px, 0.8vw, 14px);
 }
 
 .nav-item svg {
-  width: 17px;
-  height: 17px;
+  width: clamp(18px, 1.35vw, 26px);
+  height: clamp(18px, 1.35vw, 26px);
 }
 
 .nav-item.router-link-active {
@@ -120,19 +120,19 @@ button {
 
 .workspace {
   min-width: 0;
-  padding: 16px 20px 28px;
+  padding: clamp(22px, 2vw, 38px) clamp(22px, 2vw, 38px) 28px;
 }
 
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
-  margin-bottom: 16px;
+  gap: clamp(14px, 1.2vw, 22px);
+  margin-bottom: clamp(18px, 2vw, 36px);
 }
 
 .page-title {
-  font-size: 19px;
+  font-size: clamp(22px, 1.7vw, 32px);
   font-weight: 850;
   letter-spacing: 0;
 }
@@ -140,7 +140,7 @@ button {
 .page-subtitle {
   margin-top: 3px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: clamp(13px, 1vw, 18px);
 }
 
 .topbar-actions {
@@ -152,18 +152,18 @@ button {
 .global-search {
   display: flex;
   align-items: center;
-  gap: 8px;
-  width: 300px;
-  height: 36px;
+  gap: 10px;
+  width: clamp(320px, 24.5vw, 470px);
+  height: clamp(40px, 3.15vw, 60px);
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 0 12px;
+  border-radius: 14px;
+  padding: 0 clamp(12px, 1.2vw, 20px);
 }
 
 .global-search svg {
-  width: 16px;
-  height: 16px;
+  width: clamp(18px, 1.35vw, 25px);
+  height: clamp(18px, 1.35vw, 25px);
   color: var(--muted);
 }
 
@@ -181,15 +181,16 @@ button {
 .global-search input {
   min-width: 0;
   flex: 1;
+  font-size: clamp(14px, 1.15vw, 22px);
 }
 
 .icon-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
+  width: clamp(40px, 3.15vw, 60px);
+  height: clamp(40px, 3.15vw, 60px);
+  border-radius: 14px;
   border: 1px solid var(--line);
   background: var(--panel);
   color: var(--ink);
@@ -197,22 +198,24 @@ button {
 
 .icon-button svg,
 .primary-button svg {
-  width: 16px;
-  height: 16px;
+  width: clamp(18px, 1.25vw, 24px);
+  height: clamp(18px, 1.25vw, 24px);
 }
 
 .user-chip {
-  height: 36px;
+  min-width: clamp(78px, 5.2vw, 100px);
+  height: clamp(40px, 3.15vw, 60px);
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  padding: 0 12px;
-  border-radius: 10px;
+  padding: 0 clamp(12px, 1.2vw, 20px);
+  border-radius: 14px;
   background: var(--panel);
   border: 1px solid var(--line);
-  font-size: 12px;
+  font-size: clamp(13px, 1vw, 18px);
   font-weight: 800;
-  color: var(--primary-strong);
+  color: var(--ink);
 }
 
 .view-stack {
@@ -247,12 +250,13 @@ button {
   align-items: center;
   justify-content: center;
   gap: 7px;
-  height: 38px;
-  padding: 0 14px;
+  height: clamp(38px, 3.1vw, 60px);
+  padding: 0 clamp(14px, 1.3vw, 24px);
   border: 0;
-  border-radius: 9px;
+  border-radius: 14px;
   background: var(--primary);
   color: #fff;
+  font-size: clamp(13px, 1.05vw, 20px);
   font-weight: 750;
 }
 
@@ -342,11 +346,11 @@ button {
 }
 
 .assistant-layout {
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr) clamp(360px, 26vw, 500px);
 }
 
 .panel {
-  padding: 14px;
+  padding: clamp(16px, 1.35vw, 26px);
 }
 
 .wide-panel {
@@ -363,13 +367,13 @@ button {
 
 .panel-head h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: clamp(18px, 1.35vw, 26px);
   font-weight: 850;
 }
 
 .panel-head span {
   color: var(--muted);
-  font-size: 12px;
+  font-size: clamp(12px, 1vw, 17px);
   font-weight: 700;
 }
 
@@ -425,10 +429,10 @@ button {
 .status-tag {
   display: inline-flex;
   align-items: center;
-  height: 24px;
-  padding: 0 9px;
+  height: clamp(24px, 1.8vw, 36px);
+  padding: 0 clamp(9px, 1vw, 16px);
   border-radius: 999px;
-  font-size: 12px;
+  font-size: clamp(12px, 1vw, 17px);
   font-weight: 800;
 }
 
@@ -799,7 +803,7 @@ button {
 }
 
 .assistant-panel {
-  min-height: calc(100vh - 112px);
+  min-height: calc(100vh - clamp(118px, 9vw, 172px));
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
 }
@@ -815,7 +819,7 @@ button {
 .chat-message {
   max-width: 82%;
   border-radius: 12px;
-  padding: 11px 12px;
+  padding: clamp(12px, 1.2vw, 22px);
   background: #f4f6fa;
 }
 
@@ -827,56 +831,58 @@ button {
 
 .chat-message strong {
   display: block;
-  font-size: 12px;
-  margin-bottom: 6px;
+  font-size: clamp(14px, 1.1vw, 20px);
+  margin-bottom: clamp(6px, 0.8vw, 12px);
 }
 
 .chat-message p {
   margin: 0;
   white-space: pre-line;
-  line-height: 1.62;
-  font-size: 13px;
+  line-height: 1.65;
+  font-size: clamp(15px, 1.15vw, 22px);
 }
 
 .chat-input {
   display: flex;
-  gap: 10px;
-  margin-top: 14px;
+  gap: clamp(10px, 1vw, 18px);
+  margin-top: clamp(14px, 1.3vw, 24px);
 }
 
 .chat-input input {
   flex: 1;
-  height: 42px;
+  height: clamp(44px, 3.5vw, 66px);
   border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 0 12px;
+  border-radius: 14px;
+  padding: 0 clamp(14px, 1.3vw, 22px);
   background: #fff;
+  font-size: clamp(14px, 1.15vw, 22px);
 }
 
 .quick-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: clamp(10px, 1vw, 16px);
 }
 
 .quick-list button {
   text-align: left;
-  min-height: 34px;
+  min-height: clamp(42px, 3.2vw, 62px);
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: 12px;
   background: #fff;
   color: var(--ink);
-  padding: 8px 10px;
+  padding: 8px clamp(12px, 1vw, 18px);
+  font-size: clamp(15px, 1.15vw, 22px);
 }
 
 .placeholder-panel p {
   margin: 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: clamp(14px, 1vw, 18px);
   line-height: 1.7;
 }
 
-@media (max-width: 860px) {
+@media (max-width: 1040px) {
   .app-shell {
     grid-template-columns: 1fr;
   }
