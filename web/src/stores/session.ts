@@ -1,5 +1,14 @@
 import { defineStore } from 'pinia';
-import { fetchCurrentSession, fetchSystemOverview, type SessionUser, type SystemOverview } from '../services/api';
+import {
+  authToken,
+  clearAuthToken,
+  fetchCurrentSession,
+  fetchSystemOverview,
+  login,
+  logout,
+  type SessionUser,
+  type SystemOverview
+} from '../services/api';
 
 interface SessionState {
   loading: boolean;
@@ -20,7 +29,8 @@ export const useSessionStore = defineStore('session', {
       this.loading = true;
       this.error = '';
       try {
-        const [overview, user] = await Promise.all([fetchSystemOverview(), fetchCurrentSession()]);
+        const overview = await fetchSystemOverview();
+        const user = authToken() ? await fetchCurrentSession() : null;
         this.overview = overview;
         this.user = user;
       } catch (error) {
@@ -31,16 +41,28 @@ export const useSessionStore = defineStore('session', {
           activeProfile: 'offline',
           modules: ['经营驾驶舱', '数据中心', '门店运营', '系统管理']
         };
-        this.user = {
-          id: 0,
-          displayName: '管理员',
-          role: 'ADMIN',
-          roleLabel: '管理员',
-          storeScope: ['all']
-        };
+        this.user = null;
       } finally {
         this.loading = false;
       }
+    },
+    async login(username: string, password: string) {
+      this.loading = true;
+      this.error = '';
+      try {
+        this.user = await login(username, password);
+      } catch (error) {
+        clearAuthToken();
+        this.user = null;
+        this.error = '账号或密码不正确';
+        throw error;
+      } finally {
+        this.loading = false;
+      }
+    },
+    async logout() {
+      await logout();
+      this.user = null;
     }
   }
 });

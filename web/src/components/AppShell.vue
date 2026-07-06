@@ -38,6 +38,9 @@
             <span>{{ session.user?.displayName || '管理员' }}</span>
             <strong>{{ session.user?.roleLabel || '管理员' }}</strong>
           </div>
+          <button class="icon-button" title="退出登录" @click="handleLogout">
+            <LogOut />
+          </button>
         </div>
       </header>
 
@@ -48,7 +51,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { RouterLink, RouterView, useRoute } from 'vue-router';
+import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
 import {
   Bot,
   Building2,
@@ -57,6 +60,7 @@ import {
   FilePenLine,
   History,
   LayoutDashboard,
+  LogOut,
   RefreshCw,
   Search,
   Settings,
@@ -65,6 +69,7 @@ import {
 import { useSessionStore } from '../stores/session';
 
 const route = useRoute();
+const router = useRouter();
 const session = useSessionStore();
 const keyword = ref('');
 
@@ -107,7 +112,15 @@ const navGroups = [
   }
 ];
 
-onMounted(() => {
-  session.bootstrap();
+onMounted(async () => {
+  await session.bootstrap();
+  if (!session.user) {
+    router.replace('/login');
+  }
 });
+
+async function handleLogout() {
+  await session.logout();
+  router.push('/login');
+}
 </script>

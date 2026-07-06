@@ -1,0 +1,101 @@
+package com.storeprofit.system.platform.auth;
+
+import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.platform.session.SessionUser;
+import jakarta.annotation.PostConstruct;
+import java.security.SecureRandom;
+import java.time.OffsetDateTime;
+import java.util.Base64;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+
+@Service
+public class AuthService {
+  private final AuthRepository authRepository;
+  private final PasswordService passwordService;
+  private final long tokenTtlHours;
+  private final SecureRandom secureRandom = new SecureRandom();
+
+  public AuthService(
+      AuthRepository authRepository,
+      PasswordService passwordService,
+      @Value("${app.auth.token-ttl-hours:12}") long tokenTtlHours
+  ) {
+    this.authRepository = authRepository;
+    this.passwordService = passwordService;
+    this.tokenTtlHours = tokenTtlHours;
+  }
+
+  @PostConstruct
+  public void ensureDefaultAdmin() {
+    if (!authRepository.userExists("admin")) {
+      authRepository.createUser("admin", passwordService.hash("123"), "管理员", "ADMIN", null);
+    }
+  }
+
+  public LoginResponse login(LoginRequest request) {
+    AuthUser user = authRepository.findByUsername(request.username().trim())
+        .orElseThrow(() -> new BusinessException("LOGIN_FAILED", "账号或密码不正确", HttpStatus.UNAUTHORIZED));
+    if (!user.enabled() || !passwordService.matches(request.password(), user.passwordHash())) {
+      throw new BusinessException("LOGIN_FAILED", "账号或密码不正确", HttpStatus.UNAUTHORIZED);
+    }
+    String token = newToken();
+    authRepository.createToken(token, user.id(), OffsetDateTime.now().plusHours(tokenTtlHours));
+    return new LoginResponse(token, toSessionUser(user));
+  }
+
+  public void logout(String authorization) {
+    String token = extractToken(authorization);
+    if (token != null) {
+      authRepository.deleteToken(token);
+    }
+  }
+
+  public AuthUser requireUser(String authorization) {
+    String token = extractToken(authorization);
+    if (token == null) {
+      throw new BusinessException("UNAUTHORIZED", "请先登录", HttpStatus.UNAUTHORIZED);
+    }
+    return authRepository.findByToken(token)
+        .orElseThrow(() -> new BusinessException("UNAUTHORIZED", "登录已失效，请重新登录", HttpStatus.UNAUTHORIZED));
+  }
+
+  public SessionUser toSessionUser(AuthUser user) {
+    return new SessionUser(
+        user.id(),
+        user.displayName(),
+        user.role(),
+        roleLabel(user.role()),
+        authRepository.storeScope(user.id(), user.role(), user.storeId())
+    );
+  }
+
+  private String newToken() {
+    byte[] bytes = new byte[32];
+    secureRandom.nextBytes(bytes);
+    return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+  }
+
+  private String extractToken(String authorization) {
+    if (authorization == null || authorization.isBlank()) {
+      return null;
+    }
+    String value = authorization.trim();
+    if (value.regionMatches(true, 0, "Bearer ", 0, 7)) {
+      return value.substring(7).trim();
+    }
+    return value;
+  }
+
+  private String roleLabel(String role) {
+    return switch (role) {
+      case "ADMIN" -> "管理员";
+      case "BOSS" -> "老板";
+      case "FINANCE" -> "财务";
+      case "SUPERVISOR" -> "督导";
+      case "STORE_MANAGER" -> "店长";
+      default -> role;
+    };
+  }
+}
