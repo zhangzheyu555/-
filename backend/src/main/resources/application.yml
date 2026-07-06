@@ -15,7 +15,7 @@ spring:
     baseline-on-migrate: true
 
 app:
-  version: 0.2.0-phase2-auth-org
+  version: 0.3.0-phase3-finance
   auth:
     token-ttl-hours: 12
   cors:
