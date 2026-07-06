@@ -15,7 +15,7 @@ spring:
     baseline-on-migrate: true
 
 app:
-  version: 0.4.0-phase4-assistant
+  version: 0.5.0-phase5-admin-export
   auth:
     token-ttl-hours: 12
   cors:

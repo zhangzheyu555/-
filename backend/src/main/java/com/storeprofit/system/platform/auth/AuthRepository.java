@@ -42,6 +42,14 @@ public class AuthRepository {
     }
   }
 
+  public List<AuthUser> users() {
+    return jdbcTemplate.query("""
+        select id, username, password_hash, display_name, role, store_id, enabled
+        from auth_user
+        order by id
+        """, this::mapUser);
+  }
+
   public void createToken(String token, long userId, OffsetDateTime expiresAt) {
     jdbcTemplate.update("delete from auth_token where expires_at <= current_timestamp");
     jdbcTemplate.update("""

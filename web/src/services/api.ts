@@ -185,6 +185,30 @@ export interface AssistantReply {
   source: string;
 }
 
+export interface OperationLogRecord {
+  id: number;
+  operatorId: number | null;
+  operatorName: string;
+  action: string;
+  targetType: string;
+  targetId: string;
+  storeId: string;
+  month: string;
+  reason: string;
+  createdAt: string;
+}
+
+export interface UserRecord {
+  id: number;
+  username: string;
+  displayName: string;
+  role: string;
+  roleLabel: string;
+  storeId: string;
+  enabled: boolean;
+  storeScope: string[];
+}
+
 export function authToken() {
   return localStorage.getItem(TOKEN_KEY);
 }
@@ -267,4 +291,24 @@ export async function chatWithAssistant(message: string, history: AssistantTurn[
     history
   });
   return data.data;
+}
+
+export async function fetchOperationLogs(limit = 200) {
+  const { data } = await api.get<ApiResponse<OperationLogRecord[]>>('/audit/logs', {
+    params: { limit }
+  });
+  return data.data;
+}
+
+export async function fetchUsers() {
+  const { data } = await api.get<ApiResponse<UserRecord[]>>('/users');
+  return data.data;
+}
+
+export async function downloadProfitRankingCsv(month: string, brandId?: number) {
+  const { data } = await api.get<Blob>('/export/profit-ranking.csv', {
+    params: { month, brandId },
+    responseType: 'blob'
+  });
+  return data;
 }

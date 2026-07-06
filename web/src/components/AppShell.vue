@@ -92,7 +92,7 @@ const navGroups = [
     name: '数据中心',
     items: [
       { label: '利润录入', path: '/profit-entry', icon: FilePenLine },
-      { label: '数据导出', path: '/dashboard', icon: Database }
+      { label: '数据导出', path: '/export', icon: Database }
     ]
   },
   {
@@ -105,8 +105,8 @@ const navGroups = [
   {
     name: '系统管理',
     items: [
-      { label: '用户权限', path: '/dashboard', icon: Users },
-      { label: '操作日志', path: '/dashboard', icon: History },
+      { label: '用户权限', path: '/users', icon: Users },
+      { label: '操作日志', path: '/logs', icon: History },
       { label: '系统配置', path: '/dashboard', icon: Settings }
     ]
   }

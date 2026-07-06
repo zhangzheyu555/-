@@ -1,0 +1,31 @@
+package com.storeprofit.system.audit;
+
+import com.storeprofit.system.common.ApiResponse;
+import com.storeprofit.system.platform.auth.AuthService;
+import java.util.List;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/api/audit")
+public class AuditController {
+  private final AuthService authService;
+  private final AuditRepository auditRepository;
+
+  public AuditController(AuthService authService, AuditRepository auditRepository) {
+    this.authService = authService;
+    this.auditRepository = auditRepository;
+  }
+
+  @GetMapping("/logs")
+  public ApiResponse<List<OperationLogResponse>> logs(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @RequestParam(defaultValue = "200") int limit
+  ) {
+    authService.requireUser(authorization);
+    return ApiResponse.ok(auditRepository.logs(limit));
+  }
+}
