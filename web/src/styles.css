@@ -45,7 +45,9 @@ button {
 .sidebar {
   position: sticky;
   top: 0;
+  align-self: start;
   height: 100vh;
+  overflow: hidden;
   background: #242832;
   color: #fff;
   padding: clamp(18px, 2vw, 40px) clamp(14px, 1.45vw, 28px);
@@ -78,6 +80,8 @@ button {
 }
 
 .nav-groups {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   padding-right: 4px;
 }
@@ -146,6 +150,8 @@ button {
 .topbar-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
@@ -882,7 +888,7 @@ button {
   line-height: 1.7;
 }
 
-@media (max-width: 1040px) {
+@media (max-width: 760px) {
   .app-shell {
     grid-template-columns: 1fr;
   }
