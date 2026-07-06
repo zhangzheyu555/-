@@ -90,9 +90,26 @@ const AUDIT_STD={"茹果奶茶":{"fullScore":100,"redlines":[{"code":"","item":"
 
 
 /* ---------- storage helpers ----------
-   Claude 环境优先使用 window.storage；本地服务器使用 /api/storage；
-   直接打开 HTML 时回退到 localStorage，保证数据可以正常保存。 */
+   后端 API 优先；不可用时继续回退 CloudBase/window.storage/localStorage。
+   直接打开 HTML 时不强制调用后端，保证原本本地模式仍可使用。 */
 const STORAGE_PREFIX="store_profit_system:";
+const STORAGE_API_BASE=(window.STORE_PROFIT_API_BASE || (
+  (location.protocol==="http:"||location.protocol==="https:") &&
+  (location.hostname==="localhost"||location.hostname==="127.0.0.1") &&
+  location.port && location.port!=="8080" ? "http://localhost:8080" : ""
+)).replace(/\/$/,"");
+function storageApiEnabled(){return !!STORAGE_API_BASE||location.protocol==="http:"||location.protocol==="https:";}
+function storageApiUrl(path){return (STORAGE_API_BASE||"")+path;}
+async function storageApiGet(k){
+  const r=await fetch(storageApiUrl("/api/storage?key="+encodeURIComponent(k)));
+  if(!r.ok)return {hit:false,value:null};
+  const d=await r.json();
+  return {hit:true,value:d&&d.value!=null?JSON.parse(d.value):null};
+}
+async function storageApiSet(k,value){
+  const r=await fetch(storageApiUrl("/api/storage"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:k,value})});
+  return r.ok;
+}
 
 /* ===== 腾讯云开发 CloudBase 对接（渐进增强）=====
    ★ 用法：把下面 CLOUD_ENV 改成你的「云开发环境ID」即可启用多端共享 + 截图云存储。
@@ -241,6 +258,10 @@ async function importBackup(input){
 
 async function sGet(k){
   try{
+    if(storageApiEnabled()){
+      try{const r=await storageApiGet(k);if(r.hit)return r.value;}
+      catch(e){console.warn("后端 API 读取失败，继续回退：",e);}
+    }
     if(CLOUD_OK&&CLOUDDB){
       try{const res=await CLOUDDB.collection(CLOUD_KV).doc(k).get();const d=res&&res.data&&res.data[0];return d?d.value:null;}
       catch(e){console.error("云端读取失败，回退本地：",e);}
@@ -248,31 +269,23 @@ async function sGet(k){
     if(window.storage&&typeof window.storage.get==="function"){
       const r=await window.storage.get(k,false);return r?JSON.parse(r.value):null;
     }
-    if(location.protocol==="http:"||location.protocol==="https:"){
-      try{
-        const r=await fetch("/api/storage?key="+encodeURIComponent(k));
-        if(r.ok){const d=await r.json();return d&&d.value!=null?JSON.parse(d.value):null;}
-      }catch(_){/* API 不可用时继续使用浏览器本地存储 */}
-    }
     const raw=localStorage.getItem(STORAGE_PREFIX+k);
     return raw==null?null:JSON.parse(raw);
   }catch(e){console.error("读取数据失败",e);return null;}
 }
 async function sSet(k,v){
   try{
+    const value=JSON.stringify(v);
+    if(storageApiEnabled()){
+      try{if(await storageApiSet(k,value))return;}
+      catch(e){console.warn("后端 API 保存失败，继续回退：",e);}
+    }
     if(CLOUD_OK&&CLOUDDB){
       try{await CLOUDDB.collection(CLOUD_KV).doc(k).set({value:v});return;}
       catch(e){console.error("云端保存失败，回退本地：",e);}
     }
-    const value=JSON.stringify(v);
     if(window.storage&&typeof window.storage.set==="function"){
       await window.storage.set(k,value,false);return;
-    }
-    if(location.protocol==="http:"||location.protocol==="https:"){
-      try{
-        const r=await fetch("/api/storage",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:k,value})});
-        if(r.ok)return;
-      }catch(_){/* API 不可用时继续使用浏览器本地存储 */}
     }
     localStorage.setItem(STORAGE_PREFIX+k,value);
   }catch(e){console.error(e);toast("保存失败，请重试");}
@@ -378,4 +391,3 @@ function calc(e){
     rev:income, cost:costSum+expSum   // 兼容旧字段
   };
 }
-

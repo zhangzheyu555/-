@@ -1,3 +1,11 @@
 .DS_Store
 __MACOSX/
 *.log
+.env
+.env.*
+application-local.yml
+backend/src/main/resources/application-local.yml
+backend/target/
+.playwright-cli/
+.idea/
+*.iml

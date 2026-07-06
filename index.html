@@ -230,23 +230,30 @@
   .storesel:focus{background-color:var(--primary-soft)}
 
   /* ---- 数据助手 ---- */
-  .botmsgs{display:flex;flex-direction:column;gap:10px;min-height:280px;max-height:54vh;overflow-y:auto;padding:4px 2px 8px}
-  .bmsg{max-width:88%;padding:10px 13px;border-radius:14px;font-size:13.5px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+  #v-bot .botcard{padding:20px 24px;border-radius:18px}
+  .botmsgs{display:flex;flex-direction:column;gap:14px;min-height:430px;max-height:calc(100vh - 330px);overflow-y:auto;padding:8px 4px 12px}
+  .bmsg{max-width:88%;padding:12px 15px;border-radius:14px;font-size:15px;line-height:1.7;white-space:pre-wrap;word-break:break-word}
   .bmsg.u{align-self:flex-end;background:var(--primary);color:#fff;border-bottom-right-radius:4px}
   .bmsg.a{align-self:flex-start;background:var(--bg);color:var(--ink);border-bottom-left-radius:4px}
   .bmsg.a.think{color:var(--muted);font-style:italic}
   /* 数据助手 · 富文本回答（本地引擎直接呈现表格/卡片） */
-  .bmsg.a.rich{max-width:96%;white-space:normal;background:#fff;border:1px solid var(--line)}
-  .bmsg.rich .qhead{font-weight:800;font-size:15px;margin-bottom:4px;color:var(--ink)}
-  .bmsg.rich .qsub{color:var(--muted);font-size:12px;margin-bottom:9px}
-  .bmsg.rich table{width:100%;border-collapse:collapse;font-size:12.5px;margin:6px 0 2px}
-  .bmsg.rich th,.bmsg.rich td{padding:6px 9px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+  .bmsg.a.rich{width:min(820px,100%);max-width:100%;white-space:normal;background:#fff;border:1px solid var(--line);padding:18px 20px;border-radius:16px;box-shadow:0 8px 24px rgba(16,24,40,.04)}
+  .bmsg.rich .qhead{font-weight:900;font-size:18px;margin-bottom:9px;color:var(--ink);letter-spacing:0}
+  .bmsg.rich .qsub{color:#4b5563;font-size:15px;line-height:1.85;margin-bottom:12px}
+  .bmsg.rich .qsub p{margin:0 0 10px}
+  .bmsg.rich .qsub p:last-child{margin-bottom:0}
+  .bmsg.rich .qsub strong{color:var(--ink);font-weight:900}
+  .bmsg.rich table{width:100%;border-collapse:collapse;font-size:14px;margin:10px 0 4px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .bmsg.rich th,.bmsg.rich td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
   .bmsg.rich th{color:var(--muted);font-weight:700;background:var(--bg)}
   .bmsg.rich td.amt,.bmsg.rich th.amt{text-align:right;font-variant-numeric:tabular-nums}
+  .bmsg.rich .ranktable td:first-child,.bmsg.rich .ranktable th:first-child{width:52px;text-align:center;color:var(--muted);font-weight:800}
+  .bmsg.rich .ranktable td:nth-child(2){font-weight:800;color:var(--ink)}
+  .bmsg.rich .ranktable .amt{font-weight:900;color:var(--primary)}
   .bmsg.rich .kpis{display:flex;flex-wrap:wrap;gap:9px;margin:6px 0 9px}
-  .bmsg.rich .kpi{flex:1;min-width:118px;background:var(--bg);border-radius:12px;padding:10px 13px}
-  .bmsg.rich .kpi .k{font-size:11.5px;color:var(--muted)}
-  .bmsg.rich .kpi .val{font-size:19px;font-weight:800;margin-top:3px;font-variant-numeric:tabular-nums}
+  .bmsg.rich .kpi{flex:1;min-width:140px;background:var(--bg);border-radius:12px;padding:12px 14px}
+  .bmsg.rich .kpi .k{font-size:13px;color:var(--muted);font-weight:700}
+  .bmsg.rich .kpi .val{font-size:22px;font-weight:900;margin-top:4px;font-variant-numeric:tabular-nums}
   .bmsg.rich .pos{color:#16a34a}.bmsg.rich .neg{color:#dc2626}
   /* 营业总收入 高亮（品牌橙色渐变字 + 柔和底色卡片） */
   .bmsg.rich .kpi.rev{background:var(--primary-soft);box-shadow:inset 0 0 0 1px rgba(238,126,62,.18)}
@@ -256,15 +263,15 @@
     -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:#EE7E3E}
   .bmsg.rich td.rev{color:#D85F1C;font-weight:800}
   .bmsg.rich .qlinks{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
-  .bmsg.rich .qlink{font-size:12px;border:1px solid var(--line);background:#fff;border-radius:99px;padding:5px 11px;color:var(--primary);cursor:pointer;transition:.15s}
+  .bmsg.rich .qlink{font-size:13px;border:1px solid var(--line);background:#fff;border-radius:99px;padding:6px 12px;color:var(--primary);cursor:pointer;transition:.15s}
   .bmsg.rich .qlink:hover{border-color:var(--primary);background:var(--primary-soft)}
-  .botchips{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0 4px}
-  .bchip{font-size:12px;border:1px solid var(--line);background:#fff;border-radius:99px;padding:6px 11px;color:var(--ink);transition:.15s}
+  .botchips{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 6px}
+  .bchip{font-size:13px;border:1px solid var(--line);background:#fff;border-radius:99px;padding:8px 13px;color:var(--ink);transition:.15s}
   .bchip:hover{border-color:var(--primary);color:var(--primary)}
-  .botinput{display:flex;gap:8px;margin-top:8px}
-  .botinput input{flex:1;padding:12px 13px;border:1px solid var(--line);border-radius:11px;font-size:14px;outline:none;transition:.15s}
+  .botinput{display:flex;gap:10px;margin-top:10px}
+  .botinput input{flex:1;padding:15px 16px;border:1px solid var(--line);border-radius:13px;font-size:15px;outline:none;transition:.15s}
   .botinput input:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft)}
-  .botinput button{background:var(--primary);color:#fff;border:0;border-radius:11px;padding:0 20px;font-size:14px;font-weight:700}
+  .botinput button{background:var(--primary);color:#fff;border:0;border-radius:13px;padding:0 26px;font-size:15px;font-weight:800}
   .botinput button:disabled{background:#c9cdd6}
   /* 员工工资 */
   .sal-tb{width:100%;border-collapse:collapse;font-size:13.5px}
@@ -413,11 +420,11 @@
         <h1>数据助手</h1>
         <div class="right"><button class="btn-ghost" id="botClear">清空对话</button></div>
       </div>
-      <div class="card">
+      <div class="card botcard">
         <div id="botMsgs" class="botmsgs"></div>
         <div class="botchips" id="botChips"></div>
         <div class="botinput">
-          <input id="botInput" placeholder="输入需求即可，例如：保利店5月营业额 / 荆州之星店人员名单 / 5月净利排名" autocomplete="off">
+          <input id="botInput" placeholder="输入需求即可，例如：保利店5月营业额 / 保利店各月营业额 / 1-5月净利排名" autocomplete="off">
           <button id="botSend">发送</button>
         </div>
       </div>
@@ -2112,9 +2119,26 @@ function renderInspStd(body){
   body.innerHTML=html;
 }
 
-/* ---------- 数据助手（AI 搜索/问答） ---------- */
+/* ---------- 数据助手（本地简单问答） ---------- */
 let BOT_HISTORY=[], botBusy=false;
-const BOT_CHIPS=["保利店5月营业额","5月各店净利排名","哪些店在亏损？","荆州之星店人员名单","霸王茶姬各月营收","美佳华店员工工资"];
+const BOT_NATURAL_MONTH="2026-07";
+const BOT_CLIENT_BLOCKED_WORDS=["赌博","博彩","色情","黄色","毒品","黑客","攻击","破解","木马","病毒","脱库","撞库","身份证号","银行卡","密钥","令牌","api key","apikey","access token"];
+function botJsArg(s){return String(s).replace(/\\/g,"\\\\").replace(/'/g,"\\'");}
+function botAssistantApiBase(){
+  if(typeof STORAGE_API_BASE!=="undefined"&&STORAGE_API_BASE)return STORAGE_API_BASE;
+  if((location.protocol==="http:"||location.protocol==="https:")&&(location.hostname==="localhost"||location.hostname==="127.0.0.1")&&location.port&&location.port!=="8080")return "http://localhost:8080";
+  return "";
+}
+function botHasClientBlockedWord(q){const l=q.toLowerCase();return BOT_CLIENT_BLOCKED_WORDS.some(w=>l.includes(w.toLowerCase()));}
+function botAllEntryMonths(){return [...new Set(Object.keys(ENTRIES).map(k=>k.split("|")[1]).filter(Boolean))].sort();}
+function botLatestEntryMonth(){const months=botAllEntryMonths(); return months[months.length-1]||BOT_NATURAL_MONTH;}
+function botDefaultMonth(){return botLatestEntryMonth();}
+function botMonthText(m){return mLabel(m).replace(/^2026年/,"");}
+function botDefaultMonthText(){return botMonthText(botDefaultMonth());}
+function botChipTexts(){
+  const dm=botDefaultMonthText();
+  return [`保利店${dm}营业额`,`${dm}各店净利排名`,`保利店各月营业额`,"1-5月各店净利排名","霸王茶姬各月营收","荆州之星店人员名单"];
+}
 function escHtml(s){return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
 function buildDataContext(){
   let csv="品牌,门店,月份,营业总收入,实收,原材料,成本合计,毛利,房租,人工,水电,平台佣金,费用合计,净利,净利率\n";
@@ -2137,17 +2161,21 @@ function botRender(){
   document.getElementById("botSend").disabled=botBusy;
 }
 function botInit(){
-  document.getElementById("botChips").innerHTML=BOT_CHIPS.map(c=>`<button class="bchip" onclick="botAsk(this.textContent)">${c}</button>`).join("");
+  document.getElementById("botChips").innerHTML=botChipTexts().map(c=>`<button class="bchip" onclick="botAsk(this.textContent)">${c}</button>`).join("");
   if(!BOT_HISTORY.length){
-    BOT_HISTORY=[{role:"assistant",html:`<div class="qhead">你好，我是数据助手 👋</div><div class="qsub">直接输入你的需求，我会立刻把结果直观地呈现出来（无需联网）。试试下面这些：</div>
+    const dm=botDefaultMonthText();
+    const months=botAllEntryMonths();
+    const monthTip=months.length?`当前已有经营数据：${botMonthListText(months)}。`:"当前还没有录入经营数据。";
+    BOT_HISTORY=[{role:"assistant",html:`<div class="qhead">你好，我是数据助手</div><div class="qsub">当前提供受限数据问答，并保留本地数据查询兜底。回答范围只限门店利润系统。${monthTip}</div>
       <div class="qlinks">
-        <span class="qlink" onclick="botAsk('保利店5月营业额')">保利店5月营业额</span>
-        <span class="qlink" onclick="botAsk('5月各店净利排名')">5月各店净利排名</span>
-        <span class="qlink" onclick="botAsk('哪些店在亏损？')">哪些店在亏损？</span>
+        <span class="qlink" onclick="botAsk('保利店${dm}营业额')">保利店${dm}营业额</span>
+        <span class="qlink" onclick="botAsk('${dm}各店净利排名')">${dm}各店净利排名</span>
+        <span class="qlink" onclick="botAsk('1-5月各店净利排名')">1-5月各店净利排名</span>
+        <span class="qlink" onclick="botAsk('保利店各月营业额')">保利店各月营业额</span>
         <span class="qlink" onclick="botAsk('荆州之星店人员名单')">荆州之星店人员名单</span>
         <span class="qlink" onclick="botAsk('霸王茶姬各月营收')">霸王茶姬各月营收</span>
       </div>
-      <div class="qsub" style="margin-top:10px">支持：① 某店某月的营业额/净利/成本等任意指标　② 排名与亏损筛查　③ 人员名单与员工工资　④ 直接输入门店/地区/人名等关键字搜索。</div>`}];
+      <div class="qsub" style="margin-top:10px">支持：① 某店某月的营业额/净利/成本等任意指标　② 各月、每月、趋势查询　③ 1-5月这类区间排名与亏损筛查　④ 人员名单与员工工资　⑤ 直接输入门店/地区/人名等关键字搜索。</div>`}];
   }
   botRender();
 }
@@ -2155,6 +2183,66 @@ function botInit(){
 const CN_NUM={零:0,一:1,二:2,两:2,三:3,四:4,五:5,六:6,七:7,八:8,九:9,十:10};
 function cnToNum(s){ if(CN_NUM[s]!=null)return CN_NUM[s]; if(s.length===2&&s[0]==="十")return 10+(CN_NUM[s[1]]||0); return 0; }
 function mLabel(m){const p=m.split("-");return p[0]+"年"+(+p[1])+"月";}
+function botMonthListText(ms){return ms.map(mLabel).join("、");}
+function botMonthKey(year,mo){
+  mo=+mo; year=+(year||2026);
+  if(!year||mo<1||mo>12)return null;
+  return `${year}-${String(mo).padStart(2,"0")}`;
+}
+function botMonthRangeKeys(sy,sm,ey,em){
+  sy=+(sy||2026); ey=+(ey||sy); sm=+sm; em=+em;
+  if(!botMonthKey(sy,sm)||!botMonthKey(ey,em))return [];
+  let y=sy,m=sm,out=[],guard=0;
+  while((y<ey||(y===ey&&m<=em))&&guard<36){
+    out.push(botMonthKey(y,m));
+    m++; if(m>12){m=1;y++;}
+    guard++;
+  }
+  return out;
+}
+function botParseMonthRanges(q){
+  const out=[]; let m;
+  let re=/(20\d{2})\s*年\s*(\d{1,2})\s*月?\s*(?:-|到|至|~|—|－)\s*(?:(20\d{2})\s*年\s*)?(\d{1,2})\s*月/g;
+  while(m=re.exec(q)) out.push(...botMonthRangeKeys(m[1],m[2],m[3]||m[1],m[4]));
+  re=/(20\d{2})[-\/.](\d{1,2})\s*(?:-|到|至|~|—|－)\s*(?:(20\d{2})[-\/.])?(\d{1,2})/g;
+  while(m=re.exec(q)) out.push(...botMonthRangeKeys(m[1],m[2],m[3]||m[1],m[4]));
+  re=/(\d{1,2})\s*(?:-|到|至|~|—|－)\s*(\d{1,2})\s*月/g;
+  while(m=re.exec(q)) out.push(...botMonthRangeKeys(2026,m[1],2026,m[2]));
+  re=/([一二两三四五六七八九十]{1,3})\s*(?:-|到|至|~|—|－)\s*([一二两三四五六七八九十]{1,3})\s*月/g;
+  while(m=re.exec(q)) out.push(...botMonthRangeKeys(2026,cnToNum(m[1]),2026,cnToNum(m[2])));
+  return [...new Set(out)];
+}
+function botMonthsForStores(stores){
+  const ids=new Set(stores.map(s=>s.id));
+  return [...new Set(Object.keys(ENTRIES).map(k=>{const p=k.split("|");return ids.has(p[0])?p[1]:null;}).filter(Boolean))].sort();
+}
+function botScopeMonths(stores,brand){
+  if(stores&&stores.length)return botMonthsForStores(stores);
+  if(brand)return botMonthsForStores(visibleStores().filter(s=>s.brand===brand));
+  return botAllEntryMonths();
+}
+function botHasMultiMonthWord(q){return /各月|每月|趋势|全部月份|所有月份|月度|全年|汇总/.test(q);}
+function botResolveMonthIntent(q,stores,brand){
+  const scope=botScopeMonths(stores,brand);
+  const ranges=botParseMonthRanges(q);
+  if(ranges.length){
+    const months=ranges.filter(m=>!scope.length||scope.includes(m));
+    return {kind:"range",months,requested:ranges,hasMonth:true,multi:true};
+  }
+  const explicit=botParseMonths(q);
+  if(explicit.length>1){
+    const months=explicit.filter(m=>!scope.length||scope.includes(m));
+    return {kind:"list",months,requested:explicit,hasMonth:true,multi:true};
+  }
+  if(explicit.length)return {kind:"single",month:explicit[0],months:explicit,requested:explicit,hasMonth:true,multi:false};
+  if(botHasMultiMonthWord(q))return {kind:"all",months:scope.length?scope:botAllEntryMonths(),requested:scope.length?scope:botAllEntryMonths(),hasMonth:true,multi:true};
+  const month=scope[scope.length-1]||botDefaultMonth();
+  return {kind:"default",month,months:[month],requested:[month],hasMonth:false,multi:false};
+}
+function botMonthSpanLabel(ms){
+  if(!ms.length)return "";
+  return ms.length===1?mLabel(ms[0]):`${mLabel(ms[0])} - ${mLabel(ms[ms.length-1])}`;
+}
 const BOT_METRICS=[
   {keys:["营业额","营业总收入","营收","流水","总收入","营业","收入"],f:"sales",label:"营业总收入"},
   {keys:["实收收入","实收","到账"],f:"income",label:"实收收入"},
@@ -2191,10 +2279,34 @@ function botMatchStaff(q){ const names=[...new Set(SALARY.map(e=>e.name))]; retu
 function botStoreName(sid){ return (STORES.find(s=>s.id===sid)||{}).name||sid; }
 function dispVal(c,mt){ const v=c[mt.f]; return mt.pct?((v||0)*100).toFixed(1)+"%":fmt(v||0); }
 function botSalaryMonths(){ return [...new Set(SALARY.map(e=>e.month))].sort(); }
+function botMonthLinks(ms,labeler){
+  if(!ms.length)return "";
+  return `<div class="qlinks">${ms.map(m=>{
+    const label=labeler?labeler(m):`${botMonthText(m)}各店净利排名`;
+    return `<span class="qlink" onclick="botAsk('${botJsArg(label)}')">${label}</span>`;
+  }).join("")}</div>`;
+}
+function botNoDataHtml(title,detail,available){
+  return `<div class="qhead">${title}</div><div class="qsub">${detail}</div>${available&&available.length?`<div class="qsub" style="margin-top:8px">可查询月份：${botMonthListText(available)}</div>${botMonthLinks(available)}`:""}`;
+}
+function botEmptyCalc(){
+  return {sales:0,refund:0,discount:0,income:0,material:0,packaging:0,loss:0,cost_other:0,costSum:0,gross:0,grossMargin:0,rent:0,labor:0,utility:0,property:0,commission:0,promo:0,repair:0,equip:0,exp_other:0,expSum:0,net:0,margin:0,rev:0,cost:0};
+}
+function botAddCalc(total,c){
+  ["sales","refund","discount","income","material","packaging","loss","cost_other","costSum","gross","rent","labor","utility","property","commission","promo","repair","equip","exp_other","expSum","net","rev","cost"].forEach(k=>total[k]+=(+c[k]||0));
+  total.margin=total.income>0?total.net/total.income:0;
+  total.grossMargin=total.income>0?total.gross/total.income:0;
+  return total;
+}
+function botMetricValue(c,mt){return mt&&mt.pct?c[mt.f]:(+c[mt.f]||0);}
+function botDetailRow(label,value,sub=false){
+  if(Math.abs(+value||0)<0.005)return "";
+  return `<tr><td style="${sub?"color:var(--muted);padding-left:22px":""}">${label}</td><td class="amt">${fmt(value)}</td></tr>`;
+}
 
 function botStoreCard(s,m,mt){
   const e=ENTRIES[eKey(s.id,m)];
-  if(!e) return `<div class="qhead">${s.brand} · ${s.name} · ${mLabel(m)}</div><div class="qsub">该门店本月暂无数据记录。</div>`;
+  if(!e) return botNoDataHtml(`${s.brand} · ${s.name} · ${mLabel(m)}`,"该门店这个月份暂无数据记录。可以改问该门店已有月份，或先录入对应月份数据。",botMonthsForStores([s]));
   const c=calc(e), nc=c.net>=0?"pos":"neg";
   let lead="";
   if(mt&&!["sales","income","net","margin"].includes(mt.f))
@@ -2211,9 +2323,24 @@ function botStoreCard(s,m,mt){
       <tr><td>退款 + 优惠</td><td class="amt">${fmt(c.refund+c.discount)}</td></tr>
       <tr><td>实收收入</td><td class="amt">${fmt(c.income)}</td></tr>
       <tr><td>成本合计（原材料/包材/损耗等）</td><td class="amt">${fmt(c.costSum)}</td></tr>
+      ${botDetailRow("原材料",c.material,true)}
+      ${botDetailRow("包材",c.packaging,true)}
+      ${botDetailRow("损耗",c.loss,true)}
+      ${botDetailRow("其他成本",c.cost_other,true)}
       <tr><td>毛利润</td><td class="amt">${fmt(c.gross)}</td></tr>
+      <tr><td>毛利率</td><td class="amt">${(c.grossMargin*100).toFixed(1)}%</td></tr>
       <tr><td>费用合计（房租/人工/水电/佣金等）</td><td class="amt">${fmt(c.expSum)}</td></tr>
+      ${botDetailRow("房租",c.rent,true)}
+      ${botDetailRow("人工工资",c.labor,true)}
+      ${botDetailRow("水电费",c.utility,true)}
+      ${botDetailRow("物业费",c.property,true)}
+      ${botDetailRow("平台佣金",c.commission,true)}
+      ${botDetailRow("推广费",c.promo,true)}
+      ${botDetailRow("维修费",c.repair,true)}
+      ${botDetailRow("设备费",c.equip,true)}
+      ${botDetailRow("其他费用",c.exp_other,true)}
       <tr><td><b>净利润</b></td><td class="amt"><b class="${nc}">${fmt(c.net)}</b></td></tr>
+      <tr><td><b>净利率</b></td><td class="amt"><b class="${nc}">${(c.margin*100).toFixed(1)}%</b></td></tr>
     </tbody></table>`;
 }
 function botStoreTrend(s){
@@ -2225,13 +2352,36 @@ function botStoreTrend(s){
   return `<div class="qhead">${s.brand} · ${s.name} · 各月经营</div>
     <table><thead><tr><th>月份</th><th class="amt">营业额</th><th class="amt">实收</th><th class="amt">净利润</th><th class="amt">净利率</th></tr></thead><tbody>${rows}</tbody></table>${links}`;
 }
-function botRank(q,m,mt){
+function botStoreMultiMonth(stores,months,mt,requested){
+  return {html:stores.map(s=>{
+    const available=botMonthsForStores([s]);
+    const target=months&&months.length?months:available;
+    const rows=target.map(m=>{const e=ENTRIES[eKey(s.id,m)]; return e?{m,c:calc(e)}:null;}).filter(Boolean);
+    if(!rows.length){
+      const asked=requested&&requested.length?botMonthSpanLabel(requested):"这些月份";
+      return botNoDataHtml(`${s.brand} · ${s.name}` ,`${asked}暂无该门店经营数据。`,available);
+    }
+    const total=botEmptyCalc(); rows.forEach(r=>botAddCalc(total,r.c));
+    const netCls=total.net>=0?"pos":"neg";
+    const body=rows.map(r=>{const nc=r.c.net>=0?"pos":"neg";
+      if(mt) return `<tr><td>${mLabel(r.m)}</td><td class="amt ${mt.f==="net"?nc:""}">${dispVal(r.c,mt)}</td><td class="amt ${nc}">${fmt(r.c.net)}</td></tr>`;
+      return `<tr><td>${mLabel(r.m)}</td><td class="amt">${fmt(r.c.sales)}</td><td class="amt">${fmt(r.c.income)}</td><td class="amt ${nc}">${fmt(r.c.net)}</td><td class="amt ${nc}">${(r.c.margin*100).toFixed(1)}%</td></tr>`;
+    }).join("");
+    const totalRow=mt
+      ? `<tr><td><b>合计</b></td><td class="amt"><b>${dispVal(total,mt)}</b></td><td class="amt ${netCls}"><b>${fmt(total.net)}</b></td></tr>`
+      : `<tr><td><b>合计</b></td><td class="amt"><b>${fmt(total.sales)}</b></td><td class="amt"><b>${fmt(total.income)}</b></td><td class="amt ${netCls}"><b>${fmt(total.net)}</b></td><td class="amt ${netCls}"><b>${(total.margin*100).toFixed(1)}%</b></td></tr>`;
+    return `<div class="qhead">${s.brand} · ${s.name} · ${botMonthSpanLabel(rows.map(r=>r.m))}</div>
+      <table><thead><tr><th>月份</th>${mt?`<th class="amt">${mt.label}</th><th class="amt">净利润</th>`:`<th class="amt">营业额</th><th class="amt">实收</th><th class="amt">净利润</th><th class="amt">净利率</th>`}</tr></thead><tbody>${body}${totalRow}</tbody></table>`;
+  }).join("<br>")};
+}
+function botRank(q,m,mt,pool){
   mt=mt||BOT_METRICS.find(x=>x.f==="net");
   const low=/最低|最少|最差|垫底|最亏/.test(q), lossOnly=/亏损|亏钱|赔/.test(q);
-  let rows=visibleStores().map(s=>{const e=ENTRIES[eKey(s.id,m)]; if(!e)return null; const c=calc(e); return {s,c,v:c[mt.f]};}).filter(Boolean);
-  if(!rows.length) return null;
+  const stores=pool&&pool.length?pool:visibleStores();
+  let rows=stores.map(s=>{const e=ENTRIES[eKey(s.id,m)]; if(!e)return null; const c=calc(e); return {s,c,v:botMetricValue(c,mt)};}).filter(Boolean);
+  if(!rows.length) return {html:botNoDataHtml(`${mLabel(m)} · 暂无经营数据`,`当前没有找到该月份的门店经营记录。可以先录入 ${mLabel(m)} 数据，或改问已有月份的数据。`,botMonthsForStores(stores))};
   if(lossOnly){ rows=rows.filter(r=>r.c.net<0).sort((a,b)=>a.c.net-b.c.net);
-    if(!rows.length) return {html:`<div class="qhead">${mLabel(m)} · 亏损门店</div><div class="qsub">本月没有门店出现亏损 🎉</div>`}; }
+    if(!rows.length) return {html:`<div class="qhead">${mLabel(m)} · 亏损门店</div><div class="qsub">本月没有门店出现亏损。</div>`}; }
   else rows.sort((a,b)=>low?a.v-b.v:b.v-a.v);
   const showNet=mt.f!=="net";
   const body=rows.map((r,i)=>{const nc=r.c.net>=0?"pos":"neg";
@@ -2240,15 +2390,58 @@ function botRank(q,m,mt){
   return {html:`<div class="qhead">${title}</div>
     <table><thead><tr><th>#</th><th>门店</th><th class="amt">${mt.label}</th>${showNet?'<th class="amt">净利润</th>':""}</tr></thead><tbody>${body}</tbody></table>`};
 }
-function botBrandMonthly(brand){
+function botRangeRank(q,months,requested,mt,pool){
+  mt=mt||BOT_METRICS.find(x=>x.f==="net");
+  const low=/最低|最少|最差|垫底|最亏/.test(q), lossOnly=/亏损|亏钱|赔/.test(q);
+  const stores=pool&&pool.length?pool:visibleStores();
+  const available=botMonthsForStores(stores);
+  if(!months.length){
+    const asked=requested&&requested.length?botMonthSpanLabel(requested):"这些月份";
+    return {html:botNoDataHtml(`${asked} · 暂无经营数据`,`当前没有找到该月份范围内的门店经营记录。`,available)};
+  }
+  let rows=stores.map(s=>{
+    const total=botEmptyCalc(); let count=0;
+    months.forEach(m=>{const e=ENTRIES[eKey(s.id,m)]; if(e){botAddCalc(total,calc(e)); count++;}});
+    return count?{s,c:total,count,v:botMetricValue(total,mt)}:null;
+  }).filter(Boolean);
+  if(!rows.length)return {html:botNoDataHtml(`${botMonthSpanLabel(months)} · 暂无经营数据`,`当前没有找到该月份范围内的门店经营记录。`,available)};
+  if(lossOnly){ rows=rows.filter(r=>r.c.net<0).sort((a,b)=>a.c.net-b.c.net);
+    if(!rows.length)return {html:`<div class="qhead">${botMonthSpanLabel(months)} · 亏损门店</div><div class="qsub">该区间内没有门店累计亏损。</div>`}; }
+  else rows.sort((a,b)=>low?a.v-b.v:b.v-a.v);
+  const showNet=mt.f!=="net";
+  const body=rows.map((r,i)=>{const nc=r.c.net>=0?"pos":"neg";
+    return `<tr><td>${i+1}</td><td>${r.s.name}<span style="color:var(--muted)"> · ${r.s.brand}</span></td><td class="amt">${r.count}</td><td class="amt ${mt.f==="net"?nc:""}">${dispVal(r.c,mt)}</td>${showNet?`<td class="amt ${nc}">${fmt(r.c.net)}</td>`:""}</tr>`;
+  }).join("");
+  const title=lossOnly?`${botMonthSpanLabel(months)} · 亏损门店（${rows.length}家）`:`${botMonthSpanLabel(months)} · ${mt.label}${low?"（升序）":"排名"}`;
+  return {html:`<div class="qhead">${title}</div><div class="qsub">按区间内已录入月份合计排序；缺失月份不会补零。</div>
+    <table><thead><tr><th>#</th><th>门店</th><th class="amt">月份数</th><th class="amt">${mt.label}</th>${showNet?'<th class="amt">净利润</th>':""}</tr></thead><tbody>${body}</tbody></table>`};
+}
+function botBrandMonthly(brand,targetMonths){
   const stores=visibleStores().filter(s=>s.brand===brand);
-  const months=[...new Set(Object.keys(ENTRIES).filter(k=>stores.some(s=>k.startsWith(s.id+"|"))).map(k=>k.split("|")[1]))].sort();
-  if(!months.length) return {html:`<div class="qhead">${brand}</div><div class="qsub">该品牌暂无数据记录。</div>`};
+  const available=[...new Set(Object.keys(ENTRIES).filter(k=>stores.some(s=>k.startsWith(s.id+"|"))).map(k=>k.split("|")[1]))].sort();
+  const months=targetMonths&&targetMonths.length?available.filter(m=>targetMonths.includes(m)):available;
+  if(!months.length) return {html:botNoDataHtml(`${brand}`,`该品牌暂无所选月份的数据记录。`,available)};
   const body=months.map(m=>{let sales=0,net=0,inc=0;
     stores.forEach(s=>{const e=ENTRIES[eKey(s.id,m)]; if(e){const c=calc(e);sales+=c.sales;inc+=c.income;net+=c.net;}});
     const nc=net>=0?"pos":"neg"; return `<tr><td>${mLabel(m)}</td><td class="amt">${fmt(sales)}</td><td class="amt">${fmt(inc)}</td><td class="amt ${nc}">${fmt(net)}</td></tr>`;}).join("");
   return {html:`<div class="qhead">${brand} · 各月汇总（${stores.length}家门店）</div>
     <table><thead><tr><th>月份</th><th class="amt">营业额</th><th class="amt">实收</th><th class="amt">净利润</th></tr></thead><tbody>${body}</tbody></table>`};
+}
+function botBrandMonthSummary(brand,m,mt){
+  const stores=visibleStores().filter(s=>s.brand===brand);
+  const rows=stores.map(s=>{const e=ENTRIES[eKey(s.id,m)]; return e?{s,c:calc(e)}:null;}).filter(Boolean);
+  if(!rows.length)return {html:botNoDataHtml(`${brand} · ${mLabel(m)}`,`该品牌在 ${mLabel(m)} 暂无经营数据。`,botMonthsForStores(stores))};
+  const total=botEmptyCalc(); rows.forEach(r=>botAddCalc(total,r.c));
+  const nc=total.net>=0?"pos":"neg";
+  const body=rows.map(r=>{const rc=r.c.net>=0?"pos":"neg";
+    if(mt)return `<tr><td>${r.s.name}</td><td class="amt ${mt.f==="net"?rc:""}">${dispVal(r.c,mt)}</td><td class="amt ${rc}">${fmt(r.c.net)}</td></tr>`;
+    return `<tr><td>${r.s.name}</td><td class="amt">${fmt(r.c.sales)}</td><td class="amt">${fmt(r.c.income)}</td><td class="amt ${rc}">${fmt(r.c.net)}</td></tr>`;
+  }).join("");
+  const totalRow=mt
+    ? `<tr><td><b>合计</b></td><td class="amt"><b>${dispVal(total,mt)}</b></td><td class="amt ${nc}"><b>${fmt(total.net)}</b></td></tr>`
+    : `<tr><td><b>合计</b></td><td class="amt"><b>${fmt(total.sales)}</b></td><td class="amt"><b>${fmt(total.income)}</b></td><td class="amt ${nc}"><b>${fmt(total.net)}</b></td></tr>`;
+  return {html:`<div class="qhead">${brand} · ${mLabel(m)} 汇总（${rows.length}家门店）</div>
+    <table><thead><tr><th>门店</th>${mt?`<th class="amt">${mt.label}</th><th class="amt">净利润</th>`:`<th class="amt">营业额</th><th class="amt">实收</th><th class="amt">净利润</th>`}</tr></thead><tbody>${body}${totalRow}</tbody></table>`};
 }
 function botPersonnel(stores,m){
   const months=botSalaryMonths();
@@ -2276,14 +2469,76 @@ function botKeyword(q){
   if(!stores.length&&!staff.length) return null;
   let html="";
   if(stores.length){
-    const list=stores.slice(0,20).map(s=>`<span class="qlink" onclick="botAsk('${s.name}5月营业额')">${s.name}<span style="color:var(--muted)"> · ${s.brand}</span></span>`).join("");
-    html+=`<div class="qhead">找到 ${stores.length} 家相关门店</div><div class="qsub">点击查看该店 5月经营数据：</div><div class="qlinks">${list}</div>`;
+    const dm=botDefaultMonthText();
+    const list=stores.slice(0,20).map(s=>`<span class="qlink" onclick="botAsk('${botJsArg(`${s.name}${dm}营业额`)}')">${s.name}<span style="color:var(--muted)"> · ${s.brand}</span></span>`).join("");
+    html+=`<div class="qhead">找到 ${stores.length} 家相关门店</div><div class="qsub">点击查看该店 ${dm}经营数据：</div><div class="qlinks">${list}</div>`;
   }
   if(staff.length){ const d=botStaffDetail(staff); if(d)html+=(html?"<br>":"")+d.html; }
   return {html};
 }
+function botHtmlToText(html){
+  const div=document.createElement("div");
+  div.innerHTML=html||"";
+  return (div.textContent||"").replace(/\s+/g," ").trim();
+}
+function botHistoryForApi(){
+  return BOT_HISTORY.slice(-8).map(m=>{
+    const content=m.text||botHtmlToText(m.html);
+    return content?{role:m.role==="assistant"?"assistant":"user",content:content.slice(0,1000)}:null;
+  }).filter(Boolean);
+}
+function botInlineAnswer(s){
+  return escHtml(s).replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>");
+}
+function botAnswerParagraphs(lines){
+  return lines.map(line=>`<p>${botInlineAnswer(line)}</p>`).join("");
+}
+function botFormatAssistantAnswer(answer,question){
+  const text=String(answer||"").replace(/\r/g,"").trim();
+  if(!text)return "";
+  const lines=text.split(/\n+/).map(x=>x.trim().replace(/^数据助手[，,:：\s]*/,"")).filter(Boolean);
+  const rankRows=[], before=[], after=[];
+  let seenRank=false;
+  const rankRe=/^(\d+)[.、]\s*(?:\*\*)?(.+?)(?:\*\*)?\s*[:：]\s*([+-]?(?:¥|￥)?[\d,]+(?:\.\d+)?\s*(?:元|万元|%|％)?)(.*)$/;
+  lines.forEach(line=>{
+    const m=line.match(rankRe);
+    if(m){
+      seenRank=true;
+      rankRows.push({rank:m[1],name:m[2].replace(/\*\*/g,"").replace(/^["“”]+|["“”]+$/g,"").trim(),value:m[3].trim(),note:(m[4]||"").trim()});
+    }else if(!seenRank) before.push(line);
+    else after.push(line);
+  });
+  if(rankRows.length>=2){
+    const wantsAll=/全部|完整|所有|明细|全量|全部排名/.test(question||"");
+    const shown=rankRows.length>10&&!wantsAll?rankRows.slice(0,10):rankRows;
+    if(rankRows.length>shown.length)after.unshift(`默认展示前 ${shown.length} 条，共 ${rankRows.length} 条。需要完整列表可以输入“查看全部排名”。`);
+    const rows=shown.map((r,i)=>`<tr><td>${i+1}</td><td>${escHtml(r.name)}${r.note?`<span style="color:var(--muted);font-weight:500"> ${escHtml(r.note)}</span>`:""}</td><td class="amt">${escHtml(r.value)}</td></tr>`).join("");
+    return `${botAnswerParagraphs(before)}<table class="ranktable"><thead><tr><th>#</th><th>项目</th><th class="amt">数值</th></tr></thead><tbody>${rows}</tbody></table>${botAnswerParagraphs(after)}`;
+  }
+  return botAnswerParagraphs(lines);
+}
+function botAiHtml(answer,source,question){
+  return `<div class="qhead">数据助手</div><div class="qsub">${botFormatAssistantAnswer(answer,question)}</div>`;
+}
+function botShouldUseLocalFirst(q){
+  return /(\d{1,2}\s*月|20\d{2}|各月|每月|趋势|排名|亏损|营业|营收|收入|实收|净利|利润|毛利|成本|费用|房租|人工|工资|薪资|人员|名单|员工|门店|店|霸王茶姬|瑞幸|茹果|保利|荆州之星|美佳华)/i.test(q);
+}
+async function botAiAnswer(q){
+  const base=botAssistantApiBase();
+  const res=await fetch(base+"/api/assistant/chat",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({message:q,history:botHistoryForApi(),dataContext:buildDataContext()})
+  });
+  if(!res.ok)throw new Error("assistant api failed");
+  const payload=await res.json();
+  return payload&&payload.data?payload.data:payload;
+}
 function localAnswer(q){
-  const stores=botMatchStores(q), brand=botMatchBrand(q), metric=botMatchMetric(q), months=botParseMonths(q);
+  const stores=botMatchStores(q), brand=botMatchBrand(q), metric=botMatchMetric(q);
+  const monthIntent=botResolveMonthIntent(q,stores,brand);
+  const months=monthIntent.months||[];
+  const primaryMonth=monthIntent.month||months[0]||botDefaultMonth();
   const wantPerson=/人员|名单|员工|职员|团队|几个人|多少人|人数|花名册|店长是谁|谁是店长/.test(q)||(/工资|薪资|薪水/.test(q)&&!/人工/.test(q));
   const wantRank=/排名|最高|最低|最多|最少|最赚|最亏|最好|最差|哪家|哪个|哪些|垫底|亏损|亏钱|前几|top/i.test(q);
   // 1) 人名 → 工资明细
@@ -2291,50 +2546,76 @@ function localAnswer(q){
   if(named.length&&!stores.length){ const d=botStaffDetail(named); if(d)return d; }
   // 2) 人员名单 / 员工工资
   if(wantPerson){ const tgt=stores.length?stores:(brand?visibleStores().filter(s=>s.brand===brand):null);
-    if(tgt) return botPersonnel(tgt,months[0]); }
+    if(tgt) return botPersonnel(tgt,monthIntent.hasMonth&&!monthIntent.multi?primaryMonth:null); }
   // 3) 排名 / 亏损筛查
-  if(wantRank){ const m=months[0]||"2026-05"; const r=botRank(q,m,metric); if(r)return r; }
-  // 4) 品牌 × 各月 / 趋势 / 汇总
-  if(brand&&!stores.length&&(/各月|趋势|每月|汇总|合计|总营收|总营业|总净利/.test(q)||!months.length)) return botBrandMonthly(brand);
+  if(wantRank){
+    const pool=brand&&!stores.length?visibleStores().filter(s=>s.brand===brand):null;
+    const r=monthIntent.multi?botRangeRank(q,months,monthIntent.requested,metric,pool):botRank(q,primaryMonth,metric,pool);
+    if(r)return r;
+  }
+  // 4) 品牌 × 月份 / 各月 / 趋势 / 汇总
+  if(brand&&!stores.length){
+    if(monthIntent.multi) return botBrandMonthly(brand,months);
+    if(monthIntent.hasMonth||metric) return botBrandMonthSummary(brand,primaryMonth,metric);
+    if(/各月|趋势|每月|汇总|合计|总营收|总营业|总净利/.test(q)||!monthIntent.hasMonth) return botBrandMonthly(brand);
+  }
   // 5) 具体门店
   if(stores.length){
-    if(months.length) return {html:stores.map(s=>botStoreCard(s,months[0],metric)).join("<br>")};
+    if(monthIntent.multi) return botStoreMultiMonth(stores,months,metric,monthIntent.requested);
+    if(monthIntent.hasMonth||metric) return {html:stores.map(s=>botStoreCard(s,primaryMonth,metric)).join("<br>")};
     return {html:stores.slice(0,6).map(s=>botStoreTrend(s)).join("<br>")};
   }
   // 6) 仅月份（无门店）→ 当月排名
-  if(months.length){ const r=botRank(q,months[0],metric||BOT_METRICS.find(x=>x.f==="net")); if(r)return r; }
+  if(monthIntent.hasMonth){
+    const r=monthIntent.multi?botRangeRank(q,months,monthIntent.requested,metric||BOT_METRICS.find(x=>x.f==="net")):botRank(q,primaryMonth,metric||BOT_METRICS.find(x=>x.f==="net"));
+    if(r)return r;
+  }
   // 7) 关键字搜索
   return botKeyword(q);
+}
+function botSimpleFallback(){
+  const dm=botDefaultMonthText();
+  return `<div class="qhead">数据助手暂时无法直接回答</div><div class="qsub">可以按「门店 + 月份 + 指标」提问，或查询排名、亏损、人员名单。后端配置 DeepSeek API Key 后可以启用完整智能回答。</div>
+    <div class="qlinks">
+      <span class="qlink" onclick="botAsk('保利店${dm}营业额')">保利店${dm}营业额</span>
+      <span class="qlink" onclick="botAsk('${dm}各店净利排名')">${dm}各店净利排名</span>
+      <span class="qlink" onclick="botAsk('1-5月各店净利排名')">1-5月各店净利排名</span>
+      <span class="qlink" onclick="botAsk('保利店各月营业额')">保利店各月营业额</span>
+      <span class="qlink" onclick="botAsk('荆州之星店人员名单')">荆州之星店人员名单</span>
+    </div>`;
 }
 
 async function botAsk(q){
   q=(q!=null?q:document.getElementById("botInput").value).trim();
   if(!q||botBusy)return;
   document.getElementById("botInput").value="";
-  BOT_HISTORY.push({role:"user",text:q});botRender();
-  // —— 本地引擎优先，立即直观呈现 ——
-  let local=null; try{ local=localAnswer(q); }catch(e){ console.error("localAnswer",e); }
-  if(local&&(local.html||local.text)){ BOT_HISTORY.push({role:"assistant",html:local.html,text:local.text||""}); botRender(); return; }
-  // —— 本地无法识别时，再尝试在线分析（需 Claude 应用环境）——
-  botBusy=true;botRender();
-  const sys=`你是「门店利润系统」的数据助手，帮管理员查询和分析门店利润数据。以下是系统当前全部门店的逐月利润数据（CSV，金额单位：元）：\n\n${buildDataContext()}\n\n规则：\n- 只依据上面这份数据回答，做筛选、排序、求和、对比、趋势分析。\n- 计算务必准确（仔细加总，不要估算）。\n- 数据里没有的（比如某店某月没记录、或茹果奶茶尚无数据），如实说明没有，不要编造数字。\n- 用中文，简洁清晰；金额带"元"或"万"。多项对比可用简单文本表格。\n- 净利率=净利/营收。`;
-  try{
-    const msgs=BOT_HISTORY.filter(m=>(m.role==="user"||m.role==="assistant")&&m.text&&m.text.trim()).slice(-8).map(m=>({role:m.role,content:m.text}));
-    const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1500,system:sys,messages:msgs})});
-    const d=await res.json();
-    const txt=(d.content||[]).map(c=>c.text||"").join("").trim();
-    BOT_HISTORY.push({role:"assistant",text:txt||"（没有返回内容，请重试）"});
-  }catch(err){
-    BOT_HISTORY.push({role:"assistant",html:`<div class="qhead">没太理解这个问题 🤔</div><div class="qsub">换种说法试试，例如指明「门店 + 月份 + 指标」：</div>
-      <div class="qlinks">
-        <span class="qlink" onclick="botAsk('保利店5月营业额')">保利店5月营业额</span>
-        <span class="qlink" onclick="botAsk('5月各店净利排名')">5月各店净利排名</span>
-        <span class="qlink" onclick="botAsk('荆州之星店人员名单')">荆州之星店人员名单</span>
-        <span class="qlink" onclick="botAsk('霸王茶姬各月营收')">霸王茶姬各月营收</span>
-      </div>`});
+  BOT_HISTORY.push({role:"user",text:q});
+  if(botHasClientBlockedWord(q)){
+    BOT_HISTORY.push({role:"assistant",html:botAiHtml("这个问题包含系统屏蔽词，我只能协助处理门店利润系统内的经营数据、人员工资、报表和操作问题。","blocked-word",q)});
+    botRender();
+    return;
   }
-  botBusy=false;botRender();
+  // 能由系统数据直接计算的问题，先展示完整本地数据卡片/表格，避免 AI 把结果压缩成一句话。
+  if(botShouldUseLocalFirst(q)){
+    let local=null; try{ local=localAnswer(q); }catch(e){ console.error("localAnswer",e); }
+    if(local&&(local.html||local.text)){
+      BOT_HISTORY.push({role:"assistant",html:local.html,text:local.text||""});
+      botRender();
+      return;
+    }
+  }
+  botBusy=true; botRender();
+  let ai=null;
+  try{ ai=await botAiAnswer(q); }catch(e){ console.warn("assistant api failed",e); }
+  botBusy=false;
+  if(ai&&ai.answer&&!["missing-api-key","deepseek-error"].includes(ai.source)){
+    BOT_HISTORY.push({role:"assistant",html:botAiHtml(ai.answer,ai.source,q)});
+    botRender();
+    return;
+  }
+  if(ai&&ai.answer){ BOT_HISTORY.push({role:"assistant",html:botAiHtml(ai.answer,ai.source,q)}); botRender(); return; }
+  BOT_HISTORY.push({role:"assistant",html:botSimpleFallback()});
+  botRender();
 }
 document.getElementById("botSend").onclick=()=>botAsk();
 document.getElementById("botInput").addEventListener("keydown",e=>{if(e.key==="Enter")botAsk();});
