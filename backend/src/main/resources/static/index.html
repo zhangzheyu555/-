@@ -2143,12 +2143,16 @@ function renderInspNew(body){
     ${st?'':`<div style="font-size:12px;color:var(--warn);background:var(--warn-s,#FFF7E6);border-radius:8px;padding:8px 10px">该品牌（${d.brand}）的稽核标准尚未录入，可在下方自由填写维度与问题，或在「稽核标准」页了解茹菓示例。</div>`}
   </div>`;
 
-  // 现场照片证据
-  html+=`<div class="card" style="margin-bottom:14px;border:1.5px dashed #b9c0cf;background:#f7f9fc">
+  // 现场照片证据 + 拍照识别（支持拖入照片）
+  html+=`<div class="card" id="inspDropZone" style="margin-bottom:14px;border:1.5px dashed #b9c0cf;background:#f7f9fc"
+    ondragover="event.preventDefault();this.style.background='#e8f0fe';this.style.borderColor='#4a7dff'"
+    ondragleave="this.style.background='#f7f9fc';this.style.borderColor='#b9c0cf'"
+    ondrop="inspDropPhotos(event);this.style.background='#f7f9fc';this.style.borderColor='#b9c0cf'">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-      <div><div style="font-weight:700">📷 现场照片证据</div><div style="font-size:11.5px;color:var(--muted);margin-top:3px">先拍/上传现场照片，系统生成待核对建议；督导确认后才进入扣分清单。</div></div>
-      <div style="display:flex;gap:6px">
+      <div><div style="font-weight:700">📷 现场照片证据 / 拍照识别（辅助）</div><div style="font-size:11.5px;color:var(--muted);margin-top:3px">把现场照片直接拖到这个卡片，或点按钮拍照/选图（可多张）。系统会先保存证据，再生成待核对建议；督导确认后才进入扣分清单。</div></div>
+      <div style="display:flex;gap:6px;align-items:center">
         <label class="btn-ghost" style="cursor:pointer;font-size:12px;padding:7px 12px">拍照/选图<input type="file" id="insp_photo" accept="image/*" capture="environment" multiple style="display:none" onchange="inspPhotoRecognize(this)"></label>
+        ${INSP_AI_RESULTS.length?`<button class="save" style="width:auto;margin:0;padding:7px 14px;font-size:12px" onclick="inspExportExcel()">📊 生成Excel（${INSP_AI_RESULTS.length}张）</button>`:''}
       </div>
     </div>
     <div id="insp_photo_status" style="font-size:12px;color:var(--muted);margin-top:8px">${(d.photos||[]).length?`已保存 ${(d.photos||[]).length} 张现场照片`:""}</div>
@@ -2284,29 +2288,98 @@ function inspAttachPhoto(i,input){
     renderInspect();
   });
 }
+/* ---- 现场拍照识别：本地卫生识别模型 + Excel 导出 ---- */
+const INSP_API_BASE=location.protocol==="file:"?"http://127.0.0.1:8080":"";
+let INSP_AI_RESULTS=[];  // 本次发起巡检中已识别的照片结果，用于生成Excel
+/* 全局兜底：任何页面拖入图片都进入识别；防止浏览器直接打开图片文件 */
+document.addEventListener("dragover",e=>e.preventDefault());
+document.addEventListener("drop",e=>{
+  e.preventDefault();
+  const files=[...(e.dataTransfer?.files||[])].filter(f=>f.type.startsWith("image/"));
+  if(!files.length)return;
+  const zone=document.getElementById("inspDropZone");
+  if(zone){ if(!zone.contains(e.target)) inspRecognizeFiles(files); return; } // 卡片内由卡片自己处理
+  // 不在发起巡检页：登录且有权限时自动切换过去再识别
+  if(typeof CURRENT_ROLE==="undefined"||!CURRENT_ROLE)return;
+  if(typeof can==="function"&&!can("inspect"))return;
+  INSP_MODE="new"; INSP_VIEW_ID=null;
+  try{ if(!INSP_DRAFT&&typeof inspBlankDraft==="function")INSP_DRAFT=inspBlankDraft(); }catch(_){}
+  const tab=document.querySelector('.tab[data-v="inspect"]');
+  if(tab)tab.click(); else renderInspect();
+  inspRecognizeFiles(files);
+});
+function inspDropPhotos(ev){
+  ev.preventDefault();
+  const files=[...(ev.dataTransfer?.files||[])].filter(f=>f.type.startsWith("image/"));
+  if(!files.length){ const st=document.getElementById("insp_photo_status"); if(st)st.textContent="⚠️ 拖入的文件里没有图片"; return; }
+  inspRecognizeFiles(files);
+}
 async function inspPhotoRecognize(input){
   const files=[...input.files].filter(f=>(f.type||"").startsWith("image/"));
   input.value="";
-  if(!files.length)return;
+  if(files.length) await inspRecognizeFiles(files);
+}
+async function inspRecognizeFiles(files){
   const d=inspEnsureMedia();
   const st=document.getElementById("insp_photo_status");
-  if(st)st.textContent=`正在处理 ${files.length} 张照片…`;
-  let added=0, failed=0, aiN=0;
-  for(const f of files){
+  let added=0, failed=0, modelN=0, suggestionN=0;
+  const imageFiles=[...files].filter(f=>(f.type||"").startsWith("image/"));
+  for(let i=0;i<imageFiles.length;i++){
+    const f=imageFiles[i];
+    if(st)st.textContent=`正在处理 ${i+1}/${imageFiles.length} 张照片：${f.name||"现场照片"}`;
     const durl=await inspCompressAsync(f);
     if(!durl){failed++;continue;}
     const p={id:inspPhotoId("ip"),src:durl,category:"其他",status:"已保存",createdAt:new Date().toISOString(),source:"upload",name:f.name||""};
     d.photos.push(p); added++;
-    const aiItems=await inspAnalyzePhotoBackend(p);
-    if(aiItems.length){
-      aiItems.forEach(it=>d.aiSuggestions.push({id:inspPhotoId("is"),photoId:p.id,dim:it.dim||inspDimForPhoto(p.category),issue:it.issue||"",deduct:+it.deduct||1,source:"AI",status:"pending"}));
-      aiN+=aiItems.length;
-    }else{
+    let pushedSuggestion=false;
+    try{
+      const fd=new FormData(); fd.append("file",f,f.name||"photo.jpg");
+      const res=await fetch(INSP_API_BASE+"/api/inspections/detect",{method:"POST",body:fd});
+      const data=await res.json().catch(()=>null);
+      if(!res.ok||!data||!data.success) throw new Error((data&&data.message)||("HTTP "+res.status));
+      const r=data.data||{};
+      const annoDurl=r.annotated_image?await inspShrinkDataUrlAsync(r.annotated_image):"";
+      INSP_AI_RESULTS.push({
+        image_id:r.image_id||"", filename:f.name||"photo.jpg",
+        human_label:r.review_status||"待审核", auto_status:r.auto_status||"",
+        deduction_project:r.deduction_project||"", deduction_content:r.deduction_content||"",
+        deduction_score:r.deduction_score??"", detection_count:r.detection_count??0,
+        detection_summary:r.detection_summary||"", timestamp:new Date().toISOString().slice(0,19),
+        original_image:durl||"", annotated_image:annoDurl||durl||""
+      });
+      p.status=r.passed===true?"识别通过":"已识别";
+      p.source="yolo";
+      modelN++;
+      const hasIssue=r.passed===false||r.deduction_content||r.deduction_project||(+r.deduction_score||0)!==0;
+      if(hasIssue){
+        const dims=inspDims(INSP_DRAFT.brand);
+        const dim=dims.find(x=>/卫生|环境|食品/.test(x))||dims[0]||inspDimForPhoto(p.category);
+        d.aiSuggestions.push({
+          id:inspPhotoId("is"),
+          photoId:p.id,
+          dim,
+          issue:r.deduction_content||r.auto_status||r.detection_summary||"现场卫生问题",
+          deduct:Math.min(5,Math.abs(+r.deduction_score||1)),
+          source:"AI",
+          status:"pending"
+        });
+        pushedSuggestion=true;
+        suggestionN++;
+      }
+    }catch(err){
+      failed++;
+      p.status="识别服务不可用，已保存照片";
+      p.error=String(err&&err.message||err||"");
+    }
+    if(!pushedSuggestion){
       d.aiSuggestions.push(inspLocalSuggestion(p));
+      suggestionN++;
     }
   }
   renderInspect();
-  toast(`已保存 ${added} 张照片${aiN?`，生成 ${aiN} 条AI建议`:"，生成待核对提示"}${failed?`，${failed} 张失败`:""}`);
+  const st2=document.getElementById("insp_photo_status");
+  if(st2)st2.textContent=`已保存 ${added} 张照片；模型成功 ${modelN} 张；生成 ${suggestionN} 条待核对建议${failed?`；${failed} 张未完成识别`:""}。`;
+  toast(`已保存 ${added} 张照片${suggestionN?`，生成 ${suggestionN} 条待核对建议`:""}${failed?`，${failed} 张识别未完成`:""}`);
 }
 async function inspAnalyzePhotoBackend(photo){
   if(!INSP_PHOTO_AI_ENDPOINT)return [];
@@ -2366,6 +2439,41 @@ function inspIgnoreSuggestion(id){
   s.status="ignored";
   renderInspect();
 }
+async function inspExportExcel(){
+  if(!INSP_AI_RESULTS.length){ toast("请先识别照片"); return; }
+  const st=document.getElementById("insp_photo_status"); if(st)st.textContent="📊 正在生成 Excel…";
+  try{
+    const store=(STORES||[]).find(s=>INSP_DRAFT&&s.id===INSP_DRAFT.sid);
+    const storeName=store?store.name:"";
+    const res=await fetch(INSP_API_BASE+"/api/inspections/export",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({store_name:storeName,rows:INSP_AI_RESULTS})});
+    if(!res.ok){ const d=await res.json().catch(()=>null); throw new Error((d&&d.message)||("HTTP "+res.status)); }
+    const blob=await res.blob();
+    let fname="卫生复合当前汇总.xlsx";
+    const h=res.headers.get("X-Export-Filename"); if(h){ try{ fname=decodeURIComponent(h); }catch(_){} }
+    const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=fname;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href);
+    if(st)st.textContent=`✅ 已生成 ${fname}（${INSP_AI_RESULTS.length}张照片）`;
+    toast("Excel 已生成");
+  }catch(err){ if(st)st.textContent="❌ Excel 生成失败："+(err.message||err); }
+}
+function inspFileToDataUrl(file){
+  return new Promise(resolve=>{ inspCompress(file,durl=>resolve(durl||"")); });
+}
+function inspShrinkDataUrlAsync(durl){
+  return new Promise(resolve=>{ inspShrinkDataUrl(durl,resolve); });
+}
+/* 把接口返回的红圈大图压成 JPEG，避免巡检记录存储超限 */
+function inspShrinkDataUrl(durl,cb){
+  if(!durl){ cb(""); return; }
+  const img=new Image();
+  img.onload=()=>{ const max=900; let w=img.width,h=img.height; if(w>max){h=Math.round(h*max/w);w=max;}
+    const cv=document.createElement("canvas"); cv.width=w; cv.height=h;
+    cv.getContext("2d").drawImage(img,0,0,w,h);
+    cb(cv.toDataURL("image/jpeg",0.7)); };
+  img.onerror=()=>cb(durl);
+  img.src=durl;
+}
 async function inspSave(){
   if(!can("inspect")){ toast("无权发起巡检"); return; }
   const d=INSP_DRAFT;
@@ -2384,7 +2492,7 @@ async function inspSave(){
   await sSet("inspections",INSPECTIONS);
   if(JSON.stringify(INSPECTIONS).length>4000000) toast("提示：巡检照片较多，存储接近上限，注意定期清理");
   await logOp("新增","督导巡检",d.sid,d.date,null,{得分:inspScore(rec),扣分项:rec.deductions.length,红线:rec.redlines.length});
-  INSP_DRAFT=null; INSP_MODE="list"; INSP_VIEW_ID=rec.id; renderInspect();
+  INSP_DRAFT=null; INSP_AI_RESULTS=[]; INSP_MODE="list"; INSP_VIEW_ID=rec.id; renderInspect();
   toast("巡检已保存 · 得分 "+inspScore(rec));
 }
 
