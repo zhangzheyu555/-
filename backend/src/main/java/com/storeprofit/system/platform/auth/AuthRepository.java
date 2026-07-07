@@ -74,7 +74,8 @@ public class AuthRepository {
   }
 
   public List<String> storeScope(long tenantId, long userId, String role, String directStoreId) {
-    if ("ADMIN".equals(role) || "BOSS".equals(role) || "FINANCE".equals(role)) {
+    if ("ADMIN".equals(role) || "BOSS".equals(role) || "FINANCE".equals(role)
+        || "SUPERVISOR".equals(role) || "WAREHOUSE".equals(role) || "OPERATIONS".equals(role)) {
       return List.of("all");
     }
     List<String> scoped = jdbcTemplate.queryForList(

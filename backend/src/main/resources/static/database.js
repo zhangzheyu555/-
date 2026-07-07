@@ -265,10 +265,12 @@ async function storageBackendToken(){
   try{ pass=typeof LOGIN_PASS==="string"?LOGIN_PASS:""; }catch(_){ pass=""; }
   if(!pass)return "";
   if(STORAGE_BACKEND_TOKEN_PROMISE)return STORAGE_BACKEND_TOKEN_PROMISE;
+  const role=(typeof LOGIN_ROLE==="string"&&LOGIN_ROLE)||CURRENT_ROLE;
+  const backendUsername=role==="财务"?"finance":"admin";
   STORAGE_BACKEND_TOKEN_PROMISE=fetch("/api/auth/login",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({username:"admin",password:pass})
+    body:JSON.stringify({username:backendUsername,password:pass})
   }).then(async r=>{
     if(!r.ok)return "";
     const j=await r.json();
@@ -330,47 +332,108 @@ const INCOME_FIELDS=[["sales","营业总收入"],["refund","退款金额"],["dis
 const COST_FIELDS=[["material","原材料成本"],["packaging","包材成本"],["loss","损耗成本"],["cost_other","其他成本"]];
 const EXP_FIELDS=[["rent","房租"],["labor","人工工资"],["utility","水电费"],["property","物业费"],["commission","平台佣金"],["promo","推广费"],["repair","维修费"],["equip","设备费"],["exp_other","其他费用"]];
 const ENTRY_FIELDS=[...INCOME_FIELDS,...COST_FIELDS,...EXP_FIELDS].map(x=>x[0]);
-let CURRENT_USER="管理员";
-let CURRENT_ROLE="管理员", MANAGED_SID=null;
+let CURRENT_USER="老板";
+let CURRENT_ROLE="老板", MANAGED_SID=null;
 /* ===== 账号/密码 → 角色 绑定（只输密码即进入对应角色） =====
    每条 = {pass:登录密码, role:角色, sid:绑定门店(仅店长), name:显示名}
-   密码唯一即可，管理员可在「用户权限」页增删改。 */
-let LOGIN_ROLE="管理员", LOGIN_USER="", ACCOUNTS=[];
+   密码唯一即可，老板可在「用户权限」页增删改。 */
+let LOGIN_ROLE="老板", LOGIN_USER="", ACCOUNTS=[];
+const ROLE_OPTIONS=["老板","财务","督导","店长","仓库管理员","运营"];
+const ALL_TAB_IDS=["dash","report","detail","inspect","bot","entry","expense","export","stores","logs","fetch","warehouse","operations","users","salary"];
+const ROLE_HIDDEN_TABS={
+  "老板":[],
+  "管理员":[],
+  "财务":["inspect","stores","logs","fetch","warehouse","operations","users"],
+  "督导":["report","entry","expense","export","stores","logs","fetch","warehouse","operations","users","salary"],
+  "店长":["entry","export","stores","logs","fetch","warehouse","operations","users","salary"],
+  "仓库管理员":["dash","report","detail","inspect","bot","entry","expense","export","stores","logs","fetch","operations","users","salary"],
+  "运营":["dash","report","detail","inspect","bot","entry","expense","export","stores","logs","fetch","warehouse","users","salary"]
+};
+const ROLE_DEFAULT_TAB={
+  "老板":"dash",
+  "管理员":"dash",
+  "财务":"dash",
+  "督导":"inspect",
+  "店长":"dash",
+  "仓库管理员":"warehouse",
+  "运营":"operations"
+};
 function defaultAccounts(){
-  const list=[{pass:"123",role:"管理员",sid:"",name:"系统管理员"},{pass:"boss888",role:"老板",sid:"",name:"老板"}];
+  const list=[
+    {pass:"123",role:"老板",sid:"",name:"老板"},
+    {pass:"finance888",role:"财务",sid:"",name:"财务"},
+    {pass:"supervisor888",role:"督导",sid:"",name:"督导"},
+    {pass:"warehouse888",role:"仓库管理员",sid:"",name:"仓库管理员"},
+    {pass:"ops888",role:"运营",sid:"",name:"运营"}
+  ];
   (typeof STORES!=="undefined"?STORES:[]).forEach(s=>list.push({pass:(s.code||s.id),role:"店长",sid:s.id,name:"店长·"+s.name}));
   return list;
 }
+function normalizeAccounts(accounts){
+  const list=(Array.isArray(accounts)&&accounts.length?accounts:defaultAccounts()).map(a=>({...a}));
+  list.forEach(a=>{
+    if(a.role==="管理员"){
+      a.role="老板";
+      if(!a.name||a.name==="系统管理员"||a.name==="管理员")a.name="老板";
+    }
+  });
+  const ensure=(pass,role,name)=>{ if(!list.some(a=>a.pass===pass))list.push({pass,role,sid:"",name}); };
+  ensure("123","老板","老板");
+  ensure("finance888","财务","财务");
+  ensure("supervisor888","督导","督导");
+  ensure("warehouse888","仓库管理员","仓库管理员");
+  ensure("ops888","运营","运营");
+  (typeof STORES!=="undefined"?STORES:[]).forEach(s=>{
+    const pass=s.code||s.id;
+    if(!list.some(a=>a.sid===s.id||a.pass===pass))list.push({pass,role:"店长",sid:s.id,name:"店长·"+s.name});
+  });
+  return list;
+}
 function findByPass(pass){ return ACCOUNTS.find(a=>a.pass===pass); }
-/* 角色权限：管理员=全部；老板=全门店只读；财务=除删除；督导=只巡店；店长=只看自己门店 */
+function isBossRole(role=CURRENT_ROLE){return role==="老板"||role==="管理员";}
+function roleVisibleTabs(role=CURRENT_ROLE){
+  const hidden=ROLE_HIDDEN_TABS[role]||[];
+  return ALL_TAB_IDS.filter(v=>!hidden.includes(v));
+}
+function roleDefaultTab(role=CURRENT_ROLE){return ROLE_DEFAULT_TAB[role]||roleVisibleTabs(role)[0]||"dash";}
+/* 角色权限：老板=最高权限；财务=经营数据和费用；督导=巡店；店长=本店只读/报销；仓库与运营先隔离到建设中工作台 */
 function can(act){
-  if(CURRENT_ROLE==="管理员")return true;
-  if(CURRENT_ROLE==="财务")return act!=="delete"; // 财务可增改导入导出巡检，不能删除
+  if(isBossRole())return true;
+  if(CURRENT_ROLE==="财务")return ["edit","import","export","expense","salary"].includes(act);
   if(CURRENT_ROLE==="督导")return act==="inspect"; // 督导只做巡店，不碰财务数据
-  if(CURRENT_ROLE==="老板")return false; // 老板：全门店只读，任何写操作都不可
-  // 店长：只读自己门店
+  if(CURRENT_ROLE==="店长")return act==="expense";
   return false; // edit/delete/import/export 一律不可
 }
-function canExport(){return CURRENT_ROLE!=="店长"&&CURRENT_ROLE!=="老板";}
+function canExport(){return isBossRole()||CURRENT_ROLE==="财务";}
 function visibleStores(){return CURRENT_ROLE==="店长"&&MANAGED_SID?STORES.filter(s=>s.id===MANAGED_SID):STORES;}
 function isVisibleStore(sid){return CURRENT_ROLE!=="店长"||sid===MANAGED_SID;}
-const ROLE_HIDDEN_TABS={ "管理员":[], "老板":["entry","export","stores","logs","fetch","users","salary"], "财务":["users"], "督导":["report","entry","export","stores","logs","fetch","users","salary","expense"], "店长":["entry","export","stores","logs","fetch","users","salary"] };
 function applyRole(){
   CURRENT_USER = CURRENT_ROLE==="店长" ? ("店长·"+((STORES.find(s=>s.id===MANAGED_SID)||{}).name||"")) : CURRENT_ROLE;
   // 问候语
   const hi=document.getElementById("helloHi"), sub=document.getElementById("helloSub");
   if(hi)hi.textContent=CURRENT_USER+"，你好 👋";
-  if(sub)sub.textContent=CURRENT_ROLE==="店长"?"你可以查看本店的经营数据与利润表":(CURRENT_ROLE==="老板"?"全门店经营总览（只读）":(CURRENT_ROLE==="督导"?"发起门店巡检、查看稽核记录与标准":(CURRENT_ROLE==="财务"?"可录入、导入、导出（删除需管理员）":"拥有全部权限")));
+  if(sub)sub.textContent=
+    CURRENT_ROLE==="店长"?"你可以查看本店经营、提交报销和查看巡店结果":
+    (CURRENT_ROLE==="督导"?"发起门店巡检、查看稽核记录与标准":
+    (CURRENT_ROLE==="财务"?"负责数据录入、报销、工资和财务导出":
+    (CURRENT_ROLE==="仓库管理员"?"仓库中心正在建设，先保留独立工作台入口":
+    (CURRENT_ROLE==="运营"?"运营中心正在建设，先保留独立工作台入口":"最高权限，负责全部业务"))));
   // 隐藏无权的导航
   const hidden=ROLE_HIDDEN_TABS[CURRENT_ROLE]||[];
   document.querySelectorAll(".tab").forEach(t=>{ t.style.display=hidden.includes(t.dataset.v)?"none":""; });
   // 若当前停留在被隐藏页，跳回概览
   const cur=document.querySelector(".view.on");
-  if(cur&&hidden.includes(cur.id.replace("v-",""))){ document.querySelector('.tab[data-v="dash"]').click(); }
-  else { renderAll(); const on=document.querySelector(".view.on"); if(on){const v=on.id.replace("v-","");
-    if(v==="report")renderReport(); else if(v==="detail")renderDetail(); else if(v==="inspect")renderInspect(); else if(v==="stores")renderStores(); else if(v==="logs")renderLogs(); else if(v==="expense")renderExpense(); else if(v==="export")renderExport(); else if(v==="fetch")renderFetch(); else if(v==="users")renderUsers(); else if(v==="salary")renderSalary(); else if(v==="bot"&&typeof botInit==="function"){BOT_HISTORY=[];BOT_SID=null;BOT_MONTH=null;botInit();} } }
+  const curName=cur?cur.id.replace("v-",""):"";
+  const targetTab=roleDefaultTab();
+  if(cur&&(hidden.includes(curName)||(curName==="dash"&&targetTab!=="dash"))){
+    if(typeof activateTab==="function")activateTab(targetTab);
+    else document.querySelector('.tab[data-v="dash"]')?.click();
+  } else {
+    renderAll();
+    if(typeof renderActiveView==="function")renderActiveView();
+  }
   document.getElementById("roleStore").style.display=CURRENT_ROLE==="店长"?"":"none";
-  const _rb=document.querySelector(".rolebox"); if(_rb)_rb.style.display=(LOGIN_ROLE==="管理员")?"":"none"; // 仅管理员可见角色预览下拉
+  const _rb=document.querySelector(".rolebox"); if(_rb)_rb.style.display=isBossRole(LOGIN_ROLE)?"":"none"; // 仅老板可见角色预览下拉
   const expBtn=document.getElementById("exportBtn"); if(expBtn)expBtn.style.display=canExport()?"":"none";
   const resetBtn=document.getElementById("resetBtn"); if(resetBtn)resetBtn.style.display=can("delete")?"":"none";
   const deb=document.getElementById("delEntryBtn"); if(deb)deb.style.display=can("delete")?"":"none";

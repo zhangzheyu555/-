@@ -39,8 +39,8 @@ public class OrganizationService {
   }
 
   private void requireAdmin(AuthUser user) {
-    if (!"ADMIN".equals(user.role())) {
-      throw new BusinessException("FORBIDDEN", "仅管理员可维护门店档案", HttpStatus.FORBIDDEN);
+    if (!List.of("ADMIN", "BOSS").contains(user.role())) {
+      throw new BusinessException("FORBIDDEN", "仅老板可维护门店档案", HttpStatus.FORBIDDEN);
     }
   }
 }

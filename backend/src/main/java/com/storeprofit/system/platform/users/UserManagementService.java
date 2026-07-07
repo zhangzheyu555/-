@@ -16,8 +16,8 @@ public class UserManagementService {
   }
 
   public List<UserResponse> users(AuthUser currentUser) {
-    if (!"ADMIN".equals(currentUser.role())) {
-      throw new BusinessException("FORBIDDEN", "仅管理员可查看用户权限", HttpStatus.FORBIDDEN);
+    if (!List.of("ADMIN", "BOSS").contains(currentUser.role())) {
+      throw new BusinessException("FORBIDDEN", "仅老板可查看用户权限", HttpStatus.FORBIDDEN);
     }
     return authRepository.users(currentUser.tenantId()).stream()
         .map(user -> new UserResponse(
@@ -42,6 +42,8 @@ public class UserManagementService {
       case "FINANCE" -> "财务";
       case "SUPERVISOR" -> "督导";
       case "STORE_MANAGER" -> "店长";
+      case "WAREHOUSE" -> "仓库管理员";
+      case "OPERATIONS" -> "运营";
       default -> role;
     };
   }

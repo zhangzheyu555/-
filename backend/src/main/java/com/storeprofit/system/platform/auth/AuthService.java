@@ -30,8 +30,16 @@ public class AuthService {
 
   @PostConstruct
   public void ensureDefaultAdmin() {
-    if (!authRepository.userExists(TenantDefaults.DEFAULT_TENANT_ID, "admin")) {
-      authRepository.createUser(TenantDefaults.DEFAULT_TENANT_ID, "admin", passwordService.hash("123"), "管理员", "ADMIN", null);
+    ensureDefaultUser("admin", "123", "管理员", "ADMIN");
+    ensureDefaultUser("finance", "finance888", "财务", "FINANCE");
+    ensureDefaultUser("supervisor", "supervisor888", "督导", "SUPERVISOR");
+    ensureDefaultUser("warehouse", "warehouse888", "仓库管理员", "WAREHOUSE");
+    ensureDefaultUser("operations", "ops888", "运营", "OPERATIONS");
+  }
+
+  private void ensureDefaultUser(String username, String password, String displayName, String role) {
+    if (!authRepository.userExists(TenantDefaults.DEFAULT_TENANT_ID, username)) {
+      authRepository.createUser(TenantDefaults.DEFAULT_TENANT_ID, username, passwordService.hash(password), displayName, role, null);
     }
   }
 
@@ -99,6 +107,8 @@ public class AuthService {
       case "FINANCE" -> "财务";
       case "SUPERVISOR" -> "督导";
       case "STORE_MANAGER" -> "店长";
+      case "WAREHOUSE" -> "仓库管理员";
+      case "OPERATIONS" -> "运营";
       default -> role;
     };
   }

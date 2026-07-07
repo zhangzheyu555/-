@@ -121,8 +121,8 @@ public class FinanceService {
   }
 
   private void requireEditRole(AuthUser user) {
-    if (!List.of("ADMIN", "FINANCE").contains(user.role())) {
-      throw new BusinessException("FORBIDDEN", "仅管理员和财务可保存利润数据", HttpStatus.FORBIDDEN);
+    if (!List.of("ADMIN", "BOSS", "FINANCE").contains(user.role())) {
+      throw new BusinessException("FORBIDDEN", "仅老板和财务可保存利润数据", HttpStatus.FORBIDDEN);
     }
   }
 

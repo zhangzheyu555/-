@@ -75,32 +75,37 @@ public class AssistantService {
       );
     }
 
+    boolean hasFrontContext = !clean(request.dataContext()).isBlank();
     String dataContext = buildDataContext(user, message, request.dataContext());
     if (!properties.hasApiKey()) {
-      return new AssistantChatResponse(localAnswer(user, message), false, false, "local-data");
+      return new AssistantChatResponse(localAnswer(user, message, false), false, false,
+          hasFrontContext ? "backend-finance-fallback-with-frontend-context" : "backend-finance");
     }
 
     try {
       String answer = sanitizeAnswer(callDeepSeek(request, message, dataContext));
-      return new AssistantChatResponse(answer, true, false, "deepseek");
+      return new AssistantChatResponse(answer, true, false,
+          hasFrontContext ? "deepseek-frontend-context" : "deepseek-backend-finance");
     } catch (RestClientException | IllegalStateException ex) {
-      return new AssistantChatResponse(localAnswer(user, message), false, false, "local-fallback");
+      return new AssistantChatResponse(localAnswer(user, message, false), false, false,
+          hasFrontContext ? "backend-finance-fallback-with-frontend-context" : "backend-finance-fallback");
     }
   }
 
-  private String localAnswer(AuthUser user, String message) {
+  private String localAnswer(AuthUser user, String message, boolean hasFrontContext) {
     List<String> months = targetMonths(user, message);
+    String sourcePrefix = hasFrontContext ? "" : "后端财务库口径：\n";
     if (mentionsRanking(message)) {
-      return rankingAnswer(user, message, months);
+      return sourcePrefix + rankingAnswer(user, message, months);
     }
     if (message.contains("亏损")) {
-      return lossAnswer(user, months);
+      return sourcePrefix + lossAnswer(user, months);
     }
     Optional<ProfitEntryResponse> storeEntry = findMentionedStore(user, message, months);
     if (storeEntry.isPresent()) {
-      return storeAnswer(user, message, storeEntry.get().storeId(), months);
+      return sourcePrefix + storeAnswer(user, message, storeEntry.get().storeId(), months);
     }
-    return overviewAnswer(user, months.getFirst());
+    return sourcePrefix + overviewAnswer(user, months.getFirst());
   }
 
   private String rankingAnswer(AuthUser user, String message, List<String> months) {

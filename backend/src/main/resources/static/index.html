@@ -243,11 +243,11 @@
   .bmsg.rich table{width:100%;border-collapse:collapse;font-size:12.5px;margin:6px 0 2px}
   .bmsg.rich th,.bmsg.rich td{padding:6px 9px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
   .bmsg.rich th{color:var(--muted);font-weight:700;background:var(--bg)}
-  .bmsg.rich td.amt,.bmsg.rich th.amt{text-align:right;font-variant-numeric:tabular-nums}
+  .bmsg.rich td.amt,.bmsg.rich th.amt{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
   .bmsg.rich .kpis{display:flex;flex-wrap:wrap;gap:9px;margin:6px 0 9px}
-  .bmsg.rich .kpi{flex:1;min-width:118px;background:var(--bg);border-radius:12px;padding:10px 13px}
+  .bmsg.rich .kpi{flex:1;min-width:132px;background:var(--bg);border-radius:12px;padding:10px 13px}
   .bmsg.rich .kpi .k{font-size:11.5px;color:var(--muted)}
-  .bmsg.rich .kpi .val{font-size:19px;font-weight:800;margin-top:3px;font-variant-numeric:tabular-nums}
+  .bmsg.rich .kpi .val{font-size:19px;font-weight:800;margin-top:3px;font-variant-numeric:tabular-nums;white-space:nowrap;word-break:normal}
   .bmsg.rich .pos{color:#16a34a}.bmsg.rich .neg{color:#dc2626}
   /* 营业总收入 高亮（品牌橙色渐变字 + 柔和底色卡片） */
   .bmsg.rich .kpi.rev{background:var(--primary-soft);box-shadow:inset 0 0 0 1px rgba(238,126,62,.18)}
@@ -341,7 +341,7 @@
     <input type="password" id="pin" placeholder="请输入密码" autocomplete="off">
     <div class="err" id="loginErr"></div>
     <button class="go" id="loginBtn">登 录</button>
-    <div class="hint" id="loginHint">输入不同密码进入对应角色（管理员 / 老板 / 店长）</div>
+    <div class="hint" id="loginHint">输入对应角色密码进入系统（老板 / 店长 / 财务 / 督导 / 仓库 / 运营）</div>
   </div>
 </div>
 
@@ -361,6 +361,8 @@
       <button class="tab" data-v="stores"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1.2"/><circle cx="3.5" cy="12" r="1.2"/><circle cx="3.5" cy="18" r="1.2"/></svg><span class="lab">门店管理</span></button>
       <button class="tab" data-v="logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg><span class="lab">操作日志</span></button>
       <button class="tab" data-v="fetch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14L21 3"/><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/></svg><span class="lab">平台登录</span></button>
+      <button class="tab" data-v="warehouse"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-5 9 5"/><path d="M5 10v10h14V10"/><path d="M9 20v-6h6v6"/><path d="M8 10h8"/></svg><span class="lab">仓库中心</span></button>
+      <button class="tab" data-v="operations"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 15l3-4 3 2 4-7"/><circle cx="8" cy="15" r="1"/><circle cx="11" cy="11" r="1"/><circle cx="14" cy="13" r="1"/><circle cx="18" cy="6" r="1"/></svg><span class="lab">运营中心</span></button>
       <button class="tab" data-v="users"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg><span class="lab">用户权限</span></button>
       <button class="tab" data-v="salary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4"/><circle cx="12" cy="12" r="3.2"/><path d="M5 8a3 3 0 003 3M19 16a3 3 0 00-3-3"/><rect x="3" y="4" width="18" height="16" rx="2"/></svg><span class="lab">员工工资</span></button>
     </nav>
@@ -375,7 +377,7 @@
           <input id="topSearch" placeholder="搜索任何数据，回车直接问助手…" autocomplete="off">
         </div>
         <div class="rolebox">
-          <select id="roleSel" class="monthsel" title="角色预览（仅管理员可见）"><option>管理员</option><option>老板</option><option>财务</option><option>督导</option><option>店长</option></select>
+          <select id="roleSel" class="monthsel" title="角色预览（仅老板可见）"><option>老板</option><option>财务</option><option>督导</option><option>店长</option><option>仓库管理员</option><option>运营</option></select>
           <select id="roleStore" class="monthsel" style="display:none;max-width:130px"></select>
         </div>
       </div>
@@ -473,11 +475,11 @@
           <div id="aiZone" style="border:1.5px dashed #b9c0cf;border-radius:12px;padding:14px;background:#f7f9fc;margin-bottom:14px">
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
               <div style="border-right:1px solid var(--line);padding-right:10px">
-                <div style="font-size:12.5px;font-weight:700;margin-bottom:6px">📷 截图识别</div>
-                <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Ctrl+V 粘贴 或 上传企迈截图</div>
+                <div style="font-size:12.5px;font-weight:700;margin-bottom:6px">📷 截图识别 <span style="color:var(--warn);font-size:11px">待配置</span></div>
+                <div style="font-size:11px;color:var(--muted);margin-bottom:8px">可先预览截图；视觉识别服务接入后自动填表</div>
                 <div style="display:flex;gap:6px">
                   <label class="btn-ghost" style="cursor:pointer;font-size:12px;padding:6px 10px">选图<input type="file" id="aiFile" accept="image/*" style="display:none"></label>
-                  <button class="save" id="aiBtn" style="width:auto;margin:0;padding:6px 12px;font-size:12px">识别填入</button>
+                  <button class="save" id="aiBtn" style="width:auto;margin:0;padding:6px 12px;font-size:12px">查看状态</button>
                 </div>
               </div>
               <div>
@@ -485,12 +487,13 @@
                 <div style="font-size:11px;color:var(--muted);margin-bottom:8px">上传"营业额与支出"表，自动兼容乱格式</div>
                 <div style="display:flex;gap:6px">
                   <label class="btn-ghost" style="cursor:pointer;font-size:12px;padding:6px 10px">选表<input type="file" id="xlFile" accept=".xlsx,.xls,.csv" style="display:none"></label>
-                  <button class="save" id="xlBtn" style="width:auto;margin:0;padding:6px 12px;font-size:12px">识别填入</button>
+                  <button class="save" id="xlBtn" style="width:auto;margin:0;padding:6px 12px;font-size:12px">生成预览</button>
                 </div>
               </div>
             </div>
             <div id="aiPreview" style="display:none;margin-top:10px"><img id="aiImg" style="max-width:100%;max-height:200px;border-radius:8px;border:1px solid var(--line)"></div>
             <div id="aiStatus" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
+            <div id="importPreview" style="display:none;margin-top:10px"></div>
           </div>
 
           <div class="section-t" style="margin-top:6px">① 收入（元）<span style="font-weight:400;color:var(--muted);font-size:12px"> · 实收 = 总额 − 退款 − 优惠</span></div>
@@ -581,6 +584,10 @@
 
     <!-- FETCH (平台登录入口) -->
     <div class="view" id="v-fetch"></div>
+
+    <!-- WAREHOUSE / OPERATIONS (建设中角色工作台) -->
+    <div class="view" id="v-warehouse"></div>
+    <div class="view" id="v-operations"></div>
 
     <!-- USERS (用户权限) -->
     <div class="view" id="v-salary"></div>
@@ -737,9 +744,8 @@ async function init(){
   }
     LOGS=await sGet("logs")||[];
     INSPECTIONS=await sGet("inspections")||[];
-    ACCOUNTS=await sGet("accounts")||[];
-    if(!ACCOUNTS.length){ ACCOUNTS=defaultAccounts(); await sSet("accounts",ACCOUNTS); } // 首次自动生成默认账号（管理员/老板/各店店长）
-    { const _adm=ACCOUNTS.find(a=>a.role==="管理员"); if(_adm&&_adm.pass==="admin888"){ _adm.pass="123"; await sSet("accounts",ACCOUNTS); } } // 一次性：旧默认管理员密码 admin888 → 123
+    ACCOUNTS=normalizeAccounts(await sGet("accounts")||[]);
+    await sSet("accounts",ACCOUNTS); // 首次/升级时生成老板、财务、督导、仓库、运营与各店店长账号
     DATA_READY=true;
     DATA_INIT_ERROR=null;
   }catch(e){
@@ -800,30 +806,71 @@ function setupRoles(){
   rs.innerHTML=STORES.map(s=>`<option value="${s.id}">${s.name}</option>`).join("");
   if(!MANAGED_SID)MANAGED_SID=STORES[0]?.id||null;
   rs.value=MANAGED_SID||"";
-  document.getElementById("roleSel").value=CURRENT_ROLE;
+  const roleSel=document.getElementById("roleSel");
+  roleSel.innerHTML=ROLE_OPTIONS.map(r=>`<option>${r}</option>`).join("");
+  roleSel.value=ROLE_OPTIONS.includes(CURRENT_ROLE)?CURRENT_ROLE:"老板";
   document.getElementById("roleSel").onchange=e=>{ CURRENT_ROLE=e.target.value; if(CURRENT_ROLE==="店长"&&!MANAGED_SID)MANAGED_SID=STORES[0]?.id; applyRole(); };
   rs.onchange=e=>{ MANAGED_SID=e.target.value; applyRole(); };
 }
 document.getElementById("logoutBtn").onclick=()=>{AUTHED=false;LOGIN_PASS="";BOT_BACKEND_TOKEN="";try{STORAGE_BACKEND_TOKEN="";}catch(_){}document.getElementById("app").style.display="none";document.getElementById("pin").value="";document.getElementById("loginErr").textContent="";showLogin();};
+function closeActiveModalByEscape(){
+  const global=document.getElementById("salGlobalModal");
+  if(global&&global.innerHTML.trim()){
+    if(typeof expCloseForm==="function")expCloseForm();
+    if(typeof salaryCloseModal==="function")salaryCloseModal();
+    return true;
+  }
+  const storeSalary=document.getElementById("storeSalaryMount");
+  if(storeSalary&&storeSalary.innerHTML.trim()){
+    if(typeof closeStoreSalary==="function")closeStoreSalary();
+    return true;
+  }
+  const storeModal=document.getElementById("storeModal");
+  if(storeModal&&storeModal.style.display!=="none"){
+    storeModal.style.display="none";
+    return true;
+  }
+  return false;
+}
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"&&closeActiveModalByEscape()){
+    e.preventDefault();
+    e.stopPropagation();
+  }
+});
 
 /* ---------- nav ---------- */
-document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{
-  document.querySelectorAll(".tab").forEach(x=>x.classList.remove("on"));t.classList.add("on");
-  document.querySelectorAll(".view").forEach(v=>v.classList.remove("on"));
-  document.getElementById("v-"+t.dataset.v).classList.add("on");
-  if(t.dataset.v==="dash")renderDash();
-  if(t.dataset.v==="report")renderReport();
-  if(t.dataset.v==="expense")renderExpense();
-  if(t.dataset.v==="detail")renderDetail();
-  if(t.dataset.v==="inspect")renderInspect();
-  if(t.dataset.v==="bot")botInit();
-  if(t.dataset.v==="stores")renderStores();
-  if(t.dataset.v==="logs")renderLogs();
-  if(t.dataset.v==="export")renderExport();
-  if(t.dataset.v==="fetch")renderFetch();
-  if(t.dataset.v==="users")renderUsers();
-  if(t.dataset.v==="salary")renderSalary();
-});
+function renderViewByName(v){
+  if(v==="dash")renderDash();
+  if(v==="report")renderReport();
+  if(v==="expense")renderExpense();
+  if(v==="detail")renderDetail();
+  if(v==="inspect")renderInspect();
+  if(v==="bot")botInit();
+  if(v==="stores")renderStores();
+  if(v==="logs")renderLogs();
+  if(v==="export")renderExport();
+  if(v==="fetch")renderFetch();
+  if(v==="warehouse")renderWarehouse();
+  if(v==="operations")renderOperations();
+  if(v==="users")renderUsers();
+  if(v==="salary")renderSalary();
+}
+function activateTab(v){
+  const btn=document.querySelector(`.tab[data-v="${v}"]`);
+  const view=document.getElementById("v-"+v);
+  if(!btn||!view)return;
+  document.querySelectorAll(".tab").forEach(x=>x.classList.remove("on"));
+  document.querySelectorAll(".view").forEach(x=>x.classList.remove("on"));
+  btn.classList.add("on");
+  view.classList.add("on");
+  renderViewByName(v);
+}
+function renderActiveView(){
+  const on=document.querySelector(".view.on");
+  if(on)renderViewByName(on.id.replace("v-",""));
+}
+document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>activateTab(t.dataset.v));
 
 /* ---------- selectors ---------- */
 function buildSelectors(){
@@ -896,6 +943,7 @@ function liveCalc(){
   document.getElementById("c_margin").textContent=c.income>0?(c.margin*100).toFixed(1)+"%":"—";
 }
 document.getElementById("saveBtn").onclick=async()=>{
+  if(!can("edit")){toast("当前角色不能修改利润数据");return;}
   const sid=document.getElementById("eStore").value, m=document.getElementById("eMonth").value;
   const prev=ENTRIES[eKey(sid,m)];
   const e=entryFromForm();
@@ -909,7 +957,7 @@ document.getElementById("saveBtn").onclick=async()=>{
 };
 
 document.getElementById("delEntryBtn").onclick=async()=>{
-  if(!can("delete")){toast("仅管理员可删除数据");return;}
+  if(!can("delete")){toast("仅老板可删除数据");return;}
   const sid=document.getElementById("eStore").value, m=document.getElementById("eMonth").value;
   const key=eKey(sid,m), prev=ENTRIES[key];
   if(!prev){toast("该月没有数据");return;}
@@ -919,83 +967,237 @@ document.getElementById("delEntryBtn").onclick=async()=>{
   await logOp("删除","数据录入",sid,m,prev,null);
   loadEntryForm(); toast("已删除 "+m+" 数据");
 };
-const EXTRACT_RULES=`只返回纯JSON，不要解释、不要markdown围栏。\n格式：{"month":"YYYY-MM或null","revenue":{"微信":0,"支付宝":0,"现金":0,"美团外卖":0,"饿了么":0,"美团团购":0,"抖音团购":0,"京东小时达":0,"高德":0,"其他":0,"合计":0},"expense":{"原料":0,"人工":0,"房租":0,"水电":0,"平台手续费":0,"其他":0}}\n规则：\n- 没有的字段填0；金额是数字(元)，去掉逗号、￥、空格。\n- revenue取"收入/营业额"工作表里"合计"那一行的各渠道金额与合计。\n- expense按类归并：原料=物料/订货/采购/鲜奶/茶/果汁等进货；人工=工资/社保；房租=房租；水电=水费/电费/电费充值；平台手续费=手续费(多退少补后净额)；其他=报销及其余。退款/月度调整不计入expense。\n- 只有营业额数据就只填revenue，只有支出就只填expense。`;
+const IMPORT_FIELD_TO_FORM={sales:"sales",refund:"refund",discount:"discount",material:"material",packaging:"packaging",loss:"loss",costOther:"cost_other",rent:"rent",labor:"labor",utility:"utility",property:"property",commission:"commission",promo:"promo",repair:"repair",equip:"equip",expOther:"exp_other"};
+const IMPORT_FIELD_LABELS={sales:"营业总收入",refund:"退款金额",discount:"优惠金额",material:"原材料成本",packaging:"包材成本",loss:"损耗成本",costOther:"其他成本",rent:"房租",labor:"人工工资",utility:"水电费",property:"物业费",commission:"平台佣金",promo:"推广费",repair:"维修费",equip:"设备费",expOther:"其他费用"};
+let _aiFile=null,_xlFile=null,IMPORT_RESULT=null;
 
-function fillFromObj(obj,st){
-  const rev=obj.revenue||{}, exp=obj.expense||{};
-  const channels=["微信","支付宝","现金","美团外卖","饿了么","美团团购","抖音团购","京东小时达","高德","其他"];
-  let revTotal=+rev["合计"]||0;
-  if(!revTotal)revTotal=channels.reduce((s,k)=>s+(+rev[k]||0),0);
-  if(revTotal){document.getElementById("f_sales").value=Math.round(revTotal);window._aiChannels=Object.fromEntries(channels.map(k=>[k,+rev[k]||0]));}
-  const map={material:"原料",labor:"人工",rent:"房租",utility:"水电",commission:"平台手续费",exp_other:"其他"};
-  let gotExp=false;
-  for(const k in map){const v=+exp[map[k]]||0;if(v){document.getElementById("f_"+k).value=Math.round(v);gotExp=true;}}
-  if(obj.month&&/^\d{4}-\d{2}$/.test(obj.month))document.getElementById("eMonth").value=obj.month;
-  liveCalc();
-  st.innerHTML="✅ 已识别"+(revTotal?` · 营收¥${Math.round(revTotal).toLocaleString()}`:"")+(gotExp?" · 含支出":"")+" — 请核对后保存";
+function importPreviewEl(){return document.getElementById("importPreview");}
+function importStatusEl(){return document.getElementById("aiStatus");}
+function importClearPreview(){
+  IMPORT_RESULT=null;
+  const p=importPreviewEl();
+  if(p){p.style.display="none";p.innerHTML="";}
 }
-async function callAI(contentBlocks,st){
-  st.textContent="🔎 AI识别中，请稍候…";
-  try{
-    const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1500,messages:[{role:"user",content:contentBlocks}]})});
-    const data=await res.json();
-    let txt=(data.content||[]).map(c=>c.text||"").join("").replace(/```json|```/g,"").trim();
-    fillFromObj(JSON.parse(txt),st);
-  }catch(err){st.textContent="❌ 识别失败，请重试或手动录入。("+(err.message||err)+")";}
+function importAmount(v){return "¥"+Math.round(+v||0).toLocaleString("zh-CN");}
+function importEscape(v){
+  return String(v==null?"":v).replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch]));
 }
-
-/* 截图 */
-let _aiImg=null;
-function setAiImg(dataUrl){
-  const m=dataUrl.match(/^data:(image\/\w+);base64,(.+)$/);if(!m)return;
-  _aiImg={media:m[1],b64:m[2]};
+function importFieldChips(values){
+  const chips=Object.keys(IMPORT_FIELD_TO_FORM).filter(k=>values&&values[k]!=null&&+values[k]!==0).map(k=>
+    `<span style="display:inline-flex;gap:4px;align-items:center;border:1px solid var(--line);border-radius:999px;padding:3px 8px;background:#fff;font-size:11px"><b>${IMPORT_FIELD_LABELS[k]}</b><span class="tnum">${importAmount(values[k])}</span></span>`
+  );
+  return chips.length?chips.join(""):'<span style="color:var(--muted);font-size:12px">未识别到金额字段</span>';
+}
+function importStatusText(row){
+  if(row.status==="SAVED")return '<span style="color:var(--good);font-weight:800">已导入</span>';
+  if(row.status==="CONFLICT")return '<span style="color:var(--warn);font-weight:800">已有数据</span>';
+  if(row.status==="ERROR")return '<span style="color:var(--bad);font-weight:800">需处理</span>';
+  return '<span style="color:var(--good);font-weight:800">可导入</span>';
+}
+function importSelectedMonth(){
+  return (document.getElementById("eMonth")||{}).value||"";
+}
+function importMonthMismatch(row){
+  const selected=importSelectedMonth();
+  return !!(row&&row.month&&selected&&row.month!==selected);
+}
+function importMonthMismatchNotice(row,i){
+  if(!importMonthMismatch(row))return "";
+  const selected=importSelectedMonth();
+  return `<div style="margin-top:8px;border:1px solid rgba(245,158,11,.35);background:#fffbeb;color:#92400e;border-radius:9px;padding:8px 10px;font-size:11.5px;line-height:1.6">
+    表格识别月份为 <b>${importEscape(row.month)}</b>，当前页面选择月份为 <b>${importEscape(selected)}</b>。系统不会静默改月份。
+    <label style="display:flex;gap:6px;align-items:center;margin-top:5px;font-weight:700">
+      <input type="checkbox" class="imp-month-confirm" data-i="${i}">
+      确认按表格识别月份 ${importEscape(row.month)} 导入
+    </label>
+  </div>`;
+}
+function setAiImg(dataUrl,file){
+  _aiFile=file||null;
   document.getElementById("aiImg").src=dataUrl;
   document.getElementById("aiPreview").style.display="block";
-  document.getElementById("aiStatus").textContent="已载入截图，点「识别填入」";
+  importClearPreview();
+  importStatusEl().textContent="已载入截图。当前后端暂未配置视觉识别，点击后会给出安全提示。";
 }
-document.getElementById("aiFile").onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>setAiImg(r.result);r.readAsDataURL(f);};
+document.getElementById("aiFile").onchange=e=>{
+  const f=e.target.files[0];if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>setAiImg(r.result,f);
+  r.readAsDataURL(f);
+};
 document.addEventListener("paste",e=>{
   if(!document.getElementById("v-entry").classList.contains("on"))return;
-  const it=[...(e.clipboardData||{}).items||[]].find(i=>i.type.startsWith("image/"));
-  if(it){const f=it.getAsFile();const r=new FileReader();r.onload=()=>setAiImg(r.result);r.readAsDataURL(f);}
+  const it=[...(e.clipboardData||{}).items||[]].find(i=>i.type&&i.type.startsWith("image/"));
+  if(it){const f=it.getAsFile();const r=new FileReader();r.onload=()=>setAiImg(r.result,f);r.readAsDataURL(f);}
 });
 document.getElementById("aiBtn").onclick=()=>{
-  if(!_aiImg){toast("请先粘贴或上传截图");return;}
-  callAI([{type:"image",source:{type:"base64",media_type:_aiImg.media,data:_aiImg.b64}},
-          {type:"text",text:"这是企迈系统导出的某门店某月营业数据截图，请提取。\n"+EXTRACT_RULES}],
-         document.getElementById("aiStatus"));
+  if(!_aiFile){toast("请先粘贴或上传截图");return;}
+  importStatusEl().textContent="截图识别后端视觉能力尚未配置。当前请使用 Excel/CSV 导入，或按截图手工录入后保存。";
+  toast("截图识别待配置，先用表格导入或手工录入");
 };
 
-/* Excel表格 */
-function wbToText(wb){
-  const names=wb.SheetNames, isWallet=names.includes("账单总览");
-  let pick;
-  if(isWallet)pick=names.filter(n=>/账单总览/.test(n));
-  else{pick=names.filter(n=>/收入|营业额|支出|差额|对比|汇总/.test(n));if(!pick.length)pick=names.slice(0,5);}
-  let out="";
-  pick.forEach(sn=>{
-    const csv=XLSX.utils.sheet_to_csv(wb.Sheets[sn],{blankrows:false});
-    if(csv.trim())out+=`\n## 工作表：${sn}\n`+csv.slice(0,5000);
-  });
-  return {text:out.slice(0,16000),isWallet};
-}
 document.getElementById("xlFile").onchange=e=>{
   const f=e.target.files[0];if(!f)return;
-  const st=document.getElementById("aiStatus");st.textContent="📊 正在读取 "+f.name+" …";
-  const r=new FileReader();
-  r.onload=()=>{
-    try{
-      const wb=XLSX.read(new Uint8Array(r.result),{type:"array"});
-      const {text,isWallet}=wbToText(wb);
-      if(isWallet)st.innerHTML='⚠️ 这是企迈"钱包原始账单"，数据散在几百个分表里。建议改传该店的「营业额与支出」表，或用截图。仍尝试识别总览…';
-      if(!text.trim()){st.textContent="❌ 没读到可识别内容";return;}
-      callAI([{type:"text",text:"以下是某门店某月『营业额与支出』Excel导出的文本（格式可能不规整），请提取。\n"+EXTRACT_RULES+"\n\n表格内容：\n"+text}],st);
-    }catch(err){st.textContent="❌ Excel解析失败："+(err.message||err);}
-  };
-  r.readAsArrayBuffer(f);
+  _xlFile=f;
+  importClearPreview();
+  importStatusEl().textContent="已选择表格："+f.name+"，点击「生成预览」";
   e.target.value="";
 };
+document.getElementById("xlBtn").onclick=()=>{
+  if(!_xlFile){toast("请先选择 Excel/CSV 表格");return;}
+  profitImportRecognize(_xlFile,"AUTO");
+};
+
+async function profitImportRecognize(file,sourceType){
+  if(!can("import")){toast("当前角色不能导入利润数据");return;}
+  const st=importStatusEl();
+  const preview=importPreviewEl();
+  st.textContent="正在上传到后端解析…";
+  preview.style.display="none";
+  preview.innerHTML="";
+  try{
+    const token=await storageBackendToken();
+    if(!token){st.textContent="请先用老板或财务账号登录后再导入";toast("导入需要后端登录授权");return;}
+    const fd=new FormData();
+    fd.append("file",file,file.name||"import-file");
+    fd.append("sourceType",sourceType||"AUTO");
+    fd.append("storeId",document.getElementById("eStore").value||"");
+    fd.append("month",document.getElementById("eMonth").value||"");
+    const res=await fetch("/api/imports/profit/recognize",{method:"POST",headers:{Authorization:"Bearer "+token},body:fd});
+    const body=await res.json().catch(()=>null);
+    if(!res.ok||!body||!body.success){throw new Error((body&&body.message)||"识别接口调用失败");}
+    IMPORT_RESULT=body.data;
+    st.textContent=(IMPORT_RESULT.rows||[]).length?"已生成预览，请核对后填入或确认导入":"未生成可导入行";
+    renderImportPreview(IMPORT_RESULT);
+  }catch(err){
+    st.textContent="识别失败："+(err.message||err);
+  }
+}
+function renderImportPreview(data){
+  const preview=importPreviewEl();
+  const errors=(data.errors||[]).map(e=>`<div style="color:var(--bad);font-size:12px;margin-top:6px">${importEscape(e)}</div>`).join("");
+  const rows=data.rows||[];
+  if(!rows.length){
+    preview.innerHTML=`<div style="border:1px solid var(--line);border-radius:10px;background:#fff;padding:12px">${errors||'<span style="color:var(--muted);font-size:12px">没有可预览的数据</span>'}</div>`;
+    preview.style.display="block";
+    return;
+  }
+  const mismatchCount=rows.filter(importMonthMismatch).length;
+  preview.innerHTML=`
+    <div style="border:1px solid var(--line);border-radius:12px;background:#fff;padding:12px">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+        <div style="font-weight:800;font-size:13px">导入预览 <span style="color:var(--muted);font-weight:600">共 ${rows.length} 行</span></div>
+        <button class="save" type="button" onclick="importCommitSelected()" style="width:auto;margin:0;padding:8px 12px;font-size:12px">确认导入选中行</button>
+      </div>
+      ${mismatchCount?`<div style="border:1px solid rgba(245,158,11,.35);background:#fffbeb;color:#92400e;border-radius:10px;padding:9px 11px;margin-bottom:10px;font-size:12px">有 ${mismatchCount} 行表格月份与页面月份不同。请逐行确认后再导入，避免数据落错月份。</div>`:""}
+      ${errors}
+      <div style="display:flex;flex-direction:column;gap:8px">
+        ${rows.map((row,i)=>importRowHtml(row,i)).join("")}
+      </div>
+    </div>`;
+  preview.style.display="block";
+}
+function importRowHtml(row,i){
+  const disabled=row.status==="ERROR"||row.status==="SAVED";
+  const warnings=(row.warnings||[]).map(w=>`<div style="color:var(--warn);font-size:11px;margin-top:4px">${importEscape(w)}</div>`).join("");
+  const errors=(row.errors||[]).map(e=>`<div style="color:var(--bad);font-size:11px;margin-top:4px">${importEscape(e)}</div>`).join("");
+  return `<div style="border:1px solid var(--line);border-radius:10px;padding:10px;background:${row.status==="SAVED"?"#f4fbf7":"#fbfcff"}">
+    <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap">
+      <label style="display:flex;gap:8px;align-items:center;font-size:12px;font-weight:800">
+        <input type="checkbox" class="imp-row" data-i="${i}" ${disabled?"disabled":"checked"}>
+        ${importEscape(row.storeName||row.storeId||"未匹配门店")} · ${importEscape(row.month||"未识别月份")}
+      </label>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        ${importStatusText(row)}
+        <button class="btn-ghost" type="button" onclick="importApplyRow(${i})" style="padding:5px 9px;font-size:12px">填入当前表单</button>
+        ${row.existing&&row.status!=="SAVED"?`<label style="font-size:11px;color:var(--muted);display:flex;gap:4px;align-items:center"><input type="checkbox" class="imp-overwrite" data-i="${i}">覆盖已有</label>`:""}
+      </div>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${importFieldChips(row.values)}</div>
+    ${importMonthMismatchNotice(row,i)}
+    ${warnings}${errors}
+  </div>`;
+}
+function importApplyRow(index){
+  if(!IMPORT_RESULT||!IMPORT_RESULT.rows)return;
+  const row=IMPORT_RESULT.rows[index]; if(!row)return;
+  const s=STORES.find(x=>x.id===row.storeId);
+  if(s){
+    document.getElementById("eBrand").value=s.brand;
+    fillStoreSel();
+    document.getElementById("eStore").value=s.id;
+  }
+  if(row.month)document.getElementById("eMonth").value=row.month;
+  ENTRY_FIELDS.forEach(k=>{const el=document.getElementById("f_"+k);if(el)el.value=0;});
+  Object.keys(IMPORT_FIELD_TO_FORM).forEach(k=>{
+    const formKey=IMPORT_FIELD_TO_FORM[k], el=document.getElementById("f_"+formKey);
+    if(el&&row.values&&row.values[k]!=null)el.value=Math.round(+row.values[k]||0);
+  });
+  document.getElementById("f_note").value="导入预览";
+  liveCalc();
+  renderStoreHistory(document.getElementById("eStore").value);
+  importStatusEl().textContent="已填入当前表单，请核对后保存，或直接确认导入选中行";
+}
+async function importCommitSelected(){
+  if(!can("import")){toast("当前角色不能导入利润数据");return;}
+  if(!IMPORT_RESULT){toast("请先生成导入预览");return;}
+  const selected=[...document.querySelectorAll(".imp-row:checked")].map(el=>+el.dataset.i);
+  if(!selected.length){toast("请选择要导入的行");return;}
+  const unconfirmedMonth=selected.find(i=>{
+    const row=IMPORT_RESULT.rows[i];
+    return importMonthMismatch(row)&&!document.querySelector(`.imp-month-confirm[data-i="${i}"]`)?.checked;
+  });
+  if(unconfirmedMonth!=null){
+    const row=IMPORT_RESULT.rows[unconfirmedMonth];
+    importStatusEl().textContent=`导入已暂停：${row.storeName||row.storeId||"该行"} 的表格月份 ${row.month} 与页面月份 ${importSelectedMonth()} 不一致，请先勾选确认。`;
+    toast("请先确认月份不一致的导入行");
+    return;
+  }
+  const rows=selected.map(i=>{
+    const row=IMPORT_RESULT.rows[i];
+    const overwrite=document.querySelector(`.imp-overwrite[data-i="${i}"]`)?.checked||false;
+    return {rowId:row.rowId,storeId:row.storeId,month:row.month,overwrite,values:row.values||{},note:"文件导入"};
+  });
+  const st=importStatusEl();
+  st.textContent="正在写入后端数据…";
+  try{
+    const token=await storageBackendToken();
+    if(!token){toast("导入需要后端登录授权");return;}
+    const res=await fetch("/api/imports/profit/"+encodeURIComponent(IMPORT_RESULT.importId)+"/commit",{
+      method:"POST",
+      headers:{"Content-Type":"application/json",Authorization:"Bearer "+token},
+      body:JSON.stringify({rows})
+    });
+    const body=await res.json().catch(()=>null);
+    if(!res.ok||!body||!body.success){throw new Error((body&&body.message)||"导入保存失败");}
+    const result=body.data;
+    (result.rows||[]).forEach(savedRow=>{
+      const idx=(IMPORT_RESULT.rows||[]).findIndex(r=>r.rowId===savedRow.rowId);
+      if(idx>=0)IMPORT_RESULT.rows[idx]=savedRow;
+      if(savedRow.status==="SAVED")importSyncLocalEntry(savedRow);
+    });
+    await sSet("entries",ENTRIES);
+    renderAll();
+    renderStoreHistory(document.getElementById("eStore").value);
+    renderImportPreview(IMPORT_RESULT);
+    st.textContent=`导入完成：成功 ${result.saved} 行，跳过 ${result.skipped} 行`;
+  }catch(err){
+    st.textContent="导入失败："+(err.message||err);
+  }
+}
+function importSyncLocalEntry(row){
+  if(!row.storeId||!row.month)return;
+  const e={};
+  ENTRY_FIELDS.forEach(k=>e[k]=0);
+  Object.keys(IMPORT_FIELD_TO_FORM).forEach(k=>{
+    const formKey=IMPORT_FIELD_TO_FORM[k];
+    e[formKey]=Math.round(+(row.values&&row.values[k]||0));
+  });
+  e.note="文件导入";
+  e.by=CURRENT_USER;
+  e.at=new Date().toISOString();
+  ENTRIES[eKey(row.storeId,row.month)]=e;
+}
 function renderStoreHistory(sid){
   const wrap=document.getElementById("storeHistory");
   const rows=Object.keys(ENTRIES).filter(k=>k.startsWith(sid+"|")).map(k=>({m:k.split("|")[1],c:calc(ENTRIES[k])})).sort((a,b)=>b.m.localeCompare(a.m));
@@ -1019,7 +1221,10 @@ function renderDashMonthSel(){
 function renderDash(){
   const m=document.getElementById("dashMonth").value;
   const body=document.getElementById("dashBody");
-  const recs=visibleStores().map(s=>({s,c:calc(ENTRIES[eKey(s.id,m)])})).filter(x=>x.c);
+  const scopedStores=visibleStores();
+  const visibleBrands=[...new Set(scopedStores.map(s=>s.brand))];
+  if(DASH_BRAND&&!visibleBrands.includes(DASH_BRAND))DASH_BRAND=null;
+  const recs=scopedStores.map(s=>({s,c:calc(ENTRIES[eKey(s.id,m)])})).filter(x=>x.c);
   if(!recs.length){
     body.innerHTML=`<div class="card"><div class="empty"><b>本月还没有数据</b>去「数据录入」录入，或在「门店管理」点"填充示例数据"先看效果。</div></div>`;return;
   }
@@ -1033,15 +1238,16 @@ function renderDash(){
     <div class="card kpi"><div class="lab">合并营业收入</div><div class="val tnum">${fmt(tot.rev)}</div></div>
     <div class="card kpi"><div class="lab">合并净利润</div><div class="val tnum ${tot.net>=0?'good':''}">${fmt(tot.net)}</div></div>
     <div class="card kpi"><div class="lab">整体净利率</div><div class="val tnum">${(tm*100).toFixed(1)}<small>%</small></div></div>
-    <div class="card kpi"><div class="lab">已录入门店</div><div class="val tnum">${recs.length}<small>/ ${STORES.length}</small></div></div>
+    <div class="card kpi"><div class="lab">已录入门店</div><div class="val tnum">${recs.length}<small>/ ${scopedStores.length}</small></div></div>
   </div>`;
 
-  html+=`<div class="brands">`+Object.keys(BRANDS).map(b=>{
+  html+=`<div class="brands">`+visibleBrands.map(b=>{
     const g=bagg[b],meta=BRANDS[b],mg=g.rev>0?g.net/g.rev:0;
     const sel=DASH_BRAND===b, dim=DASH_BRAND&&!sel;
+    const brandTotal=scopedStores.filter(s=>s.brand===b).length;
     return `<div class="bcard${sel?" sel":""}${dim?" dim":""}" style="background:${meta.color}" onclick="toggleDashBrand('${b}')" tabindex="0" role="button" aria-pressed="${sel}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleDashBrand('${b}')}" title="点击只看 ${b} 的数据">
       ${sel?`<div class="bsel">✓ 查看中</div>`:""}
-      <div class="bn">${b}</div><div class="bc">${g.n} / ${BRAND_COUNT[b]} 家已录</div>
+      <div class="bn">${b}</div><div class="bc">${g.n} / ${brandTotal} 家已录</div>
       <div class="brow"><div><div class="bbig tnum">${fmtK(g.net)}</div><div style="font-size:11px;opacity:.85">净利</div></div>
       <div class="bm">营收<br><b class="tnum">${fmtK(g.rev)}</b><br>利率 ${(mg*100).toFixed(1)}%</div></div></div>`;
   }).join("")+`</div>`;
@@ -1068,7 +1274,7 @@ function renderDash(){
 
   // trend（跟随所选品类）
   const ms=allMonths();
-  const pool=DASH_BRAND?STORES.filter(s=>s.brand===DASH_BRAND):STORES;
+  const pool=DASH_BRAND?scopedStores.filter(s=>s.brand===DASH_BRAND):scopedStores;
   const poolHasData=pool.some(s=>Object.keys(ENTRIES).some(k=>k.startsWith(s.id+"|")));
   if(ms.length>1 && poolHasData){
     const series=ms.map(mm=>{const r=pool.map(s=>calc(ENTRIES[eKey(s.id,mm)])).filter(Boolean);return {m:mm,net:r.reduce((a,c)=>a+c.net,0)};});
@@ -1213,11 +1419,11 @@ function exportReportAll(){
   XLSX.writeFile(wb,`全部门店_${m}_利润汇总.xlsx`); toast("已导出汇总Excel");
 }
 
-/* ---------- 报销栏（门店上传 → 待审核 → 管理员确定无误 → 完成；历史长期保留） ---------- */
+/* ---------- 报销栏（门店上传 → 待审核 → 老板确定无误 → 完成；历史长期保留） ---------- */
 let EXPENSES=[], EXP_BRAND="all", EXP_SID="all", EXP_STATUS="all", EXP_MONTH="all", EXP_IMG="";
 const EXP_CATS=["物料采购","设备维修","水电杂费","办公用品","物流运费","其他"];
-function expCanSubmit(){return CURRENT_ROLE==="店长"||CURRENT_ROLE==="管理员"||CURRENT_ROLE==="财务";}
-function expCanReview(){return CURRENT_ROLE==="管理员";}
+function expCanSubmit(){return CURRENT_ROLE==="店长"||isBossRole()||CURRENT_ROLE==="财务";}
+function expCanReview(){return isBossRole();}
 function expId(){return "exp"+Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
 function expStoreName(sid){const s=STORES.find(x=>x.id===sid);return s?s.name:(sid||"—");}
 function expFmtTime(iso){if(!iso)return "—";const d=new Date(iso);const p=n=>String(n).padStart(2,"0");return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;}
@@ -1303,11 +1509,11 @@ async function expSubmit(){
   EXPENSES.unshift(rec);
   await sSet("expenses",EXPENSES);
   expCloseForm();
-  toast("报销已提交，等待管理员审核");
+  toast("报销已提交，等待老板审核");
   renderExpense();
 }
 async function expApprove(id){
-  if(!expCanReview()){toast("只有管理员可以审核");return;}
+  if(!expCanReview()){toast("只有老板可以审核");return;}
   const r=EXPENSES.find(x=>x.id===id); if(!r)return;
   r.status="done"; r.reviewBy=CURRENT_USER; r.reviewAt=new Date().toISOString();
   await sSet("expenses",EXPENSES);
@@ -1315,7 +1521,7 @@ async function expApprove(id){
   renderExpense();
 }
 async function expDelete(id){
-  if(CURRENT_ROLE!=="管理员"){toast("只有管理员可以删除");return;}
+  if(!isBossRole()){toast("只有老板可以删除");return;}
   EXPENSES=EXPENSES.filter(x=>x.id!==id);
   await sSet("expenses",EXPENSES);
   toast("已删除该报销记录");
@@ -1411,7 +1617,7 @@ function renderExpense(){
     const action=(r.status==="pending"&&canReview)
       ? `<button class="seg-b" style="background:#16a34a;color:#fff;border-radius:8px;padding:6px 12px;font-weight:700;font-size:12px" onclick="expApprove('${r.id}')">✓ 确定无误</button>`
       : badge+reviewInfo;
-    const del=(CURRENT_ROLE==="管理员")?`<button class="sal-ic del" title="删除" onclick="expDelete('${r.id}')">🗑</button>`:"";
+  const del=isBossRole()?`<button class="sal-ic del" title="删除" onclick="expDelete('${r.id}')">🗑</button>`:"";
     return `<tr>
       <td style="white-space:nowrap;font-weight:700;color:var(--primary)">${salEsc(expMonthOf(r))}</td>
       <td style="white-space:nowrap;color:var(--muted)">${expFmtTime(r.at)}</td>
@@ -1436,7 +1642,7 @@ function renderExpense(){
     <div class="card" style="flex:1;min-width:130px;padding:14px 16px"><div style="font-size:12px;color:var(--muted);font-weight:600">报销总额</div><div style="font-size:22px;font-weight:900" class="tnum">¥${Math.round(sumAmt).toLocaleString()}</div></div>
   </div>
   <div class="card" style="padding:11px 14px;margin-bottom:14px;font-size:12px;color:var(--muted);border-left:3px solid var(--primary);line-height:1.7">
-    📋 门店填写报销并上传<b>支付截图</b>后即进入<b style="color:#d97706">待审核</b>；管理员核对无误点击「<b style="color:#16a34a">确定无误</b>」后变为<b style="color:#16a34a">已完成</b>。所有记录长期保留于此（后台 expenses），可按门店/状态筛选查看历史。${canReview?"":(canSubmit?"（你可提交报销，审核由管理员完成）":"（当前角色为只读）")}
+  📋 门店填写报销并上传<b>支付截图</b>后即进入<b style="color:#d97706">待审核</b>；老板核对无误点击「<b style="color:#16a34a">确定无误</b>」后变为<b style="color:#16a34a">已完成</b>。所有记录长期保留于此（后台 expenses），可按门店/状态筛选查看历史。${canReview?"":(canSubmit?"（你可提交报销，审核由老板完成）":"（当前角色为只读）")}
   </div>
   <div class="card" style="padding:0;overflow-x:auto">
     <table class="sal-tb" style="font-size:12.5px">
@@ -2364,7 +2570,7 @@ function inspExportBasic(r,s){
   XLSX.writeFile(wb,`${s?s.name:r.sid}_${r.date||""}_巡检表.xlsx`);
 }
 async function inspDelete(id){
-  if(!can("delete")){toast("仅管理员可删除");return;}
+  if(!can("delete")){toast("仅老板可删除");return;}
   const r=INSPECTIONS.find(x=>x.id===id); if(!r)return;
   const s=STORES.find(x=>x.id===r.sid);
   if(!confirm(`删除「${s?s.name:r.sid}」${r.date} 的巡检记录？此操作会记入日志。`))return;
@@ -2774,10 +2980,11 @@ async function botBackendToken(){
   if(BOT_BACKEND_TOKEN)return BOT_BACKEND_TOKEN;
   if(!LOGIN_PASS)return "";
   if(BOT_BACKEND_TOKEN_PROMISE)return BOT_BACKEND_TOKEN_PROMISE;
+  const backendUsername=LOGIN_ROLE==="财务"?"finance":"admin";
   BOT_BACKEND_TOKEN_PROMISE=fetch("/api/auth/login",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({username:"admin",password:LOGIN_PASS})
+    body:JSON.stringify({username:backendUsername,password:LOGIN_PASS})
   }).then(async r=>{
     if(!r.ok)return "";
     const j=await r.json();
@@ -2799,10 +3006,11 @@ async function botDeepSeekAnswer(q){
   return j&&j.success&&j.data?j.data:null;
 }
 function botAiHtml(resp){
-  const source=resp.aiUsed?"DeepSeek 智能分析":"本地后端回答";
+  const source=resp.aiUsed?"DeepSeek 智能分析":(resp.source&&resp.source.includes("backend-finance")?"后端财务库回答":"本地后端回答");
+  const basis=resp.source&&resp.source.includes("frontend-context")?"当前页面可见数据":(resp.source&&resp.source.includes("backend-finance")?"后端财务库数据":"当前系统可见数据");
   const text=escHtml(resp.answer||"").replace(/\n/g,"<br>");
   const store=botCurrentStore();
-  return `<div class="qhead">${source}</div><div class="qsub">回答基于${store?`「${escHtml(store.name)}」当前门店`:"当前系统可见"}数据生成。</div><div>${text}</div>`;
+  return `<div class="qhead">${source}</div><div class="qsub">回答基于${basis}${store&&basis==="当前页面可见数据"?`（${escHtml(store.name)}）`:""}生成，页面本地结果优先。</div><div>${text}</div>`;
 }
 function botScopedQuestion(q){
   const store=botCurrentStore();
@@ -3034,15 +3242,48 @@ function renderFetch(){
   <div class="plat-grid">${cards}</div>`;
 }
 
+/* ---------- 仓库 / 运营角色工作台（先分职业入口，业务模块后续接入） ---------- */
+function renderRolePending(hostId,title,subtitle,steps){
+  const host=document.getElementById(hostId); if(!host)return;
+  host.innerHTML=`
+    <div class="h"><h1>${title}</h1></div>
+    <div class="card" style="border-left:4px solid var(--primary);margin-bottom:16px">
+      <div style="font-weight:800;font-size:16px;margin-bottom:6px">${subtitle}</div>
+      <div style="font-size:13px;color:var(--muted);line-height:1.7">这个职业入口已经独立出来，当前先不接入真实业务数据，避免把未完成模块伪装成可用功能。</div>
+    </div>
+    <div class="grid2">
+      ${steps.map(s=>`<div class="card"><div class="section-t">${s[0]}</div><div style="font-size:13px;color:var(--muted);line-height:1.7">${s[1]}</div></div>`).join("")}
+    </div>`;
+}
+function renderWarehouse(){
+  renderRolePending("v-warehouse","仓库中心","仓库管理员工作台 · 建设中",[
+    ["未来负责","库存台账、入库出库、门店申领、盘点差异和供应商到货。"],
+    ["现在可见","先只开放独立入口和权限展示，不允许修改利润、工资、报销等财务数据。"],
+    ["下一步接入","先做物料基础档案，再做门店领料和库存预警。"]
+  ]);
+}
+function renderOperations(){
+  renderRolePending("v-operations","运营中心","运营工作台 · 建设中",[
+    ["未来负责","门店活动、运营任务、销售目标、异常跟进和经营动作复盘。"],
+    ["现在可见","先只开放独立入口和权限展示，不混入老板、财务、督导的工作页面。"],
+    ["下一步接入","先做运营任务清单，再接 AI 经营建议和任务闭环。"]
+  ]);
+}
+
 /* ---------- 用户权限（本地模拟；真实多用户需后端） ---------- */
 const ROLE_MATRIX=[
-  ["查看所有门店","✓","✓","仅本店"],
-  ["新增 / 修改数据","✓","✓","✕"],
-  ["删除数据","✓","✕","✕"],
-  ["Excel 导入","✓","✓","✕"],
-  ["Excel 导出","✓","✓","✕"],
-  ["管理门店","✓","✓","✕"],
-  ["管理用户","✓","✕","✕"],
+  ["查看经营数据","全部","全部","全部","本店","建设中","建设中"],
+  ["新增 / 修改利润数据","✓","✓","✕","✕","✕","✕"],
+  ["删除数据","✓","✕","✕","✕","✕","✕"],
+  ["Excel / CSV 导入","✓","✓","✕","✕","✕","✕"],
+  ["财务导出","✓","✓","✕","✕","✕","✕"],
+  ["报销提交 / 审核","审核","提交/处理","✕","提交","✕","✕"],
+  ["督导巡店","✓","✕","✓","查看","✕","✕"],
+  ["员工工资","✓","✓","✕","✕","✕","✕"],
+  ["门店管理","✓","✕","✕","✕","✕","✕"],
+  ["用户权限","✓","✕","✕","✕","✕","✕"],
+  ["仓库中心","查看","✕","✕","✕","建设中","✕"],
+  ["运营中心","查看","✕","✕","✕","✕","建设中"],
 ];
 function renderUsers(){
   const body=document.getElementById("usersBody");
@@ -3050,11 +3291,11 @@ function renderUsers(){
   body.innerHTML=`
     <div class="card" style="margin-bottom:16px;border-left:4px solid var(--primary)">
       <div style="font-weight:700;margin-bottom:4px">当前角色：${CURRENT_USER}</div>
-      <div style="font-size:13px;color:var(--muted);line-height:1.7">右上角可切换角色预览权限效果（本地模拟）。正式多用户登录、账号管理、按门店授权需对接后端（user / user_store_permission 表）。</div>
+      <div style="font-size:13px;color:var(--muted);line-height:1.7">老板是最高权限，负责全部业务；店长、财务、督导分别进入自己的工作台；仓库管理员和运营先保留独立入口，后续再接真实业务。</div>
     </div>
     <div class="card" style="overflow-x:auto"><div class="section-t">角色权限矩阵</div>
-      <table class="ranktbl" style="min-width:560px"><thead><tr><th>权限</th><th style="text-align:center">管理员</th><th style="text-align:center">财务人员</th><th style="text-align:center">门店负责人</th></tr></thead>
-      <tbody>${ROLE_MATRIX.map(r=>`<tr><td style="font-weight:600">${r[0]}</td><td style="text-align:center">${yn(r[1])}</td><td style="text-align:center">${yn(r[2])}</td><td style="text-align:center">${yn(r[3])}</td></tr>`).join("")}</tbody></table>
+      <table class="ranktbl" style="min-width:880px"><thead><tr><th>权限</th><th style="text-align:center">老板</th><th style="text-align:center">财务</th><th style="text-align:center">督导</th><th style="text-align:center">店长</th><th style="text-align:center">仓库管理员</th><th style="text-align:center">运营</th></tr></thead>
+      <tbody>${ROLE_MATRIX.map(r=>`<tr><td style="font-weight:600">${r[0]}</td>${r.slice(1).map(v=>`<td style="text-align:center">${yn(v)}</td>`).join("")}</tr>`).join("")}</tbody></table>
     </div>`;
 }
 document.getElementById("addStoreBtn").onclick=async()=>{
@@ -3307,7 +3548,7 @@ function salaryFloorHint(pos,att,month,floor,core,finalGross){
   if(i2r&&i2r.checked){el.innerHTML=`🎓→👤 实习转正当月：按实习段 + 转正段相加实发（不享受满勤保底），应发 <b>¥${salMoney(finalGross)}</b>`;el.style.color="var(--primary)";return;}
   const std=salaryFloorFor(pos);
   if(!std){el.textContent=pos?"该职位无保底工资":"";el.style.color="var(--muted)";return;}
-  if(!floor){el.textContent=/-02$/.test(String(month||""))?`2月不参与保底，按实际工资项发（由管理员手动核定）`:`缺勤月（出勤 ${att||"?"} < 满勤 ${salaryWorkdays(month)} 天）不享受保底，按实际工资项发`;el.style.color="var(--muted)";return;}
+  if(!floor){el.textContent=/-02$/.test(String(month||""))?`2月不参与保底，按实际工资项发（由老板手动核定）`:`缺勤月（出勤 ${att||"?"} < 满勤 ${salaryWorkdays(month)} 天）不享受保底，按实际工资项发`;el.style.color="var(--muted)";return;}
   if(core<floor){el.innerHTML=`⛑ 已触发保底：不含加班/工龄合计 ¥${salMoney(core)} ＜ ${pos}保底 ¥${floor} → 按保底发，应发 = ¥${floor} + 加班/工龄 = <b>¥${salMoney(finalGross)}</b>`;el.style.color="var(--warn)";}
   else{el.innerHTML=`✓ 不含加班/工龄合计 ¥${salMoney(core)} ≥ ${pos}保底 ¥${floor}，按实际工资项发`;el.style.color="var(--good)";}
 }
@@ -3524,7 +3765,7 @@ async function salaryDelete(id){
   salaryAfterChange();toast("已删除");
 }
 async function salaryDeleteMonth(){
-  if(!can("delete")){toast("只有管理员可以删除");return;}
+  if(!can("delete")){toast("只有老板可以删除");return;}
   const month=SALARY_MONTH;
   const scope=SALARY.filter(e=>e.month===month&&(SALARY_SID==="all"||e.sid===SALARY_SID));
   if(!scope.length){toast(`${month} 无可删除的工资记录`);return;}
