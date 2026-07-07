@@ -266,7 +266,7 @@ async function storageBackendToken(){
   if(!pass)return "";
   if(STORAGE_BACKEND_TOKEN_PROMISE)return STORAGE_BACKEND_TOKEN_PROMISE;
   const role=(typeof LOGIN_ROLE==="string"&&LOGIN_ROLE)||CURRENT_ROLE;
-  const backendUsername=role==="财务"?"finance":"admin";
+  const backendUsername=role==="财务"?"finance":"boss";
   STORAGE_BACKEND_TOKEN_PROMISE=fetch("/api/auth/login",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
@@ -342,7 +342,6 @@ const ROLE_OPTIONS=["老板","财务","督导","店长","仓库管理员","运�
 const ALL_TAB_IDS=["dash","report","detail","inspect","bot","entry","expense","export","stores","logs","fetch","warehouse","operations","users","salary"];
 const ROLE_HIDDEN_TABS={
   "老板":[],
-  "管理员":[],
   "财务":["inspect","stores","logs","fetch","warehouse","operations","users"],
   "督导":["report","entry","expense","export","stores","logs","fetch","warehouse","operations","users","salary"],
   "店长":["entry","export","stores","logs","fetch","warehouse","operations","users","salary"],
@@ -351,7 +350,6 @@ const ROLE_HIDDEN_TABS={
 };
 const ROLE_DEFAULT_TAB={
   "老板":"dash",
-  "管理员":"dash",
   "财务":"dash",
   "督导":"inspect",
   "店长":"dash",
@@ -390,7 +388,7 @@ function normalizeAccounts(accounts){
   return list;
 }
 function findByPass(pass){ return ACCOUNTS.find(a=>a.pass===pass); }
-function isBossRole(role=CURRENT_ROLE){return role==="老板"||role==="管理员";}
+function isBossRole(role=CURRENT_ROLE){return role==="老板";}
 function roleVisibleTabs(role=CURRENT_ROLE){
   const hidden=ROLE_HIDDEN_TABS[role]||[];
   return ALL_TAB_IDS.filter(v=>!hidden.includes(v));

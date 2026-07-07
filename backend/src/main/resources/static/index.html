@@ -2980,7 +2980,7 @@ async function botBackendToken(){
   if(BOT_BACKEND_TOKEN)return BOT_BACKEND_TOKEN;
   if(!LOGIN_PASS)return "";
   if(BOT_BACKEND_TOKEN_PROMISE)return BOT_BACKEND_TOKEN_PROMISE;
-  const backendUsername=LOGIN_ROLE==="财务"?"finance":"admin";
+  const backendUsername=LOGIN_ROLE==="财务"?"finance":"boss";
   BOT_BACKEND_TOKEN_PROMISE=fetch("/api/auth/login",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
@@ -3354,7 +3354,7 @@ function salaryFloorFor(position){return SALARY_FLOOR[position]||0;}
 // 有效保底：满勤(出勤天数≥当月满勤=当月天数−4，或出勤留空按整月)享受全额保底；缺勤当月不享受保底(返回0)；非正式岗位无保底
 function salaryFloorEff(position,attendance,month){
   const base=salaryFloorFor(position); if(!base)return 0;
-  if(/-02$/.test(String(month||"")))return 0; // 2月不参与保底（需管理员手动核定）
+  if(/-02$/.test(String(month||"")))return 0; // 2月不参与保底（需老板手动核定）
   const att=parseFloat(attendance), full=salaryWorkdays(month);
   if(isNaN(att)||!full)return base;   // 出勤无数字 → 正式岗位按整月享受全额保底
   return att>=full?base:0;            // 缺勤当月不享受满勤保底，按实际工资项发

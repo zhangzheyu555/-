@@ -57,6 +57,7 @@ public class AuthRepository {
         from auth_user u
         join tenant t on t.id = u.tenant_id
         where u.tenant_id = ?
+          and not (u.username = 'admin' and u.role = 'BOSS' and u.enabled = 0)
         order by u.id
         """, this::mapUser, tenantId);
   }
@@ -98,6 +99,38 @@ public class AuthRepository {
         username
     );
     return count != null && count > 0;
+  }
+
+  public void migrateAdminAccountToBoss(long tenantId) {
+    jdbcTemplate.update("""
+        update auth_user admin_user
+        left join auth_user boss_user
+          on boss_user.tenant_id = admin_user.tenant_id
+         and boss_user.username = 'boss'
+        set admin_user.username = case when boss_user.id is null then 'boss' else admin_user.username end,
+            admin_user.enabled = case when boss_user.id is null then admin_user.enabled else 0 end,
+            admin_user.role = 'BOSS',
+            admin_user.display_name = '老板'
+        where admin_user.tenant_id = ? and admin_user.username = 'admin'
+        """, tenantId);
+    jdbcTemplate.update("""
+        update auth_user
+        set role = 'BOSS',
+            display_name = case
+              when display_name is null or display_name = '' or display_name in ('管理员', '系统管理员') then '老板'
+              else display_name
+            end
+        where tenant_id = ? and role = 'ADMIN'
+        """, tenantId);
+  }
+
+  public void ensureUserRole(long tenantId, String username, String displayName, String role) {
+    jdbcTemplate.update("""
+        update auth_user
+        set role = ?,
+            display_name = ?
+        where tenant_id = ? and username = ?
+        """, role, displayName, tenantId, username);
   }
 
   public void createUser(long tenantId, String username, String passwordHash, String displayName, String role, String storeId) {

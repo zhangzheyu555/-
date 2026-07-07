@@ -50,7 +50,7 @@ public class StorageService {
   @Transactional
   public void set(AuthUser user, String key, String value) {
     String normalizedKey = normalizeKey(key);
-    requireAdmin(user);
+    requireBoss(user);
     requireAllowedKey(normalizedKey);
     jdbcTemplate.update("""
         insert into kv_storage(storage_key, storage_value, updated_at)
@@ -62,9 +62,9 @@ public class StorageService {
     logLegacyWrite(user, normalizedKey);
   }
 
-  private void requireAdmin(AuthUser user) {
-    if (!"ADMIN".equals(user.role())) {
-      throw new BusinessException("FORBIDDEN", "仅管理员可写入 legacy KV 存储", HttpStatus.FORBIDDEN);
+  private void requireBoss(AuthUser user) {
+    if (!Set.of("BOSS", "ADMIN").contains(user.role())) {
+      throw new BusinessException("FORBIDDEN", "仅老板可写入 legacy KV 存储", HttpStatus.FORBIDDEN);
     }
   }
 

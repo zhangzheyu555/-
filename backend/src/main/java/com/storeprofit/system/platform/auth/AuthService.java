@@ -29,8 +29,9 @@ public class AuthService {
   }
 
   @PostConstruct
-  public void ensureDefaultAdmin() {
-    ensureDefaultUser("admin", "123", "管理员", "ADMIN");
+  public void ensureDefaultUsers() {
+    authRepository.migrateAdminAccountToBoss(TenantDefaults.DEFAULT_TENANT_ID);
+    ensureDefaultUser("boss", "123", "老板", "BOSS");
     ensureDefaultUser("finance", "finance888", "财务", "FINANCE");
     ensureDefaultUser("supervisor", "supervisor888", "督导", "SUPERVISOR");
     ensureDefaultUser("warehouse", "warehouse888", "仓库管理员", "WAREHOUSE");
@@ -40,6 +41,8 @@ public class AuthService {
   private void ensureDefaultUser(String username, String password, String displayName, String role) {
     if (!authRepository.userExists(TenantDefaults.DEFAULT_TENANT_ID, username)) {
       authRepository.createUser(TenantDefaults.DEFAULT_TENANT_ID, username, passwordService.hash(password), displayName, role, null);
+    } else {
+      authRepository.ensureUserRole(TenantDefaults.DEFAULT_TENANT_ID, username, displayName, role);
     }
   }
 
@@ -102,8 +105,7 @@ public class AuthService {
 
   private String roleLabel(String role) {
     return switch (role) {
-      case "ADMIN" -> "管理员";
-      case "BOSS" -> "老板";
+      case "ADMIN", "BOSS" -> "老板";
       case "FINANCE" -> "财务";
       case "SUPERVISOR" -> "督导";
       case "STORE_MANAGER" -> "店长";

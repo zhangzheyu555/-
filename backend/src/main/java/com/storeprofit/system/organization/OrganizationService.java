@@ -28,7 +28,7 @@ public class OrganizationService {
   }
 
   public void upsertStore(AuthUser user, StoreUpsertRequest request) {
-    requireAdmin(user);
+    requireBoss(user);
     if (organizationRepository.storeIdBelongsToOtherTenant(user.tenantId(), request.id())) {
       throw new BusinessException("STORE_CONFLICT", "门店ID已被其他企业使用", HttpStatus.CONFLICT);
     }
@@ -38,7 +38,7 @@ public class OrganizationService {
     organizationRepository.upsertStore(user.tenantId(), request);
   }
 
-  private void requireAdmin(AuthUser user) {
+  private void requireBoss(AuthUser user) {
     if (!List.of("ADMIN", "BOSS").contains(user.role())) {
       throw new BusinessException("FORBIDDEN", "仅老板可维护门店档案", HttpStatus.FORBIDDEN);
     }

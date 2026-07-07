@@ -37,8 +37,7 @@ public class UserManagementService {
 
   private String roleLabel(String role) {
     return switch (role) {
-      case "ADMIN" -> "管理员";
-      case "BOSS" -> "老板";
+      case "ADMIN", "BOSS" -> "老板";
       case "FINANCE" -> "财务";
       case "SUPERVISOR" -> "督导";
       case "STORE_MANAGER" -> "店长";
