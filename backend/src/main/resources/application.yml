@@ -38,6 +38,8 @@ app:
     allowed-origin-patterns:
       - "http://localhost:*"
       - "http://127.0.0.1:*"
+      - "http://175.178.89.183:*"
+      - "https://175.178.89.183:*"
       - "file://*"
       # 双击 HTML 用 file:// 打开时浏览器发送的 Origin 是字面量 "null"
       - "null"
