@@ -57,39 +57,103 @@ public class AssistantService {
 
   public AssistantChatResponse chat(AuthUser user, AssistantChatRequest request) {
     String message = clean(request.message());
+    boolean hasFrontContext = !clean(request.dataContext()).isBlank();
     if (hasBlockedWord(message)) {
-      return new AssistantChatResponse(
+      return response(
           "这个问题包含系统屏蔽词，我只能协助处理门店利润系统内的经营数据、人员工资、报表和操作问题。",
           false,
           true,
-          "blocked-word"
+          "blocked-word",
+          hasFrontContext,
+          message,
+          user
       );
     }
 
     if (!isInScope(message)) {
-      return new AssistantChatResponse(
+      return response(
           "我只能回答门店利润系统相关问题，例如利润、营收、成本、门店、员工工资、数据录入、报表导出和权限操作。",
           false,
           true,
-          "out-of-scope"
+          "out-of-scope",
+          hasFrontContext,
+          message,
+          user
       );
     }
 
-    boolean hasFrontContext = !clean(request.dataContext()).isBlank();
     String dataContext = buildDataContext(user, message, request.dataContext());
     if (!properties.hasApiKey()) {
-      return new AssistantChatResponse(localAnswer(user, message, false), false, false,
-          hasFrontContext ? "backend-finance-fallback-with-frontend-context" : "backend-finance");
+      return response(localAnswer(user, message, false), false, false,
+          hasFrontContext ? "backend-finance-fallback-with-frontend-context" : "backend-finance",
+          hasFrontContext, message, user);
     }
 
     try {
       String answer = sanitizeAnswer(callDeepSeek(request, message, dataContext));
-      return new AssistantChatResponse(answer, true, false,
-          hasFrontContext ? "deepseek-frontend-context" : "deepseek-backend-finance");
+      return response(answer, true, false,
+          hasFrontContext ? "deepseek-frontend-context" : "deepseek-backend-finance",
+          hasFrontContext, message, user);
     } catch (RestClientException | IllegalStateException ex) {
-      return new AssistantChatResponse(localAnswer(user, message, false), false, false,
-          hasFrontContext ? "backend-finance-fallback-with-frontend-context" : "backend-finance-fallback");
+      return response(localAnswer(user, message, false), false, false,
+          hasFrontContext ? "backend-finance-fallback-with-frontend-context" : "backend-finance-fallback",
+          hasFrontContext, message, user);
     }
+  }
+
+  private AssistantChatResponse response(
+      String answer,
+      boolean aiUsed,
+      boolean blocked,
+      String source,
+      boolean hasFrontContext,
+      String message,
+      AuthUser user
+  ) {
+    List<String> months = blocked ? List.of() : targetMonths(user, message);
+    return new AssistantChatResponse(
+        answer,
+        aiUsed,
+        blocked,
+        source,
+        assistantDataSource(source, hasFrontContext),
+        months.isEmpty() ? "" : months.getFirst(),
+        List.of(),
+        assistantWarnings(source, hasFrontContext)
+    );
+  }
+
+  private String assistantDataSource(String source, boolean hasFrontContext) {
+    if (source != null && (source.contains("blocked") || source.contains("out-of-scope"))) {
+      return "SYSTEM_GUARDRAIL";
+    }
+    if (source != null && source.contains("deepseek")) {
+      return hasFrontContext ? "AI_ENRICHED_FRONTEND_CONTEXT" : "AI_ENRICHED_BACKEND_FINANCE";
+    }
+    if (source != null && source.contains("frontend-context")) {
+      return "FRONTEND_CONTEXT";
+    }
+    if (source != null && source.contains("backend-finance")) {
+      return "BACKEND_FINANCE";
+    }
+    return hasFrontContext ? "FRONTEND_CONTEXT" : "LOCAL_RULES";
+  }
+
+  private List<String> assistantWarnings(String source, boolean hasFrontContext) {
+    List<String> warnings = new ArrayList<>();
+    if (source != null && (source.contains("blocked") || source.contains("out-of-scope"))) {
+      warnings.add("已启用系统安全边界，仅回答门店利润系统内的问题。");
+      return warnings;
+    }
+    if (hasFrontContext) {
+      warnings.add("回答基于当前页面可见数据。");
+    } else {
+      warnings.add("回答基于后端财务库和当前用户权限范围。");
+    }
+    if (source != null && source.contains("fallback")) {
+      warnings.add("AI 暂不可用，已使用本地规则或后端财务数据回答。");
+    }
+    return warnings;
   }
 
   private String localAnswer(AuthUser user, String message, boolean hasFrontContext) {
