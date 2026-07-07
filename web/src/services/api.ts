@@ -185,6 +185,31 @@ export interface AssistantReply {
   source: string;
 }
 
+export interface InspectionDetection {
+  class_id: number;
+  class_name: string;
+  confidence: number;
+  source: string;
+  on_floor: boolean;
+  large_circle?: boolean;
+  box_xyxy: number[];
+}
+
+export interface InspectionDetectResult {
+  image_id: string;
+  filename: string;
+  passed: boolean;
+  review_status: string;
+  auto_status: string;
+  detection_count: number;
+  detections: InspectionDetection[];
+  detection_summary: string;
+  annotated_image: string;
+  deduction_project: string;
+  deduction_content: string;
+  deduction_score: number | string;
+}
+
 export interface OperationLogRecord {
   id: number;
   operatorId: number | null;
@@ -289,6 +314,15 @@ export async function chatWithAssistant(message: string, history: AssistantTurn[
   const { data } = await api.post<ApiResponse<AssistantReply>>('/assistant/chat', {
     message,
     history
+  });
+  return data.data;
+}
+
+export async function detectInspectionPhoto(file: File) {
+  const formData = new FormData();
+  formData.append('file', file);
+  const { data } = await api.post<ApiResponse<InspectionDetectResult>>('/inspections/detect', formData, {
+    timeout: 120000
   });
   return data.data;
 }

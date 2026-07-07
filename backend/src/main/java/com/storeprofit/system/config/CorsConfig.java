@@ -22,6 +22,7 @@ public class CorsConfig {
     config.setAllowedOriginPatterns(properties.getAllowedOriginPatterns());
     config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
     config.setAllowedHeaders(List.of("*"));
+    config.setExposedHeaders(List.of("X-Export-Filename", "Content-Disposition"));
     config.setAllowCredentials(false);
 
     UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
