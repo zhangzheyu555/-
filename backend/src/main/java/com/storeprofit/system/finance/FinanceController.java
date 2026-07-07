@@ -27,8 +27,7 @@ public class FinanceController {
   public ApiResponse<List<String>> months(
       @RequestHeader(value = "Authorization", required = false) String authorization
   ) {
-    authService.requireUser(authorization);
-    return ApiResponse.ok(financeService.months());
+    return ApiResponse.ok(financeService.months(authService.requireUser(authorization)));
   }
 
   @GetMapping("/dashboard")

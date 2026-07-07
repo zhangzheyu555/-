@@ -363,7 +363,7 @@ public class AssistantService {
   }
 
   private List<String> dataMonths(AuthUser user) {
-    return financeService.months().stream()
+    return financeService.months(user).stream()
         .filter(month -> !financeService.entries(user, month, null, null).isEmpty())
         .distinct()
         .toList();

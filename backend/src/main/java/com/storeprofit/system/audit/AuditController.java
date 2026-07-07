@@ -2,6 +2,7 @@ package com.storeprofit.system.audit;
 
 import com.storeprofit.system.common.ApiResponse;
 import com.storeprofit.system.platform.auth.AuthService;
+import com.storeprofit.system.platform.auth.AuthUser;
 import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -25,7 +26,7 @@ public class AuditController {
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @RequestParam(defaultValue = "200") int limit
   ) {
-    authService.requireUser(authorization);
-    return ApiResponse.ok(auditRepository.logs(limit));
+    AuthUser user = authService.requireUser(authorization);
+    return ApiResponse.ok(auditRepository.logs(user.tenantId(), limit));
   }
 }

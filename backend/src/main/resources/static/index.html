@@ -259,6 +259,21 @@
   .bmsg.rich .qlinks{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
   .bmsg.rich .qlink{font-size:12px;border:1px solid var(--line);background:#fff;border-radius:99px;padding:5px 11px;color:var(--primary);cursor:pointer;transition:.15s}
   .bmsg.rich .qlink:hover{border-color:var(--primary);background:var(--primary-soft)}
+  .bot-storebar{display:grid;grid-template-columns:minmax(260px,360px) 1fr;gap:12px;margin-bottom:14px;align-items:stretch}
+  .bot-storepanel,.bot-store-summary{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px 16px;box-shadow:0 8px 24px rgba(31,35,48,.05)}
+  .bot-store-eyebrow{font-size:11px;font-weight:800;color:var(--muted);margin-bottom:7px}
+  .bot-storepick{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .bot-storepick select{max-width:100%}
+  .bot-store-note{font-size:12px;color:var(--muted);line-height:1.5;margin-top:8px}
+  .bot-store-summary{display:grid;grid-template-columns:repeat(4,minmax(112px,1fr));gap:10px}
+  .bot-store-summary .mini{background:var(--bg);border-radius:10px;padding:10px 12px;min-width:0}
+  .bot-store-summary .mini .k{font-size:11px;color:var(--muted);white-space:nowrap}
+  .bot-store-summary .mini .v{font-size:18px;font-weight:900;margin-top:4px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bot-store-summary .mini.good .v{color:var(--good)}
+  .bot-store-summary .mini.bad .v{color:var(--bad)}
+  .bot-store-summary .mini.warn .v{color:var(--warn)}
+  .bot-store-summary.empty{display:block;color:var(--muted);font-size:13px;line-height:1.7}
+  .bot-chat-card{padding-top:16px}
   .botchips{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0 4px}
   .bchip{font-size:12px;border:1px solid var(--line);background:#fff;border-radius:99px;padding:6px 11px;color:var(--ink);transition:.15s}
   .bchip:hover{border-color:var(--primary);color:var(--primary)}
@@ -267,6 +282,15 @@
   .botinput input:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft)}
   .botinput button{background:var(--primary);color:#fff;border:0;border-radius:11px;padding:0 20px;font-size:14px;font-weight:700}
   .botinput button:disabled{background:#c9cdd6}
+  @media(max-width:900px){
+    .bot-storebar{grid-template-columns:1fr}
+    .bot-store-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+  }
+  @media(max-width:560px){
+    .bot-store-summary{grid-template-columns:1fr}
+    .botinput{align-items:stretch}
+    .botinput button{min-height:44px}
+  }
   /* 员工工资 */
   .sal-tb{width:100%;border-collapse:collapse;font-size:13.5px}
   .sal-tb th{text-align:left;font-size:11.5px;font-weight:700;color:var(--muted);padding:11px 12px;border-bottom:1px solid var(--line);white-space:nowrap;position:sticky;top:0;background:var(--surface)}
@@ -330,7 +354,7 @@
       <button class="tab" data-v="report"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V5a2 2 0 00-2-2h-4"/><rect x="9" y="2" width="6" height="4" rx="1"/><path d="M8 11h8M8 15h5"/></svg><span class="lab">利润表</span></button>
       <button class="tab" data-v="detail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l1.5-5h15L21 9"/><path d="M4 9v10a1 1 0 001 1h14a1 1 0 001-1V9"/><path d="M3 9h18"/><path d="M9 20v-6h6v6"/></svg><span class="lab">门店详情</span></button>
       <button class="tab" data-v="inspect"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg><span class="lab">督导巡店</span></button>
-      <button class="tab" data-v="bot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 01-8.5 8.5 9 9 0 01-4-1L3 20l1-3.5a8.38 8.38 0 01-1-4A8.5 8.5 0 0121 11.5z"/><circle cx="9" cy="11.5" r="1"/><circle cx="13" cy="11.5" r="1"/></svg><span class="lab">数据助手</span></button>
+      <button class="tab" data-v="bot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 01-8.5 8.5 9 9 0 01-4-1L3 20l1-3.5a8.38 8.38 0 01-1-4A8.5 8.5 0 0121 11.5z"/><circle cx="9" cy="11.5" r="1"/><circle cx="13" cy="11.5" r="1"/></svg><span class="lab">门店助手</span></button>
       <button class="tab" data-v="entry"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg><span class="lab">数据录入</span></button>
       <button class="tab" data-v="expense"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2h11l3 3v17l-2.5-1.7L15 22l-2.5-1.7L10 22l-2.5-1.7L5 22z"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="9" y1="12" x2="15" y2="12"/></svg><span class="lab">报销栏</span></button>
       <button class="tab" data-v="export"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 9 12 4 17 9"/><line x1="12" y1="4" x2="12" y2="16"/></svg><span class="lab">数据导出</span></button>
@@ -411,14 +435,25 @@
     <!-- BOT (数据助手) -->
     <div class="view" id="v-bot">
       <div class="h">
-        <h1>数据助手</h1>
+        <h1>门店经营助手</h1>
         <div class="right"><button class="btn-ghost" id="botClear">清空对话</button></div>
       </div>
-      <div class="card">
+      <div class="bot-storebar">
+        <div class="bot-storepanel">
+          <div class="bot-store-eyebrow">当前门店</div>
+          <div class="bot-storepick">
+            <select class="monthsel" id="botStore"></select>
+            <select class="monthsel" id="botMonth"></select>
+          </div>
+          <div class="bot-store-note" id="botStoreNote"></div>
+        </div>
+        <div class="bot-store-summary" id="botStoreSummary"></div>
+      </div>
+      <div class="card bot-chat-card">
         <div id="botMsgs" class="botmsgs"></div>
         <div class="botchips" id="botChips"></div>
         <div class="botinput">
-          <input id="botInput" placeholder="输入需求即可，例如：保利店营业额 / 保利店各月营收 / 1-5月净利排名" autocomplete="off">
+          <input id="botInput" placeholder="问当前门店，例如：本月营业额 / 净利润 / 成本异常" autocomplete="off">
           <button id="botSend">发送</button>
         </div>
       </div>
@@ -750,6 +785,7 @@ async function login(){
   if(!a){err.textContent="密码不正确";return;}
   LOGIN_PASS=v;
   BOT_BACKEND_TOKEN="";
+  try{ STORAGE_BACKEND_TOKEN=""; }catch(_){}
   LOGIN_ROLE=a.role; CURRENT_ROLE=a.role; MANAGED_SID=a.sid||null; LOGIN_USER=a.name||a.role;
   enterApp();
 }
@@ -768,7 +804,7 @@ function setupRoles(){
   document.getElementById("roleSel").onchange=e=>{ CURRENT_ROLE=e.target.value; if(CURRENT_ROLE==="店长"&&!MANAGED_SID)MANAGED_SID=STORES[0]?.id; applyRole(); };
   rs.onchange=e=>{ MANAGED_SID=e.target.value; applyRole(); };
 }
-document.getElementById("logoutBtn").onclick=()=>{AUTHED=false;LOGIN_PASS="";BOT_BACKEND_TOKEN="";document.getElementById("app").style.display="none";document.getElementById("pin").value="";document.getElementById("loginErr").textContent="";showLogin();};
+document.getElementById("logoutBtn").onclick=()=>{AUTHED=false;LOGIN_PASS="";BOT_BACKEND_TOKEN="";try{STORAGE_BACKEND_TOKEN="";}catch(_){}document.getElementById("app").style.display="none";document.getElementById("pin").value="";document.getElementById("loginErr").textContent="";showLogin();};
 
 /* ---------- nav ---------- */
 document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{
@@ -1741,11 +1777,136 @@ function renderInspList(body){
 /* ---- 子视图2：发起巡检 ---- */
 function inspBlankDraft(){
   const first=inspStores()[0];
-  return { sid:first?first.id:null, brand:first?first.brand:Object.keys(BRANDS)[0], date:todayISO(), inspector:"", fullScore:100, deductions:[], redlines:[], note:"" };
+  return { sid:first?first.id:null, brand:first?first.brand:Object.keys(BRANDS)[0], date:todayISO(), inspector:"", fullScore:100, photos:[], aiSuggestions:[], deductions:[], redlines:[], note:"" };
 }
 const GENERIC_DIMS=["食品安全","卫生","服务","环境","其他"];
+const INSP_PHOTO_CATS=["门头","收银/吧台","后厨/仓库","冰箱/冷柜","物料/标签","员工操作","环境卫生","其他"];
+const INSP_PHOTO_AI_ENDPOINT="";
 function inspDims(brand){ const st=brandStd(brand); return st?st.groups.map(g=>g.dim):GENERIC_DIMS; }
 function inspClausesOf(brand,dim){ const st=brandStd(brand); if(!st)return []; const g=st.groups.find(g=>g.dim===dim); return g?g.items:[]; }
+function inspHtml(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+function inspPhotoId(prefix){return (prefix||"ip")+Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
+function inspEnsureMedia(d){
+  d=d||INSP_DRAFT;
+  if(!d)return {photos:[],aiSuggestions:[]};
+  if(!Array.isArray(d.photos))d.photos=[];
+  if(!Array.isArray(d.aiSuggestions))d.aiSuggestions=[];
+  return d;
+}
+function inspPhotoById(id,d){
+  d=inspEnsureMedia(d);
+  return d.photos.find(p=>p.id===id)||null;
+}
+function inspPhotoObj(p,cat){
+  if(!p)return null;
+  if(typeof p==="string")return {id:"",src:p,category:cat||"现场照片"};
+  const src=p.src||p.url||p.photo||"";
+  return src?{id:p.id||"",src,category:p.category||cat||"现场照片",createdAt:p.createdAt||p.at||"",source:p.source||""}:null;
+}
+function inspDeductionPhotos(x){
+  const out=[];
+  (Array.isArray(x&&x.photos)?x.photos:[]).forEach(p=>{const po=inspPhotoObj(p,x.dim);if(po)out.push(po);});
+  if(x&&x.photo&&!out.find(p=>p.src===x.photo))out.push({id:"",src:x.photo,category:x.dim||"现场照片"});
+  return out;
+}
+function inspRecordPhotos(r){
+  const out=[], seen=new Set();
+  function add(p,cat){
+    const po=inspPhotoObj(p,cat);
+    if(!po||seen.has(po.src))return;
+    seen.add(po.src); out.push(po);
+  }
+  (Array.isArray(r&&r.photos)?r.photos:[]).forEach(p=>add(p));
+  (r&&r.deductions||[]).forEach(d=>inspDeductionPhotos(d).forEach(p=>add(p,d.dim)));
+  return out;
+}
+function inspDimForPhoto(cat){
+  const dims=inspDims(INSP_DRAFT&&INSP_DRAFT.brand);
+  const pick=names=>dims.find(d=>names.some(n=>d.indexOf(n)>=0));
+  return (cat==="物料/标签"&&pick(["品质","食品","物料"]))||
+    ((cat==="后厨/仓库"||cat==="冰箱/冷柜"||cat==="环境卫生")&&pick(["卫生","环境","食品"]))||
+    (cat==="员工操作"&&pick(["服务","操作","人员"]))||
+    (cat==="门头"&&pick(["环境","形象"]))||
+    dims[0]||"其他";
+}
+function inspReviewIssueForPhoto(cat){
+  const map={
+    "门头":"请核对门头、灯箱、海报、陈列是否完整清洁，发现问题后改成具体描述。",
+    "收银/吧台":"请核对吧台台面、杯具、工具、标签和收银区摆放，发现问题后改成具体描述。",
+    "后厨/仓库":"请核对后厨/仓库卫生、地面、墙角、物料分区和防虫防潮，发现问题后改成具体描述。",
+    "冰箱/冷柜":"请核对冰箱温度、密封、清洁、开封物料标签和效期，发现问题后改成具体描述。",
+    "物料/标签":"请核对物料效期、开封标签、先进先出和摆放规范，发现问题后改成具体描述。",
+    "员工操作":"请核对员工着装、洗手消毒、操作流程和服务状态，发现问题后改成具体描述。",
+    "环境卫生":"请核对就餐区、地面、垃圾桶、设备表面和死角卫生，发现问题后改成具体描述。"
+  };
+  return map[cat]||"请核对照片中是否存在卫生、物料、服务或环境问题，发现后改成具体描述。";
+}
+function inspLocalSuggestion(photo){
+  const cat=photo.category||"其他";
+  return {id:inspPhotoId("is"),photoId:photo.id,dim:inspDimForPhoto(cat),issue:inspReviewIssueForPhoto(cat),deduct:1,source:"检查提示",status:"pending"};
+}
+function inspThumbsHtml(photos,empty){
+  const arr=(photos||[]).map(p=>inspPhotoObj(p)).filter(Boolean);
+  if(!arr.length)return empty||"—";
+  return `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">`+
+    arr.slice(0,4).map(p=>`<img src="${p.src}" title="${inspHtml(p.category)}" onclick="inspOpenPhoto(this.src)" style="height:42px;width:54px;object-fit:cover;border-radius:7px;border:1px solid var(--line);cursor:pointer;background:#fff">`).join("")+
+    (arr.length>4?`<span style="font-size:11px;color:var(--muted)">+${arr.length-4}</span>`:"")+`</div>`;
+}
+function inspPhotoOptionsHtml(selected){
+  const d=inspEnsureMedia(), photos=d.photos||[];
+  if(!photos.length)return "";
+  return `<select style="width:auto;min-width:138px;padding:7px 9px;font-size:12px" onchange="if(this.value){inspBindPhotoToDeduct(${selected.index},this.value);this.value=''}"><option value="">绑定已拍照片</option>`+
+    photos.map((p,i)=>`<option value="${p.id}">${inspHtml(p.category||"现场照片")} #${i+1}</option>`).join("")+`</select>`;
+}
+function inspPhotoGridHtml(){
+  const d=inspEnsureMedia(), photos=d.photos||[];
+  if(!photos.length)return `<div class="empty" style="padding:14px 8px;text-align:left"><b>还没有现场照片</b>可以一次选多张。照片会先作为证据保存，再由督导确认是否转成扣分项。</div>`;
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:12px">`+
+    photos.map((p,i)=>`<div style="background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px">
+      <img src="${p.src}" onclick="inspOpenPhoto(this.src)" style="width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:pointer">
+      <div style="display:flex;gap:6px;align-items:center;margin-top:7px">
+        <select style="flex:1;padding:6px 8px;font-size:12px" onchange="inspSetPhotoCategory('${p.id}',this.value)">${INSP_PHOTO_CATS.map(c=>`<option ${c===(p.category||"其他")?"selected":""}>${c}</option>`).join("")}</select>
+        <button class="del" title="删除照片" onclick="inspDeletePhoto('${p.id}')">✕</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:5px">照片 #${i+1} · ${inspHtml(p.status||"已保存")}</div>
+    </div>`).join("")+`</div>`;
+}
+function inspSuggestionById(id){
+  return (inspEnsureMedia().aiSuggestions||[]).find(s=>s.id===id)||null;
+}
+function inspSuggestionsHtml(){
+  const d=inspEnsureMedia();
+  const pending=(d.aiSuggestions||[]).filter(s=>s.status!=="ignored"&&s.status!=="accepted");
+  if(!pending.length)return `<div style="font-size:12px;color:var(--muted);margin-top:12px">暂无待确认建议。可拍照后由系统生成核对提示，或直接在下方手动添加扣分项。</div>`;
+  const dims=inspDims(d.brand);
+  return `<div style="margin-top:12px"><div class="section-t">待督导确认（${pending.length}）</div>`+
+    pending.map(s=>{
+      const p=inspPhotoById(s.photoId,d);
+      const source=s.source==="AI"?"AI识别":"检查提示";
+      return `<div style="border:1px solid var(--line);background:#fff;border-radius:10px;padding:10px;margin-bottom:8px">
+        <div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap">
+          ${p?`<img src="${p.src}" onclick="inspOpenPhoto(this.src)" style="width:74px;height:56px;object-fit:cover;border-radius:7px;border:1px solid var(--line);cursor:pointer">`:""}
+          <div style="flex:1;min-width:220px">
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:7px">
+              <span style="font-size:11px;font-weight:800;color:${s.source==="AI"?"var(--primary)":"var(--muted)"};background:${s.source==="AI"?"var(--primary-soft)":"var(--bg)"};border-radius:99px;padding:2px 8px">${source}</span>
+              <select style="width:auto;min-width:120px;padding:6px 8px;font-size:12px" onchange="inspUpdateSuggestion('${s.id}','dim',this.value)">${dims.map(dm=>`<option ${dm===(s.dim||"")?"selected":""}>${dm}</option>`).join("")}</select>
+              <span style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--muted)">扣<input type="number" min="0" value="${s.deduct||1}" style="width:58px;padding:5px 7px" oninput="inspUpdateSuggestion('${s.id}','deduct',this.value)">分</span>
+            </div>
+            <input value="${inspHtml(s.issue||"")}" style="width:100%;padding:8px 10px;font-size:13px" oninput="inspUpdateSuggestion('${s.id}','issue',this.value)">
+            ${s.source==="AI"?"":`<div style="font-size:11px;color:var(--muted);margin-top:5px">这是按照片类型生成的核对提示，不会自动扣分；只有点“采纳”后才进入扣分清单。</div>`}
+          </div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <button class="btn-ghost" style="font-size:12px;padding:7px 10px;color:var(--good)" onclick="inspAcceptSuggestion('${s.id}')">采纳</button>
+            <button class="btn-ghost" style="font-size:12px;padding:7px 10px" onclick="inspIgnoreSuggestion('${s.id}')">忽略</button>
+          </div>
+        </div>
+      </div>`;
+    }).join("")+`</div>`;
+}
+function inspOpenPhoto(src){
+  const w=window.open("","_blank");
+  if(w)w.document.write(`<title>巡检照片</title><body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${src}" style="max-width:100%;max-height:100vh;object-fit:contain"></body>`);
+}
 
 function renderInspNew(body){
   if(!INSP_DRAFT) INSP_DRAFT=inspBlankDraft();
@@ -1767,15 +1928,17 @@ function renderInspNew(body){
     ${st?'':`<div style="font-size:12px;color:var(--warn);background:var(--warn-s,#FFF7E6);border-radius:8px;padding:8px 10px">该品牌（${d.brand}）的稽核标准尚未录入，可在下方自由填写维度与问题，或在「稽核标准」页了解茹菓示例。</div>`}
   </div>`;
 
-  // 拍照识别
+  // 现场照片证据
   html+=`<div class="card" style="margin-bottom:14px;border:1.5px dashed #b9c0cf;background:#f7f9fc">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-      <div><div style="font-weight:700">📷 现场拍照识别（辅助）</div><div style="font-size:11.5px;color:var(--muted);margin-top:3px">拍门店现场照片，AI 协助找出可见问题并生成扣分项，督导可再核对增删。</div></div>
+      <div><div style="font-weight:700">📷 现场照片证据</div><div style="font-size:11.5px;color:var(--muted);margin-top:3px">先拍/上传现场照片，系统生成待核对建议；督导确认后才进入扣分清单。</div></div>
       <div style="display:flex;gap:6px">
-        <label class="btn-ghost" style="cursor:pointer;font-size:12px;padding:7px 12px">拍照/选图<input type="file" id="insp_photo" accept="image/*" capture="environment" style="display:none" onchange="inspPhotoRecognize(this)"></label>
+        <label class="btn-ghost" style="cursor:pointer;font-size:12px;padding:7px 12px">拍照/选图<input type="file" id="insp_photo" accept="image/*" capture="environment" multiple style="display:none" onchange="inspPhotoRecognize(this)"></label>
       </div>
     </div>
-    <div id="insp_photo_status" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
+    <div id="insp_photo_status" style="font-size:12px;color:var(--muted);margin-top:8px">${(d.photos||[]).length?`已保存 ${(d.photos||[]).length} 张现场照片`:""}</div>
+    ${inspPhotoGridHtml()}
+    ${inspSuggestionsHtml()}
   </div>`;
 
   // 得分实时卡
@@ -1791,7 +1954,7 @@ function renderInspNew(body){
   // 扣分项列表
   html+=`<div class="card" style="margin-bottom:14px"><div class="section-t">扣分项清单（${d.deductions.length}）</div>`;
   if(!d.deductions.length){
-    html+=`<div class="empty" style="padding:18px">还没有扣分项。门店各项达标即满分；下方添加发现的问题，或用上方拍照识别。</div>`;
+    html+=`<div class="empty" style="padding:18px">还没有扣分项。门店各项达标即满分；下方添加发现的问题，或从上方照片建议中采纳。</div>`;
   }else{
     html+=d.deductions.map((x,i)=>`<div style="border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#fff">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
@@ -1800,8 +1963,10 @@ function renderInspNew(body){
       </div>
       <div style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap;align-items:center">
         <div style="display:flex;align-items:center;gap:5px"><span style="font-size:12px;color:var(--muted)">扣</span><input type="number" value="${x.deduct||0}" min="0" style="width:64px" oninput="INSP_DRAFT.deductions[${i}].deduct=+this.value||0;inspLiveScore()"><span style="font-size:12px;color:var(--muted)">分</span></div>
-        <input value="${(x.issue||'').replace(/"/g,'&quot;')}" placeholder="问题描述" style="flex:1;min-width:160px" oninput="INSP_DRAFT.deductions[${i}].issue=this.value">
-        ${x.photo?`<img src="${x.photo}" style="height:42px;border-radius:6px;border:1px solid var(--line)" title="已附照片">`:`<label class="btn-ghost" style="cursor:pointer;font-size:11px;padding:5px 9px">附照片<input type="file" accept="image/*" capture="environment" style="display:none" onchange="inspAttachPhoto(${i},this)"></label>`}
+        <input value="${inspHtml(x.issue||'')}" placeholder="问题描述" style="flex:1;min-width:160px" oninput="INSP_DRAFT.deductions[${i}].issue=this.value">
+        ${inspThumbsHtml(inspDeductionPhotos(x),`<span style="font-size:12px;color:var(--muted)">未绑定照片</span>`)}
+        ${inspPhotoOptionsHtml({index:i})}
+        <label class="btn-ghost" style="cursor:pointer;font-size:11px;padding:5px 9px">新拍证据<input type="file" accept="image/*" capture="environment" style="display:none" onchange="inspAttachPhoto(${i},this)"></label>
       </div></div>`).join("");
   }
   // 添加扣分项子表单
@@ -1815,6 +1980,7 @@ function renderInspNew(body){
     </div>
     <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
       <input id="nd_issue" placeholder="问题描述（如：开封物料未贴时效标签）" style="flex:1;min-width:200px">
+      ${d.photos&&d.photos.length?`<select id="nd_photo" style="width:auto;min-width:140px"><option value="">不绑定照片</option>${d.photos.map((p,i)=>`<option value="${p.id}">${inspHtml(p.category||"现场照片")} #${i+1}</option>`).join("")}</select>`:""}
       <button class="btn-ghost" onclick="inspAddDeduct()" style="padding:8px 16px">添加</button>
     </div></div>`;
   html+=`</div>`;
@@ -1861,7 +2027,9 @@ function inspAddDeduct(){
   }
   const deduct=+document.getElementById("nd_deduct").value||sugg;
   const issue=document.getElementById("nd_issue").value.trim();
-  d.deductions.push({dim,code,item,issue,deduct,photo:""});
+  const photoId=document.getElementById("nd_photo")?document.getElementById("nd_photo").value:"";
+  const p=photoId?inspPhotoById(photoId,d):null;
+  d.deductions.push({dim,code,item,issue,deduct,photo:p?p.src:"",photos:p?[{id:p.id,src:p.src,category:p.category||dim}]:[]});
   renderInspect();
 }
 function inspDelDeduct(i){ INSP_DRAFT.deductions.splice(i,1); renderInspect(); }
@@ -1875,38 +2043,113 @@ function inspToggleRedline(i,on){
 function inspCompress(file,cb){
   const r=new FileReader();
   r.onload=()=>{ const img=new Image(); img.onload=()=>{
-    const max=900; let w=img.width,h=img.height; if(w>max){h=Math.round(h*max/w);w=max;}
+    const max=1000; let w=img.width,h=img.height;
+    if(w>h&&w>max){h=Math.round(h*max/w);w=max;}
+    else if(h>=w&&h>max){w=Math.round(w*max/h);h=max;}
     const cv=document.createElement("canvas"); cv.width=w; cv.height=h;
-    cv.getContext("2d").drawImage(img,0,0,w,h);
-    cb(cv.toDataURL("image/jpeg",0.7));
+    const ctx=cv.getContext("2d"); ctx.fillStyle="#fff"; ctx.fillRect(0,0,w,h); ctx.drawImage(img,0,0,w,h);
+    cb(cv.toDataURL("image/jpeg",0.72));
   }; img.onerror=()=>cb(null); img.src=r.result; };
   r.onerror=()=>cb(null); r.readAsDataURL(file);
 }
+function inspCompressAsync(file){
+  return new Promise(res=>inspCompress(file,res));
+}
 function inspAttachPhoto(i,input){
   const f=input.files[0]; if(!f)return;
-  inspCompress(f,durl=>{ if(durl){ INSP_DRAFT.deductions[i].photo=durl; renderInspect(); } });
+  input.value="";
+  inspCompress(f,durl=>{
+    const d=inspEnsureMedia(), item=d.deductions[i];
+    if(!durl||!item)return;
+    const p={id:inspPhotoId("ip"),src:durl,category:item.dim||"扣分证据",status:"已绑定扣分项",createdAt:new Date().toISOString(),source:"manual"};
+    d.photos.push(p);
+    item.photos=Array.isArray(item.photos)?item.photos:[];
+    item.photos.push({id:p.id,src:p.src,category:p.category});
+    item.photo=item.photo||p.src;
+    renderInspect();
+  });
 }
 async function inspPhotoRecognize(input){
-  const f=input.files[0]; if(!f)return; input.value="";
-  const st=document.getElementById("insp_photo_status"); st.textContent="🔎 AI 识别现场问题中…";
-  inspCompress(f,async durl=>{
-    if(!durl){ st.textContent="❌ 图片读取失败"; return; }
-    const m=durl.match(/^data:(image\/\w+);base64,(.+)$/); if(!m){ st.textContent="❌ 图片格式异常"; return; }
-    const prompt=`这是奶茶/咖啡门店督导巡检的现场照片。请找出照片中"可见"的、违反门店品质/卫生/服务/环境标准的问题（如：物料未贴时效标签、台面脏污、物品摆放杂乱、设备霉斑、垃圾未清、展架不规范等）。\n只返回纯JSON数组，不要解释、不要markdown围栏，格式：[{"dim":"维度","issue":"问题描述","deduct":建议扣分整数}]。\n维度从这些里选最贴切的：${inspDims(INSP_DRAFT.brand).join("、")}。\n规则：只描述照片里确实看得到的问题，看不清就不要写；deduct取1-5的整数；没有发现明显问题就返回 []。`;
-    try{
-      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1200,messages:[{role:"user",content:[
-          {type:"image",source:{type:"base64",media_type:m[1],data:m[2]}},
-          {type:"text",text:prompt}]}]})});
-      const data=await res.json();
-      let txt=(data.content||[]).map(c=>c.text||"").join("").replace(/```json|```/g,"").trim();
-      const arr=JSON.parse(txt);
-      if(!Array.isArray(arr)||!arr.length){ st.textContent="✅ 识别完成：照片中未发现明显问题（你也可以手动添加）"; return; }
-      arr.forEach(it=>{ INSP_DRAFT.deductions.push({dim:it.dim||inspDims(INSP_DRAFT.brand)[0],code:"",item:"",issue:it.issue||"",deduct:+it.deduct||1,photo:durl,_ai:true}); });
-      st.textContent=`✅ 识别到 ${arr.length} 条疑似问题，已加入清单（标“AI建议”），请核对增删`;
-      renderInspect();
-    }catch(err){ st.textContent="❌ 识别失败，请重试或手动添加。("+(err.message||err)+")"; }
+  const files=[...input.files].filter(f=>(f.type||"").startsWith("image/"));
+  input.value="";
+  if(!files.length)return;
+  const d=inspEnsureMedia();
+  const st=document.getElementById("insp_photo_status");
+  if(st)st.textContent=`正在处理 ${files.length} 张照片…`;
+  let added=0, failed=0, aiN=0;
+  for(const f of files){
+    const durl=await inspCompressAsync(f);
+    if(!durl){failed++;continue;}
+    const p={id:inspPhotoId("ip"),src:durl,category:"其他",status:"已保存",createdAt:new Date().toISOString(),source:"upload",name:f.name||""};
+    d.photos.push(p); added++;
+    const aiItems=await inspAnalyzePhotoBackend(p);
+    if(aiItems.length){
+      aiItems.forEach(it=>d.aiSuggestions.push({id:inspPhotoId("is"),photoId:p.id,dim:it.dim||inspDimForPhoto(p.category),issue:it.issue||"",deduct:+it.deduct||1,source:"AI",status:"pending"}));
+      aiN+=aiItems.length;
+    }else{
+      d.aiSuggestions.push(inspLocalSuggestion(p));
+    }
+  }
+  renderInspect();
+  toast(`已保存 ${added} 张照片${aiN?`，生成 ${aiN} 条AI建议`:"，生成待核对提示"}${failed?`，${failed} 张失败`:""}`);
+}
+async function inspAnalyzePhotoBackend(photo){
+  if(!INSP_PHOTO_AI_ENDPOINT)return [];
+  try{
+    const res=await fetch(INSP_PHOTO_AI_ENDPOINT,{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({sid:INSP_DRAFT.sid,brand:INSP_DRAFT.brand,date:INSP_DRAFT.date,category:photo.category,image:photo.src})});
+    if(!res.ok)return [];
+    const data=await res.json();
+    const arr=Array.isArray(data)?data:(data.suggestions||data.items||[]);
+    return Array.isArray(arr)?arr.filter(x=>x&&x.issue).slice(0,6):[];
+  }catch(_){ return []; }
+}
+function inspSetPhotoCategory(id,cat){
+  const d=inspEnsureMedia(), p=inspPhotoById(id,d);
+  if(!p)return;
+  p.category=cat||"其他";
+  (d.aiSuggestions||[]).filter(s=>s.photoId===id&&s.source!=="AI"&&s.status==="pending").forEach(s=>{
+    s.dim=inspDimForPhoto(p.category);
+    s.issue=inspReviewIssueForPhoto(p.category);
   });
+  renderInspect();
+}
+function inspDeletePhoto(id){
+  const d=inspEnsureMedia(), p=inspPhotoById(id,d);
+  if(!p)return;
+  d.photos=d.photos.filter(x=>x.id!==id);
+  d.aiSuggestions=(d.aiSuggestions||[]).filter(s=>s.photoId!==id);
+  (d.deductions||[]).forEach(x=>{
+    x.photos=(Array.isArray(x.photos)?x.photos:[]).filter(ph=>ph.id!==id&&ph.src!==p.src);
+    if(x.photo===p.src)x.photo=(x.photos[0]&&x.photos[0].src)||"";
+  });
+  renderInspect();
+}
+function inspBindPhotoToDeduct(i,id){
+  const d=inspEnsureMedia(), p=inspPhotoById(id,d), item=d.deductions[i];
+  if(!p||!item)return;
+  item.photos=Array.isArray(item.photos)?item.photos:[];
+  if(!item.photos.find(x=>x.id===p.id||x.src===p.src))item.photos.push({id:p.id,src:p.src,category:p.category||item.dim});
+  item.photo=item.photo||p.src;
+  renderInspect();
+}
+function inspUpdateSuggestion(id,key,val){
+  const s=inspSuggestionById(id); if(!s)return;
+  if(key==="deduct")s.deduct=+val||0;
+  else s[key]=val;
+}
+function inspAcceptSuggestion(id){
+  const d=inspEnsureMedia(), s=inspSuggestionById(id);
+  if(!s)return;
+  const p=s.photoId?inspPhotoById(s.photoId,d):null;
+  d.deductions.push({dim:s.dim||inspDims(d.brand)[0],code:"",item:"",issue:(s.issue||"").trim(),deduct:+s.deduct||1,photo:p?p.src:"",photos:p?[{id:p.id,src:p.src,category:p.category||s.dim}]:[],_ai:s.source==="AI"});
+  s.status="accepted";
+  renderInspect();
+}
+function inspIgnoreSuggestion(id){
+  const s=inspSuggestionById(id); if(!s)return;
+  s.status="ignored";
+  renderInspect();
 }
 async function inspSave(){
   if(!can("inspect")){ toast("无权发起巡检"); return; }
@@ -1915,7 +2158,11 @@ async function inspSave(){
   if(!d.date){ toast("请选择巡检日期"); return; }
   const rec={ id:"insp"+Date.now(), sid:d.sid, brand:d.brand, date:d.date,
     inspector:(d.inspector||"").trim()||CURRENT_USER, fullScore:+d.fullScore||100,
-    deductions:d.deductions.map(x=>({dim:x.dim||"",code:x.code||"",item:x.item||"",issue:(x.issue||"").trim(),deduct:+x.deduct||0,photo:x.photo||""})),
+    photos:(d.photos||[]).map(p=>({id:p.id||inspPhotoId("ip"),src:p.src||"",category:p.category||"现场照片",createdAt:p.createdAt||"",source:p.source||""})).filter(p=>p.src),
+    deductions:d.deductions.map(x=>{
+      const photos=inspDeductionPhotos(x).map(p=>({id:p.id||"",src:p.src,category:p.category||x.dim||"现场照片"}));
+      return {dim:x.dim||"",code:x.code||"",item:x.item||"",issue:(x.issue||"").trim(),deduct:+x.deduct||0,photo:(x.photo||((photos[0]||{}).src)||""),photos};
+    }),
     redlines:d.redlines.map(x=>({item:x.item})), note:(d.note||"").trim(),
     by:CURRENT_USER, at:new Date().toISOString() };
   INSPECTIONS.unshift(rec);
@@ -1973,6 +2220,16 @@ function renderInspDetail(body,id){
         <div style="font-size:15px;font-weight:800;color:${ok?'var(--good)':'var(--bad)'}">${ok?'✓ 合格':'⚠ 不合格（红线）'}</div>
       </div>
     </div></div>`;
+  const evidence=inspRecordPhotos(r);
+  if(evidence.length){
+    html+=`<div class="card" style="margin-bottom:14px">
+      <div class="section-t">现场照片证据（${evidence.length}）</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px">`+
+      evidence.map((p,i)=>`<div style="border:1px solid var(--line);border-radius:10px;padding:7px;background:#fff">
+        <img src="${p.src}" onclick="inspOpenPhoto(this.src)" style="width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:pointer">
+        <div style="font-size:11px;color:var(--muted);margin-top:5px">${inspHtml(p.category||"现场照片")} #${i+1}</div>
+      </div>`).join("")+`</div></div>`;
+  }
   html+=inspStoreTrend(r.sid,r.id);
   // 红线
   if((r.redlines||[]).length){
@@ -1986,7 +2243,7 @@ function renderInspDetail(body,id){
     html+=`<div class="empty" style="padding:16px">无扣分项，各项达标 🎉</div>`;
   }else{
     html+=`<div style="overflow-x:auto"><table class="ranktbl" style="min-width:560px"><thead><tr><th>维度</th><th>条款</th><th>问题描述</th><th class="r">扣分</th><th>照片</th></tr></thead><tbody>`+
-      r.deductions.map(x=>`<tr><td>${x.dim||'—'}</td><td style="color:var(--muted)">${x.code||'—'}${x.item?'<br>'+x.item:''}</td><td>${x.issue||'—'}</td><td class="r tnum" style="color:var(--bad);font-weight:700">-${x.deduct||0}</td><td>${x.photo?`<img src="${x.photo}" style="height:46px;border-radius:6px;border:1px solid var(--line);cursor:pointer" onclick="window.open('').document.write('<img src=\\'${x.photo}\\' style=max-width:100%>')">`:'—'}</td></tr>`).join("")+
+      r.deductions.map(x=>`<tr><td>${x.dim||'—'}</td><td style="color:var(--muted)">${x.code||'—'}${x.item?'<br>'+x.item:''}</td><td>${x.issue||'—'}</td><td class="r tnum" style="color:var(--bad);font-weight:700">-${x.deduct||0}</td><td>${inspThumbsHtml(inspDeductionPhotos(x),'—')}</td></tr>`).join("")+
       `</tbody></table></div>`;
   }
   html+=`</div>`;
@@ -2012,7 +2269,7 @@ function inspDownloadBlob(blob,name){
 async function inspExport(id){
   const r=INSPECTIONS.find(x=>x.id===id); if(!r){toast("无记录");return;}
   const s=STORES.find(x=>x.id===r.sid);
-  const hasPhoto=(r.deductions||[]).some(d=>d.photo);
+  const hasPhoto=inspRecordPhotos(r).length>0;
   toast(hasPhoto?"正在生成巡检表（含照片）…":"正在生成巡检表…");
   const ok=await inspLoadExcelJS();
   if(ok&&window.ExcelJS){
@@ -2065,7 +2322,8 @@ async function inspExportRich(r,s){
       const cc=ws.getCell(row,3); cc.value=-(d.deduct||0); cc.font={bold:true,color:BAD}; cc.alignment=ctr;
       bdRow(row);
       let h=34;
-      if(d.photo){ const m=d.photo.match(/^data:image\/(\w+);base64,(.+)$/);
+      const firstPhoto=(inspDeductionPhotos(d)[0]||{}).src||"";
+      if(firstPhoto){ const m=firstPhoto.match(/^data:image\/(\w+);base64,(.+)$/);
         if(m){ let ext=m[1].toLowerCase(); if(ext==="jpg")ext="jpeg";
           try{ const imgId=wb.addImage({base64:m[2],extension:ext});
             ws.addImage(imgId,{tl:{col:3.05,row:(row-1)+0.05},ext:{width:120,height:90}}); h=72; }catch(e){}
@@ -2088,7 +2346,7 @@ async function inspExportRich(r,s){
   const td=ws.getCell(row,4); td.value=sc+" / "+(r.fullScore||100); td.font={bold:true,size:13,color:ok?GOOD:BAD}; td.alignment=ctr; bdRow(row); ws.getRow(row).height=24;
   const buf=await wb.xlsx.writeBuffer();
   inspDownloadBlob(new Blob([buf],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}),`${s?s.name:r.sid}_${r.date||""}_巡检表.xlsx`);
-  toast("巡检表已导出"+((r.deductions||[]).some(d=>d.photo)?"（含照片）":""));
+  toast("巡检表已导出"+(inspRecordPhotos(r).length?"（含照片）":""));
 }
 // 保底版（SheetJS，纯文字无照片）
 function inspExportBasic(r,s){
@@ -2148,6 +2406,7 @@ function renderInspStd(body){
 /* ---------- 数据助手（本地简单问答） ---------- */
 let BOT_HISTORY=[], botBusy=false;
 let BOT_BACKEND_TOKEN="", BOT_BACKEND_TOKEN_PROMISE=null;
+let BOT_SID=null, BOT_MONTH=null;
 function escHtml(s){return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
 function botJsArg(s){return String(s).replace(/\\/g,"\\\\").replace(/'/g,"\\'").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
 function botQLink(q,label){return `<span class="qlink" onclick="botAsk('${botJsArg(q)}')">${escHtml(label||q)}</span>`;}
@@ -2164,9 +2423,29 @@ function botLatestEntryMonth(stores){
 }
 function botMonthText(m){return (+String(m).split("-")[1]||0)+"月";}
 function botDefaultMonthText(){return botMonthText(botLatestEntryMonth());}
+function botScopedStores(){
+  const stores=visibleStores();
+  return stores.length?stores:STORES;
+}
+function botCurrentStore(){
+  const stores=botScopedStores();
+  if(!stores.length)return null;
+  if(CURRENT_ROLE==="店长"&&MANAGED_SID)BOT_SID=MANAGED_SID;
+  if(BOT_SID&&stores.some(s=>s.id===BOT_SID))return stores.find(s=>s.id===BOT_SID);
+  const withData=stores.find(s=>Object.keys(ENTRIES).some(k=>k.startsWith(s.id+"|")));
+  BOT_SID=(withData||stores[0]).id;
+  return stores.find(s=>s.id===BOT_SID)||null;
+}
+function botCurrentMonth(store){
+  const months=botAllEntryMonths(store?[store]:botScopedStores());
+  if(months.length&&BOT_MONTH&&months.includes(BOT_MONTH))return BOT_MONTH;
+  BOT_MONTH=months.length?months[months.length-1]:botLatestEntryMonth(store?[store]:botScopedStores());
+  return BOT_MONTH;
+}
 function botChips(){
-  const t=botDefaultMonthText();
-  return [`保利店${t}营业额`,`${t}各店净利排名`,`${t}哪些店在亏损？`,"保利店各月营业额","荆州之星店人员名单","霸王茶姬各月营收","美佳华店员工工资"];
+  const store=botCurrentStore(), month=botCurrentMonth(store), t=botMonthText(month);
+  if(!store)return ["本月营业额","净利润","成本异常"];
+  return [`${store.name}${t}营业额`,`${store.name}${t}净利润`,`${store.name}${t}成本异常`,` ${store.name}各月营收`.trim()];
 }
 function botMonthHint(months,makeQuestion){
   const list=(months&&months.length?months:botAllEntryMonths()).sort();
@@ -2174,11 +2453,65 @@ function botMonthHint(months,makeQuestion){
   const links=list.map(m=>botQLink(makeQuestion?makeQuestion(m):`${botMonthText(m)}各店净利排名`,mLabel(m))).join("");
   return `<div class="qsub">当前已有经营数据月份：${list.map(mLabel).join("、")}。</div><div class="qlinks">${links}</div>`;
 }
-function buildDataContext(){
-  const latest=botLatestEntryMonth();
-  let csv=`当前前端可见数据；未指定月份时默认使用最新已录入月份：${latest}（${mLabel(latest)}）。\n`;
+function botStoreSummaryHtml(store,month){
+  if(!store)return "还没有可查看的门店。";
+  const e=ENTRIES[eKey(store.id,month)];
+  if(!e){
+    const months=botAllEntryMonths([store]);
+    return `<b>${escHtml(store.name)} ${mLabel(month)} 暂无经营数据</b><br>${months.length?`可切换到：${months.map(mLabel).join("、")}`:"这家店还没有录入月份。"}`;
+  }
+  const c=calc(e), good=c.net>=0, margin=(c.margin*100).toFixed(1)+"%";
+  let status="正常", cls=good?"good":"bad";
+  if(c.net<0)status="亏损";
+  else if(c.margin<.08){status="低利润";cls="warn";}
+  return `
+    <div class="mini"><div class="k">营业额</div><div class="v">${fmt(c.sales)}</div></div>
+    <div class="mini ${good?"good":"bad"}"><div class="k">净利润</div><div class="v">${fmt(c.net)}</div></div>
+    <div class="mini ${good?"good":"bad"}"><div class="k">净利率</div><div class="v">${margin}</div></div>
+    <div class="mini ${cls}"><div class="k">状态</div><div class="v">${status}</div></div>`;
+}
+function botRenderStoreContext(){
+  const storeSel=document.getElementById("botStore"), monthSel=document.getElementById("botMonth");
+  if(!storeSel||!monthSel)return;
+  const stores=botScopedStores();
+  const store=botCurrentStore();
+  const storeOptions=stores.map(s=>`<option value="${s.id}" ${store&&s.id===store.id?"selected":""}>${s.name}（${s.brand}）</option>`).join("");
+  storeSel.innerHTML=storeOptions||`<option>暂无门店</option>`;
+  storeSel.disabled=CURRENT_ROLE==="店长"||stores.length<=1;
+  storeSel.onchange=e=>{BOT_SID=e.target.value;BOT_MONTH=null;BOT_HISTORY=[];botInit();};
+
+  const month=botCurrentMonth(store);
+  const months=botAllEntryMonths(store?[store]:stores);
+  monthSel.innerHTML=(months.length?months.slice().reverse():[month]).map(m=>`<option value="${m}" ${m===month?"selected":""}>${m}</option>`).join("");
+  monthSel.disabled=!months.length;
+  monthSel.onchange=e=>{BOT_MONTH=e.target.value;BOT_HISTORY=[];botInit();};
+
+  const note=document.getElementById("botStoreNote");
+  if(note&&store){
+    const rawNote=store.note||"当前门店经营数据";
+    note.textContent=rawNote.startsWith(store.brand)?rawNote:`${store.brand} · ${rawNote}`;
+  }else if(note)note.textContent="当前角色暂无门店数据";
+  const summary=document.getElementById("botStoreSummary");
+  if(summary){
+    const hasData=store&&ENTRIES[eKey(store.id,month)];
+    summary.classList.toggle("empty",!hasData);
+    summary.innerHTML=botStoreSummaryHtml(store,month);
+  }
+  const chips=document.getElementById("botChips");
+  if(chips)chips.innerHTML=botChips().map(c=>`<button class="bchip" onclick="botAsk(this.textContent)">${escHtml(c)}</button>`).join("");
+  const input=document.getElementById("botInput");
+  if(input&&store)input.placeholder=`问 ${store.name}，例如：本月营业额 / 净利润 / 成本异常`;
+}
+function buildDataContext(q){
+  const store=botCurrentStore();
+  const wantsAll=/各店|全部门店|所有门店|全门店|门店排名|排名|哪家|哪个店|哪些店|亏损门店|top/i.test(q||"");
+  const stores=wantsAll?botScopedStores():(store?[store]:botScopedStores());
+  const latest=botLatestEntryMonth(stores);
+  let csv=`当前门店经营助手数据；未指定月份时默认使用当前门店最新已录入月份：${latest}（${mLabel(latest)}）。\n`;
+  if(store&&!wantsAll)csv+=`当前门店：${store.name}（${store.brand}）。请只围绕该门店回答。\n`;
+  if(wantsAll)csv+=`用户明确要求跨门店对比，本次提供当前角色可见门店数据。\n`;
   csv+="品牌,门店,月份,营业总收入,实收,原材料,成本合计,毛利,房租,人工,水电,平台佣金,费用合计,净利,净利率\n";
-  visibleStores().forEach(s=>{
+  stores.forEach(s=>{
     Object.keys(ENTRIES).filter(k=>k.startsWith(s.id+"|")).sort().forEach(k=>{
       const c=calc(ENTRIES[k]);
       csv+=[s.brand,s.name,k.split("|")[1],Math.round(c.sales),Math.round(c.income),Math.round(c.material),Math.round(c.costSum),Math.round(c.gross),Math.round(c.rent),Math.round(c.labor),Math.round(c.utility),Math.round(c.commission),Math.round(c.expSum),Math.round(c.net),(c.margin*100).toFixed(1)+"%"].join(",")+"\n";
@@ -2197,19 +2530,16 @@ function botRender(){
   document.getElementById("botSend").disabled=botBusy;
 }
 function botInit(){
-  document.getElementById("botChips").innerHTML=botChips().map(c=>`<button class="bchip" onclick="botAsk(this.textContent)">${c}</button>`).join("");
+  botRenderStoreContext();
   if(!BOT_HISTORY.length){
-    const latest=botLatestEntryMonth(), latestText=botMonthText(latest);
-    BOT_HISTORY=[{role:"assistant",html:`<div class="qhead">你好，我是数据助手 👋</div><div class="qsub">当前先提供本地规则查询，DeepSeek 可用时会补充智能分析。未输入月份时默认查询最新已录入月份（${mLabel(latest)}）。</div>
+    const store=botCurrentStore(), latest=botCurrentMonth(store), latestText=botMonthText(latest), name=store?store.name:"当前门店";
+    BOT_HISTORY=[{role:"assistant",html:`<div class="qhead">${name} 经营助手</div><div class="qsub">先按当前门店给出本地结果；DeepSeek 可用时补充智能分析。未输入月份时默认查看 ${mLabel(latest)}。</div>
       <div class="qlinks">
-        ${botQLink(`保利店${latestText}营业额`)}
-        ${botQLink(`${latestText}各店净利排名`)}
-        ${botQLink(`${latestText}哪些店在亏损？`)}
-        ${botQLink("保利店各月营业额")}
-        ${botQLink("荆州之星店人员名单")}
-        ${botQLink("霸王茶姬各月营收")}
-      </div>
-      <div class="qsub" style="margin-top:10px">支持：① 某店某月的营业额/净利/成本等任意指标　② 各月/趋势/1-5月区间查询　③ 排名与亏损筛查　④ 人员名单与员工工资　⑤ 直接输入门店/地区/人名等关键字搜索。</div>`}];
+        ${botQLink(`${name}${latestText}营业额`,"看营业额")}
+        ${botQLink(`${name}${latestText}净利润`,"看净利润")}
+        ${botQLink(`${name}${latestText}成本异常`,"查成本异常")}
+        ${botQLink(`${name}各月营收`,"看趋势")}
+      </div>`}];
   }
   botRender();
 }
@@ -2428,14 +2758,13 @@ function localAnswer(q){
   return botKeyword(q);
 }
 function botSimpleFallback(){
-  const latest=botLatestEntryMonth(), t=botMonthText(latest);
-  return `<div class="qhead">本地规则暂未识别</div><div class="qsub">可以按「门店 + 月份 + 指标」提问，或查询排名、亏损、人员名单；DeepSeek 后端可用时会补充更自由的智能分析。</div>
+  const store=botCurrentStore(), latest=botCurrentMonth(store), t=botMonthText(latest), name=store?store.name:"当前门店";
+  return `<div class="qhead">本地规则暂未识别</div><div class="qsub">可以围绕${name}直接问营业额、净利润、成本异常或趋势；DeepSeek 后端可用时会补充更自由的智能分析。</div>
     <div class="qlinks">
-      ${botQLink(`保利店${t}营业额`)}
-      ${botQLink(`${t}各店净利排名`)}
-      ${botQLink(`${t}哪些店在亏损？`)}
-      ${botQLink("保利店各月营业额")}
-      ${botQLink("荆州之星店人员名单")}
+      ${botQLink(`${name}${t}营业额`,"看营业额")}
+      ${botQLink(`${name}${t}净利润`,"看净利润")}
+      ${botQLink(`${name}${t}成本异常`,"查成本异常")}
+      ${botQLink(`${name}各月营收`,"看趋势")}
     </div>`;
 }
 function botAssistantHistory(){
@@ -2463,7 +2792,7 @@ async function botDeepSeekAnswer(q){
   const r=await fetch("/api/assistant/chat",{
     method:"POST",
     headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},
-    body:JSON.stringify({message:q,history:botAssistantHistory(),dataContext:buildDataContext()})
+    body:JSON.stringify({message:q,history:botAssistantHistory(),dataContext:buildDataContext(q)})
   });
   if(!r.ok)return null;
   const j=await r.json();
@@ -2472,7 +2801,17 @@ async function botDeepSeekAnswer(q){
 function botAiHtml(resp){
   const source=resp.aiUsed?"DeepSeek 智能分析":"本地后端回答";
   const text=escHtml(resp.answer||"").replace(/\n/g,"<br>");
-  return `<div class="qhead">${source}</div><div class="qsub">回答基于当前系统可见数据生成。</div><div>${text}</div>`;
+  const store=botCurrentStore();
+  return `<div class="qhead">${source}</div><div class="qsub">回答基于${store?`「${escHtml(store.name)}」当前门店`:"当前系统可见"}数据生成。</div><div>${text}</div>`;
+}
+function botScopedQuestion(q){
+  const store=botCurrentStore();
+  if(!store)return q;
+  if(botMatchStores(q).length||botMatchBrand(q))return q;
+  if(/各店|全部门店|所有门店|全门店|门店排名|排名|哪家|哪个店|哪些店|亏损门店|top/i.test(q))return q;
+  const month=botCurrentMonth(store);
+  const hasMonth=botParseMonths(q).length||/本月|这个月|当前月|最新|当月/.test(q);
+  return `${store.name}${hasMonth?"":botMonthText(month)}${q}`;
 }
 
 async function botAsk(q){
@@ -2480,11 +2819,12 @@ async function botAsk(q){
   if(!q||botBusy)return;
   document.getElementById("botInput").value="";
   BOT_HISTORY.push({role:"user",text:q});botRender();
+  const askQ=botScopedQuestion(q);
   // —— 本地引擎优先，立即直观呈现 ——
-  let local=null; try{ local=localAnswer(q); }catch(e){ console.error("localAnswer",e); }
+  let local=null; try{ local=localAnswer(askQ); }catch(e){ console.error("localAnswer",e); }
   if(local&&(local.html||local.text)){ BOT_HISTORY.push({role:"assistant",html:local.html,text:local.text||""}); botRender(); }
   botBusy=true; botRender();
-  let ai=null; try{ ai=await botDeepSeekAnswer(q); }catch(e){ console.warn("botDeepSeekAnswer",e); }
+  let ai=null; try{ ai=await botDeepSeekAnswer(askQ); }catch(e){ console.warn("botDeepSeekAnswer",e); }
   botBusy=false;
   if(ai&&(ai.aiUsed||!local)){ BOT_HISTORY.push({role:"assistant",html:botAiHtml(ai),text:ai.answer||""}); botRender(); return; }
   if(!local){ BOT_HISTORY.push({role:"assistant",html:botSimpleFallback()}); }

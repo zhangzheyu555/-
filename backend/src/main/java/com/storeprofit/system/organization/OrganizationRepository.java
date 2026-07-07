@@ -16,41 +16,49 @@ public class OrganizationRepository {
     this.jdbcTemplate = jdbcTemplate;
   }
 
-  public List<BrandResponse> brands() {
+  public List<BrandResponse> brands(long tenantId) {
     return jdbcTemplate.query("""
         select id, code, name, color, sort_order
         from brand
+        where tenant_id = ?
         order by sort_order, id
-        """, this::mapBrand);
+        """, this::mapBrand, tenantId);
   }
 
-  public List<StoreResponse> stores() {
+  public List<StoreResponse> stores(long tenantId) {
     return jdbcTemplate.query("""
         select s.id, s.code, s.name, s.brand_id, b.name as brand_name, s.area, s.manager,
                date_format(s.open_date, '%Y-%m-%d') as open_date, s.status, s.note
         from store_branch s
-        left join brand b on b.id = s.brand_id
+        left join brand b on b.id = s.brand_id and b.tenant_id = s.tenant_id
+        where s.tenant_id = ?
         order by b.sort_order, s.code, s.id
-        """, this::mapStore);
+        """, this::mapStore, tenantId);
   }
 
-  public long ensureBrand(String code, String name, String color, int sortOrder) {
+  public long ensureBrand(long tenantId, String code, String name, String color, int sortOrder) {
     jdbcTemplate.update("""
-        insert into brand(code, name, color, sort_order, created_at)
-        values (?, ?, ?, ?, current_timestamp)
+        insert into brand(tenant_id, code, name, color, sort_order, created_at)
+        values (?, ?, ?, ?, ?, current_timestamp)
         on duplicate key update
           name = values(name),
           color = values(color),
-          sort_order = values(sort_order)
-        """, code, name, color, sortOrder);
-    Long id = jdbcTemplate.queryForObject("select id from brand where code = ?", Long.class, code);
+          sort_order = values(sort_order),
+          updated_at = current_timestamp
+        """, tenantId, code, name, color, sortOrder);
+    Long id = jdbcTemplate.queryForObject(
+        "select id from brand where tenant_id = ? and code = ?",
+        Long.class,
+        tenantId,
+        code
+    );
     return id == null ? 0L : id;
   }
 
-  public void upsertStore(StoreUpsertRequest request) {
+  public void upsertStore(long tenantId, StoreUpsertRequest request) {
     jdbcTemplate.update("""
-        insert into store_branch(id, brand_id, code, name, area, manager, open_date, status, note, created_at)
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+        insert into store_branch(id, tenant_id, brand_id, code, name, area, manager, open_date, status, note, created_at)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
         on duplicate key update
           brand_id = values(brand_id),
           code = values(code),
@@ -63,6 +71,7 @@ public class OrganizationRepository {
           updated_at = current_timestamp
         """,
         request.id(),
+        tenantId,
         request.brandId(),
         blankToNull(request.code()),
         request.name(),
@@ -74,13 +83,33 @@ public class OrganizationRepository {
     );
   }
 
-  public int brandCount() {
-    Integer count = jdbcTemplate.queryForObject("select count(*) from brand", Integer.class);
+  public boolean brandExists(long tenantId, long brandId) {
+    Integer count = jdbcTemplate.queryForObject(
+        "select count(*) from brand where tenant_id = ? and id = ?",
+        Integer.class,
+        tenantId,
+        brandId
+    );
+    return count != null && count > 0;
+  }
+
+  public boolean storeIdBelongsToOtherTenant(long tenantId, String storeId) {
+    Integer count = jdbcTemplate.queryForObject(
+        "select count(*) from store_branch where id = ? and tenant_id <> ?",
+        Integer.class,
+        storeId,
+        tenantId
+    );
+    return count != null && count > 0;
+  }
+
+  public int brandCount(long tenantId) {
+    Integer count = jdbcTemplate.queryForObject("select count(*) from brand where tenant_id = ?", Integer.class, tenantId);
     return count == null ? 0 : count;
   }
 
-  public int storeCount() {
-    Integer count = jdbcTemplate.queryForObject("select count(*) from store_branch", Integer.class);
+  public int storeCount(long tenantId) {
+    Integer count = jdbcTemplate.queryForObject("select count(*) from store_branch where tenant_id = ?", Integer.class, tenantId);
     return count == null ? 0 : count;
   }
 
@@ -96,11 +125,11 @@ public class OrganizationRepository {
     }
   }
 
-  public void addUserStoreScope(long userId, String storeId) {
+  public void addUserStoreScope(long tenantId, long userId, String storeId) {
     jdbcTemplate.update("""
-        insert ignore into user_store_scope(user_id, store_id, created_at)
-        values (?, ?, current_timestamp)
-        """, userId, storeId);
+        insert ignore into user_store_scope(tenant_id, user_id, store_id, created_at)
+        values (?, ?, ?, current_timestamp)
+        """, tenantId, userId, storeId);
   }
 
   private BrandResponse mapBrand(ResultSet rs, int rowNum) throws SQLException {

@@ -16,6 +16,10 @@ spring:
 
 app:
   version: 0.5.0-phase5-admin-export
+  seed:
+    demo-enabled: ${APP_SEED_DEMO_ENABLED:false}
+  migration:
+    auto-run: ${APP_MIGRATION_AUTO_RUN:false}
   auth:
     token-ttl-hours: 12
   cors:

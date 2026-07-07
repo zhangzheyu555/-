@@ -27,11 +27,11 @@ public class FinanceService {
 
   public ProfitDashboardResponse dashboard(AuthUser user, String month, Long brandId) {
     String targetMonth = normalizeMonth(month);
-    List<String> months = months();
-    List<ProfitEntryResponse> entries = scoped(user, financeRepository.entries(targetMonth, brandId, null));
+    List<String> months = months(user);
+    List<ProfitEntryResponse> entries = scoped(user, financeRepository.entries(user.tenantId(), targetMonth, brandId, null));
     return new ProfitDashboardResponse(
         months,
-        organizationRepository.brands(),
+        organizationRepository.brands(user.tenantId()),
         summary(targetMonth, entries),
         entries,
         trend(user, brandId, months)
@@ -39,11 +39,11 @@ public class FinanceService {
   }
 
   public List<ProfitEntryResponse> entries(AuthUser user, String month, Long brandId, String storeId) {
-    return scoped(user, financeRepository.entries(normalizeMonth(month), brandId, storeId));
+    return scoped(user, financeRepository.entries(user.tenantId(), normalizeMonth(month), brandId, storeId));
   }
 
   public ProfitEntryResponse entry(AuthUser user, String storeId, String month) {
-    ProfitEntryResponse entry = financeRepository.entry(storeId, normalizeMonth(month))
+    ProfitEntryResponse entry = financeRepository.entry(user.tenantId(), storeId, normalizeMonth(month))
         .orElseThrow(() -> new BusinessException("NOT_FOUND", "该门店本月还没有利润数据", HttpStatus.NOT_FOUND));
     return scoped(user, List.of(entry)).stream()
         .findFirst()
@@ -53,8 +53,8 @@ public class FinanceService {
   @Transactional
   public void save(AuthUser user, ProfitEntryRequest request) {
     requireEditRole(user);
-    if (!financeRepository.storeExists(request.storeId())) {
-      throw new BusinessException("STORE_NOT_FOUND", "门店不存在，不能保存利润数据", HttpStatus.BAD_REQUEST);
+    if (!financeRepository.storeExists(user.tenantId(), request.storeId())) {
+      throw new BusinessException("STORE_NOT_FOUND", "门店不存在或不属于当前企业，不能保存利润数据", HttpStatus.BAD_REQUEST);
     }
     ProfitEntryRequest normalized = new ProfitEntryRequest(
         request.storeId(),
@@ -77,17 +77,17 @@ public class FinanceService {
         request.expOther(),
         request.note()
     );
-    financeRepository.upsert(normalized, user.id());
-    financeRepository.logSave(user.id(), user.displayName(), normalized.storeId(), normalized.month());
+    financeRepository.upsert(user.tenantId(), normalized, user.id());
+    financeRepository.logSave(user.tenantId(), user.id(), user.displayName(), normalized.storeId(), normalized.month());
   }
 
-  public List<String> months() {
+  public List<String> months(AuthUser user) {
     LinkedHashSet<String> values = new LinkedHashSet<>();
     YearMonth current = YearMonth.now(BUSINESS_ZONE);
     for (int i = 0; i < 8; i++) {
       values.add(current.minusMonths(i).toString());
     }
-    values.addAll(financeRepository.availableMonths());
+    values.addAll(financeRepository.availableMonths(user.tenantId()));
     return new ArrayList<>(values);
   }
 
@@ -96,7 +96,7 @@ public class FinanceService {
     ArrayList<ProfitTrendPoint> points = new ArrayList<>();
     for (int i = targetMonths.size() - 1; i >= 0; i--) {
       String month = targetMonths.get(i);
-      ProfitSummaryResponse summary = summary(month, scoped(user, financeRepository.entries(month, brandId, null)));
+      ProfitSummaryResponse summary = summary(month, scoped(user, financeRepository.entries(user.tenantId(), month, brandId, null)));
       points.add(new ProfitTrendPoint(month, summary.income(), summary.net(), summary.margin()));
     }
     return points;

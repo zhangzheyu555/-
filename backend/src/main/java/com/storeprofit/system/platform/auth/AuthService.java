@@ -2,6 +2,7 @@ package com.storeprofit.system.platform.auth;
 
 import com.storeprofit.system.common.BusinessException;
 import com.storeprofit.system.platform.session.SessionUser;
+import com.storeprofit.system.platform.tenant.TenantDefaults;
 import jakarta.annotation.PostConstruct;
 import java.security.SecureRandom;
 import java.time.OffsetDateTime;
@@ -29,19 +30,20 @@ public class AuthService {
 
   @PostConstruct
   public void ensureDefaultAdmin() {
-    if (!authRepository.userExists("admin")) {
-      authRepository.createUser("admin", passwordService.hash("123"), "管理员", "ADMIN", null);
+    if (!authRepository.userExists(TenantDefaults.DEFAULT_TENANT_ID, "admin")) {
+      authRepository.createUser(TenantDefaults.DEFAULT_TENANT_ID, "admin", passwordService.hash("123"), "管理员", "ADMIN", null);
     }
   }
 
   public LoginResponse login(LoginRequest request) {
-    AuthUser user = authRepository.findByUsername(request.username().trim())
+    long tenantId = request.tenantId() == null ? TenantDefaults.DEFAULT_TENANT_ID : request.tenantId();
+    AuthUser user = authRepository.findByUsername(tenantId, request.username().trim())
         .orElseThrow(() -> new BusinessException("LOGIN_FAILED", "账号或密码不正确", HttpStatus.UNAUTHORIZED));
     if (!user.enabled() || !passwordService.matches(request.password(), user.passwordHash())) {
       throw new BusinessException("LOGIN_FAILED", "账号或密码不正确", HttpStatus.UNAUTHORIZED);
     }
     String token = newToken();
-    authRepository.createToken(token, user.id(), OffsetDateTime.now().plusHours(tokenTtlHours));
+    authRepository.createToken(token, user.tenantId(), user.id(), OffsetDateTime.now().plusHours(tokenTtlHours));
     return new LoginResponse(token, toSessionUser(user));
   }
 
@@ -64,10 +66,12 @@ public class AuthService {
   public SessionUser toSessionUser(AuthUser user) {
     return new SessionUser(
         user.id(),
+        user.tenantId(),
+        user.tenantName(),
         user.displayName(),
         user.role(),
         roleLabel(user.role()),
-        authRepository.storeScope(user.id(), user.role(), user.storeId())
+        authRepository.storeScope(user.tenantId(), user.id(), user.role(), user.storeId())
     );
   }
 

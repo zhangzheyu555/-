@@ -19,16 +19,18 @@ public class UserManagementService {
     if (!"ADMIN".equals(currentUser.role())) {
       throw new BusinessException("FORBIDDEN", "仅管理员可查看用户权限", HttpStatus.FORBIDDEN);
     }
-    return authRepository.users().stream()
+    return authRepository.users(currentUser.tenantId()).stream()
         .map(user -> new UserResponse(
             user.id(),
+            user.tenantId(),
+            user.tenantName(),
             user.username(),
             user.displayName(),
             user.role(),
             roleLabel(user.role()),
             user.storeId(),
             user.enabled(),
-            authRepository.storeScope(user.id(), user.role(), user.storeId())
+            authRepository.storeScope(currentUser.tenantId(), user.id(), user.role(), user.storeId())
         ))
         .toList();
   }

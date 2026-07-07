@@ -258,6 +258,25 @@ async function sGet(k){
     return raw==null?null:JSON.parse(raw);
   }catch(e){console.error("读取数据失败",e);return null;}
 }
+let STORAGE_BACKEND_TOKEN="", STORAGE_BACKEND_TOKEN_PROMISE=null;
+async function storageBackendToken(){
+  if(STORAGE_BACKEND_TOKEN)return STORAGE_BACKEND_TOKEN;
+  let pass="";
+  try{ pass=typeof LOGIN_PASS==="string"?LOGIN_PASS:""; }catch(_){ pass=""; }
+  if(!pass)return "";
+  if(STORAGE_BACKEND_TOKEN_PROMISE)return STORAGE_BACKEND_TOKEN_PROMISE;
+  STORAGE_BACKEND_TOKEN_PROMISE=fetch("/api/auth/login",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({username:"admin",password:pass})
+  }).then(async r=>{
+    if(!r.ok)return "";
+    const j=await r.json();
+    STORAGE_BACKEND_TOKEN=(j&&j.success&&j.data&&j.data.token)||"";
+    return STORAGE_BACKEND_TOKEN;
+  }).catch(()=>"").finally(()=>{STORAGE_BACKEND_TOKEN_PROMISE=null;});
+  return STORAGE_BACKEND_TOKEN_PROMISE;
+}
 async function sSet(k,v){
   try{
     if(CLOUD_OK&&CLOUDDB){
@@ -270,8 +289,12 @@ async function sSet(k,v){
     }
     if(location.protocol==="http:"||location.protocol==="https:"){
       try{
-        const r=await fetch("/api/storage",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:k,value})});
-        if(r.ok)return;
+        const token=await storageBackendToken();
+        if(token){
+          const r=await fetch("/api/storage",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},body:JSON.stringify({key:k,value})});
+          if(r.ok)return;
+          if(r.status===401||r.status===403)STORAGE_BACKEND_TOKEN="";
+        }
       }catch(_){/* API 不可用时继续使用浏览器本地存储 */}
     }
     localStorage.setItem(STORAGE_PREFIX+k,value);
@@ -345,7 +368,7 @@ function applyRole(){
   const cur=document.querySelector(".view.on");
   if(cur&&hidden.includes(cur.id.replace("v-",""))){ document.querySelector('.tab[data-v="dash"]').click(); }
   else { renderAll(); const on=document.querySelector(".view.on"); if(on){const v=on.id.replace("v-","");
-    if(v==="report")renderReport(); else if(v==="detail")renderDetail(); else if(v==="inspect")renderInspect(); else if(v==="stores")renderStores(); else if(v==="logs")renderLogs(); else if(v==="expense")renderExpense(); else if(v==="export")renderExport(); else if(v==="fetch")renderFetch(); else if(v==="users")renderUsers(); else if(v==="salary")renderSalary(); } }
+    if(v==="report")renderReport(); else if(v==="detail")renderDetail(); else if(v==="inspect")renderInspect(); else if(v==="stores")renderStores(); else if(v==="logs")renderLogs(); else if(v==="expense")renderExpense(); else if(v==="export")renderExport(); else if(v==="fetch")renderFetch(); else if(v==="users")renderUsers(); else if(v==="salary")renderSalary(); else if(v==="bot"&&typeof botInit==="function"){BOT_HISTORY=[];BOT_SID=null;BOT_MONTH=null;botInit();} } }
   document.getElementById("roleStore").style.display=CURRENT_ROLE==="店长"?"":"none";
   const _rb=document.querySelector(".rolebox"); if(_rb)_rb.style.display=(LOGIN_ROLE==="管理员")?"":"none"; // 仅管理员可见角色预览下拉
   const expBtn=document.getElementById("exportBtn"); if(expBtn)expBtn.style.display=canExport()?"":"none";

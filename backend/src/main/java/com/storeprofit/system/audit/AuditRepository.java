@@ -14,14 +14,15 @@ public class AuditRepository {
     this.jdbcTemplate = jdbcTemplate;
   }
 
-  public List<OperationLogResponse> logs(int limit) {
+  public List<OperationLogResponse> logs(long tenantId, int limit) {
     return jdbcTemplate.query("""
         select id, operator_id, operator_name, action, target_type, target_id,
                store_id, month, reason, date_format(created_at, '%Y-%m-%d %H:%i:%s') as created_at
         from operation_log
+        where tenant_id = ?
         order by created_at desc, id desc
         limit ?
-        """, this::mapLog, Math.max(1, Math.min(limit, 500)));
+        """, this::mapLog, tenantId, Math.max(1, Math.min(limit, 500)));
   }
 
   private OperationLogResponse mapLog(ResultSet rs, int rowNum) throws SQLException {
