@@ -822,6 +822,14 @@ function closeActiveModalByEscape(){
     if(typeof salaryCloseModal==="function")salaryCloseModal();
     return true;
   }
+  const importPreview=document.getElementById("importPreview");
+  if(importPreview&&importPreview.style.display!=="none"&&importPreview.innerHTML.trim()){
+    importPreview.style.display="none";
+    importPreview.innerHTML="";
+    const st=document.getElementById("aiStatus");
+    if(st)st.textContent="";
+    return true;
+  }
   const storeSalary=document.getElementById("storeSalaryMount");
   if(storeSalary&&storeSalary.innerHTML.trim()){
     if(typeof closeStoreSalary==="function")closeStoreSalary();
