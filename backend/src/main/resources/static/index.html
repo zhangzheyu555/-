@@ -3008,12 +3008,40 @@ async function botDeepSeekAnswer(q){
   const j=await r.json();
   return j&&j.success&&j.data?j.data:null;
 }
+function botAiSourceLabel(resp){
+  const ds=(resp&&resp.dataSource)||"";
+  if(ds==="FRONTEND_CONTEXT")return "当前页面可见数据";
+  if(ds==="BACKEND_FINANCE")return "后端财务库数据";
+  if(ds==="AI_ENRICHED_FRONTEND_CONTEXT")return "DeepSeek + 当前页面可见数据";
+  if(ds==="AI_ENRICHED_BACKEND_FINANCE")return "DeepSeek + 后端财务库数据";
+  if(ds==="SYSTEM_GUARDRAIL")return "系统安全边界";
+  if(ds==="LOCAL_RULES")return "本地规则";
+  const source=(resp&&resp.source)||"";
+  if(source.includes("frontend-context"))return "当前页面可见数据";
+  if(source.includes("backend-finance"))return "后端财务库数据";
+  if(source.includes("deepseek"))return "DeepSeek 智能分析";
+  if(source.includes("blocked")||source.includes("out-of-scope"))return "系统安全边界";
+  return "当前系统可见数据";
+}
+function botVisibleScopeText(){
+  const stores=visibleStores();
+  if(CURRENT_ROLE==="店长"&&MANAGED_SID){
+    const s=stores[0]||STORES.find(x=>x.id===MANAGED_SID);
+    return s?`本店：${s.name}`:"本店";
+  }
+  return `当前可见 ${stores.length} 家门店`;
+}
 function botAiHtml(resp){
-  const source=resp.aiUsed?"DeepSeek 智能分析":(resp.source&&resp.source.includes("backend-finance")?"后端财务库回答":"本地后端回答");
-  const basis=resp.source&&resp.source.includes("frontend-context")?"当前页面可见数据":(resp.source&&resp.source.includes("backend-finance")?"后端财务库数据":"当前系统可见数据");
+  resp=resp||{};
+  const source=resp.aiUsed?"DeepSeek 智能分析":(resp.source&&resp.source.includes("backend-finance")?"后端财务库回答":"本地规则回答");
+  const basis=botAiSourceLabel(resp);
+  const month=resp.month?` · 月份 ${escHtml(resp.month)}`:"";
+  const scope=botVisibleScopeText();
+  const warnings=Array.isArray(resp.warnings)&&resp.warnings.length
+    ? `<div class="qsub">${resp.warnings.map(w=>escHtml(w)).join("；")}</div>`
+    : "";
   const text=escHtml(resp.answer||"").replace(/\n/g,"<br>");
-  const store=botCurrentStore();
-  return `<div class="qhead">${source}</div><div class="qsub">回答基于${basis}${store&&basis==="当前页面可见数据"?`（${escHtml(store.name)}）`:""}生成，页面本地结果优先。</div><div>${text}</div>`;
+  return `<div class="qhead">${source}</div><div class="qsub">数据来源：${escHtml(basis)}${month} · ${escHtml(scope)}。页面本地结果优先。</div>${warnings}<div>${text}</div>`;
 }
 function botScopedQuestion(q){
   const store=botCurrentStore();
