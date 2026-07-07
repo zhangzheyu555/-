@@ -108,7 +108,9 @@
 
   /* KPIs */
   .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
-  @media(max-width:760px){.kpis{grid-template-columns:repeat(2,1fr)}.kpi .val{font-size:21px}}
+  .kpis.wh-kpis{grid-template-columns:repeat(5,minmax(0,1fr))}
+  @media(max-width:1100px){.kpis.wh-kpis{grid-template-columns:repeat(3,1fr)}}
+  @media(max-width:760px){.kpis{grid-template-columns:repeat(2,1fr)}.kpis.wh-kpis{grid-template-columns:repeat(2,1fr)}.kpi .val{font-size:21px}}
   .kpi{min-width:0}
   .kpi .lab{font-size:12px;color:var(--muted);font-weight:600}
   .kpi .val{font-size:25px;font-weight:900;letter-spacing:-.02em;margin-top:3px}
@@ -320,7 +322,7 @@
     .kpi .val{font-size:20px}
   }
   @media(max-width:400px){
-    .kpis{grid-template-columns:1fr}
+    .kpis,.kpis.wh-kpis{grid-template-columns:1fr}
   }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -2980,7 +2982,8 @@ async function botBackendToken(){
   if(BOT_BACKEND_TOKEN)return BOT_BACKEND_TOKEN;
   if(!LOGIN_PASS)return "";
   if(BOT_BACKEND_TOKEN_PROMISE)return BOT_BACKEND_TOKEN_PROMISE;
-  const backendUsername=LOGIN_ROLE==="财务"?"finance":"boss";
+  const backendUsername=typeof backendUsernameForRole==="function"?backendUsernameForRole(LOGIN_ROLE):(LOGIN_ROLE==="财务"?"finance":"boss");
+  if(!backendUsername)return "";
   BOT_BACKEND_TOKEN_PROMISE=fetch("/api/auth/login",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
@@ -3242,7 +3245,7 @@ function renderFetch(){
   <div class="plat-grid">${cards}</div>`;
 }
 
-/* ---------- 仓库 / 运营角色工作台（先分职业入口，业务模块后续接入） ---------- */
+/* ---------- 仓库中心 / 运营角色工作台 ---------- */
 function renderRolePending(hostId,title,subtitle,steps){
   const host=document.getElementById(hostId); if(!host)return;
   host.innerHTML=`
@@ -3255,12 +3258,239 @@ function renderRolePending(hostId,title,subtitle,steps){
       ${steps.map(s=>`<div class="card"><div class="section-t">${s[0]}</div><div style="font-size:13px;color:var(--muted);line-height:1.7">${s[1]}</div></div>`).join("")}
     </div>`;
 }
+let WAREHOUSE_DATA=null, WAREHOUSE_LOADING=false, WAREHOUSE_ERROR="";
+function warehouseCanManage(){return isBossRole()||CURRENT_ROLE==="仓库管理员";}
+function warehouseCanOrder(){return warehouseCanManage()||CURRENT_ROLE==="店长";}
+function whMoney(v){return "¥"+Math.round(Number(v||0)).toLocaleString("zh-CN");}
+function whQty(v){return Number(v||0).toLocaleString("zh-CN",{maximumFractionDigits:1});}
+function whKpi(label,value,unit){return `<div class="card kpi"><div class="lab">${label}</div><div class="val">${value}${unit?`<small>${unit}</small>`:""}</div></div>`;}
+function whAlertLabel(level){
+  return {LOW:"低库存",EXPIRING:"临期",OVERSTOCK:"积压",OK:"正常",WARN:"提醒",RISK:"风险"}[level]||level||"-";
+}
+function whAlertColor(level){
+  return level==="OK"?"var(--good)":(level==="LOW"||level==="WARN"?"var(--warn)":"var(--bad)");
+}
+async function warehouseApi(path,options={}){
+  const token=await storageBackendToken();
+  if(!token)throw new Error("请使用老板、仓库管理员或正式门店账号登录后再进入仓库中心");
+  const r=await fetch(path,{
+    ...options,
+    headers:{"Content-Type":"application/json","Authorization":"Bearer "+token,...(options.headers||{})}
+  });
+  const j=await r.json().catch(()=>null);
+  if(!r.ok||!j||j.success===false)throw new Error((j&&j.message)||"仓库接口请求失败");
+  return j.data;
+}
+async function warehouseLoad(force=false){
+  if(WAREHOUSE_LOADING)return;
+  if(force)WAREHOUSE_DATA=null;
+  WAREHOUSE_LOADING=true; WAREHOUSE_ERROR="";
+  renderWarehouse();
+  try{
+    WAREHOUSE_DATA=await warehouseApi("/api/warehouse/overview");
+  }catch(e){
+    WAREHOUSE_ERROR=e.message||"仓库数据加载失败";
+  }finally{
+    WAREHOUSE_LOADING=false;
+    renderWarehouse();
+  }
+}
+function whNum(id){return Number(document.getElementById(id)?.value||0);}
+function whText(id){return (document.getElementById(id)?.value||"").trim();}
+async function warehouseSaveItem(){
+  try{
+    const payload={
+      code:whText("whItemCode"),
+      name:whText("whItemName"),
+      category:whText("whItemCategory"),
+      unit:whText("whItemUnit")||"件",
+      spec:whText("whItemSpec"),
+      unitPrice:whNum("whItemPrice"),
+      shelfLifeDays:Math.round(whNum("whItemShelf")),
+      cupsPerUnit:whNum("whItemCups"),
+      dailyUsageEstimate:whNum("whItemDaily"),
+      minStockDays:Math.round(whNum("whItemMinDays"))||7,
+      maxStockDays:Math.round(whNum("whItemMaxDays"))||60,
+      active:true
+    };
+    if(!payload.code||!payload.name){toast("请填写物料编码和名称");return;}
+    await warehouseApi("/api/warehouse/items",{method:"POST",body:JSON.stringify(payload)});
+    toast("物料已保存");
+    await warehouseLoad(true);
+  }catch(e){toast(e.message||"保存失败");}
+}
+async function warehouseReceiveStock(){
+  try{
+    const payload={
+      itemId:Number(whText("whBatchItem")),
+      batchNo:whText("whBatchNo"),
+      receivedDate:whText("whReceivedDate"),
+      expiryDate:whText("whExpiryDate")||null,
+      quantity:whNum("whBatchQty"),
+      unitCost:whNum("whBatchCost"),
+      note:whText("whBatchNote")
+    };
+    if(!payload.itemId||!payload.batchNo||!payload.receivedDate||payload.quantity<=0){toast("请填写入库物料、批次、日期和数量");return;}
+    await warehouseApi("/api/warehouse/stock-batches",{method:"POST",body:JSON.stringify(payload)});
+    toast("入库已记录");
+    await warehouseLoad(true);
+  }catch(e){toast(e.message||"入库失败");}
+}
+async function warehouseSubmitOrder(){
+  try{
+    const payload={
+      storeId:whText("whStore")||MANAGED_SID,
+      lines:[{itemId:Number(whText("whReqItem")),requestedQuantity:whNum("whReqQty"),note:whText("whReqNote")}],
+      note:whText("whReqNote")
+    };
+    if(!payload.storeId||!payload.lines[0].itemId||payload.lines[0].requestedQuantity<=0){toast("请选择门店、物料并填写叫货数量");return;}
+    await warehouseApi("/api/warehouse/requisitions",{method:"POST",body:JSON.stringify(payload)});
+    toast("叫货单已提交");
+    await warehouseLoad(true);
+  }catch(e){toast(e.message||"提交失败");}
+}
+async function warehouseReview(id,approved){
+  try{
+    const note=approved?"审核通过":"仓库驳回";
+    await warehouseApi(`/api/warehouse/requisitions/${encodeURIComponent(id)}/review`,{method:"POST",body:JSON.stringify({approved,note,lines:[]})});
+    toast(approved?"已审核通过":"已驳回");
+    await warehouseLoad(true);
+  }catch(e){toast(e.message||"操作失败");}
+}
+async function warehouseShip(id){
+  try{
+    if(!confirm("确认按叫货单完成配货并扣减库存？"))return;
+    await warehouseApi(`/api/warehouse/requisitions/${encodeURIComponent(id)}/ship`,{method:"POST",body:"{}"});
+    toast("已完成配货");
+    await warehouseLoad(true);
+  }catch(e){toast(e.message||"配货失败");}
+}
+function whReqActions(r){
+  const actions=[];
+  if(r.status==="SUBMITTED"){
+    actions.push(`<button class="btn-ghost" style="padding:6px 10px;font-size:12px" onclick="warehouseReview('${r.id}',true)">通过</button>`);
+    actions.push(`<button class="btn-ghost" style="padding:6px 10px;font-size:12px" onclick="warehouseReview('${r.id}',false)">驳回</button>`);
+  }
+  if(r.status==="SUBMITTED"||r.status==="APPROVED"){
+    actions.push(`<button class="save" style="width:auto;padding:8px 12px" onclick="warehouseShip('${r.id}')">配货</button>`);
+  }
+  return actions.length?`<div style="display:flex;gap:6px;flex-wrap:wrap">${actions.join("")}</div>`:"-";
+}
 function renderWarehouse(){
-  renderRolePending("v-warehouse","仓库中心","仓库管理员工作台 · 建设中",[
-    ["未来负责","库存台账、入库出库、门店申领、盘点差异和供应商到货。"],
-    ["现在可见","先只开放独立入口和权限展示，不允许修改利润、工资、报销等财务数据。"],
-    ["下一步接入","先做物料基础档案，再做门店领料和库存预警。"]
-  ]);
+  const host=document.getElementById("v-warehouse"); if(!host)return;
+  if(!WAREHOUSE_DATA&&!WAREHOUSE_LOADING)warehouseLoad();
+  const data=WAREHOUSE_DATA;
+  const canManage=warehouseCanManage();
+  const canOrder=warehouseCanOrder();
+  const itemOpts=(data?.items||[]).map(i=>`<option value="${i.id}">${escHtml(i.name)} · 库存 ${whQty(i.stockQuantity)}${escHtml(i.unit||"")}</option>`).join("");
+  const storeOpts=visibleStores().map(s=>`<option value="${s.id}">${escHtml(s.name)}</option>`).join("");
+  host.innerHTML=`
+    <div class="h">
+      <h1>仓库中心</h1>
+      <button class="btn-ghost" onclick="warehouseLoad(true)">刷新库存</button>
+    </div>
+    ${WAREHOUSE_LOADING&&!data?`<div class="card">正在读取仓库数据...</div>`:""}
+    ${WAREHOUSE_ERROR?`<div class="card" style="border-left:4px solid var(--bad);color:var(--bad)">${escHtml(WAREHOUSE_ERROR)}</div>`:""}
+    ${data?`
+      <div class="kpis wh-kpis" style="margin-bottom:16px">
+        ${whKpi("物料数",data.summary.itemCount,"项")}
+        ${whKpi("库存金额",whMoney(data.summary.stockValue),"")}
+        ${whKpi("低库存",data.summary.lowStockCount,"项")}
+        ${whKpi("临期风险",data.summary.expiringCount,"项")}
+        ${whKpi("待处理叫货",data.summary.pendingRequisitionCount,"单")}
+      </div>
+      <div class="grid2">
+        <div class="card">
+          <div class="section-t">库存预警</div>
+          ${data.alerts.length?data.alerts.slice(0,8).map(a=>`
+            <div style="display:flex;gap:10px;align-items:flex-start;border-bottom:1px solid var(--line);padding:9px 0">
+              <span style="font-size:12px;font-weight:800;color:${a.type==="LOW"?"var(--warn)":"var(--bad)"}">${whAlertLabel(a.type)}</span>
+              <div><b>${escHtml(a.itemName)}</b><div style="font-size:12px;color:var(--muted);margin-top:2px">${escHtml(a.message)}</div></div>
+            </div>`).join(""):`<div style="font-size:13px;color:var(--muted)">暂无库存风险</div>`}
+        </div>
+        <div class="card">
+          <div class="section-t">门店叫货</div>
+          ${canOrder?`
+            <div class="grid2" style="grid-template-columns:${CURRENT_ROLE==="店长"?"1fr":"1fr 1fr"};gap:10px">
+              ${CURRENT_ROLE==="店长"?`<input type="hidden" id="whStore" value="${MANAGED_SID||""}">`:`<div class="field"><label>门店</label><select id="whStore">${storeOpts}</select></div>`}
+              <div class="field"><label>物料</label><select id="whReqItem">${itemOpts}</select></div>
+            </div>
+            <div class="grid2" style="gap:10px">
+              <div class="field"><label>叫货数量</label><input type="number" min="0.01" step="0.01" id="whReqQty" placeholder="例如 1"></div>
+              <div class="field"><label>备注</label><input id="whReqNote" placeholder="例如 本周补货"></div>
+            </div>
+            <button class="save" onclick="warehouseSubmitOrder()">提交叫货</button>
+          `:`<div style="font-size:13px;color:var(--muted)">当前角色只能查看仓库信息。</div>`}
+        </div>
+      </div>
+      ${canManage?`
+        <div class="grid2" style="margin-top:16px">
+          <div class="card">
+            <div class="section-t">新增 / 更新物料</div>
+            <div class="grid2" style="gap:10px">
+              <div class="field"><label>编码</label><input id="whItemCode" placeholder="如 CUP-700"></div>
+              <div class="field"><label>名称</label><input id="whItemName" placeholder="如 700ml杯子"></div>
+              <div class="field"><label>分类</label><input id="whItemCategory" placeholder="原料 / 包材 / 水果"></div>
+              <div class="field"><label>单位</label><input id="whItemUnit" value="件"></div>
+              <div class="field"><label>规格</label><input id="whItemSpec" placeholder="如 15斤/件"></div>
+              <div class="field"><label>单价 ¥</label><input type="number" step="0.01" id="whItemPrice" value="0"></div>
+              <div class="field"><label>保质期天数</label><input type="number" id="whItemShelf" value="365"></div>
+              <div class="field"><label>每件可做杯数</label><input type="number" step="0.01" id="whItemCups" value="0"></div>
+              <div class="field"><label>日均用量(件)</label><input type="number" step="0.01" id="whItemDaily" value="0"></div>
+              <div class="field"><label>低库存预警天数</label><input type="number" id="whItemMinDays" value="7"></div>
+              <div class="field"><label>积压预警天数</label><input type="number" id="whItemMaxDays" value="60"></div>
+            </div>
+            <button class="save" onclick="warehouseSaveItem()">保存物料</button>
+          </div>
+          <div class="card">
+            <div class="section-t">采购到货入库</div>
+            <div class="grid2" style="gap:10px">
+              <div class="field"><label>物料</label><select id="whBatchItem">${itemOpts}</select></div>
+              <div class="field"><label>批次号</label><input id="whBatchNo" value="B${Date.now().toString().slice(-6)}"></div>
+              <div class="field"><label>到货日期</label><input type="date" id="whReceivedDate" value="${todayISO()}"></div>
+              <div class="field"><label>到期日期</label><input type="date" id="whExpiryDate"></div>
+              <div class="field"><label>入库数量</label><input type="number" min="0.01" step="0.01" id="whBatchQty" placeholder="例如 10"></div>
+              <div class="field"><label>入库单价 ¥</label><input type="number" min="0" step="0.01" id="whBatchCost" value="0"></div>
+            </div>
+            <div class="field"><label>备注</label><input id="whBatchNote" placeholder="供应商 / 采购单号"></div>
+            <button class="save" onclick="warehouseReceiveStock()">确认入库</button>
+          </div>
+        </div>`:""}
+      <div class="card" style="margin-top:16px;overflow-x:auto">
+        <div class="section-t">物料库存台账</div>
+        <table class="ranktbl" style="min-width:980px">
+          <thead><tr><th>物料</th><th>分类</th><th>库存</th><th>可用天数</th><th>最近效期</th><th>每件杯数</th><th>金额</th><th>状态</th></tr></thead>
+          <tbody>${data.items.map(i=>`
+            <tr>
+              <td><b>${escHtml(i.name)}</b><div style="font-size:12px;color:var(--muted)">${escHtml(i.code)} · ${escHtml(i.spec||"")}</div></td>
+              <td>${escHtml(i.category||"-")}</td>
+              <td>${whQty(i.stockQuantity)} ${escHtml(i.unit||"")}</td>
+              <td>${Number(i.daysAvailable||0)>0?whQty(i.daysAvailable)+" 天":"未配置"}</td>
+              <td>${escHtml(i.nearestExpiryDate||"-")}</td>
+              <td>${whQty(i.cupsPerUnit)} 杯</td>
+              <td>${whMoney(i.stockValue)}</td>
+              <td><span style="font-weight:800;color:${whAlertColor(i.alertLevel)}">${whAlertLabel(i.alertLevel)}</span><div style="font-size:12px;color:var(--muted)">${escHtml(i.alertText||"")}</div></td>
+            </tr>`).join("")}</tbody>
+        </table>
+      </div>
+      <div class="card" style="margin-top:16px;overflow-x:auto">
+        <div class="section-t">门店叫货单</div>
+        ${data.requisitions.length?`
+          <table class="ranktbl" style="min-width:1000px">
+            <thead><tr><th>单号</th><th>门店</th><th>物料</th><th>金额</th><th>状态</th><th>提交时间</th><th>操作</th></tr></thead>
+            <tbody>${data.requisitions.map(r=>`
+              <tr>
+                <td><b>${escHtml(r.id)}</b><div style="font-size:12px;color:var(--muted)">${escHtml(r.note||"")}</div></td>
+                <td>${escHtml(r.storeName||r.storeId)}</td>
+                <td>${r.lines.map(l=>`${escHtml(l.itemName)} × ${whQty(l.approvedQuantity||l.requestedQuantity)}${escHtml(l.unit||"")}`).join("<br>")}</td>
+                <td>${whMoney(r.totalAmount)}</td>
+                <td><b>${escHtml(r.statusLabel)}</b></td>
+                <td>${escHtml(r.submittedAt||"")}</td>
+                <td>${canManage?whReqActions(r):"-"}</td>
+              </tr>`).join("")}</tbody>
+          </table>`:`<div style="font-size:13px;color:var(--muted)">暂无叫货单</div>`}
+      </div>
+    `:""}`;
 }
 function renderOperations(){
   renderRolePending("v-operations","运营中心","运营工作台 · 建设中",[
@@ -3282,7 +3512,7 @@ const ROLE_MATRIX=[
   ["员工工资","✓","✓","✕","✕","✕","✕"],
   ["门店管理","✓","✕","✕","✕","✕","✕"],
   ["用户权限","✓","✕","✕","✕","✕","✕"],
-  ["仓库中心","查看","✕","✕","✕","建设中","✕"],
+  ["仓库中心","全部","✕","✕","叫货","入库/配货","✕"],
   ["运营中心","查看","✕","✕","✕","✕","建设中"],
 ];
 function renderUsers(){
@@ -3291,7 +3521,7 @@ function renderUsers(){
   body.innerHTML=`
     <div class="card" style="margin-bottom:16px;border-left:4px solid var(--primary)">
       <div style="font-weight:700;margin-bottom:4px">当前角色：${CURRENT_USER}</div>
-      <div style="font-size:13px;color:var(--muted);line-height:1.7">老板是最高权限，负责全部业务；店长、财务、督导分别进入自己的工作台；仓库管理员和运营先保留独立入口，后续再接真实业务。</div>
+      <div style="font-size:13px;color:var(--muted);line-height:1.7">老板是最高权限，负责全部业务；店长可查看本店并提交叫货；仓库管理员负责物料、入库、审核和配货；运营先保留独立入口，后续再接真实业务。</div>
     </div>
     <div class="card" style="overflow-x:auto"><div class="section-t">角色权限矩阵</div>
       <table class="ranktbl" style="min-width:880px"><thead><tr><th>权限</th><th style="text-align:center">老板</th><th style="text-align:center">财务</th><th style="text-align:center">督导</th><th style="text-align:center">店长</th><th style="text-align:center">仓库管理员</th><th style="text-align:center">运营</th></tr></thead>

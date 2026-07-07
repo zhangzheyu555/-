@@ -259,6 +259,14 @@ async function sGet(k){
   }catch(e){console.error("读取数据失败",e);return null;}
 }
 let STORAGE_BACKEND_TOKEN="", STORAGE_BACKEND_TOKEN_PROMISE=null;
+function backendUsernameForRole(role=(typeof LOGIN_ROLE==="string"&&LOGIN_ROLE)||CURRENT_ROLE){
+  if(role==="财务")return "finance";
+  if(role==="督导")return "supervisor";
+  if(role==="仓库管理员")return "warehouse";
+  if(role==="运营")return "operations";
+  if(role==="店长")return (typeof MANAGED_SID==="string"&&MANAGED_SID)||"";
+  return "boss";
+}
 async function storageBackendToken(){
   if(STORAGE_BACKEND_TOKEN)return STORAGE_BACKEND_TOKEN;
   let pass="";
@@ -266,7 +274,8 @@ async function storageBackendToken(){
   if(!pass)return "";
   if(STORAGE_BACKEND_TOKEN_PROMISE)return STORAGE_BACKEND_TOKEN_PROMISE;
   const role=(typeof LOGIN_ROLE==="string"&&LOGIN_ROLE)||CURRENT_ROLE;
-  const backendUsername=role==="财务"?"finance":"boss";
+  const backendUsername=backendUsernameForRole(role);
+  if(!backendUsername)return "";
   STORAGE_BACKEND_TOKEN_PROMISE=fetch("/api/auth/login",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
@@ -344,7 +353,7 @@ const ROLE_HIDDEN_TABS={
   "老板":[],
   "财务":["inspect","stores","logs","fetch","warehouse","operations","users"],
   "督导":["report","entry","expense","export","stores","logs","fetch","warehouse","operations","users","salary"],
-  "店长":["entry","export","stores","logs","fetch","warehouse","operations","users","salary"],
+  "店长":["entry","export","stores","logs","fetch","operations","users","salary"],
   "仓库管理员":["dash","report","detail","inspect","bot","entry","expense","export","stores","logs","fetch","operations","users","salary"],
   "运营":["dash","report","detail","inspect","bot","entry","expense","export","stores","logs","fetch","warehouse","users","salary"]
 };
@@ -394,12 +403,13 @@ function roleVisibleTabs(role=CURRENT_ROLE){
   return ALL_TAB_IDS.filter(v=>!hidden.includes(v));
 }
 function roleDefaultTab(role=CURRENT_ROLE){return ROLE_DEFAULT_TAB[role]||roleVisibleTabs(role)[0]||"dash";}
-/* 角色权限：老板=最高权限；财务=经营数据和费用；督导=巡店；店长=本店只读/报销；仓库与运营先隔离到建设中工作台 */
+/* 角色权限：老板=最高权限；财务=经营数据和费用；督导=巡店；店长=本店只读/报销/叫货；仓库=库存与配货 */
 function can(act){
   if(isBossRole())return true;
   if(CURRENT_ROLE==="财务")return ["edit","import","export","expense","salary"].includes(act);
   if(CURRENT_ROLE==="督导")return act==="inspect"; // 督导只做巡店，不碰财务数据
-  if(CURRENT_ROLE==="店长")return act==="expense";
+  if(CURRENT_ROLE==="店长")return act==="expense"||act==="warehouseOrder";
+  if(CURRENT_ROLE==="仓库管理员")return act==="warehouse";
   return false; // edit/delete/import/export 一律不可
 }
 function canExport(){return isBossRole()||CURRENT_ROLE==="财务";}
@@ -414,7 +424,7 @@ function applyRole(){
     CURRENT_ROLE==="店长"?"你可以查看本店经营、提交报销和查看巡店结果":
     (CURRENT_ROLE==="督导"?"发起门店巡检、查看稽核记录与标准":
     (CURRENT_ROLE==="财务"?"负责数据录入、报销、工资和财务导出":
-    (CURRENT_ROLE==="仓库管理员"?"仓库中心正在建设，先保留独立工作台入口":
+    (CURRENT_ROLE==="仓库管理员"?"负责物料档案、入库、门店叫货审核和配货出库":
     (CURRENT_ROLE==="运营"?"运营中心正在建设，先保留独立工作台入口":"最高权限，负责全部业务"))));
   // 隐藏无权的导航
   const hidden=ROLE_HIDDEN_TABS[CURRENT_ROLE]||[];

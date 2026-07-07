@@ -133,6 +133,16 @@ public class AuthRepository {
         """, role, displayName, tenantId, username);
   }
 
+  public void ensureUserProfile(long tenantId, String username, String displayName, String role, String storeId) {
+    jdbcTemplate.update("""
+        update auth_user
+        set role = ?,
+            display_name = ?,
+            store_id = ?
+        where tenant_id = ? and username = ?
+        """, role, displayName, storeId, tenantId, username);
+  }
+
   public void createUser(long tenantId, String username, String passwordHash, String displayName, String role, String storeId) {
     jdbcTemplate.update("""
         insert into auth_user(tenant_id, username, password_hash, display_name, role, store_id, enabled, created_at)
