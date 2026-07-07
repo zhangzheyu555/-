@@ -14,3 +14,7 @@ web/dist/
 web/tsconfig.tsbuildinfo
 .idea/
 *.iml
+inspection-service/.venv/
+inspection-service/data/
+inspection-service/runs/
+inspection-service/__pycache__/
