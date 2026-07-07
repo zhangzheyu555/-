@@ -478,7 +478,7 @@
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
               <div style="border-right:1px solid var(--line);padding-right:10px">
                 <div style="font-size:12.5px;font-weight:700;margin-bottom:6px">📷 截图识别 <span style="color:var(--warn);font-size:11px">待配置</span></div>
-                <div style="font-size:11px;color:var(--muted);margin-bottom:8px">可先预览截图；视觉识别服务接入后自动填表</div>
+                <div style="font-size:11px;color:var(--muted);margin-bottom:8px">当前仅支持预览截图；不会自动读取图片金额</div>
                 <div style="display:flex;gap:6px">
                   <label class="btn-ghost" style="cursor:pointer;font-size:12px;padding:6px 10px">选图<input type="file" id="aiFile" accept="image/*" style="display:none"></label>
                   <button class="save" id="aiBtn" style="width:auto;margin:0;padding:6px 12px;font-size:12px">查看状态</button>
@@ -1019,7 +1019,7 @@ function setAiImg(dataUrl,file){
   document.getElementById("aiImg").src=dataUrl;
   document.getElementById("aiPreview").style.display="block";
   importClearPreview();
-  importStatusEl().textContent="已载入截图。当前后端暂未配置视觉识别，点击后会给出安全提示。";
+  importStatusEl().textContent="已载入截图预览。当前未配置视觉识别，不会自动读取图片金额，请使用 Excel/CSV 导入或手工录入。";
 }
 document.getElementById("aiFile").onchange=e=>{
   const f=e.target.files[0];if(!f)return;
@@ -1033,8 +1033,7 @@ document.addEventListener("paste",e=>{
   if(it){const f=it.getAsFile();const r=new FileReader();r.onload=()=>setAiImg(r.result,f);r.readAsDataURL(f);}
 });
 document.getElementById("aiBtn").onclick=()=>{
-  if(!_aiFile){toast("请先粘贴或上传截图");return;}
-  importStatusEl().textContent="截图识别后端视觉能力尚未配置。当前请使用 Excel/CSV 导入，或按截图手工录入后保存。";
+  importStatusEl().textContent="截图识别待配置：当前版本只预览图片，不会自动读取图片金额。请使用 Excel/CSV 导入，或按截图手工录入后保存。";
   toast("截图识别待配置，先用表格导入或手工录入");
 };
 
