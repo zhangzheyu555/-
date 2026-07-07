@@ -28,7 +28,7 @@ import org.springframework.web.client.RestClientException;
 
 @Service
 public class AssistantService {
-  private static final int CONTEXT_LIMIT = 14000;
+  private static final int CONTEXT_LIMIT = 20000;
   private static final int HISTORY_LIMIT = 8;
   private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
   private static final DecimalFormat MONEY = new DecimalFormat("#,##0");
@@ -89,7 +89,7 @@ public class AssistantService {
   }
 
   private String localAnswer(AuthUser user, String message) {
-    List<String> months = targetMonths(message);
+    List<String> months = targetMonths(user, message);
     if (mentionsRanking(message)) {
       return rankingAnswer(user, message, months);
     }
@@ -189,8 +189,13 @@ public class AssistantService {
   }
 
   private String buildDataContext(AuthUser user, String message, String frontContext) {
+    String extra = clean(frontContext);
+    if (!extra.isBlank()) {
+      return limitContext("前端当前可见数据上下文（优先级最高；未指定月份时按前端说明的默认月份回答）：\n" + extra);
+    }
+
     StringBuilder context = new StringBuilder();
-    for (String month : targetMonths(message).stream().limit(6).toList()) {
+    for (String month : targetMonths(user, message).stream().limit(6).toList()) {
       ProfitSummaryResponse summary = financeService.dashboard(user, month, null).summary();
       context.append("月份：").append(month)
           .append("；营业总收入：").append(money(summary.sales()))
@@ -211,11 +216,10 @@ public class AssistantService {
               .append("，净利率 ").append(percent(entry.margin()))
               .append("，状态 ").append(entry.risk()).append("\n"));
     }
-    String extra = clean(frontContext);
-    if (!extra.isBlank()) {
-      context.append("\n前端补充上下文：\n").append(extra);
-    }
-    String value = context.toString();
+    return limitContext(context.toString());
+  }
+
+  private String limitContext(String value) {
     return value.length() > CONTEXT_LIMIT ? value.substring(0, CONTEXT_LIMIT) + "\n...（数据上下文已截断）" : value;
   }
 
@@ -276,7 +280,7 @@ public class AssistantService {
     return """
         你是“门店利润系统”的数据助手，只能回答当前系统范围内的问题。
 
-        系统范围包括：利润概览、利润表、门店详情、督导巡店、数据助手、数据录入、报销栏、数据导出、门店管理、用户权限、员工工资、操作日志，以及下方后端数据上下文里的门店经营数据。
+        系统范围包括：利润概览、利润表、门店详情、督导巡店、数据助手、数据录入、报销栏、数据导出、门店管理、用户权限、员工工资、操作日志，以及下方当前数据上下文里的门店经营数据。
 
         回答规则：
         1. 只回答门店利润系统相关内容；用户问系统外问题时，礼貌说明无法回答，并引导回系统功能。
@@ -287,8 +291,9 @@ public class AssistantService {
         6. 排名类回答请使用清晰编号列表，格式为“1. 门店名：金额元”。
         7. 查询某店某月经营时，同时给出营业总收入、实收收入、成本合计、毛利润、费用合计、净利润、净利率。
         8. 查询各月趋势时，逐月列出数据，并补充合计、最高月、最低月。
+        9. 用户没有明确说“各月、每月、趋势、区间、1-5月”等多月份意图时，只回答上下文说明的默认月份，不要主动改成各月趋势。
 
-        当前后端数据上下文：
+        当前数据上下文：
         """ + (dataContext.isBlank() ? "暂无可用数据。" : dataContext);
   }
 
@@ -320,9 +325,14 @@ public class AssistantService {
         .findFirst();
   }
 
-  private List<String> targetMonths(String message) {
+  private List<String> targetMonths(AuthUser user, String message) {
+    List<String> availableMonths = dataMonths(user);
     LinkedHashSet<String> months = new LinkedHashSet<>();
-    int year = YearMonth.now(BUSINESS_ZONE).getYear();
+    int year = availableMonths.stream()
+        .findFirst()
+        .map(YearMonth::parse)
+        .map(YearMonth::getYear)
+        .orElse(YearMonth.now(BUSINESS_ZONE).getYear());
 
     Matcher range = Pattern.compile("(?<!\\d)(1[0-2]|[1-9])\\s*[-到至~]\\s*(1[0-2]|[1-9])\\s*月").matcher(message);
     while (range.find()) {
@@ -344,12 +354,19 @@ public class AssistantService {
     }
 
     if (months.isEmpty() && (message.contains("各月") || message.contains("趋势"))) {
-      months.addAll(financeService.months().stream().limit(6).toList());
+      months.addAll(availableMonths.stream().limit(6).toList());
     }
     if (months.isEmpty()) {
-      months.add(YearMonth.now(BUSINESS_ZONE).toString());
+      months.add(availableMonths.stream().findFirst().orElse(YearMonth.now(BUSINESS_ZONE).toString()));
     }
     return new ArrayList<>(months);
+  }
+
+  private List<String> dataMonths(AuthUser user) {
+    return financeService.months().stream()
+        .filter(month -> !financeService.entries(user, month, null, null).isEmpty())
+        .distinct()
+        .toList();
   }
 
   private boolean hasBlockedWord(String text) {
