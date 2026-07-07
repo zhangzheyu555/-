@@ -3038,6 +3038,9 @@ function botVisibleScopeText(){
   }
   return `当前可见 ${stores.length} 家门店`;
 }
+function botLocalTrustHtml(){
+  return `<div class="qsub">数据来源：页面本地规则 · ${escHtml(botVisibleScopeText())}。页面本地结果优先。</div>`;
+}
 function botAiHtml(resp){
   resp=resp||{};
   const source=resp.aiUsed?"DeepSeek 智能分析":(resp.source&&resp.source.includes("backend-finance")?"后端财务库回答":"本地规则回答");
@@ -3068,7 +3071,7 @@ async function botAsk(q){
   const askQ=botScopedQuestion(q);
   // —— 本地引擎优先，立即直观呈现 ——
   let local=null; try{ local=localAnswer(askQ); }catch(e){ console.error("localAnswer",e); }
-  if(local&&(local.html||local.text)){ BOT_HISTORY.push({role:"assistant",html:local.html,text:local.text||""}); botRender(); }
+  if(local&&(local.html||local.text)){ BOT_HISTORY.push({role:"assistant",html:local.html?botLocalTrustHtml()+local.html:null,text:local.text||""}); botRender(); }
   botBusy=true; botRender();
   let ai=null; try{ ai=await botDeepSeekAnswer(askQ); }catch(e){ console.warn("botDeepSeekAnswer",e); }
   botBusy=false;
