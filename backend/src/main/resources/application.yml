@@ -28,6 +28,14 @@ app:
   inspection:
     detect-url: ${INSPECTION_DETECT_URL:http://127.0.0.1:8000/detect}
     timeout: ${INSPECTION_TIMEOUT:60s}
+  eleme:
+    app-key: ${ELEME_APP_KEY:}
+    app-secret: ${ELEME_APP_SECRET:}
+    access-token: ${ELEME_ACCESS_TOKEN:}
+    base-url: ${ELEME_BASE_URL:https://api-be.ele.me/}
+    timeout: ${ELEME_TIMEOUT:20s}
+    # 已授权门店（shopId:门店名），逗号分隔；留空则用示例门店
+    shops: ${ELEME_SHOPS:}
   auth:
     token-ttl-hours: 12
   cors:

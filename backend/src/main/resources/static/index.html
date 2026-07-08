@@ -297,8 +297,76 @@
   @media(max-width:400px){
     .kpis{grid-template-columns:1fr}
   }
+  /* 新人培训 */
+  .tr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:16px}
+  .tr-card{background:var(--surface);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;transition:transform .18s,box-shadow .18s}
+  .tr-card:hover{transform:translateY(-3px);box-shadow:0 18px 38px -14px rgba(40,30,20,.22)}
+  .tr-cover{position:relative;height:165px;overflow:hidden;cursor:zoom-in;background:var(--bg)}
+  .tr-cover img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .35s}
+  .tr-card:hover .tr-cover img{transform:scale(1.05)}
+  .tr-cover .cnt{position:absolute;right:10px;bottom:10px;background:rgba(0,0,0,.55);color:#fff;font-size:11px;font-weight:700;border-radius:99px;padding:3px 10px}
+  .tr-body{padding:14px 16px 16px;display:flex;flex-direction:column;gap:10px;font-size:13px;flex:1}
+  .tr-title{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .tr-title .nm{font-weight:900;font-size:16px;letter-spacing:-.01em}
+  .tr-tag{font-size:11px;font-weight:800;border-radius:99px;padding:3px 11px;white-space:nowrap}
+  .tr-tag.t-fruit{background:#fff1e6;color:#e0670f}
+  .tr-tag.t-prep{background:#e8f6ec;color:#1e7d32}
+  .tr-tag.t-cook{background:#f0ebfd;color:#6c3fd1}
+  .tr-tag.t-ratio{background:#e8f1fd;color:#1d63c9}
+  .tr-h6{font-size:11px;font-weight:800;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.04em}
+  .tr-chips{display:flex;flex-wrap:wrap;gap:6px}
+  .tr-chip{background:var(--bg);border:1px solid var(--line);border-radius:99px;padding:3px 11px;font-size:12px;font-weight:600}
+  .tr-flow{display:flex;flex-direction:column}
+  .tr-fstep{display:flex;gap:10px;align-items:flex-start;position:relative;padding:3px 0}
+  .tr-fnum{width:20px;height:20px;border-radius:50%;background:var(--grad);color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px;z-index:1}
+  .tr-fstep::before{content:"";position:absolute;left:9px;top:24px;bottom:-3px;width:2px;background:var(--line)}
+  .tr-fstep:last-child::before{display:none}
+  .tr-ftxt{line-height:1.6;padding-top:3px}
+  .tr-warn{background:#fdf0ef;border:1px solid #f6d3d0;color:#c0392b;border-radius:12px;padding:9px 13px;font-size:12px;line-height:1.75}
+  .tr-note{background:var(--bg);border-radius:12px;padding:9px 13px;line-height:1.75;font-size:12px}
+  .tr-ratio{background:#eef7ef;border:1px solid #d4ead7;color:#1e7d32;border-radius:12px;padding:8px 13px;font-size:12px;font-weight:700;line-height:1.7}
+  .tr-table{width:100%;border-collapse:collapse;font-size:12.5px}
+  .tr-table th{color:var(--muted);text-align:left;padding:6px 9px;border-bottom:1.5px solid var(--line);font-weight:800;white-space:nowrap}
+  .tr-table td{padding:6px 9px;border-bottom:1px solid var(--line);font-weight:600}
+  .tr-table tbody tr:nth-child(even){background:var(--bg)}
+  .tr-table tr:last-child td{border-bottom:0}
+  .tr-lb{position:fixed;inset:0;background:rgba(18,14,10,.86);z-index:120;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px}
+  .tr-lb img{max-width:90vw;max-height:76vh;border-radius:14px;box-shadow:0 30px 90px rgba(0,0,0,.55);background:#fff}
+  .tr-lb .lbnav{display:flex;gap:14px;align-items:center;color:#fff;font-weight:700;font-size:13px}
+  .tr-lb .lbbtn{border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.12);color:#fff;border-radius:99px;padding:8px 18px;font-size:14px;font-weight:800;cursor:pointer}
+  .tr-lb .lbbtn:hover{background:rgba(255,255,255,.25)}
+  .tr-addcard{border:2px dashed var(--line);border-radius:18px;display:flex;align-items:center;justify-content:center;min-height:180px;color:var(--muted);font-weight:800;font-size:15px;cursor:pointer;transition:.18s;background:none;box-shadow:none}
+  .tr-addcard:hover{border-color:var(--primary);color:var(--primary);background:var(--primary-soft);transform:none;box-shadow:none}
+  .tr-editbtn{border:0;background:var(--bg);color:var(--muted);border-radius:8px;padding:4px 8px;font-size:12px;cursor:pointer;flex-shrink:0}
+  .tr-editbtn:hover{background:var(--primary-soft);color:var(--primary)}
+  .field textarea{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:10px;font-size:13px;outline:none;background:#fff;transition:.15s;font-family:inherit;line-height:1.6;resize:vertical}
+  .field textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft)}
+  /* 考试系统 */
+  .ex-papers{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}
+  .ex-paper{background:var(--surface);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);padding:20px;display:flex;flex-direction:column;gap:10px;transition:transform .18s,box-shadow .18s}
+  .ex-paper:hover{transform:translateY(-3px);box-shadow:0 18px 38px -14px rgba(40,30,20,.2)}
+  .ex-paper .pico{width:46px;height:46px;border-radius:13px;display:flex;align-items:center;justify-content:center;font-size:23px;background:var(--primary-soft)}
+  .ex-paper .pnm{font-weight:900;font-size:16px}
+  .ex-paper .psub{font-size:12.5px;color:var(--muted);line-height:1.6}
+  .ex-paper .pmeta{display:flex;gap:8px;flex-wrap:wrap;margin-top:2px}
+  .ex-badge{font-size:11px;font-weight:800;border-radius:99px;padding:3px 10px;background:var(--bg)}
+  .ex-q{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:15px 17px;margin-bottom:12px}
+  .ex-q .qh{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;margin-bottom:9px}
+  .ex-q .qt{font-weight:700;font-size:14px;line-height:1.65}
+  .ex-q .qs{font-size:11px;font-weight:800;color:var(--muted);white-space:nowrap;background:var(--bg);border-radius:99px;padding:3px 10px}
+  .ex-q .qtype{font-size:11px;font-weight:700;border-radius:6px;padding:2px 7px;margin-right:6px}
+  .ex-q .t-num{background:#e8f1fd;color:#1d63c9}
+  .ex-q .t-text{background:#e8f6ec;color:#1e7d32}
+  .ex-q input{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:10px;font-size:14px;outline:none;transition:.15s}
+  .ex-q input:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft)}
+  .ex-q.right{border-color:#bfe6c6;background:#f4fbf5}
+  .ex-q.wrong{border-color:#f3c9c5;background:#fdf3f2}
+  .ex-fb{margin-top:8px;font-size:12.5px;line-height:1.6}
+  .ex-fb.ok{color:#1e7d32}.ex-fb.no{color:#c0392b}
+  .ex-locked{background:#fdf3f2;border:1px solid #f3c9c5;color:#c0392b;border-radius:14px;padding:16px 18px;line-height:1.7}
+  .ex-scorebig{font-size:52px;font-weight:900;letter-spacing:-.02em;line-height:1}
 </style>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="./xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <!-- 腾讯云开发 CloudBase Web SDK：用于多端共享数据 + 报销截图云存储（未配置环境ID时不影响本地使用） -->
 <script src="./cloudbase.full.js"></script>
@@ -330,6 +398,10 @@
       <button class="tab" data-v="detail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l1.5-5h15L21 9"/><path d="M4 9v10a1 1 0 001 1h14a1 1 0 001-1V9"/><path d="M3 9h18"/><path d="M9 20v-6h6v6"/></svg><span class="lab">门店详情</span></button>
       <button class="tab" data-v="inspect"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg><span class="lab">督导巡店</span></button>
       <button class="tab" data-v="bot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 01-8.5 8.5 9 9 0 01-4-1L3 20l1-3.5a8.38 8.38 0 01-1-4A8.5 8.5 0 0121 11.5z"/><circle cx="9" cy="11.5" r="1"/><circle cx="13" cy="11.5" r="1"/></svg><span class="lab">数据助手</span></button>
+      <button class="tab" data-v="analysis"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="3" y1="20" x2="21" y2="20"/></svg><span class="lab">数据分析</span></button>
+      <button class="tab" data-v="train"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10L12 5 2 10l10 5 10-5z"/><path d="M6 12v5c0 1.5 2.7 3 6 3s6-1.5 6-3v-5"/></svg><span class="lab">新人培训</span></button>
+      <button class="tab" data-v="exam"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg><span class="lab">考试系统</span></button>
+      <button class="tab" data-v="inv"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/></svg><span class="lab">店铺盘存</span></button>
       <button class="tab" data-v="entry"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg><span class="lab">数据录入</span></button>
       <button class="tab" data-v="expense"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2h11l3 3v17l-2.5-1.7L15 22l-2.5-1.7L10 22l-2.5-1.7L5 22z"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="9" y1="12" x2="15" y2="12"/></svg><span class="lab">报销栏</span></button>
       <button class="tab" data-v="export"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 9 12 4 17 9"/><line x1="12" y1="4" x2="12" y2="16"/></svg><span class="lab">数据导出</span></button>
@@ -546,6 +618,140 @@
     <!-- FETCH (平台登录入口) -->
     <div class="view" id="v-fetch"></div>
 
+    <!-- ANALYSIS (数据分析：出肉率×单杯用量 采购量测算) -->
+    <div class="view" id="v-analysis">
+      <div class="h"><h1>数据分析</h1></div>
+      <div class="card" style="margin-bottom:16px">
+        <div style="font-weight:800;font-size:15px;margin-bottom:8px">出肉率 × 单杯用量 → 采购量公式</div>
+        <div style="background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:15px;font-weight:700;letter-spacing:.02em">
+          采购毛重（g） = 单杯用量（g） ÷ 出肉率 × 售卖杯数
+        </div>
+        <div style="color:var(--muted);font-size:13px;margin-top:8px;line-height:1.7">
+          单杯用量表记录的是去皮去核后的<b>净果肉</b>克数，进货买的是带皮带核的整果，所以要除以出肉率（净重÷毛重）才是真实采购量。出肉率越低，同样一杯产品要买的水果越多。
+        </div>
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <div style="font-weight:800;font-size:15px;margin-bottom:12px">上传产品用量核算表（Excel）</div>
+        <div class="row2">
+          <div class="field"><label>选择 Excel 文件（需含"水果出肉率"和"单杯用量"两个工作表）</label>
+            <input id="ana_file" type="file" accept=".xlsx,.xls" onchange="anaFilePick()"></div>
+          <div class="field"><label>数据月份（从文件名自动识别，可修改）</label>
+            <input id="ana_month" type="month"></div>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;margin-top:4px">
+          <button class="save" style="margin:0;width:auto;padding:10px 22px" onclick="anaUpload()">解析并保存</button>
+          <span id="ana_up_msg" style="color:var(--muted);font-size:13px"></span>
+        </div>
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <div style="font-weight:800;font-size:15px;margin-bottom:12px">历史记录（按月查看）</div>
+        <div id="ana_history" style="color:var(--muted);font-size:13px">加载中…</div>
+        <div id="ana_month_view" style="margin-top:12px"></div>
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <div style="font-weight:800;font-size:15px;margin-bottom:12px">按产品测算（配方来自《5月产品用量核算表·单杯用量》）<span id="ana_src" style="color:var(--muted);font-weight:600;font-size:12px"></span></div>
+        <div class="row2">
+          <div class="field"><label>选择产品（自动带出配方果肉用量）</label>
+            <select id="ana_prod" onchange="anaProdPick()">
+              <option value="">— 请选择产品 —</option>
+            </select>
+          </div>
+          <div class="field"><label>售卖杯数（默认为5月实际合计，可修改）</label><input id="ana_prod_cups" type="number" min="0" step="1" placeholder="选产品后自动填入" oninput="anaProdCalc()"></div>
+        </div>
+        <div id="ana_prod_body" style="margin-top:6px;color:var(--muted);font-size:13px">选择产品后，这里会列出每种果肉的单杯用量、配对的出肉率和需采购的毛重。含中/大杯规格的产品按中杯配方计算。</div>
+        <div style="margin-top:12px"><button class="save" style="margin:0;width:auto;padding:10px 22px" onclick="anaExport()">生成采购汇总 Excel（全部产品）</button></div>
+      </div>
+      <div class="card">
+        <div style="font-weight:800;font-size:15px;margin-bottom:12px">手动测算（自定义用量）</div>
+        <div class="row2">
+          <div class="field"><label>选择水果（自动填出肉率，来自5月核算表）</label>
+            <select id="ana_fruit" onchange="anaFruitPick()">
+              <option value="">— 手动填写出肉率 —</option>
+            </select>
+          </div>
+          <div class="field"><label>出肉率（%）</label><input id="ana_yield" type="number" min="1" max="100" step="0.1" placeholder="如 78" oninput="anaCalc()"></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>单杯用量（g，净果肉）</label><input id="ana_percup" type="number" min="0" step="1" placeholder="如 50" oninput="anaCalc()"></div>
+          <div class="field"><label>售卖杯数</label><input id="ana_cups" type="number" min="0" step="1" placeholder="如 23629" oninput="anaCalc()"></div>
+        </div>
+        <div class="kpis" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px">
+          <div class="card kpi"><div class="lab">单杯需采购毛重</div><div class="val" id="ana_percup_raw">—</div></div>
+          <div class="card kpi"><div class="lab">采购总毛重</div><div class="val" id="ana_total_raw">—</div></div>
+          <div class="card kpi"><div class="lab">损耗（皮核等）</div><div class="val" id="ana_waste">—</div></div>
+        </div>
+        <div id="ana_note" style="color:var(--muted);font-size:13px;margin-top:10px"></div>
+      </div>
+    </div>
+
+    <!-- TRAIN (新人培训) -->
+    <div class="view" id="v-train">
+      <div class="h">
+        <h1>新人培训</h1>
+        <div class="right">
+          <div class="topsearch" style="min-width:220px">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input id="trSearch" placeholder="搜索水果、半成品、配比…" autocomplete="off" oninput="trRender()">
+          </div>
+        </div>
+      </div>
+      <div class="seg" id="trSeg" style="margin-bottom:16px">
+        <button class="seg-b on" data-m="fruit" onclick="trPick('fruit')">🍎 选果标准</button>
+        <button class="seg-b" data-m="prep" onclick="trPick('prep')">🔪 水果处理</button>
+        <button class="seg-b" data-m="cook" onclick="trPick('cook')">🍵 蒸煮半成品</button>
+        <button class="seg-b" data-m="ratio" onclick="trPick('ratio')">⚖️ 配比速查</button>
+      </div>
+      <div id="trBody" class="tr-grid"></div>
+    </div>
+
+    <!-- EXAM (考试系统) -->
+    <div class="view" id="v-exam">
+      <div class="h"><h1>考试系统</h1><div class="right" id="examTopRight"></div></div>
+      <div id="examBody"></div>
+    </div>
+
+    <!-- INV (店铺盘存) -->
+    <div class="view" id="v-inv">
+      <div class="h">
+        <h1>店铺盘存</h1>
+        <div class="right">
+          <div class="topsearch" style="min-width:200px">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input id="invSearch" placeholder="搜索物品…" autocomplete="off" oninput="invRender()">
+          </div>
+          <button class="btn-ghost" onclick="invResetAll()">恢复全部基准价</button>
+          <button class="btn-ghost" onclick="invExport()">导出盘存 Excel</button>
+        </div>
+      </div>
+      <div class="card" style="margin-bottom:14px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between">
+        <div class="seg" id="invSeg">
+          <button class="seg-b on" data-c="全部" onclick="invPick('全部')">全部</button>
+          <button class="seg-b" data-c="耗材包材" onclick="invPick('耗材包材')">📦 耗材包材</button>
+          <button class="seg-b" data-c="物料原料" onclick="invPick('物料原料')">🥛 物料原料</button>
+          <button class="seg-b" data-c="水果生鲜" onclick="invPick('水果生鲜')">🍉 水果生鲜</button>
+        </div>
+        <div style="color:var(--muted);font-size:12.5px">基准：2026年6月盘存表 · 改价后<b style="color:var(--primary)">单价/个</b>与<b style="color:var(--primary)">金额</b>自动重算，改动自动保存</div>
+      </div>
+      <div class="card" style="padding:0;overflow-x:auto">
+        <table class="tr-table" id="invTable" style="min-width:860px">
+          <thead><tr>
+            <th style="padding:10px 14px">类别</th><th>物品名称</th><th>规格</th>
+            <th style="text-align:right">单位数量</th>
+            <th style="text-align:right">单价/件（元）✏️</th>
+            <th style="text-align:right">单价/个（元）</th>
+            <th style="text-align:right">盘存数量 ✏️</th>
+            <th style="text-align:right;padding-right:14px">金额（元）</th>
+            <th></th>
+          </tr></thead>
+          <tbody id="invBody"></tbody>
+          <tfoot><tr style="font-weight:900">
+            <td colspan="7" style="padding:11px 14px;text-align:right">盘存总金额</td>
+            <td id="invTotal" style="text-align:right;color:var(--primary);font-size:15px">¥ 0.00</td><td></td>
+          </tr></tfoot>
+        </table>
+      </div>
+    </div>
+
     <!-- USERS (用户权限) -->
     <div class="view" id="v-salary"></div>
     <div class="view" id="v-users">
@@ -554,6 +760,43 @@
     </div>
 
   </div>
+  </div>
+</div>
+
+<!-- 新人培训 添加/编辑弹窗（四个板块通用） -->
+<div id="trFruitModal" class="modal-bg" style="display:none">
+  <div class="modal" style="max-width:540px;max-height:90vh;overflow-y:auto">
+    <div class="modal-h" id="tfTitle">添加</div>
+    <div class="row2">
+      <div class="field"><label>名称 *</label><input id="tf_n" placeholder="如：西瓜（麒麟）"></div>
+      <div class="field" id="g_tag"><label>上市时间</label><input id="tf_tag" placeholder="如：5-9月 / 全年"></div>
+      <div class="field" id="g_time" style="display:none"><label>效期 / 储存</label><input id="tf_time" placeholder="如：冷藏5小时"></div>
+    </div>
+    <div id="g_fruit">
+      <div class="field"><label>产地等标签（每行一个）</label><textarea id="tf_chips" rows="2" placeholder="产地：海南 / 广西"></textarea></div>
+      <div class="field"><label>保存与存放（每行一条）</label><textarea id="tf_keep" rows="3" placeholder="未处理：常温3天，冷藏6天&#10;处理后：冷藏5小时"></textarea></div>
+      <div class="field"><label>挑选与验收要点（每行一条）</label><textarea id="tf_pick" rows="3" placeholder="表皮光滑、无腐烂损伤&#10;成熟果按压有弹性"></textarea></div>
+      <div class="field"><label>严禁使用（红色警示条）</label><textarea id="tf_warn" rows="2" placeholder="腐烂发霉、发酵异味等现象，严禁使用"></textarea></div>
+    </div>
+    <div id="g_proc" style="display:none">
+      <div class="field"><label>操作流程（每行一步）*</label><textarea id="tf_steps" rows="5" placeholder="自来水洗2遍&#10;直饮水洗1遍&#10;切块冷藏"></textarea></div>
+      <div class="field"><label>配比（绿色高亮条，可留空）</label><input id="tf_ratio" placeholder="如：白糖2 : 热水1"></div>
+      <div class="field"><label>注意 / 提示（可留空）</label><input id="tf_tips" placeholder="如：熬制过程中需搅拌"></div>
+    </div>
+    <div id="g_ratio" style="display:none">
+      <div class="field"><label>表头（用逗号分隔）*</label><input id="tf_head" placeholder="如：热水/g, 西米/g, 白糖油/cc"></div>
+      <div class="field"><label>数据行（每行一条，值用逗号分隔）*</label><textarea id="tf_rows" rows="4" placeholder="4000, 100, 40&#10;5000, 200, 80"></textarea></div>
+      <div class="field"><label>说明（可留空）</label><input id="tf_note" placeholder="如：煮沸后转900W熬4分钟"></div>
+    </div>
+    <div class="field" id="g_img"><label>图片（可多选；选择后替换现有图片）</label><input id="tf_img" type="file" accept="image/*" multiple onchange="trImgPick(this.files)">
+      <div id="tf_thumbs" style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="save" style="flex:1;margin:0" onclick="trSaveItem()">保存</button>
+      <button class="btn-ghost" id="tf_restore" style="display:none" onclick="trRestoreItem()">恢复默认</button>
+      <button class="btn-ghost" id="tf_del" style="display:none;color:#d33" onclick="trDelItem()">删除</button>
+      <button class="btn-ghost" onclick="document.getElementById('trFruitModal').style.display='none'">取消</button>
+    </div>
   </div>
 </div>
 
@@ -784,7 +1027,988 @@ document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{
   if(t.dataset.v==="fetch")renderFetch();
   if(t.dataset.v==="users")renderUsers();
   if(t.dataset.v==="salary")renderSalary();
+  if(t.dataset.v==="analysis")anaInit();
+  if(t.dataset.v==="train")trRender();
+  if(t.dataset.v==="inv")invInit();
+  if(t.dataset.v==="exam")examInit();
 });
+
+/* ================= 考试系统（题库来自桌面《考试真题》文件夹，填空智能判分）=================
+   判分规则：数字空必须精准；文字空命中关键词（大概意思对）即得分。
+   一次不及格 → 该套试卷 7 天后才能再考。及格线各卷自定，默认 80 分。 */
+const EXAM_PASS_LOCK_DAYS=7;
+const EXAMS=[
+ {id:"partner",name:"茹菓小伙伴转正技能考试",icon:"🧋",pass:90,role:"新员工转正",
+  items:[
+   {q:"茹菓的使命是什么？",type:"text",a:"做茶饮行业服务最好的奶茶品牌",accept:["服务最好","奶茶品牌"],min:1},
+   {q:"茹菓的愿景是什么？",type:"text",a:"让走进茹菓的顾客都开心的走出去",accept:["开心","走出去"],min:1},
+   {q:"茹菓的价值观是什么？",type:"text",a:"团结协作，努力奋斗，精益求精",accept:["团结","奋斗","精益求精"],min:2},
+   {q:"服务核心四大原则是哪四个？",type:"text",a:"顾客第一、及时招呼、仔细聆听、创造体验",accept:["顾客第一","及时招呼","仔细聆听","创造体验"],min:3},
+   {q:"糖油配方：白糖水按白糖 X 克配开水 1000 克，X=？（克）",type:"num",a:"2000"},
+   {q:"熬糖油：中火多少 W 熬制？（W）",type:"num",a:"1000"},
+   {q:"熬糖油：中火熬几分钟？（分钟）",type:"num",a:"4"},
+   {q:"糖油放冷后冷藏保存几小时？（小时）",type:"num",a:"72"},
+   {q:"芒果未处理：常温可放几天？（天）",type:"num",a:"3"},
+   {q:"芒果未处理：冷藏可放几天？（天）",type:"num",a:"5"},
+   {q:"芒果处理过后冷藏保存几小时？（小时）",type:"num",a:"5"},
+   {q:"芒果处理过后冷冻保存几小时？（小时）",type:"num",a:"72"},
+   {q:"挑选成熟芒果，颜色应是？",type:"text",a:"深黄色",accept:["深黄","黄色"],min:1},
+   {q:"成熟芒果握在手中手感如何？",type:"text",a:"微软",accept:["微软","软"],min:1},
+   {q:"芒果变质会散发什么味道？",type:"text",a:"酒味",accept:["酒味","酒精味","坏味"],min:1},
+   {q:"芒芒甘露大杯：加入芒果粒几克？（克）",type:"num",a:"50"},
+   {q:"芒芒甘露大杯：加入蒟蒻几克？（克）",type:"num",a:"40"},
+   {q:"芒芒甘露大杯：加入茶冻几克？（克）",type:"num",a:"70"},
+   {q:"芒芒甘露大杯：倒入芒果汁几克？（克）",type:"num",a:"360"},
+   {q:"满杯VC水果茶：加入橙子角几个压出汁水？（个）",type:"num",a:"2"},
+   {q:"满杯VC水果茶：加入金桔几个？（个）",type:"num",a:"1"},
+   {q:"满杯VC水果茶：橙子酱几克？（克）",type:"num",a:"80"},
+   {q:"满杯VC水果茶：百香果几克？（克）",type:"num",a:"15"},
+   {q:"满杯VC水果茶：糖几克？（克）",type:"num",a:"40"},
+   {q:"满杯VC水果茶：冰量几克？（克）",type:"num",a:"150"},
+   {q:"凤梨未处理：常温可放几天？（天）",type:"num",a:"3"},
+   {q:"凤梨处理过后冷藏保存几小时？（小时）",type:"num",a:"5"},
+   {q:"凤梨清洗后需祛除中间的什么？",type:"text",a:"硬芯",accept:["硬芯","芯"],min:1},
+   {q:"百香芒芒金凤梨：芒果条几克后捣碎？（克）",type:"num",a:"150"},
+   {q:"百香芒芒金凤梨：凤梨汁几克？（克）",type:"num",a:"80"},
+   {q:"百香芒芒金凤梨：百香果酱几克？（克）",type:"num",a:"30"},
+   {q:"霸气橙子：加入橙子角几个压出汁水？（个）",type:"num",a:"4"},
+   {q:"霸气橙子：糖几克？（克）",type:"num",a:"30"},
+   {q:"仪容仪表：需按要求穿戴的有帽子、发网、工服和什么？",type:"text",a:"围裙",accept:["围裙"],min:1},
+   {q:"迎客标准话术是什么？",type:"text",a:"您好，欢迎光临茹菓",accept:["欢迎光临","您好"],min:1},
+   {q:"点单时推荐哪种冰口感会更好一些？",type:"text",a:"标准冰",accept:["标准冰"],min:1},
+   {q:"点单后必须做什么，跟顾客确认点单内容？",type:"text",a:"复单",accept:["复单","确认"],min:1},
+   {q:"告知顾客我们的产品都是怎样制作的？",type:"text",a:"手工现做",accept:["手工现做","现做"],min:1},
+   {q:"产品最佳饮用时间是多久？",type:"text",a:"半个小时",accept:["半个小时","半小时","30分钟"],min:1},
+   {q:"打包：先看是堂食还是外卖，外卖需要做什么？",type:"text",a:"封口",accept:["封口"],min:1},
+   {q:"抹布分类：擦桌椅用什么颜色？",type:"text",a:"驼色",accept:["驼色"],min:1},
+   {q:"抹布分类：打包台用什么颜色？",type:"text",a:"蓝色",accept:["蓝色"],min:1},
+   {q:"抹布分类：蒸汽机、奶昔机用什么颜色？",type:"text",a:"灰色",accept:["灰色"],min:1},
+   {q:"抹布分类：操作台、切水果台、泡茶台、备料台用什么颜色？",type:"text",a:"棕色",accept:["棕色"],min:1},
+   {q:"红线：到店货物（味全、卡士、牛奶）不允许超过多久？",type:"text",a:"一周",accept:["一周","7天","七天"],min:1},
+   {q:"红线：各平台差评占比率不得高于百分之几？（%）",type:"num",a:"0.05"},
+   {q:"红线：售后占比率不得高于总单量百分之几？（%）",type:"num",a:"0.2"},
+   {q:"红线：外卖产品需在几点前准时上架？（如 9:30）",type:"text",a:"9:30",accept:["9:30","9：30","930"],min:1},
+   {q:"红线：沙冰壶每次搅拌容量不可超过几杯？（杯）",type:"num",a:"2"},
+   {q:"红线：果酱壶盛装不可超过总容量的百分之几？（%）",type:"num",a:"60"},
+   {q:"红线：水果进冰箱存放，外围需离杆、四周需怎样？",type:"text",a:"离壁",accept:["离壁"],min:1},
+   {q:"红线：交叉污染——水槽严禁清洗什么？",type:"text",a:"拖把",accept:["拖把"],min:1},
+   {q:"红线：门店严禁一切什么行为，一经发现严肃处理？",type:"text",a:"代打卡",accept:["代打卡","打卡"],min:1},
+   {q:"黄线：电子温度计温度应在 0± 多少℃？",type:"text",a:"0±0.3℃",accept:["0.3","±0.3"],min:1},
+   {q:"黄线：茶汤需在几秒内完成过滤及搅拌？（秒）",type:"num",a:"30"},
+   {q:"黄线：仓库物料按离地几公分标准存放？（公分）",type:"num",a:"10"}
+  ]},
+ {id:"trainer",name:"茹菓训练员转正技能考试",icon:"🎓",pass:90,role:"训练员转正",
+  items:[
+   {q:"茹菓的使命是什么？",type:"text",a:"做茶饮行业服务最好的奶茶品牌",accept:["服务最好","奶茶品牌"],min:1},
+   {q:"茹菓的愿景是什么？",type:"text",a:"让走进茹菓的顾客都开心的走出去",accept:["开心","走出去"],min:1},
+   {q:"茹菓的价值观是什么？",type:"text",a:"团结协作，努力奋斗，精益求精",accept:["团结","奋斗","精益求精"],min:2},
+   {q:"服务核心四大原则是哪四个？",type:"text",a:"顾客第一、及时招呼、仔细聆听、创造体验",accept:["顾客第一","及时招呼","仔细聆听","创造体验"],min:3},
+   {q:"带新人：第一天主要学习什么内容？（简述）",type:"text",a:"企业文化与服务标准",accept:["企业文化","服务","文化"],min:1},
+   {q:"迎客标准话术是什么？",type:"text",a:"您好，欢迎光临茹菓",accept:["欢迎光临","您好"],min:1},
+   {q:"点单时推荐哪种冰口感会更好？",type:"text",a:"标准冰",accept:["标准冰"],min:1},
+   {q:"点单后必须做什么，跟顾客确认内容？",type:"text",a:"复单",accept:["复单","确认"],min:1},
+   {q:"打包：外卖需要做什么，堂食直接盖盖子？",type:"text",a:"封口",accept:["封口"],min:1},
+   {q:"仪容仪表：需按要求穿戴帽子、发网、工服和什么？",type:"text",a:"围裙",accept:["围裙"],min:1},
+   {q:"糖油：白糖与开水的比例（白糖 2000 : 开水 X），X=？（克）",type:"num",a:"1000"},
+   {q:"熬糖油：中火多少 W 熬 4 分钟？（W）",type:"num",a:"1000"},
+   {q:"糖油冷藏保存几小时？（小时）",type:"num",a:"72"},
+   {q:"沙冰壶每次搅拌容量不可超过几杯？（杯）",type:"num",a:"2"},
+   {q:"果酱壶盛装不可超过总容量的百分之几？（%）",type:"num",a:"60"},
+   {q:"果酱壶总容量不能超过多少毫升？（毫升）",type:"num",a:"1500"},
+   {q:"水果进冰箱存放，外围离杆、四周需怎样？",type:"text",a:"离壁",accept:["离壁"],min:1},
+   {q:"各平台差评占比率不得高于百分之几？（%）",type:"num",a:"0.05"},
+   {q:"售后占比率不得高于总单量百分之几？（%）",type:"num",a:"0.2"},
+   {q:"外卖产品需在几点前准时上架？（如 9:30）",type:"text",a:"9:30",accept:["9:30","9：30","930"],min:1},
+   {q:"晚上几点前不可无故下架或不报备下架？（如 21:00）",type:"text",a:"21:00",accept:["21:00","21：00","2100"],min:1},
+   {q:"服务投诉：1-3000 单以内允许几条？（条）",type:"num",a:"1"},
+   {q:"服务投诉：5000 单以内允许几条？（条）",type:"num",a:"2"},
+   {q:"服务投诉：10000 单以内允许几条？（条）",type:"num",a:"4"},
+   {q:"平台评分需时刻保持多少分及以上（大众点评除外）？（分）",type:"num",a:"4.8"},
+   {q:"电子温度计温度应在 0± 多少℃？",type:"text",a:"0±0.3℃",accept:["0.3","±0.3"],min:1},
+   {q:"茶汤需在几秒内完成过滤及搅拌？（秒）",type:"num",a:"30"},
+   {q:"店铺到货是否在几分钟内搬到仓库？（分钟）",type:"num",a:"30"},
+   {q:"仓库物料按离地几公分标准存放？（公分）",type:"num",a:"10"},
+   {q:"叫货：周一到周四截止到几点？（如 16:00）",type:"text",a:"16:00",accept:["16:00","16：00","1600"],min:1},
+   {q:"叫货：周五到周六截止到几点？（如 17:00）",type:"text",a:"17:00",accept:["17:00","17：00","1700"],min:1},
+   {q:"叫货：节假日截止到几点？（如 19:00）",type:"text",a:"19:00",accept:["19:00","19：00","1900"],min:1},
+   {q:"到店货物（味全、卡士、牛奶）不允许超过多久？",type:"text",a:"一周",accept:["一周","7天","七天"],min:1},
+   {q:"交叉污染：水槽严禁清洗什么？",type:"text",a:"拖把",accept:["拖把"],min:1},
+   {q:"门店严禁一切什么行为？",type:"text",a:"代打卡",accept:["代打卡","打卡"],min:1},
+   {q:"抹布分类：打包台用什么颜色？",type:"text",a:"蓝色",accept:["蓝色"],min:1},
+   {q:"顾客取餐时，伙伴需主动核对什么？",type:"text",a:"取餐号",accept:["取餐号","取单号","号"],min:1},
+   {q:"产品最佳饮用时间是多久？",type:"text",a:"半个小时",accept:["半个小时","半小时","30分钟"],min:1}
+  ]},
+ {id:"manager",name:"店长 / 领班考试题（食品安全）",icon:"📋",pass:90,role:"店长、领班",
+  items:[
+   {q:"食品安全查核表：服务-A 板块占比多少？（%）",type:"num",a:"55"},
+   {q:"食品安全查核表：环境-B 板块占比多少？（%）",type:"num",a:"30"},
+   {q:"食品安全查核表：出品-C 板块占比多少？（%）",type:"num",a:"15"},
+   {q:"食品安全查核表：附加-D 板块附加多少分？（分）",type:"num",a:"10"},
+   {q:"黄线：电子温度计温度应在 0± 多少℃？",type:"text",a:"0±0.3℃",accept:["0.3","±0.3"],min:1},
+   {q:"黄线：机械温度计温度应正对多少度？（度）",type:"num",a:"0"},
+   {q:"黄线：茶汤需在几秒内完成过滤及搅拌？（秒）",type:"num",a:"30"},
+   {q:"黄线：闷泡计时器响后几秒内滤出茶汤？（秒）",type:"num",a:"30"},
+   {q:"黄线：店铺到货是否在几分钟内搬到仓库？（分钟）",type:"num",a:"30"},
+   {q:"黄线：仓库物料按离地几公分标准存放？（公分）",type:"num",a:"10"},
+   {q:"红线：各平台差评占比率不得高于百分之几？（%）",type:"num",a:"0.05"},
+   {q:"红线：售后占比率不得高于总单量百分之几？（%）",type:"num",a:"0.2"},
+   {q:"红线：外卖产品需在几点前准时上架？（如 9:30）",type:"text",a:"9:30",accept:["9:30","9：30","930"],min:1},
+   {q:"红线：叫货周一到周四截止到几点？（如 16:00）",type:"text",a:"16:00",accept:["16:00","16：00","1600"],min:1},
+   {q:"红线：叫货周五到周六截止到几点？（如 17:00）",type:"text",a:"17:00",accept:["17:00","17：00","1700"],min:1},
+   {q:"红线：叫货节假日截止到几点？（如 19:00）",type:"text",a:"19:00",accept:["19:00","19：00","1900"],min:1},
+   {q:"红线：沙冰壶每次搅拌容量不可超过几杯？（杯）",type:"num",a:"2"},
+   {q:"红线：果酱壶盛装不可超过总容量的百分之几？（%）",type:"num",a:"60"},
+   {q:"红线：果酱壶总容量不能超过多少毫升？（毫升）",type:"num",a:"1500"},
+   {q:"红线：到店货物（味全、卡士、牛奶）不允许超过多久？",type:"text",a:"一周",accept:["一周","7天","七天"],min:1},
+   {q:"红线：服务投诉——5000 单以内允许几条？（条）",type:"num",a:"2"},
+   {q:"红线：平台评分需保持多少分及以上（大众点评除外）？（分）",type:"num",a:"4.8"},
+   {q:"红线：证件——小餐饮许可证、健康证必须在什么状态内？",type:"text",a:"有效期内",accept:["有效期","有效"],min:1},
+   {q:"红线：新员工、兼职需在多久内办理健康证？",type:"text",a:"一周",accept:["一周","7天","七天"],min:1},
+   {q:"红线：交叉污染——水槽严禁清洗什么？",type:"text",a:"拖把",accept:["拖把"],min:1},
+   {q:"红线：损害门店利益——不得损坏店铺利益、形象和什么？",type:"text",a:"名声",accept:["名声","声誉"],min:1},
+   {q:"红线：食品物料存储需遵循什么使用原则？",type:"text",a:"先进先出",accept:["先进先出"],min:1},
+   {q:"红线：门店严禁一切什么行为，一经发现严肃处理？",type:"text",a:"代打卡",accept:["代打卡","打卡"],min:1},
+   {q:"红线：水果存放外围离杆，四周需怎样？",type:"text",a:"离壁",accept:["离壁"],min:1},
+   {q:"卫生：水果冷藏柜物料须附上正确的什么？",type:"text",a:"时间条",accept:["时间条","时效","时间"],min:1},
+   {q:"服务：进店招呼标准话术是什么？",type:"text",a:"您好，欢迎光临茹菓",accept:["欢迎光临","您好"],min:1},
+   {q:"服务：顾客离店几分钟内需清理干净客区？（分钟）",type:"num",a:"3"}
+  ]},
+ {id:"recipe",name:"茹菓半成品配方考核",icon:"⚗️",pass:90,role:"全员配方考核",
+  items:[
+   {q:"西米配比一：热水几克配西米 100 克？（克）",type:"num",a:"4000"},
+   {q:"西米配比一：西米 100 克配糖油几克？（克）",type:"num",a:"40"},
+   {q:"西米手煮：煮 500 克西米用热水几克？（克）",type:"num",a:"8000"},
+   {q:"西米手煮：煮沸后电磁炉转几瓦计时煮？（瓦）",type:"num",a:"2000"},
+   {q:"西米手煮：转 2000 瓦后计时煮几分钟？（分钟）",type:"num",a:"7"},
+   {q:"西米手煮：500 克西米加入几克糖油搅拌？（克）",type:"num",a:"200"},
+   {q:"西米：常温储存保存几小时？（小时）",type:"num",a:"6"},
+   {q:"珍珠配比一：珍珠 500 克配热水几克？（克）",type:"num",a:"3000"},
+   {q:"珍珠配比一：珍珠 500 克配红糖几克？（克）",type:"num",a:"200"},
+   {q:"珍珠配比一：珍珠 500 克配木薯粉几克？（克）",type:"num",a:"15"},
+   {q:"珍珠：煮几分钟？（分钟）",type:"num",a:"30"},
+   {q:"珍珠：焖几分钟？（分钟）",type:"num",a:"30"},
+   {q:"珍珠：保温温度须控制在几℃左右？（如 50-55）",type:"text",a:"50-55℃",accept:["50-55","50","55"],min:1},
+   {q:"米麻薯：75 克生糯米加几克热水？（克）",type:"num",a:"75"},
+   {q:"米麻薯：糯米蒸几分钟？（分钟）",type:"num",a:"40"},
+   {q:"米麻薯：75 克生糯米+75 克热水出几克熟糯米？（克）",type:"num",a:"150"},
+   {q:"芋泥：芋头 1000 克配白砂糖几克？（克）",type:"num",a:"160"},
+   {q:"芋泥：果酱机一次只能打几克？（克）",type:"num",a:"500"},
+   {q:"糖油：白糖 2000 克配开水几克？（克）",type:"num",a:"1000"},
+   {q:"糖油：沸腾后转中火几 W 熬制？（W）",type:"num",a:"1000"},
+   {q:"糖油：中火熬几分钟？（分钟）",type:"num",a:"4"},
+   {q:"茶冻：茶汤 3500ml 配水晶冻粉几克？（克）",type:"num",a:"315"},
+   {q:"茶冻：茶汤 3500ml 配果糖几克？（克）",type:"num",a:"245"},
+   {q:"茶冻：用几瓦最高档加热？（瓦）",type:"num",a:"3500"},
+   {q:"山楂酱：山楂肉 1000 克配白砂糖几克？（克）",type:"num",a:"350"},
+   {q:"山楂酱：沸腾后转 800 瓦小火熬几分钟？（如 20-25）",type:"text",a:"20-25分钟",accept:["20-25","20","25"],min:1},
+   {q:"红茶配比一：茶叶 25 克配热水几克？（克）",type:"num",a:"725"},
+   {q:"红茶：水温需控制在几度以上？（度）",type:"num",a:"95"},
+   {q:"红茶：闷泡几分钟？（分钟）",type:"num",a:"15"},
+   {q:"绿茶配比一：茶叶 50 克配热水几克？（克）",type:"num",a:"2000"},
+   {q:"绿茶：水温控制在几度之间？（如 71-73）",type:"text",a:"71-73度",accept:["71-73","71","73"],min:1},
+   {q:"绿茶：闷泡几分钟？（分钟）",type:"num",a:"6"},
+   {q:"椰奶：一包椰子粉是多少克？（克）",type:"num",a:"1000"},
+   {q:"椰奶：水温控制在几度左右？（如 85-90）",type:"text",a:"85-90度",accept:["85-90","85","90"],min:1},
+   {q:"奶盖一份：鲜牛奶几克？（克）",type:"num",a:"130"},
+   {q:"奶盖一份：淡奶油几克？（克）",type:"num",a:"230"},
+   {q:"奶盖一份：炼奶几克？（克）",type:"num",a:"60"},
+   {q:"奶盖一份：海盐几克？（克）",type:"num",a:"2"},
+   {q:"新鲜芒果汁：芒果肉 750 克配几毫升直饮水？（毫升）",type:"num",a:"150"},
+   {q:"新鲜芒果汁：果酱机搅拌几秒左右？（秒）",type:"num",a:"20"}
+  ]}
+];
+
+let EXAM_RECORDS=null, EXAM_STAGE="home", EXAM_CUR=null, EXAM_NAME="";
+function examInit(){
+  if(EXAM_RECORDS===null){ sGet("exam_records").then(v=>{EXAM_RECORDS=v||[];examHome();}); return; }
+  examHome();
+}
+function examSaveRec(){ sSet("exam_records",EXAM_RECORDS); }
+/* 防切屏：答题中切出页面（切 App / 切标签 / 锁屏）计入违规，累计上限强制交卷 */
+const EXAM_MAX_SWITCH=3;
+let EXAM_SWITCH=0, EXAM_PENDING_WARN=false;
+function examOnVisibility(){
+  if(EXAM_STAGE!=="quiz")return;
+  if(document.hidden){
+    EXAM_SWITCH++;
+    if(EXAM_SWITCH>=EXAM_MAX_SWITCH){ examSubmit(true); }   // 达上限：强制交卷
+    else { EXAM_PENDING_WARN=true; }
+  }else if(EXAM_PENDING_WARN){
+    EXAM_PENDING_WARN=false;
+    const left=EXAM_MAX_SWITCH-EXAM_SWITCH;
+    const b=document.getElementById("exSwitch"); if(b)b.textContent=EXAM_SWITCH;
+    alert("⚠️ 检测到你切出了考试页面！\n这是第 "+EXAM_SWITCH+" 次切屏，再切 "+left+" 次将被强制交卷并记为违规。\n考试期间请勿切换到其他应用或页面。");
+  }
+}
+function examBindGuard(){ EXAM_SWITCH=0; EXAM_PENDING_WARN=false; document.addEventListener("visibilitychange",examOnVisibility); window.addEventListener("blur",examOnVisibility); }
+function examUnbindGuard(){ document.removeEventListener("visibilitychange",examOnVisibility); window.removeEventListener("blur",examOnVisibility); }
+/* 该考生该套试卷是否处于锁定期（上次不及格且未满7天） */
+function examLock(name,examId){
+  const recs=EXAM_RECORDS.filter(r=>r.name===name&&r.examId===examId).sort((a,b)=>b.at-a.at);
+  const last=recs[0];
+  if(last&&!last.pass){
+    const unlock=last.at+EXAM_PASS_LOCK_DAYS*86400000;
+    if(Date.now()<unlock)return unlock;
+  }
+  return null;
+}
+function examFmtDate(ms){const d=new Date(ms);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")+" "+String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");}
+
+/* 首页：填姓名 + 选试卷 */
+function examHome(){
+  EXAM_STAGE="home"; examUnbindGuard();
+  document.getElementById("examTopRight").innerHTML="";
+  const nm=EXAM_NAME;
+  const papers=EXAMS.map(e=>{
+    const locked=nm?examLock(nm,e.id):null;
+    const recs=nm?EXAM_RECORDS.filter(r=>r.name===nm&&r.examId===e.id).sort((a,b)=>b.at-a.at):[];
+    const best=recs.length?Math.max(...recs.map(r=>r.score)):null;
+    const passed=recs.some(r=>r.pass);
+    let status="";
+    if(passed)status=`<span class="ex-badge" style="background:#e8f6ec;color:#1e7d32">✅ 已通过（最高 ${best} 分）</span>`;
+    else if(locked)status=`<span class="ex-badge" style="background:#fdf3f2;color:#c0392b">🔒 锁定至 ${examFmtDate(locked)}</span>`;
+    else if(best!=null)status=`<span class="ex-badge" style="background:#fff4e5;color:#b26a00">上次 ${best} 分未过</span>`;
+    const btn=locked?`<button class="btn-ghost" disabled style="opacity:.5">🔒 暂不可考</button>`
+      :`<button class="save" style="margin:0;width:auto;padding:9px 20px" onclick="examStart('${e.id}')">${passed?"再考一次":"开始考试"}</button>`;
+    return `<div class="ex-paper">
+      <div class="pico">${e.icon}</div>
+      <div class="pnm">${e.name}</div>
+      <div class="psub">适用：${e.role}</div>
+      <div class="pmeta"><span class="ex-badge">共 ${e.items.length} 题</span><span class="ex-badge">及格 ${e.pass} 分</span>${status}</div>
+      <div style="margin-top:6px">${btn}</div>
+    </div>`;
+  }).join("");
+  document.getElementById("examBody").innerHTML=`
+    <div class="card" style="margin-bottom:16px">
+      <div class="field" style="max-width:340px"><label>考生姓名 *（成绩与补考锁定按姓名记录）</label>
+        <input id="examName" value="${nm}" placeholder="请输入你的姓名" oninput="EXAM_NAME=this.value.trim();" onchange="examHome()"></div>
+      <div style="color:var(--muted);font-size:12.5px;margin-top:4px">💡 选择要考的试卷开始答题。提交后自动判分：<b>数字必须精准，文字答对大意即可</b>。一次不及格需隔 ${EXAM_PASS_LOCK_DAYS} 天才能重考同一套。</div>
+    </div>
+    ${!nm?`<div class="ex-locked" style="background:#fff8ec;border-color:#f0d9a8;color:#8a6300">✍️ 请先在上方填写<b>考生姓名</b>，再选择试卷。</div>`:`<div class="ex-papers">${papers}</div>`}
+    ${examHistoryTable()}`;
+}
+function examHistoryTable(){
+  if(!EXAM_RECORDS.length)return "";
+  const rows=[...EXAM_RECORDS].sort((a,b)=>b.at-a.at).slice(0,40).map(r=>`<tr>
+    <td style="padding:8px 12px;font-weight:700">${r.name}</td><td>${r.examName}</td>
+    <td style="text-align:right;font-weight:800;color:${r.pass?"#1e7d32":"#c0392b"}">${r.score}</td>
+    <td style="text-align:center">${r.pass?'<span style="color:#1e7d32;font-weight:700">通过</span>':'<span style="color:#c0392b;font-weight:700">未过</span>'}${r.violated?'<span title="切屏强制交卷" style="color:#c0392b;font-size:11px"> 🚫违规</span>':""}</td>
+    <td style="color:var(--muted)">${examFmtDate(r.at)}</td></tr>`).join("");
+  return `<div style="font-weight:800;font-size:14px;margin:22px 0 10px">📊 考试成绩记录</div>
+    <div class="card" style="padding:0;overflow-x:auto"><table class="tr-table" style="min-width:560px">
+      <thead><tr><th style="padding:9px 12px">姓名</th><th>试卷</th><th style="text-align:right">得分</th><th style="text-align:center">结果</th><th>时间</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+}
+
+/* 答题页 */
+function examStart(id){
+  const e=EXAMS.find(x=>x.id===id); if(!e)return;
+  const locked=examLock(EXAM_NAME,id);
+  if(locked){toast("该试卷锁定至 "+examFmtDate(locked));examHome();return;}
+  EXAM_CUR={exam:e,answers:new Array(e.items.length).fill("")}; EXAM_STAGE="quiz";
+  document.getElementById("examTopRight").innerHTML=`<button class="btn-ghost" onclick="examHome()">← 返回</button>`;
+  examBindGuard();
+  const qs=e.items.map((it,i)=>`
+    <div class="ex-q" id="exq${i}">
+      <div class="qh"><div class="qt"><span class="qtype ${it.type==="num"?"t-num":"t-text"}">${it.type==="num"?"数字":"文字"}</span>${i+1}. ${it.q}</div><span class="qs">${examPerScore(e)} 分</span></div>
+      <input id="exa${i}" placeholder="${it.type==="num"?"请填写数字":"填写答案，大意正确即可"}" oninput="EXAM_CUR.answers[${i}]=this.value" autocomplete="off">
+    </div>`).join("");
+  document.getElementById("examBody").innerHTML=`
+    <div class="card" style="margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+      <div><div style="font-weight:900;font-size:17px">${e.name}</div>
+        <div style="color:var(--muted);font-size:12.5px;margin-top:3px">考生：${EXAM_NAME} · 共 ${e.items.length} 题 · 及格 ${e.pass} 分 · 数字精准/文字对大意</div></div>
+    </div>
+    <div class="ex-locked" style="background:#fff4e5;border-color:#f0d9a8;color:#8a6300;margin-bottom:16px">🔒 <b>防切屏已开启</b>：考试期间请勿切换到其他 App 或页面。已切屏 <b id="exSwitch">0</b> / ${EXAM_MAX_SWITCH} 次，达 ${EXAM_MAX_SWITCH} 次将<b>强制交卷并记为违规</b>。</div>
+    ${qs}
+    <div style="display:flex;gap:10px;margin:6px 0 20px"><button class="save" style="margin:0;width:auto;padding:12px 30px" onclick="examSubmit()">提交并自动判分</button>
+      <button class="btn-ghost" onclick="examHome()">取消</button></div>`;
+}
+function examPerScore(e){return Math.round(100/e.items.length);}
+
+/* 智能判分：数字精准，文字命中关键词 */
+function examGradeItem(user,it){
+  const u=(user||"").trim(); if(!u)return false;
+  const norm=s=>String(s).toLowerCase().replace(/[\s，,。.、；;：:！!？?"'“”‘’（）()\/]/g,"");
+  if(it.type==="num"){
+    const un=u.match(/\d+(\.\d+)?/g)||[];
+    const an=String(it.a).match(/\d+(\.\d+)?/g)||[];
+    return an.length>0 && an.every(x=>un.includes(x));
+  }
+  const nu=norm(u), kws=(it.accept&&it.accept.length?it.accept:[it.a]);
+  const hit=kws.filter(k=>nu.includes(norm(k))).length;
+  return hit>=(it.min||1);
+}
+function examSubmit(forced){
+  if(EXAM_STAGE!=="quiz"||!EXAM_CUR)return;
+  EXAM_STAGE="result"; examUnbindGuard();
+  const e=EXAM_CUR.exam, per=examPerScore(e);
+  let score=0, correct=0;
+  e.items.forEach((it,i)=>{
+    const ok=examGradeItem(EXAM_CUR.answers[i],it);
+    if(ok){score+=per;correct++;}
+    const box=document.getElementById("exq"+i), inp=document.getElementById("exa"+i);
+    box.classList.add(ok?"right":"wrong");
+    if(inp)inp.disabled=true;
+    const fb=document.createElement("div");
+    fb.className="ex-fb "+(ok?"ok":"no");
+    fb.innerHTML=ok?`✓ 正确（+${per}）`:`✗ 扣 ${per} 分 · 参考答案：<b>${e.items[i].a}</b>`;
+    box.appendChild(fb);
+  });
+  score=Math.min(100,score);
+  const forcedSubmit=forced===true;
+  const pass=score>=e.pass && !forcedSubmit;   // 违规强制交卷一律判不通过
+  const rec={name:EXAM_NAME,examId:e.id,examName:e.name,score,total:100,correct,pass,at:Date.now(),switchCount:EXAM_SWITCH,violated:forcedSubmit};
+  EXAM_RECORDS.push(rec); examSaveRec();
+  const unlock=rec.at+EXAM_PASS_LOCK_DAYS*86400000;
+  const banner=`<div class="card" style="margin-bottom:16px;text-align:center;padding:26px;background:${pass?"linear-gradient(135deg,#e9f9ec,#f4fbf5)":"linear-gradient(135deg,#fdeeec,#fdf5f4)"}">
+      <div style="font-size:13px;font-weight:800;color:var(--muted)">${e.name} · 考生 ${EXAM_NAME}</div>
+      ${forcedSubmit?`<div style="font-weight:800;color:#c0392b;margin-top:6px">🚫 因切屏 ${EXAM_SWITCH} 次，已被强制交卷并记为违规</div>`:""}
+      <div class="ex-scorebig" style="color:${pass?"#1e7d32":"#c0392b"};margin:10px 0">${score}<span style="font-size:22px"> 分</span></div>
+      <div style="font-weight:800;font-size:16px;color:${pass?"#1e7d32":"#c0392b"}">${pass?"🎉 恭喜通过！":"❌ 未通过（及格 "+e.pass+" 分）"}</div>
+      <div style="color:var(--muted);font-size:13px;margin-top:8px">答对 ${correct}/${e.items.length} 题${pass?"":`　·　🔒 需隔 ${EXAM_PASS_LOCK_DAYS} 天，${examFmtDate(unlock)} 后才能重考本卷`}</div>
+    </div>`;
+  document.getElementById("examBody").insertAdjacentHTML("afterbegin",banner);
+  document.getElementById("examTopRight").innerHTML=`<button class="save" style="margin:0;width:auto;padding:9px 20px" onclick="examHome()">返回考试首页</button>`;
+  document.querySelector("#examBody .save")?.scrollIntoView({behavior:"smooth",block:"start"});
+  window.scrollTo({top:0,behavior:"smooth"});
+}
+
+/* ---------- 店铺盘存（基准：2026年6月盘存表 Sheet3）---------- */
+const INV_BASE=[{"n":"700注塑杯","spec":"1件20条/1条25个","per":500,"price":210,"cat":"耗材包材"},{"n":"原味晶球","spec":"1件12包","per":12,"price":100,"cat":"物料原料"},{"n":"香水柠檬","spec":"斤","per":1,"price":4,"cat":"水果生鲜"},{"n":"500注塑杯","spec":"1件20条/1条25个","per":500,"price":190,"cat":"耗材包材"},{"n":"西柚粒","spec":"1件12瓶","per":12,"price":350,"cat":"物料原料"},{"n":"牛油果","spec":"按个算","per":1,"price":5,"cat":"水果生鲜"},{"n":"新500纸杯","spec":"1件10条/1条20个","per":200,"price":105,"cat":"耗材包材"},{"n":"椰子粉","spec":"1件12包","per":12,"price":400,"cat":"物料原料"},{"n":"芒果","spec":"1件20斤","per":1,"price":5,"cat":"水果生鲜"},{"n":"奶油分装盒","spec":"按条/1条25个","per":25,"price":8.5,"cat":"耗材包材"},{"n":"熊猫炼奶（瓶）","spec":"按瓶统计","per":1,"price":9.5,"cat":"物料原料"},{"n":"火龙果","spec":"1件28斤","per":1,"price":4,"cat":"水果生鲜"},{"n":"试饮杯","spec":"1条100个","per":100,"price":4,"cat":"耗材包材"},{"n":"咖啡奶","spec":"1件12瓶","per":12,"price":27.5,"cat":"物料原料"},{"n":"凤梨","spec":"1件25斤","per":1,"price":6.5,"cat":"水果生鲜"},{"n":"分体热饮盖","spec":"1件4条/1条50个","per":200,"price":225,"cat":"耗材包材"},{"n":"优益C","spec":"1瓶950ML","per":1,"price":11,"cat":"物料原料"},{"n":"橙子","spec":"1件38斤","per":1,"price":3,"cat":"水果生鲜"},{"n":"小孔芒果杯盖","spec":"1条/50个","per":50,"price":8,"cat":"耗材包材"},{"n":"淡奶油","spec":"1件12瓶","per":12,"price":485,"cat":"物料原料"},{"n":"羽衣甘蓝","spec":"斤","per":1,"price":6.5,"cat":"水果生鲜"},{"n":"新款98口径杯盖","spec":"1件20条/1条50个","per":100,"price":13,"cat":"耗材包材"},{"n":"白糖","spec":"1袋25kg","per":50,"price":235,"cat":"物料原料"},{"n":"榴莲","spec":"1件6斤","per":1,"price":56.66,"cat":"水果生鲜"},{"n":"热敏收银纸","spec":"1件25条/1条4个","per":100,"price":165,"cat":"耗材包材"},{"n":"定制糖浆（新款糖）","spec":"1件4桶","per":1,"price":210,"cat":"物料原料"},{"n":"梨子","spec":"25斤/件","per":1,"price":4.5,"cat":"水果生鲜"},{"n":"杯贴标签纸","spec":"1条5卷","per":1,"price":6.4,"cat":"耗材包材"},{"n":"海盐","spec":"袋","per":1,"price":4.5,"cat":"物料原料"},{"n":"苹果","spec":"斤","per":1,"price":5,"cat":"水果生鲜"},{"n":"时效贴纸","spec":"1条6卷","per":1,"price":7,"cat":"耗材包材"},{"n":"VC","spec":"1袋500克","per":1,"price":27,"cat":"物料原料"},{"n":"百香果","spec":"斤","per":1,"price":9,"cat":"水果生鲜"},{"n":"注塑杯盖","spec":"一件20条/一条50个","per":1000,"price":100,"cat":"耗材包材"},{"n":"水晶冻粉","spec":"按包统计","per":1,"price":20,"cat":"物料原料"},{"n":"金桔","spec":"斤","per":1,"price":7,"cat":"水果生鲜"},{"n":"封口膜","spec":"卷","per":1,"price":75,"cat":"耗材包材"},{"n":"茉莉绿茶","spec":"1件50包","per":50,"price":2100,"cat":"物料原料"},{"n":"荔枝","spec":"斤","per":1,"price":8,"cat":"水果生鲜"},{"n":"热饮白色封条","spec":"卷","per":60,"price":3,"cat":"耗材包材"},{"n":"悦鲜活","spec":"1件12瓶","per":12,"price":156,"cat":"物料原料"},{"n":"西瓜","spec":"45斤/件","per":1,"price":3.8,"cat":"水果生鲜"},{"n":"细吸管（按包叫货）","spec":"按包统计","per":1,"price":5.5,"cat":"耗材包材"},{"n":"氧泡泡","spec":"盒","per":1,"price":148,"cat":"物料原料"},{"n":"杨梅","spec":"5斤/件","per":1,"price":18,"cat":"水果生鲜"},{"n":"粗吸管","spec":"1件20包/1包100支","per":20,"price":105,"cat":"耗材包材"},{"n":"西米","spec":"20包/件","per":20,"price":140,"cat":"物料原料"},{"n":"莲雾","spec":"1斤","per":1,"price":25,"cat":"水果生鲜"},{"n":"水果叉子","spec":"按包统计","per":1,"price":10,"cat":"耗材包材"},{"n":"珍珠","spec":"1斤/包","per":1,"price":10,"cat":"物料原料"},{"n":"单杯保温袋","spec":"1件10扎/1扎50个","per":500,"price":305,"cat":"耗材包材"},{"n":"黑糖","spec":"5斤/包","per":5,"price":65,"cat":"物料原料"},{"n":"双杯保温袋","spec":"1件10扎/1扎50个","per":500,"price":390,"cat":"耗材包材"},{"n":"糯米","spec":"5斤/包","per":5,"price":20,"cat":"物料原料"},{"n":"四杯保温袋","spec":"1件6扎/1扎50个","per":300,"price":310,"cat":"耗材包材"},{"n":"糯米粉","spec":"1斤/包","per":1,"price":8,"cat":"物料原料"},{"n":"单杯袋","spec":"一扎100个","per":100,"price":11,"cat":"耗材包材"},{"n":"木薯粉","spec":"1斤/包","per":1,"price":8,"cat":"物料原料"},{"n":"双杯纸袋","spec":"1件20扎/一扎25个","per":500,"price":425,"cat":"耗材包材"},{"n":"红茶","spec":"1袋500克","per":500,"price":30,"cat":"物料原料"},{"n":"四杯纸袋","spec":"1件8扎/一扎25个","per":200,"price":210,"cat":"耗材包材"},{"n":"爆爆珠","spec":"一件12瓶","per":12,"price":225,"cat":"物料原料"},{"n":"四杯托","spec":"1件20扎/一扎25个","per":500,"price":200,"cat":"耗材包材"},{"n":"卡士酸奶","spec":"24盒/件","per":24,"price":72,"cat":"物料原料"},{"n":"驼色抹布","spec":"按条统计","per":1,"price":4,"cat":"耗材包材"},{"n":"奇亚籽","spec":"500克/盒","per":500,"price":50,"cat":"物料原料"},{"n":"蓝色抹布","spec":"按条统计","per":1,"price":4,"cat":"耗材包材"},{"n":"小胡鸭藕","spec":"袋","per":1,"price":1,"cat":"物料原料"},{"n":"咖色抹布","spec":"按条统计","per":1,"price":4.5,"cat":"耗材包材"},{"n":"小胡鸭海带","spec":"袋","per":1,"price":1,"cat":"物料原料"},{"n":"灰色抹布","spec":"按条统计","per":1,"price":4,"cat":"耗材包材"},{"n":"小胡鸭鸡爪","spec":"袋","per":1,"price":1.5,"cat":"物料原料"},{"n":"纸巾","spec":"1件50包","per":50,"price":140,"cat":"耗材包材"},{"n":"红枣","spec":"一包2.5KG","per":5,"price":30,"cat":"物料原料"},{"n":"大垃圾袋","spec":"1扎30个","per":30,"price":18,"cat":"耗材包材"},{"n":"小黄姜","spec":"一瓶500ML","per":500,"price":12,"cat":"物料原料"},{"n":"玻璃瓶","spec":"60个/件","per":60,"price":95,"cat":"耗材包材"},{"n":"食用盐","spec":"1袋500克","per":500,"price":2,"cat":"物料原料"},{"n":"抹茶","spec":"50克一袋","per":50,"price":40,"cat":"物料原料"},{"n":"500牛油果杯","spec":"1件20条/1条15个","per":300,"price":145,"cat":"耗材包材"},{"n":"生耶乳","spec":"一件12瓶","per":12,"price":204,"cat":"物料原料"},{"n":"550注塑杯","spec":"500个/件","per":500,"price":382,"cat":"耗材包材"},{"n":"味全乳酸菌","spec":"1瓶950ML","per":1,"price":14,"cat":"物料原料"},{"n":"550注塑杯盖子","spec":"500个/件","per":500,"price":108,"cat":"耗材包材"},{"n":"1L瓶子","spec":"1件100个","per":100,"price":135,"cat":"耗材包材"},{"n":"500瓶子","spec":"1件100个","per":100,"price":100,"cat":"耗材包材"},{"n":"棉棒","spec":"个","per":1,"price":20,"cat":"耗材包材"},{"n":"雪克杯","spec":"个","per":1,"price":20,"cat":"耗材包材"},{"n":"一次性头套","spec":"1包100个","per":100,"price":20,"cat":"耗材包材"},{"n":"一次性手套M","spec":"1包100个","per":100,"price":35,"cat":"耗材包材"},{"n":"一次性手套L","spec":"1包100个","per":100,"price":18,"cat":"耗材包材"},{"n":"一次性口罩","spec":"1包50个","per":50,"price":30,"cat":"耗材包材"},{"n":"拱形杯盖","spec":"一件20条/一条50个","per":1000,"price":125,"cat":"耗材包材"},{"n":"小透明胶","spec":"卷","per":1,"price":4.5,"cat":"耗材包材"},{"n":"卡士杯盖防漏贴","spec":"卷","per":1,"price":12,"cat":"耗材包材"},{"n":"装饰袋","spec":"个","per":1,"price":3,"cat":"耗材包材"},{"n":"防漏纸","spec":"500张/包","per":500,"price":16,"cat":"耗材包材"}];
+let INV_OV={},INV_CAT="全部",INV_READY=false,INV_SAVE_T=null;
+function invInit(){ if(INV_READY){invRender();return;} INV_READY=true;
+  sGet("inv_overrides").then(v=>{INV_OV=v||{};invRender();});
+}
+function invSave(){ clearTimeout(INV_SAVE_T); INV_SAVE_T=setTimeout(()=>sSet("inv_overrides",INV_OV),600); }
+function invPick(c){INV_CAT=c;document.querySelectorAll("#invSeg .seg-b").forEach(b=>b.classList.toggle("on",b.dataset.c===c));invRender();}
+function invGet(it){ const o=INV_OV[it.n]||{}; return {price:o.price!=null?o.price:it.price, qty:o.qty!=null?o.qty:null, mod:o.price!=null}; }
+function invFmt(v){ return (+v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function invRender(){
+  const q=(document.getElementById("invSearch").value||"").trim().toLowerCase();
+  const CATC={"耗材包材":"#1d63c9","物料原料":"#6c3fd1","水果生鲜":"#1e7d32"};
+  let total=0;
+  const rows=INV_BASE.filter(it=>(INV_CAT==="全部"||it.cat===INV_CAT)&&(!q||(it.n+it.spec).toLowerCase().includes(q))).map(it=>{
+    const s=invGet(it), unit=s.price/it.per, amt=s.qty!=null?s.qty*s.price:null;
+    if(amt!=null)total+=amt;
+    const id=encodeURIComponent(it.n);
+    return `<tr>
+      <td style="padding-left:14px"><span style="color:${CATC[it.cat]};font-weight:800;font-size:12px">${it.cat}</span></td>
+      <td style="font-weight:700">${it.n}${s.mod?` <span title="已改价，基准 ¥${it.price}" style="color:var(--primary);font-size:11px;font-weight:800">改</span>`:""}</td>
+      <td style="color:var(--muted)">${it.spec||"—"}</td>
+      <td style="text-align:right">${it.per}</td>
+      <td style="text-align:right"><input type="number" min="0" step="0.1" value="${s.price}" style="width:88px;text-align:right;padding:5px 8px;border:1px solid ${s.mod?"var(--primary)":"var(--line)"};border-radius:8px;font-weight:700;background:${s.mod?"var(--primary-soft)":"#fff"}" onchange="invEdit('${id}','price',this.value)"></td>
+      <td style="text-align:right;font-weight:800;color:var(--primary)">${invFmt(unit)}</td>
+      <td style="text-align:right"><input type="number" min="0" step="1" value="${s.qty!=null?s.qty:""}" placeholder="—" style="width:74px;text-align:right;padding:5px 8px;border:1px solid var(--line);border-radius:8px;font-weight:700" onchange="invEdit('${id}','qty',this.value)"></td>
+      <td style="text-align:right;padding-right:14px;font-weight:800">${amt!=null?invFmt(amt):"—"}</td>
+      <td style="text-align:center">${s.mod?`<button class="btn-ghost" style="padding:3px 9px;font-size:11px" title="恢复基准价 ¥${it.price}" onclick="invReset('${id}')">↺</button>`:""}</td>
+    </tr>`;
+  });
+  document.getElementById("invBody").innerHTML=rows.join("")||`<tr><td colspan="9" style="padding:18px;text-align:center;color:var(--muted)">没有匹配的物品</td></tr>`;
+  document.getElementById("invTotal").textContent="¥ "+invFmt(total);
+}
+function invEdit(id,field,val){
+  const n=decodeURIComponent(id), it=INV_BASE.find(x=>x.n===n); if(!it)return;
+  const v=val===""?null:+val;
+  if(!INV_OV[n])INV_OV[n]={};
+  if(field==="price"){ if(v==null||v===it.price)delete INV_OV[n].price; else INV_OV[n].price=v; }
+  else { if(v==null)delete INV_OV[n].qty; else INV_OV[n].qty=v; }
+  if(!Object.keys(INV_OV[n]).length)delete INV_OV[n];
+  invSave(); invRender();
+}
+function invReset(id){ const n=decodeURIComponent(id); if(INV_OV[n]){delete INV_OV[n].price; if(!Object.keys(INV_OV[n]).length)delete INV_OV[n];} invSave(); invRender(); }
+function invResetAll(){ if(!confirm("将所有物品价格恢复为6月盘存表基准价？盘存数量保留。"))return;
+  Object.keys(INV_OV).forEach(n=>{delete INV_OV[n].price; if(!Object.keys(INV_OV[n]).length)delete INV_OV[n];});
+  invSave(); invRender(); toast("已恢复全部基准价");
+}
+function invExport(){
+  const rows=[["店铺盘存表","","","","","","",""],["类别","物品名称","规格","单位数量","单价/件（元）","单价/个（元）","盘存数量","金额（元）"]];
+  let total=0;
+  INV_BASE.forEach(it=>{ const s=invGet(it), amt=s.qty!=null?s.qty*s.price:null; if(amt!=null)total+=amt;
+    rows.push([it.cat,it.n,it.spec,it.per,s.price,+(s.price/it.per).toFixed(4),s.qty!=null?s.qty:"",amt!=null?+amt.toFixed(2):""]);
+  });
+  rows.push(["","","","","","","合计",+total.toFixed(2)]);
+  const ws=XLSX.utils.aoa_to_sheet(rows);
+  ws["!cols"]=[{wch:10},{wch:20},{wch:20},{wch:10},{wch:13},{wch:13},{wch:10},{wch:12}];
+  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,"盘存");
+  XLSX.writeFile(wb,"店铺盘存表.xlsx"); toast("已导出盘存 Excel");
+}
+
+/* ---------- 新人培训（内容来自：水果选择标准.pdf / 水果处理标准2024.pptx / 蒸煮类半成品.pptx / 茹菓半成品配方表 ） ---------- */
+const TRAIN={
+fruit:[
+ {n:"牛油果",tag:"全年",chips:["产地：秘鲁 / 智利 / 墨西哥"],keep:["未处理：常温3天，冷藏6天","处理后：冷藏5小时","不可积压堆放；未熟果勿进冰箱（易僵果长黑丝）"],pick:["黑褐色、按压回弹、果蒂易脱落 = 最佳食用","青色硬果未成熟，不能用；全黑软糯需尽快用","果肉黄绿色，绵软似乳酪、微甜"],warn:"表面腐烂、切开异味、果肉发黑或有黑丝，严禁使用；勿挤压果身"},
+ {n:"小台芒",tag:"5-7月",chips:["产地：海南 / 湛江 / 广西"],keep:["未处理：常温3天，冷藏6天","处理后：冷藏5小时，冷冻72小时"],pick:["果香浓郁、表皮偏黄细腻、按压有弹性 = 成熟","黑斑≤4个且直径≤5mm、按压不出水可用（外表不美观者优先用）","果肉金黄细腻软糯为佳，带酸涩=未熟"],warn:"严重黑斑、腐烂发霉、干瘪皱皮、破损发黑、发酵异味，严禁使用"},
+ {n:"凯特芒",tag:"7-9月",chips:["产地：四川"],keep:["未处理：常温3天，冷藏6天","处理后：冷藏5小时，冷冻24小时","平放一层，严禁堆压、头朝下"],pick:["9成熟：手捏微软、果皮红黄交替、散芒果香 = 可用","全熟易长黑斑，不影响食用，尽快使用"],warn:"严重黑斑腐烂发霉、内部果肉变黑、发酵异味，严禁使用"},
+ {n:"猕猴桃",tag:"11-3月 / 5-9月",chips:["产地：陕西 / 新西兰"],keep:["未处理：常温3天，冷藏6天","处理后：冷藏5小时","平放一层，严禁堆压、头朝下"],pick:["青绿转金黄/淡绿、按压凹陷有弹性 = 成熟","有清香、切开果籽黑褐色 = 成熟","果肉青绿、酸甜多汁"],warn:"果体腐烂发霉烂点、病斑疤痕、酒精味异味，严禁使用"},
+ {n:"草莓（红颜）",tag:"11-4月",chips:["产地：丹东 / 徐州 / 南通 / 武汉"],keep:["未处理：常温1天，冷藏2天","处理后：冷藏5小时","清洗：盐水泡5分钟以上→过滤水冲2遍→沥干，严禁泡水"],pick:["9成熟-全红：香甜浓郁，口感最佳","轻微划伤碰伤、按压不出水属正常"],warn:"表皮发霉、干瘪、破损变质、病虫害，严禁使用"},
+ {n:"凤梨",tag:"全年",chips:["产地：菲律宾 / 海南"],keep:["未处理：常温3天，冷藏6天","处理后：冷藏5小时，冷冻24小时","未成熟去冠催熟；已成熟无需去冠可延长保鲜"],pick:["表皮金黄、香气浓郁、微软不易捏动 = 成熟（8-9分熟可用）","冠底因海运受潮发霉、不伤果肉属正常"],warn:"表皮腐烂果肉变质、黑腐病果芯发黑、酒精异味，严禁使用"},
+ {n:"柠檬（四季香水）",tag:"全年",chips:["产地：广东 / 广西","无籽品种"],keep:["未处理：冷藏4天","处理后：冷藏5小时"],pick:["表皮亮泽青黄绿（70%留青），果肉细脆清香微酸","轻微花皮斑点属正常；有籽果比例≤5%"],warn:"表皮暗淡裂口、白色霉菌、2/3以上花皮腐烂皱皮、严重泛黄带苦/霉味，严禁使用"},
+ {n:"火龙果（红心）",tag:"全年",chips:["产地：越南"],keep:["未处理：常温3天，冷藏6天","处理后：冷藏5小时","堆放不超过2层"],pick:["表皮火红、果肉深红、果实坚固鳞片外翻","要求全熟：果皮干瘪皱皮较软属正常"],warn:"严重黑斑腐烂发霉、内部果肉变质、发酵异味，严禁使用"},
+ {n:"桑葚",tag:"2-4月",chips:["产地：广东 / 四川 / 湖北 / 湖南 / 山东"],keep:["未处理：冷藏2天","处理后：冷藏5小时"],pick:["深紫至紫黑色（红色面积≤30%）","果面新鲜光洁，无破损溢汁、无萎蔫"],warn:"斑点破损霉斑腐烂、刺鼻酸腐酒精味、松软干燥软烂，严禁使用"},
+ {n:"橙子（新奇士）",tag:"3-5月",chips:["产地：美国"],keep:["未处理：常温3天，冷藏6天","处理后：冷藏5小时","堆放不超过2层"],pick:["橙黄至橙红、果心实、汁多带酸甘、果香浓","光照花皮一至三级、不出水不下凹属正常"],warn:"黑斑白霉、2/3以上花皮腐烂皱皮、果肉发黑腐败霉味酒精味，严禁使用"},
+ {n:"葡萄（夏黑）",tag:"3-9月",chips:["产地：云南"],keep:["未处理：冷藏3天","处理后：冷藏5小时","不可积压堆放"],pick:["90%以上果面黑紫至蓝黑、表面有白霜","果粒紧凑饱满有弹性、无籽、果梗新鲜"],warn:"破损霉斑腐烂、刺鼻酸腐酒精味、果感松软软烂，严禁使用"},
+ {n:"石榴（软籽）",tag:"9-11月",chips:["产地：四川"],keep:["未处理：常温3天，冷藏6天","处理后：冷藏5小时，冷冻24小时"],pick:["果体坚实饱满、果粒晶莹透明、籽软易嚼","果皮轻微发黑、不出水有硬实感属正常"],warn:"黑斑腐烂、2/3以上花皮、果肉发黑发褐软烂、腐败霉味酒精味，严禁使用"},
+ {n:"水蜜桃",tag:"4-10月",chips:["产地：河北 / 山东 / 四川 / 无锡"],keep:["未处理：常温3天，冷藏6天","处理后：冷藏5小时","平放一层，不可堆放"],pick:["黄底红晕、果体微软有弹性、香气浓郁 = 成熟","皮薄易剥、味甜微酸多汁"],warn:"表皮发霉腐烂发皱、果核黑心发霉、腐败霉味，严禁使用"}
+],
+prep:[
+ {n:"苹果切配",time:"冷藏5小时",steps:["自来水洗2遍","直饮水洗1遍","十字切4块","去核/蒂/梗","切咖勺大小块","过VC水","沥干冷藏"],ratio:"VC水：直饮水500g : VC粉1g",tips:"苹果块过一遍VC水防氧化，滤出冷藏备用"},
+ {n:"现制羽衣甘蓝段",time:"冷藏5小时",steps:["自来水洗2遍","盐水浸泡5分钟","直饮水洗2遍","切约2cm段"],ratio:"盐水：热水1300g + 冰块700g + 盐5g",tips:"羽衣甘蓝需完全浸没在盐水中"},
+ {n:"现制羽衣甘蓝苹果汁",time:"冷藏5小时",steps:["羽衣甘蓝段60g + 苹果块300g","倒入原汁机榨汁","过滤","加VC粉搅匀"],ratio:"苹果5 : 羽衣甘蓝1；果汁500g : VC粉1g",tips:"按顺序放料，榨出的汁过滤后再加VC粉"},
+ {n:"雪梨切配",time:"冷藏5小时",steps:["自来水洗2遍","去果皮","直饮水洗1遍","十字切4块","去核/蒂/梗","切块"],tips:"中间果核黑籽去净；果肉不可长时间泡水"},
+ {n:"橙子块",time:"冷藏5小时",steps:["刷子自来水洗2遍","直饮水洗2遍","去头去尾","去果皮","切块"],tips:"表面白皮需剔干净，白皮易产生苦味"},
+ {n:"橙子肉",time:"冷藏5小时",steps:["刷洗2遍+直饮水2遍","去头尾去皮","对半切开","去薄膜取完整果肉"],tips:"白膜去除；果肉不可捏破爆汁，保持完整"},
+ {n:"橙子角",time:"冷藏5小时",steps:["刷洗2遍+直饮水2遍","去头去尾","对半切开","去白芯","切成8瓣"],tips:"表皮必须刷洗散发橙香；白芯易苦需去除"},
+ {n:"凤梨肉",time:"冷藏5小时",steps:["洗2+2遍","去头去尾","削皮刮净绿皮","菠萝夹挖眼去黑刺","直饮水洗1遍","十字切4瓣","去硬芯","切块"]},
+ {n:"凤梨酱",time:"冷藏5小时",steps:["凤梨肉300g + 白糖油90g","果酱机5档搅打约25秒","打至无颗粒流动状","硅胶铲刮净"],ratio:"凤梨肉500 : 白糖油150",tips:"必须完全打碎成汁；超出赏味期不可使用"},
+ {n:"橙子酱",time:"冷藏5小时",steps:["凤梨肉250g+白糖油180g+海盐1g","5档打25秒至无颗粒","加橙子肉500g","点打3-5下保留颗粒"],tips:"凤梨打碎、橙子肉点打，保留橙子肉颗粒感"},
+ {n:"桑葚腌制",time:"冷藏5小时",steps:["自来水洗2遍","盐水浸泡5分钟","直饮水冲洗2遍","剥出完整果粒","加白糖油腌10分钟"],ratio:"盐水：热水1000g+冰1500g+盐5g；桑葚果肉6 : 白糖油1.1",tips:"轻微搅拌，勿把果肉搅破爆汁"},
+ {n:"火龙果肉",time:"冷藏5小时",steps:["洗2+2遍","去头去尾","切成2瓣","手剥去皮","切块"]},
+ {n:"百香果处理",time:"冷藏24小时",steps:["洗2+2遍","去头","勺子挖出果籽"],tips:"内部白瓤较大，需去除"},
+ {n:"芒果切配",time:"冷藏5小时",steps:["洗2+2遍","削皮","直饮水洗1遍","削肉去核","切丁"],tips:"核上果肉需剔除干净"},
+ {n:"芒果汁",time:"冷藏5小时",steps:["芒果肉/边角料600g + 直饮水300g","果酱机5档打25-30秒","过滤出汁"],ratio:"甘露汁：芒果肉450g + 直饮水150g，过滤后按1:1加椰奶",tips:"用汤勺按压搅拌过滤"},
+ {n:"柠檬切块",time:"冷藏5小时",steps:["刷洗2遍","直饮水洗2遍","去头去尾","去白芯","切月牙形8瓣"],tips:"必须刷洗表皮散香；白芯易苦需去除"},
+ {n:"柠檬切皮 / 肉",time:"冷藏5小时",steps:["刷洗2遍+直饮水2遍","去头尾削出表皮","皮切2cm段","肉对半切块"],tips:"内皮不带过多果肉；柠檬肉表面白皮不过多"},
+ {n:"耙耙柑肉",time:"冷藏5小时",steps:["自来水洗2遍","去头去尾","去表皮及白瓤","剔出完整果肉"],tips:"果肉不可捏破爆汁，注意完整性、少损耗"}
+],
+cook:[
+ {n:"椰奶",time:"保温桶24小时",steps:["热水3000g（85-90℃）","倒入椰子粉1000g快速搅化","加冰块2000g搅至融化"],ratio:"椰子粉1 : 热水3 : 冰3",tips:"椰子粉易沉底，需快速搅拌至完全融化"},
+ {n:"白糖油",time:"冷却后冷藏72小时",steps:["白砂糖3000g + 热水1500g搅匀","2000W煮沸（边煮边搅）","转900W熬4分钟","倒亚克力桶冷却"],ratio:"白糖2 : 热水1",tips:"熬制全程需搅拌"},
+ {n:"茉莉绿茶汤",time:"当日使用",steps:["茶叶50g，热水2000g+冰175g（71-73℃）","搅3圈加盖焖6分钟","3分钟时开盖搅一次","过滤入冰块1325g搅至融化"],ratio:"茶50g : 热水2000g : 降温冰175g : 稀释冰1325g",tips:"提前30秒备好冰桶，滴声响立即过滤"},
+ {n:"红茶汤",time:"当日使用",steps:["红茶叶50g，热水1450g（95℃以上）","焖泡15分钟（7.5分钟搅一次）","加红糖搅至融化","过滤入冰块800g"],tips:"水温不足需电磁炉加热到标准"},
+ {n:"茶冻",time:"含凝固72小时",steps:["茶汤3500g+水晶冻粉315g+果糖245g搅匀","3500W边加热边搅至沸腾","倒亚克力桶刮泡","冷却凝固后切块"],ratio:"茶汤1 : 水晶冻粉0.09 : 果糖0.07",tips:"加热必须搅拌防结坨；用刀切成吸管可吸大小"},
+ {n:"西米",time:"当日使用",steps:["热水4000g烧开","倒西米250g搅至完全浮起","2000W加盖煮7分钟（中途搅1次）","关火焖12分钟","加冰快速降温","滤网加冰1000g冲洗沥干"]},
+ {n:"珍珠（煮制）",time:"保温使用",steps:["珍珠过筛去粉沫，称300g","内锅热水3000g入珍珠锅","水沸鸣笛后加珍珠搅至浮起","程序煮30分钟+焖30分钟（中途搅1-2次）"],tips:"必须搅开，避免黏成整坨"},
+ {n:"红糖珍珠（炒制）",time:"50-55℃保温5小时",steps:["木薯粉9g+直饮水120g调匀","煮好珍珠300g+红糖132g+木薯粉水","炒5分钟至黏稠拉丝","倒入珍珠煲保温"],ratio:"珍珠500 : 红糖220 : 木薯粉15 : 直饮水200"},
+ {n:"米麻薯（蒸米）",time:"当日使用",steps:["糯米75g淘洗2遍","加热水75g盖盖密封","蒸锅热水4000ml蒸40分钟"],ratio:"生糯米75g + 热水75g = 熟糯米150g"},
+ {n:"米麻薯（打浆熬制）",time:"当日使用",steps:["糯米75g+牛奶150g点打5下滤出米浆200g","米浆200g+糯米粉20g+白糖100g+木薯粉80g+牛奶600g搅匀","加淡奶油400g","1200W煮至黏稠转600W持续搅拌"]},
+ {n:"芋泥",time:"当日使用",steps:["芋头300g垫蒸布蒸40分钟","150g+白糖54g+热水90g果酱机搅打","另150g捣棒捣碎","两者融合"],tips:"手捣部分有颗粒感属正常"},
+ {n:"奶盖",time:"冷藏24小时",steps:["牛奶260g+炼乳120g+海盐4g+淡奶油460g","吧勺搅8-10下","厨师机2档30秒","转5档4.5分钟至流动状"],ratio:"牛奶130 : 炼乳60 : 海盐2 : 淡奶油230",tips:"炼乳易沉底，上机前先搅拌；成品光滑细腻有堆叠感"},
+ {n:"奇亚籽",time:"冷藏6小时",steps:["奇亚籽10g+热水200g","立即搅拌防结块，泡5分钟","冰水（冰1:水1）泡5分钟至常温"],tips:"出品时搅拌均匀"},
+ {n:"毛豆",time:"冷藏6小时",steps:["毛豆清洗干净","蒸锅热水蒸30分钟","去皮剥出豆子"]}
+],
+ratio:[
+ {n:"西米",head:["茶桶","热水/g","西米/g","白糖油/cc"],rows:[["小茶桶",4000,100,40],["小茶桶",5000,200,80],["小茶桶",6000,300,120],["大茶桶",7000,400,160],["大茶桶",8000,500,200]]},
+ {n:"珍珠",head:["珍珠/g","热水/g","红糖/g","木薯粉/g","直饮水/g"],rows:[[500,3000,200,15,200],[1000,6000,400,30,400],[1500,9000,600,45,600],[2000,12000,800,60,800]],note:"煮30分钟，焖30分钟；拌入红糖后炒5-6分钟"},
+ {n:"红茶汤",head:["茶叶/g","热水/g","稀释冰/g"],rows:[[25,725,400],[50,1450,800],[100,2900,1600],[200,5800,3200]],note:"95℃以上，焖泡15分钟（对半时间搅一次）"},
+ {n:"绿茶汤",head:["茶叶/g","热水/g","降温冰/g","稀释冰/g"],rows:[[50,2000,175,1325],[100,4000,350,2650],[200,8000,700,5300]],note:"71-73℃，焖泡6分钟（3分钟搅一次）"},
+ {n:"椰奶",head:["椰子粉/g","热水/g","冰块/g"],rows:[[500,1500,1000],[1000,3000,2000]],note:"热水85-90℃"},
+ {n:"白糖油",head:["热水/g","白砂糖/g"],rows:[[1000,2000],[2000,4000]],note:"煮沸后转900W熬4分钟"},
+ {n:"橙子酱（橙子汁）",head:["橙子肉/g","凤梨肉/g","白糖油/g","海盐/g"],rows:[[250,125,90,0.5],[500,250,180,1],[1000,500,360,2]]},
+ {n:"凤梨酱（凤梨汁）",head:["凤梨肉/g","白糖油/g"],rows:[[250,75],[500,150],[1000,300]]},
+ {n:"羽衣甘蓝苹果汁",head:["苹果块/g","羽衣甘蓝段/g","VC粉/g"],rows:[[250,50,0.5],[500,100,1]]},
+ {n:"芒芒甘露汁",head:["芒果肉/g","直饮水/g"],rows:[[450,150],[900,300]],note:"榨汁过滤后按 1:1 加入椰奶"},
+ {n:"茶冻",head:["茶汤/g","水晶冻粉/g","甘蔗糖/g"],rows:[[500,45,35],[1000,90,70]]},
+ {n:"腌制芭乐果肉",head:["芭乐/g","白砂糖/g","苹果汁/g","火龙果汁/g"],rows:[[500,50,50,7.5],[1000,100,100,15]],note:"捣碎腌10分钟"},
+ {n:"腌制水蜜桃果肉",head:["水蜜桃/g","白糖油/g","火龙果汁/g","VC/g"],rows:[[500,60,5,1.5],[1000,120,10,3]],note:"捣碎腌10分钟"},
+ {n:"腌制杨梅果肉",head:["杨梅/g","白糖油/g"],rows:[[500,75],[1000,150]],note:"捣碎腌25分钟后使用"},
+ {n:"腌制桑葚果肉",head:["桑葚果肉/g","白糖油/g"],rows:[[600,110]],note:"轻微搅拌腌10分钟，勿搅破果肉"},
+ {n:"腌制猕猴桃果肉",head:["猕猴桃肉/g","白砂糖/g"],rows:[[1000,100]],note:"捣碎腌10分钟"}
+]};
+/* 图片映射：来自原培训文件（PDF整页图 / PPT步骤实拍图），存于 train-img/ */
+(function(){
+  const single=[9,11,12]; // 单页水果
+  TRAIN.fruit.forEach((f,i)=>{const n=i+1;f.img=[`train-img/fruit${n}_1.jpg`];if(!single.includes(n))f.img.push(`train-img/fruit${n}_2.jpg`);});
+  TRAIN.prep.forEach((p,i)=>{const n=i+1;p.img=[1,2,3].map(k=>`train-img/prep${n}_${k}.jpg`);});
+  const cookSlide=[1,2,3,8,4,5,6,7,9,10,11,12,13,14]; // cook数组顺序 → PPT页码
+  TRAIN.cook.forEach((c,i)=>{const n=cookSlide[i];c.img=[1,2,3].map(k=>`train-img/cook${n}_${k}.jpg`);});
+})();
+let TR_MODE="fruit",TR_LB=null,TR_FOV=null;
+function trPick(m){TR_MODE=m;document.querySelectorAll("#trSeg .seg-b").forEach(b=>b.classList.toggle("on",b.dataset.m===m));trRender();}
+/* 四个板块均支持页面增改：基准数据 + 覆盖(edits) + 新增(adds)，存 train_ov */
+function trOvEmpty(){return {fruit:{edits:{},adds:[]},prep:{edits:{},adds:[]},cook:{edits:{},adds:[]},ratio:{edits:{},adds:[]}};}
+function trList(m){
+  const ov=(TR_FOV&&TR_FOV[m])||{edits:{},adds:[]};
+  return TRAIN[m].map(f=>ov.edits&&ov.edits[f.n]?Object.assign({},f,ov.edits[f.n]):f).concat(ov.adds||[]);
+}
+function trRender(){
+  if(TR_FOV===null){TR_FOV=trOvEmpty();
+    sGet("train_ov").then(async v=>{
+      if(v){TR_FOV=Object.assign(trOvEmpty(),v);}
+      else{const old=await sGet("train_fruit_ov");if(old)TR_FOV.fruit=old;} // 兼容旧格式
+      trRender();});
+    return;}
+  const q=(document.getElementById("trSearch").value||"").trim().toLowerCase();
+  const all=trList(TR_MODE);
+  const list=all.map((it,i)=>[it,i]).filter(([it])=>!q||JSON.stringify(it).toLowerCase().includes(q));
+  const host=document.getElementById("trBody");
+  const ADD_LABEL={fruit:"＋ 添加水果标准",prep:"＋ 添加处理流程",cook:"＋ 添加半成品做法",ratio:"＋ 添加配比表"};
+  const addCard=`<div class="tr-card tr-addcard" onclick="trEditIdx(-1)">${ADD_LABEL[TR_MODE]}</div>`;
+  if(!list.length){host.innerHTML=`<div class="tr-note" style="grid-column:1/-1">没有匹配「${q}」的内容，换个关键词试试</div>`+addCard;return;}
+  const flow=arr=>`<div class="tr-flow">${arr.map((s,i)=>`<div class="tr-fstep"><span class="tr-fnum">${i+1}</span><span class="tr-ftxt">${s}</span></div>`).join("")}</div>`;
+  host.innerHTML=list.map(([it,idx])=>{
+    const cover=it.img&&it.img.length?`<div class="tr-cover" onclick="trLightbox('${TR_MODE}',${idx},0)"><img src="${it.img[0]}" loading="lazy" alt="${it.n}">${it.img.length>1?`<span class="cnt">📷 ${it.img.length} 张</span>`:""}</div>`:"";
+    let body="";
+    if(TR_MODE==="fruit"){
+      body=`<div class="tr-chips">${(it.chips||[]).map(c=>`<span class="tr-chip">${c}</span>`).join("")}${it.tag?`<span class="tr-chip">🗓 ${it.tag}</span>`:""}</div>
+        ${it.keep&&it.keep.length?`<div><div class="tr-h6">保存与存放</div><div class="tr-note">${it.keep.join("<br>")}</div></div>`:""}
+        ${it.pick&&it.pick.length?`<div><div class="tr-h6">挑选与验收要点</div><div class="tr-note">${it.pick.map(p=>"• "+p).join("<br>")}</div></div>`:""}
+        ${it.warn?`<div class="tr-warn">⛔ ${it.warn}</div>`:""}`;
+    }else if(TR_MODE==="prep"||TR_MODE==="cook"){
+      body=`<div><div class="tr-h6">操作流程</div>${flow(it.steps)}</div>
+        ${it.ratio?`<div class="tr-ratio">⚖️ ${it.ratio}</div>`:""}
+        ${it.tips?`<div class="tr-note">💡 ${it.tips}</div>`:""}`;
+    }else{
+      body=`<table class="tr-table"><thead><tr>${it.head.map(h=>`<th>${h}</th>`).join("")}</tr></thead>
+        <tbody>${it.rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table>
+        ${it.note?`<div class="tr-note">💡 ${it.note}</div>`:""}`;
+    }
+    const tag=TR_MODE==="fruit"?"选果标准":(TR_MODE==="ratio"?"配比表":(it.time||""));
+    const edit=`<button class="tr-editbtn" title="编辑" onclick="trEditIdx(${idx})">✎ 编辑</button>`;
+    return `<div class="tr-card">${cover}<div class="tr-body">
+      <div class="tr-title"><span class="nm">${it.n}</span><span style="display:flex;gap:6px;align-items:center">${edit}<span class="tr-tag t-${TR_MODE}">${tag}</span></span></div>${body}</div></div>`;
+  }).join("")+addCard;
+}
+/* --- 添加/编辑（四个板块通用）--- */
+let TR_EDIT=null,TR_EDIT_MODE=null,TR_EDIT_IMGS=[];
+const TR_MODE_NAME={fruit:"水果标准",prep:"处理流程",cook:"半成品做法",ratio:"配比表"};
+function trEditIdx(i){
+  const m=TR_MODE, f=i>=0?trList(m)[i]:null;
+  TR_EDIT=f?f.n:null; TR_EDIT_MODE=m; TR_EDIT_IMGS=f&&f.img?f.img.slice():[];
+  const $=id=>document.getElementById(id), isProc=(m==="prep"||m==="cook");
+  $("tfTitle").textContent=f?("编辑："+f.n):("添加"+TR_MODE_NAME[m]);
+  $("g_tag").style.display=m==="fruit"?"":"none";
+  $("g_time").style.display=isProc?"":"none";
+  $("g_fruit").style.display=m==="fruit"?"":"none";
+  $("g_proc").style.display=isProc?"":"none";
+  $("g_ratio").style.display=m==="ratio"?"":"none";
+  $("g_img").style.display=m==="ratio"?"none":"";
+  $("tf_n").value=f?f.n:"";
+  if(m==="fruit"){
+    $("tf_tag").value=f&&f.tag?f.tag:"";
+    $("tf_chips").value=f?(f.chips||[]).join("\n"):"";
+    $("tf_keep").value=f?(f.keep||[]).join("\n"):"";
+    $("tf_pick").value=f?(f.pick||[]).join("\n"):"";
+    $("tf_warn").value=f&&f.warn?f.warn:"";
+  }else if(isProc){
+    $("tf_time").value=f&&f.time?f.time:"";
+    $("tf_steps").value=f?(f.steps||[]).join("\n"):"";
+    $("tf_ratio").value=f&&f.ratio?f.ratio:"";
+    $("tf_tips").value=f&&f.tips?f.tips:"";
+  }else{
+    $("tf_head").value=f?(f.head||[]).join(", "):"";
+    $("tf_rows").value=f?(f.rows||[]).map(r=>r.join(", ")).join("\n"):"";
+    $("tf_note").value=f&&f.note?f.note:"";
+  }
+  $("tf_img").value="";
+  const isBase=f&&TRAIN[m].some(x=>x.n===f.n);
+  $("tf_restore").style.display=(isBase&&TR_FOV[m].edits[f.n])?"":"none";
+  $("tf_del").style.display=(f&&!isBase)?"":"none";
+  trThumbs();
+  $("trFruitModal").style.display="flex";
+}
+function trThumbs(){
+  document.getElementById("tf_thumbs").innerHTML=TR_EDIT_IMGS.map(s=>`<img src="${s}" style="width:64px;height:48px;object-fit:cover;border-radius:8px;border:1px solid var(--line)">`).join("")||`<span style="color:var(--muted);font-size:12px">暂无图片</span>`;
+}
+function trImgPick(files){
+  if(!files||!files.length)return;
+  const jobs=[...files].map(f=>new Promise(res=>{
+    const img=new Image();
+    img.onload=()=>{ const w=Math.min(640,img.width), h=Math.round(img.height*w/img.width);
+      const c=document.createElement("canvas"); c.width=w; c.height=h;
+      c.getContext("2d").drawImage(img,0,0,w,h); res(c.toDataURL("image/jpeg",.72)); };
+    img.src=URL.createObjectURL(f);
+  }));
+  Promise.all(jobs).then(arr=>{TR_EDIT_IMGS=arr;trThumbs();toast("已载入 "+arr.length+" 张图片");});
+}
+function trSaveItem(){
+  const $=id=>document.getElementById(id), lines=id=>$(id).value.split("\n").map(s=>s.trim()).filter(Boolean);
+  const m=TR_EDIT_MODE, isProc=(m==="prep"||m==="cook");
+  const n=$("tf_n").value.trim();
+  if(!n){toast("请填写名称");return;}
+  let rec={n};
+  if(m==="fruit"){
+    rec=Object.assign(rec,{tag:$("tf_tag").value.trim(),chips:lines("tf_chips"),keep:lines("tf_keep"),pick:lines("tf_pick"),warn:$("tf_warn").value.trim()});
+  }else if(isProc){
+    const steps=lines("tf_steps");
+    if(!steps.length){toast("请填写操作流程");return;}
+    rec=Object.assign(rec,{time:$("tf_time").value.trim(),steps});
+    const ratio=$("tf_ratio").value.trim(); if(ratio)rec.ratio=ratio;
+    const tips=$("tf_tips").value.trim(); if(tips)rec.tips=tips;
+  }else{
+    const head=$("tf_head").value.split(/[,，]/).map(s=>s.trim()).filter(Boolean);
+    const rows=lines("tf_rows").map(l=>l.split(/[,，]/).map(s=>s.trim()));
+    if(!head.length||!rows.length){toast("请填写表头和数据行");return;}
+    rec=Object.assign(rec,{head,rows});
+    const note=$("tf_note").value.trim(); if(note)rec.note=note;
+  }
+  if(m!=="ratio"&&TR_EDIT_IMGS.length)rec.img=TR_EDIT_IMGS;
+  const ov=TR_FOV[m];
+  if(TR_EDIT){
+    const isBase=TRAIN[m].some(x=>x.n===TR_EDIT);
+    if(isBase)ov.edits[TR_EDIT]=rec;
+    else{const j=ov.adds.findIndex(x=>x.n===TR_EDIT); if(j>=0)ov.adds[j]=rec; else ov.adds.push(rec);}
+  }else{
+    if(trList(m).some(x=>x.n===n)){toast("已存在同名条目，请改名或编辑原卡片");return;}
+    ov.adds.push(rec);
+  }
+  sSet("train_ov",TR_FOV);
+  document.getElementById("trFruitModal").style.display="none";
+  trRender(); toast("已保存「"+n+"」");
+}
+function trRestoreItem(){
+  const m=TR_EDIT_MODE;
+  if(!TR_EDIT||!TR_FOV[m].edits[TR_EDIT])return;
+  if(!confirm("恢复「"+TR_EDIT+"」为系统默认内容？"))return;
+  delete TR_FOV[m].edits[TR_EDIT];
+  sSet("train_ov",TR_FOV);
+  document.getElementById("trFruitModal").style.display="none";
+  trRender(); toast("已恢复默认");
+}
+function trDelItem(){
+  const m=TR_EDIT_MODE;
+  if(!TR_EDIT)return;
+  if(!confirm("删除自定义条目「"+TR_EDIT+"」？"))return;
+  TR_FOV[m].adds=TR_FOV[m].adds.filter(x=>x.n!==TR_EDIT);
+  sSet("train_ov",TR_FOV);
+  document.getElementById("trFruitModal").style.display="none";
+  trRender(); toast("已删除");
+}
+/* 图片灯箱 */
+function trLightbox(mode,idx,pos){
+  const it=trList(mode)[idx]; if(!it||!it.img)return;
+  TR_LB={imgs:it.img,pos,name:it.n};
+  let lb=document.getElementById("trLB");
+  if(!lb){lb=document.createElement("div");lb.id="trLB";lb.className="tr-lb";lb.onclick=e=>{if(e.target===lb)trLbClose();};document.body.appendChild(lb);}
+  trLbDraw();lb.style.display="flex";
+}
+function trLbDraw(){
+  const lb=document.getElementById("trLB"),s=TR_LB;
+  lb.innerHTML=`<img src="${s.imgs[s.pos]}" alt="${s.name}">
+    <div class="lbnav">
+      ${s.imgs.length>1?`<button class="lbbtn" onclick="trLbNav(-1)">‹ 上一张</button>`:""}
+      <span>${s.name} · ${s.pos+1}/${s.imgs.length}</span>
+      ${s.imgs.length>1?`<button class="lbbtn" onclick="trLbNav(1)">下一张 ›</button>`:""}
+      <button class="lbbtn" onclick="trLbClose()">✕ 关闭</button>
+    </div>`;
+}
+function trLbNav(d){TR_LB.pos=(TR_LB.pos+d+TR_LB.imgs.length)%TR_LB.imgs.length;trLbDraw();}
+function trLbClose(){const lb=document.getElementById("trLB");if(lb)lb.style.display="none";}
+
+/* ---------- 数据分析：出肉率 × 单杯用量 采购量测算 ---------- */
+/* 出肉率来自《5月产品用量核算表》"水果出肉率"表：净重÷毛重 */
+const ANA_YIELDS=[
+  ["牛油果",78],["芒果",53],["火龙果",70],["水蜜桃",74.2],["黄皮",74],
+  ["葡萄",65],["凤梨",59.8],["杨梅",80],["青芒",70],["西瓜",80],
+  ["橙子",54],["柠檬",90],["芭乐",73.6],["荔枝",58],["莲雾",90],
+  ["秋月梨",78.9],["苹果",89.8]
+];
+/* 出肉率配对表：原料名 → 出肉率(%) */
+const ANA_RATES={"芒果":53,"牛油果":78,"凤梨":59.8,"火龙果":70,"桃子":74.2,"杨梅":80,"西瓜":80,"橙子":54,"柠檬":90,"芭乐":73.6,"荔枝":58,"莲雾":90,"梨":78.9,"苹果":89.8};
+/* 产品配方（来自《5月产品用量核算表·单杯用量》，中杯规格）：c=5月合计杯数，i=[原料, 单杯净用量g, 配对水果] */
+const ANA_PRODUCTS={
+ "芒芒甘露":{c:23629,i:[["芒果粒",50,"芒果"],["芒果汁·芒果",170,"芒果"]]},
+ "牛油果甘露":{c:18355,i:[["芒果粒",50,"芒果"],["牛油果",80,"牛油果"]]},
+ "牛油果追芒芒":{c:8103,i:[["芒果肉",70,"芒果"],["牛油果",80,"牛油果"]]},
+ "牛油果追凤梨":{c:2374,i:[["凤梨肉",70,"凤梨"],["牛油果",80,"牛油果"]]},
+ "奇亚籽羽衣甘蓝牛油果":{c:6685,i:[["牛油果",60,"牛油果"],["羽衣甘蓝",7,null]]},
+ "牛油果追火龙果":{c:5276,i:[["火龙果肉",70,"火龙果"],["牛油果",80,"牛油果"]]},
+ "茉香芝芝芒芒":{c:470,i:[["芒果肉",180,"芒果"]]},
+ "春见与百香":{c:375,i:[["橙子角",30,"橙子"],["百香果",30,null],["耙耙柑果肉",100,null],["橙子酱·橙子肉",53,"橙子"],["橙子酱·凤梨肉",26,"凤梨"]]},
+ "手剥耙耙柑":{c:2094,i:[["耙耙柑果肉",120,null],["橙子酱·橙子肉",53,"橙子"],["橙子酱·凤梨肉",26,"凤梨"],["橙子角",30,"橙子"]]},
+ "每日阳光甜橙冰(中)":{c:845,i:[["橙子底肉",50,"橙子"],["橙子块",95,"橙子"],["梨汁",60,null]]},
+ "每日阳光甜橙冰(大)":{c:0,i:[["橙子底肉",80,"橙子"],["橙子块",190,"橙子"],["梨汁",120,null]]},
+ "霸气橙子":{c:7814,i:[["橙子角",120,"橙子"],["橙子酱·橙子肉",69,"橙子"],["橙子酱·凤梨肉",34,"凤梨"]]},
+ "芭乐与莲雾":{c:3499,i:[["芭乐肉",86,"芭乐"],["莲雾丁",40,"莲雾"]]},
+ "胭脂粉芭乐":{c:6287,i:[["芭乐肉",158,"芭乐"]]},
+ "芒也":{c:868,i:[["芒果粒",50,"芒果"]]},
+ "自然轻甜.小绿杯":{c:340,i:[["羽衣甘蓝汁",20,null],["雪梨汁",90,null],["橙汁",120,null]]},
+ "春天里的羊角蜜":{c:2014,i:[["羊角蜜",250,null]]},
+ "夏日菠萝冰":{c:2525,i:[["凤梨肉",150,"凤梨"],["凤梨汁·凤梨",56,"凤梨"]]},
+ "芒芒凤梨":{c:4340,i:[["芒果肉",130,"芒果"],["凤梨汁·凤梨",80,"凤梨"],["柠檬角",10,"柠檬"]]},
+ "西瓜大战椰子":{c:6162,i:[["西瓜果肉",200,"西瓜"]]},
+ "夏日西瓜雪梨冰(中)":{c:4257,i:[["西瓜果肉",260,"西瓜"],["雪梨汁",50,null]]},
+ "满杯VC水果茶":{c:3423,i:[["芒果条",50,"芒果"],["西瓜果肉",80,"西瓜"],["百香果",15,null],["橙子酱·橙子肉",42,"橙子"],["橙子酱·凤梨肉",21,"凤梨"],["橙子角",30,"橙子"]]},
+ "凤梨百香火龙果":{c:3188,i:[["火龙果肉",140,"火龙果"],["凤梨汁·凤梨",80,"凤梨"],["百香果",30,null]]},
+ "百香芒芒金凤梨":{c:4384,i:[["芒果肉",150,"芒果"],["凤梨汁·凤梨",64,"凤梨"],["百香果",30,null]]},
+ "手打柠檬茶":{c:2069,i:[["柠檬角",80,"柠檬"]]},
+ "羽衣甘蓝柠檬茶":{c:1102,i:[["柠檬角",80,"柠檬"],["羽衣甘蓝汁",25,null]]},
+ "乘风破浪的阳光橙":{c:1238,i:[["橙子块",280,"橙子"],["雪梨块",170,"梨"]]},
+ "元气小红瓶":{c:1575,i:[["火龙果",50,"火龙果"],["凤梨",70,"凤梨"],["橙子",70,"橙子"],["苹果",70,"苹果"],["雪梨",150,"梨"]]},
+ "超绿轻体瓶":{c:2055,i:[["雪梨",250,"梨"],["橙子",120,"橙子"],["羽衣甘蓝",25,null]]},
+ "满杯百香果":{c:53,i:[["百香果",60,null]]},
+ "青柠百香果":{c:60,i:[["柠檬角",40,"柠檬"],["百香果",30,null]]},
+ "榴莲和芒果":{c:2061,i:[["榴莲肉",50,null],["芒果粒",50,"芒果"],["芒果汁·芒果",120,"芒果"]]},
+ "黄金榴莲牛油果":{c:3717,i:[["榴莲肉",50,null],["牛油果",80,"牛油果"]]},
+ "大块芒果酸奶冰":{c:1584,i:[["芒果肉",150,"芒果"]]},
+ "大块火龙酸奶冰":{c:0,i:[["火龙果",170,"火龙果"]]},
+ "霸气桃桃水果茶":{c:5507,i:[["桃子肉",225,"桃子"]]},
+ "芭乐桃桃":{c:2747,i:[["芭乐果肉",96,"芭乐"],["桃子肉",105,"桃子"]]},
+ "牛油果追桃桃":{c:2039,i:[["桃子肉",80,"桃子"],["牛油果",80,"牛油果"]]},
+ "芝士桃桃冰":{c:678,i:[["桃子肉",232,"桃子"]]},
+ "满杯桃桃冰冰茶":{c:545,i:[["桃子肉",232,"桃子"]]},
+ "芝士火龙果":{c:258,i:[["火龙果",180,"火龙果"]]},
+ "厚椰芒芒冰茶":{c:624,i:[["芒果",300,"芒果"]]},
+ "杨梅凤梨":{c:1353,i:[["杨梅",144,"杨梅"],["凤梨汁·凤梨",64,"凤梨"]]},
+ "芝士杨梅冰":{c:380,i:[["杨梅",161,"杨梅"]]},
+ "满杯杨梅冰冰茶":{c:444,i:[["杨梅",152,"杨梅"]]},
+ "蜜桃荔枝水果茶":{c:443,i:[["桃子肉",115,"桃子"],["荔枝肉",100,"荔枝"],["荔枝汁",60,null]]},
+ "爆汁西瓜桃桃冰":{c:397,i:[["桃桃",100,"桃子"],["西瓜",170,"西瓜"]]},
+ "芭乐荔枝":{c:319,i:[["芭乐果肉",96,"芭乐"],["荔枝肉",80,"荔枝"]]},
+ "荔枝西瓜冰":{c:291,i:[["荔枝肉",80,"荔枝"],["荔枝汁",50,null],["西瓜肉",80,"西瓜"]]},
+ "芝芝粉荔":{c:267,i:[["荔枝肉",120,"荔枝"],["荔枝汁",100,null]]},
+ "荔夏，茉莉":{c:154,i:[["荔枝汁",150,null]]}
+};
+/* 当前测算数据源（默认内置5月数据，可被上传的月份数据替换） */
+let ANA_CUR_RATES=ANA_RATES, ANA_CUR_PRODUCTS=ANA_PRODUCTS, ANA_CUR_SRC="";
+let ANA_READY=false;
+function anaInit(){
+  if(ANA_READY)return; ANA_READY=true;
+  const sel=document.getElementById("ana_fruit");
+  ANA_YIELDS.forEach(([n,y])=>sel.insertAdjacentHTML("beforeend",`<option value="${y}">${n}（出肉率 ${y}%）</option>`));
+  anaFillProdSel();
+  anaLoadHist();
+}
+function anaFillProdSel(){
+  const ps=document.getElementById("ana_prod");
+  ps.innerHTML='<option value="">— 请选择产品 —</option>';
+  Object.keys(ANA_CUR_PRODUCTS).forEach(n=>ps.insertAdjacentHTML("beforeend",`<option>${n}</option>`));
+  document.getElementById("ana_src").textContent=ANA_CUR_SRC?`　·　当前数据源：${ANA_CUR_SRC}`:"";
+  document.getElementById("ana_prod_cups").value="";
+  anaProdCalc();
+}
+function anaProdPick(){
+  const n=document.getElementById("ana_prod").value;
+  const cupsEl=document.getElementById("ana_prod_cups");
+  if(n&&ANA_CUR_PRODUCTS[n])cupsEl.value=ANA_CUR_PRODUCTS[n].c||"";
+  anaProdCalc();
+}
+function anaProdCalc(){
+  const n=document.getElementById("ana_prod").value;
+  const body=document.getElementById("ana_prod_body");
+  if(!n||!ANA_CUR_PRODUCTS[n]){body.innerHTML="选择产品后，这里会列出每种果肉的单杯用量、配对的出肉率和需采购的毛重。含中/大杯规格的产品按中杯配方计算。";return;}
+  const cups=+document.getElementById("ana_prod_cups").value||0;
+  let netSum=0,rawSum=0;
+  const rows=ANA_CUR_PRODUCTS[n].i.map(([lab,g,f])=>{
+    const rate=(f&&ANA_CUR_RATES[f]!=null)?ANA_CUR_RATES[f]:null;
+    const raw=rate?g/(rate/100):g;   // 无出肉率数据的原料按原量计
+    netSum+=g;rawSum+=raw;
+    return `<tr><td style="padding:7px 10px;font-weight:600">${lab}</td>
+      <td style="padding:7px 10px;text-align:right">${g} g</td>
+      <td style="padding:7px 10px;text-align:right">${rate?rate+"%（"+f+"）":"—（按原量计）"}</td>
+      <td style="padding:7px 10px;text-align:right;font-weight:700">${raw.toFixed(1)} g</td>
+      <td style="padding:7px 10px;text-align:right">${cups>0?anaFmt(raw*cups):"—"}</td></tr>`;
+  }).join("");
+  body.innerHTML=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead><tr style="color:var(--muted);border-bottom:1px solid var(--line)">
+      <th style="padding:7px 10px;text-align:left">原料（净果肉）</th><th style="padding:7px 10px;text-align:right">单杯用量</th>
+      <th style="padding:7px 10px;text-align:right">出肉率</th><th style="padding:7px 10px;text-align:right">单杯需毛重</th>
+      <th style="padding:7px 10px;text-align:right">合计采购（×${cups>0?cups.toLocaleString():"杯数"}）</th></tr></thead>
+    <tbody>${rows}</tbody>
+    <tfoot><tr style="border-top:1px solid var(--line);font-weight:800">
+      <td style="padding:8px 10px">合计</td><td style="padding:8px 10px;text-align:right">${netSum} g</td><td></td>
+      <td style="padding:8px 10px;text-align:right">${rawSum.toFixed(1)} g</td>
+      <td style="padding:8px 10px;text-align:right;color:var(--primary)">${cups>0?anaFmt(rawSum*cups):"—"}</td></tr></tfoot>
+  </table></div>
+  <div style="color:var(--muted);font-size:12px;margin-top:8px">公式：单杯需毛重 = 单杯用量 ÷ 出肉率；合计采购 = 单杯需毛重 × 杯数。榴莲、百香果、耙耙柑、羊角蜜及各类果汁在核算表中无出肉率数据，按原量计入。</div>`;
+}
+
+/* 导出 Excel：全部产品 × 当月杯数 → 按水果汇总采购量（含 kg 与斤，1kg=2斤） */
+function anaExport(){
+  const agg={}, missing=[];
+  Object.entries(ANA_CUR_PRODUCTS).forEach(([n,p])=>{
+    const cups=p.c||0;
+    if(!cups){missing.push(n);return;}
+    p.i.forEach(([lab,g,f])=>{
+      const rate=(f&&ANA_CUR_RATES[f]!=null)?ANA_CUR_RATES[f]:null;
+      const key=rate!=null?f:lab;
+      if(!agg[key])agg[key]={rate,net:0,raw:0};
+      agg[key].net+=g*cups;
+      agg[key].raw+=(rate!=null?g/(rate/100):g)*cups;
+    });
+  });
+  /* 表1：按水果汇总 */
+  const rows=[
+    ["采购汇总表（全部产品 × 当月售卖杯数）"],
+    ["数据源",ANA_CUR_SRC||"内置5月核算表"],
+    [],
+    ["水果/原料","出肉率（%）","总净用量（g）","总采购毛重（g）","总采购毛重（kg）","总采购毛重（斤）"]
+  ];
+  let totNet=0,totRaw=0;
+  Object.entries(agg).sort((a,b)=>b[1].raw-a[1].raw).forEach(([k,v])=>{
+    totNet+=v.net;totRaw+=v.raw;
+    rows.push([k,v.rate!=null?v.rate:"按原量计",+v.net.toFixed(0),+v.raw.toFixed(0),+(v.raw/1000).toFixed(2),+(v.raw/500).toFixed(1)]);
+  });
+  rows.push(["合计","",+totNet.toFixed(0),+totRaw.toFixed(0),+(totRaw/1000).toFixed(2),+(totRaw/500).toFixed(1)]);
+  rows.push([]);
+  rows.push(["说明：总采购毛重 = Σ(单杯用量 ÷ 出肉率 × 当月杯数)；1 kg = 2 斤（1 斤 = 500 g）；无出肉率数据的原料按原量计"]);
+  if(missing.length)rows.push(["未计入（当月无杯数数据）："+missing.join("，")]);
+  const ws=XLSX.utils.aoa_to_sheet(rows);
+  ws["!cols"]=[{wch:22},{wch:13},{wch:15},{wch:16},{wch:16},{wch:16}];
+  /* 表2：按产品明细 */
+  const drows=[["产品","当月杯数","原料（净果肉）","单杯用量（g）","出肉率（%）","单杯需毛重（g）","合计采购（g）","合计采购（kg）","合计采购（斤）"]];
+  Object.entries(ANA_CUR_PRODUCTS).forEach(([n,p])=>{
+    p.i.forEach(([lab,g,f],idx)=>{
+      const rate=(f&&ANA_CUR_RATES[f]!=null)?ANA_CUR_RATES[f]:null;
+      const raw=rate!=null?g/(rate/100):g;
+      const tot=p.c?raw*p.c:null;
+      drows.push([idx===0?n:"",idx===0?(p.c||"无数据"):"",lab,g,rate!=null?rate:"按原量计",+raw.toFixed(1),
+        tot!=null?+tot.toFixed(0):"",tot!=null?+(tot/1000).toFixed(2):"",tot!=null?+(tot/500).toFixed(1):""]);
+    });
+  });
+  const ws2=XLSX.utils.aoa_to_sheet(drows);
+  ws2["!cols"]=[{wch:20},{wch:10},{wch:22},{wch:13},{wch:13},{wch:15},{wch:14},{wch:12},{wch:12}];
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,"采购汇总");
+  XLSX.utils.book_append_sheet(wb,ws2,"按产品明细");
+  const src=ANA_CUR_SRC?ANA_CUR_SRC.slice(0,7):"内置5月";
+  XLSX.writeFile(wb,`采购汇总-${src}.xlsx`);
+  toast("已生成采购汇总 Excel");
+}
+
+/* ---------- Excel 上传解析 + 按月历史记录 ---------- */
+let ANA_HIST=[], ANA_FILE=null;
+function anaFilePick(){
+  const f=document.getElementById("ana_file").files[0];
+  ANA_FILE=f||null;
+  if(!f)return;
+  // 从文件名识别月份：如 "5月产品用量核算表"、"2026-05"、"2026年5月"
+  let y=new Date().getFullYear(),m=null;
+  let mt=f.name.match(/(20\d{2})\s*[年.\-_/]?\s*(\d{1,2})\s*月/); if(mt){y=+mt[1];m=+mt[2];}
+  else{mt=f.name.match(/(\d{1,2})\s*月/); if(mt)m=+mt[1];}
+  if(m>=1&&m<=12)document.getElementById("ana_month").value=y+"-"+String(m).padStart(2,"0");
+  document.getElementById("ana_up_msg").textContent="已选择："+f.name;
+}
+/* 原料名 → 出肉率表水果名（按名称包含配对；果汁类不折算） */
+function anaMatchFruit(n,yieldNames){
+  if(/汁$/.test(n))return null;
+  const names=[...yieldNames].sort((a,b)=>b.length-a.length);
+  for(const y of names){ if(n.includes(y))return y; }
+  const alias=[["桃","水蜜桃"],["雪梨","秋月梨"],["梨","秋月梨"],["橙","橙子"],["柑","橙子"]];
+  for(const [k,f] of alias){ if(n.includes(k)&&names.includes(f))return f; }
+  return null;
+}
+function anaParseWB(wb){
+  const ys=wb.Sheets["水果出肉率"], us=wb.Sheets["单杯用量"];
+  if(!ys||!us)throw "Excel 里找不到「水果出肉率」或「单杯用量」工作表，请确认表格式与5月核算表一致";
+  const yields=[];
+  XLSX.utils.sheet_to_json(ys,{header:1}).forEach(r=>{
+    if(typeof r[0]==="string"&&typeof r[6]==="number"&&r[6]>0&&r[6]<=1&&r[0]!=="水果名称")
+      yields.push([r[0].trim(),Math.round(r[6]*1000)/10]);
+  });
+  const yieldNames=yields.map(x=>x[0]);
+  const products={}; let cur=null;
+  const SKIP=/^(水|椰奶|糖油|白糖|冰|牛奶|酸奶|奶)$/;
+  XLSX.utils.sheet_to_json(us,{header:1}).forEach(r=>{
+    const a=r[0],b=r[1],c=r[2]; let d=r[3];
+    if(typeof a==="string"&&a.trim()&&a!=="产品名称"&&!/用量表/.test(a)){cur=a.trim().replace(/^`/,"");products[cur]={c:+r[9]||0,i:[]};}
+    if(!cur)return;
+    let name=null,label=null;
+    if(typeof c==="string"&&c.trim()){name=c.trim();label=(typeof b==="string"&&b.trim()?b.trim()+"·":"")+name;}
+    else if(typeof b==="string"&&b.trim()){name=b.trim();label=name;}
+    if(!name||SKIP.test(name))return;
+    if(/[（(]大[)）]/.test(name))return;                       // 中/大杯取中杯
+    name=name.replace(/[（(]中[)）]/g,"");label=label.replace(/[（(]中[)）]/g,"");
+    if(typeof d==="string"){const mm=d.match(/\d+(\.\d+)?/);d=mm?+mm[0]:null;}
+    if(typeof d!=="number"||!(d>0))return;
+    products[cur].i.push([label,d,anaMatchFruit(name,yieldNames)]);
+  });
+  Object.keys(products).forEach(k=>{if(!products[k].i.length)delete products[k];});
+  return {yields,products};
+}
+async function anaUpload(){
+  const msg=document.getElementById("ana_up_msg");
+  const month=document.getElementById("ana_month").value;
+  if(!ANA_FILE){msg.textContent="请先选择 Excel 文件";return;}
+  if(!month){msg.textContent="请选择数据月份";return;}
+  msg.textContent="解析中…";
+  try{
+    const buf=await ANA_FILE.arrayBuffer();
+    const {yields,products}=anaParseWB(XLSX.read(buf,{type:"array"}));
+    const pn=Object.keys(products).length;
+    if(!yields.length||!pn)throw "没有解析到有效数据，请检查表格式";
+    const rec={id:String(Date.now()),month,file:ANA_FILE.name,at:new Date().toLocaleString("zh-CN"),yields,products};
+    ANA_HIST=ANA_HIST.filter(r=>r.month!==month);              // 同月覆盖
+    ANA_HIST.push(rec); ANA_HIST.sort((a,b)=>b.month.localeCompare(a.month));
+    await sSet("ana_uploads",ANA_HIST);
+    msg.textContent=`✅ ${month} 已保存：${yields.length} 种水果出肉率、${pn} 个产品配方`;
+    document.getElementById("ana_file").value="";ANA_FILE=null;
+    anaRenderHist(); anaApplyRec(rec.id);
+  }catch(e){msg.textContent="❌ "+(typeof e==="string"?e:"解析失败："+(e.message||e));}
+}
+async function anaLoadHist(){
+  ANA_HIST=await sGet("ana_uploads")||[];
+  anaRenderHist();
+}
+function anaRenderHist(){
+  const el=document.getElementById("ana_history");
+  if(!ANA_HIST.length){el.innerHTML="暂无上传记录。上传核算表后，这里会按月份列出，可随时查看或套用到下方测算。";return;}
+  el.innerHTML=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead><tr style="color:var(--muted);border-bottom:1px solid var(--line)">
+      <th style="padding:7px 10px;text-align:left">月份</th><th style="padding:7px 10px;text-align:left">文件</th>
+      <th style="padding:7px 10px;text-align:right">出肉率</th><th style="padding:7px 10px;text-align:right">产品数</th>
+      <th style="padding:7px 10px;text-align:left">上传时间</th><th style="padding:7px 10px;text-align:right">操作</th></tr></thead>
+    <tbody>${ANA_HIST.map(r=>`<tr style="border-bottom:1px solid var(--line)">
+      <td style="padding:8px 10px;font-weight:800">${r.month}</td>
+      <td style="padding:8px 10px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.file}">${r.file}</td>
+      <td style="padding:8px 10px;text-align:right">${r.yields.length} 种</td>
+      <td style="padding:8px 10px;text-align:right">${Object.keys(r.products).length} 个</td>
+      <td style="padding:8px 10px;color:var(--muted)">${r.at}</td>
+      <td style="padding:8px 10px;text-align:right;white-space:nowrap">
+        <button class="btn-ghost" style="padding:5px 10px" onclick="anaViewRec('${r.id}')">查看</button>
+        <button class="btn-ghost" style="padding:5px 10px" onclick="anaApplyRec('${r.id}')">套用测算</button>
+        <button class="btn-ghost" style="padding:5px 10px;color:#d33" onclick="anaDelRec('${r.id}')">删除</button></td></tr>`).join("")}</tbody></table></div>`;
+}
+function anaViewRec(id){
+  const r=ANA_HIST.find(x=>x.id===id); const el=document.getElementById("ana_month_view");
+  if(!r){el.innerHTML="";return;}
+  el.innerHTML=`<div style="border:1px solid var(--line);border-radius:12px;padding:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div style="font-weight:800">${r.month} · ${r.file}</div>
+      <button class="btn-ghost" style="padding:5px 10px" onclick="document.getElementById('ana_month_view').innerHTML=''">收起</button></div>
+    <div style="font-weight:700;font-size:13px;margin-bottom:6px">水果出肉率</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">
+      ${r.yields.map(([n,y])=>`<span style="background:var(--bg);border:1px solid var(--line);border-radius:99px;padding:4px 11px;font-size:12px;font-weight:600">${n} ${y}%</span>`).join("")}</div>
+    <div style="font-weight:700;font-size:13px;margin-bottom:6px">产品单杯用量（共 ${Object.keys(r.products).length} 个）</div>
+    <div style="overflow-x:auto;max-height:340px;overflow-y:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="color:var(--muted);border-bottom:1px solid var(--line)">
+        <th style="padding:6px 10px;text-align:left">产品</th><th style="padding:6px 10px;text-align:right">当月杯数</th><th style="padding:6px 10px;text-align:left">配方（净果肉/杯）</th></tr></thead>
+      <tbody>${Object.entries(r.products).map(([n,p])=>`<tr style="border-bottom:1px solid var(--line)">
+        <td style="padding:6px 10px;font-weight:600;white-space:nowrap">${n}</td>
+        <td style="padding:6px 10px;text-align:right">${p.c?p.c.toLocaleString():"—"}</td>
+        <td style="padding:6px 10px;color:var(--muted)">${p.i.map(([l,g])=>`${l} ${g}g`).join("，")}</td></tr>`).join("")}</tbody></table></div></div>`;
+}
+function anaApplyRec(id){
+  const r=ANA_HIST.find(x=>x.id===id); if(!r)return;
+  ANA_CUR_RATES=Object.fromEntries(r.yields);
+  ANA_CUR_PRODUCTS=r.products;
+  ANA_CUR_SRC=r.month+" 上传数据";
+  anaFillProdSel();
+  toast("已套用 "+r.month+" 的数据到测算");
+}
+async function anaDelRec(id){
+  const r=ANA_HIST.find(x=>x.id===id); if(!r)return;
+  if(!confirm("删除 "+r.month+" 的上传记录？"))return;
+  ANA_HIST=ANA_HIST.filter(x=>x.id!==id);
+  await sSet("ana_uploads",ANA_HIST);
+  document.getElementById("ana_month_view").innerHTML="";
+  anaRenderHist();
+  if(ANA_CUR_SRC.startsWith(r.month)){ANA_CUR_RATES=ANA_RATES;ANA_CUR_PRODUCTS=ANA_PRODUCTS;ANA_CUR_SRC="";anaFillProdSel();}
+}
+function anaFruitPick(){
+  const v=document.getElementById("ana_fruit").value;
+  if(v)document.getElementById("ana_yield").value=v;
+  anaCalc();
+}
+function anaFmt(g){ return g>=100000?(g/1000).toFixed(1)+" kg（"+(g/500).toLocaleString(undefined,{maximumFractionDigits:0})+" 斤）":Math.round(g).toLocaleString()+" g"; }
+function anaCalc(){
+  const y=+document.getElementById("ana_yield").value/100;
+  const per=+document.getElementById("ana_percup").value;
+  const cups=+document.getElementById("ana_cups").value;
+  const p=document.getElementById("ana_percup_raw"), t=document.getElementById("ana_total_raw"),
+        w=document.getElementById("ana_waste"), note=document.getElementById("ana_note");
+  if(!(y>0&&y<=1)||!(per>0)){p.textContent=t.textContent=w.textContent="—";note.textContent="";return;}
+  const perRaw=per/y;                      // 单杯需采购毛重 = 单杯用量 ÷ 出肉率
+  p.textContent=anaFmt(perRaw);
+  if(cups>0){
+    const totalRaw=perRaw*cups;            // 采购总毛重 = 单杯毛重 × 杯数
+    t.textContent=anaFmt(totalRaw);
+    w.textContent=anaFmt(totalRaw-per*cups);
+    note.textContent=`按出肉率 ${(y*100).toFixed(1)}%：每杯净用 ${per}g 需采购 ${perRaw.toFixed(0)}g 毛果；${cups.toLocaleString()} 杯共需净果肉 ${anaFmt(per*cups)}，折合采购毛重 ${anaFmt(totalRaw)}。`;
+  }else{
+    t.textContent=w.textContent="—";
+    note.textContent=`按出肉率 ${(y*100).toFixed(1)}%：每杯净用 ${per}g 需采购 ${perRaw.toFixed(0)}g 毛果。填入售卖杯数可算总采购量。`;
+  }
+}
 
 /* ---------- selectors ---------- */
 function buildSelectors(){
@@ -2641,7 +3865,66 @@ function renderFetch(){
   </style>
   <div class="h"><h1>平台登录入口</h1></div>
   <div class="card" style="padding:11px 14px;margin-bottom:16px;font-size:12.5px;color:var(--muted);border-left:3px solid var(--primary);line-height:1.7">🔗 点击平台卡片将在新标签页打开对应的商家登录页。如某平台你有专属后台地址，可在 <b>renderFetch()</b> 的 PLATFORMS 列表里替换 url。</div>
-  <div class="plat-grid">${cards}</div>`;
+  <div class="plat-grid">${cards}</div>
+  <div id="elemePanel" style="margin-top:22px"></div>`;
+  renderEleme();
+}
+
+/* ---------- 饿了么开放平台：订单营业额接入（步骤文档 v1.0）---------- */
+function elemeMonths(){ // 最近12个自然月，格式 yyyy-MM
+  const out=[],now=new Date();
+  for(let i=0;i<12;i++){const d=new Date(now.getFullYear(),now.getMonth()-i,1);out.push(monthKey(d));}
+  return out;
+}
+async function renderEleme(month){
+  const host=document.getElementById("elemePanel"); if(!host)return;
+  month=month||monthKey(new Date());
+  const opts=elemeMonths().map(m=>{const[y,mm]=m.split("-");return `<option value="${m}"${m===month?" selected":""}>${y}年${+mm}月</option>`;}).join("");
+  host.innerHTML=`<div class="h" style="margin-bottom:12px"><h1 style="font-size:19px">🍜 饿了么订单营业额</h1>
+    <div class="right">
+      <select class="monthsel" id="elemeMonth" onchange="renderEleme(this.value)">${opts}</select>
+      <button class="btn-ghost" onclick="renderEleme('${month}')">刷新</button>
+    </div></div>
+    <div class="card" style="color:var(--muted)">正在从开放平台拉取订单…</div>`;
+  try{
+    const r=await fetch("/api/eleme/summary?month="+encodeURIComponent(month));
+    const j=await r.json();
+    const d=j.data||j;
+    const money=v=>"¥ "+(+v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+    const live=d.mode==="LIVE";
+    const badge=`<span style="font-size:12px;font-weight:800;border-radius:99px;padding:4px 12px;background:${live?"#e8f6ec":"#fff4e5"};color:${live?"#1e7d32":"#b26a00"}">${live?"● 实时数据":"○ 示例数据"}</span>`;
+    // 门店维度小计
+    const byShop={};
+    d.shops.forEach(r=>{const k=r.shopId;(byShop[k]=byShop[k]||{name:r.shopName,oc:0,tp:0,inc:0});byShop[k].oc+=r.validOrderCount;byShop[k].tp+=+r.totalPriceSum;byShop[k].inc+=+r.incomeSum;});
+    const shopCards=Object.values(byShop).map(s=>`
+      <div class="card kpi"><div class="lab">${s.name}</div>
+        <div class="val" style="font-size:20px">${money(s.tp)}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:3px">实收 ${money(s.inc)} · ${s.oc} 单</div></div>`).join("");
+    host.querySelector(".card").outerHTML=`
+      <div class="card" style="padding:11px 14px;margin-bottom:14px;font-size:12.5px;line-height:1.7;border-left:3px solid ${live?"#1e7d32":"#e0a44e"}">${badge}　${d.note}</div>
+      <div class="kpis" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px">
+        <div class="card kpi"><div class="lab">订单总额 SUM(totalPrice)</div><div class="val">${money(d.totalPrice)}</div></div>
+        <div class="card kpi"><div class="lab">商家实收 SUM(income)</div><div class="val good">${money(d.income)}</div></div>
+        <div class="card kpi"><div class="lab">有效订单数</div><div class="val">${(+d.orderCount).toLocaleString()}<small> 单</small></div></div>
+      </div>
+      <div style="font-weight:800;font-size:14px;margin:16px 0 8px">各门店营收（${month.split("-")[0]}年${+month.split("-")[1]}月合计）</div>
+      <div class="kpis" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:16px">${shopCards}</div>
+      <div style="font-weight:800;font-size:14px;margin:8px 0">门店 × 日期明细</div>
+      <div class="card" style="padding:0;overflow-x:auto">
+        <table class="tr-table" style="min-width:640px">
+          <thead><tr><th style="padding:10px 14px">日期</th><th>门店</th><th style="text-align:right">有效订单</th><th style="text-align:right">订单总额</th><th style="text-align:right;padding-right:14px">商家实收</th></tr></thead>
+          <tbody>${d.shops.map(r=>`<tr>
+            <td style="padding:8px 14px;font-weight:700">${r.bizDate}</td>
+            <td>${r.shopName}</td>
+            <td style="text-align:right">${r.validOrderCount}</td>
+            <td style="text-align:right">${money(r.totalPriceSum)}</td>
+            <td style="text-align:right;padding-right:14px;font-weight:700">${money(r.incomeSum)}</td></tr>`).join("")}</tbody>
+        </table>
+      </div>
+      <div style="color:var(--muted);font-size:12px;margin-top:10px;line-height:1.7">数据口径：仅统计已授权门店、最近 30 天有效订单（status=settled 或 Type=18 完结）。配置 ELEME_APP_KEY / ELEME_APP_SECRET / ELEME_ACCESS_TOKEN / ELEME_SHOPS 环境变量后自动切换为真实订单。</div>`;
+  }catch(e){
+    host.querySelector(".card").outerHTML=`<div class="card" style="color:#c0392b">❌ 拉取失败：${e.message||e}。请确认后端服务正常。</div>`;
+  }
 }
 
 /* ---------- 用户权限（本地模拟；真实多用户需后端） ---------- */
