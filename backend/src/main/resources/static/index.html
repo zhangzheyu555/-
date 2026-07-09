@@ -1103,40 +1103,52 @@ const EXAMS=[
    {q:"茹菓的愿景是什么？",type:"text",a:"让走进茹菓的顾客都开心的走出去",accept:["开心","走出去"],min:1},
    {q:"茹菓的价值观是什么？",type:"text",a:"团结协作，努力奋斗，精益求精",accept:["团结","奋斗","精益求精"],min:2},
    {q:"服务核心四大原则是哪四个？",type:"text",a:"顾客第一、及时招呼、仔细聆听、创造体验",accept:["顾客第一","及时招呼","仔细聆听","创造体验"],min:3},
-   {q:"带新人：第一天主要学习什么内容？（简述）",type:"text",a:"企业文化与服务标准",accept:["企业文化","服务","文化"],min:1},
-   {q:"迎客标准话术是什么？",type:"text",a:"您好，欢迎光临茹菓",accept:["欢迎光临","您好"],min:1},
-   {q:"点单时推荐哪种冰口感会更好？",type:"text",a:"标准冰",accept:["标准冰"],min:1},
-   {q:"点单后必须做什么，跟顾客确认内容？",type:"text",a:"复单",accept:["复单","确认"],min:1},
-   {q:"打包：外卖需要做什么，堂食直接盖盖子？",type:"text",a:"封口",accept:["封口"],min:1},
-   {q:"仪容仪表：需按要求穿戴帽子、发网、工服和什么？",type:"text",a:"围裙",accept:["围裙"],min:1},
-   {q:"糖油：白糖与开水的比例（白糖 2000 : 开水 X），X=？（克）",type:"num",a:"1000"},
-   {q:"熬糖油：中火多少 W 熬 4 分钟？（W）",type:"num",a:"1000"},
-   {q:"糖油冷藏保存几小时？（小时）",type:"num",a:"72"},
-   {q:"沙冰壶每次搅拌容量不可超过几杯？（杯）",type:"num",a:"2"},
-   {q:"果酱壶盛装不可超过总容量的百分之几？（%）",type:"num",a:"60"},
-   {q:"果酱壶总容量不能超过多少毫升？（毫升）",type:"num",a:"1500"},
-   {q:"水果进冰箱存放，外围离杆、四周需怎样？",type:"text",a:"离壁",accept:["离壁"],min:1},
-   {q:"各平台差评占比率不得高于百分之几？（%）",type:"num",a:"0.05"},
-   {q:"售后占比率不得高于总单量百分之几？（%）",type:"num",a:"0.2"},
+   {q:"顾客第一：前台点单同事如备料或忙，规定几秒回头往收银台回望？（秒）",type:"num",a:"10"},
+   {q:"仪容仪表：哪四样需按要求穿戴？",type:"text",a:"头发、帽子、围裙、发网",accept:["头发","帽子","围裙","发网"],min:3},
+   {q:"迎客标准话术是什么？",type:"text",a:"您好，欢迎光临茹菓",accept:["您好","欢迎光临"],min:1},
+   {q:"点单时询问顾客需要喝什么＿和＿？",type:"text",a:"温度和甜度",accept:["温度","甜度"],min:2},
+   {q:"推荐哪种冰口感会更好？",type:"text",a:"标准冰",accept:["标准冰"],min:1},
+   {q:"会员福利：生日送什么？",type:"text",a:"买一送一券",accept:["买一送一"],min:1},
+   {q:"点单后必须做什么，跟顾客确认点单内容？",type:"text",a:"复单",accept:["复单"],min:1},
+   {q:"告知顾客我们的产品都是什么（据操作台杯数解释等待时长）？",type:"text",a:"手工现做",accept:["手工","现做"],min:1},
+   {q:"打包：先看堂食还是外卖，外卖需确定是否做什么？",type:"text",a:"封口",accept:["封口"],min:1},
+   {q:"杯贴标签核对饮品后要套什么？",type:"text",a:"杯套",accept:["杯套"],min:1},
+   {q:"根据订单的什么进行叫号？",type:"text",a:"先后时间",accept:["先后","时间","顺序"],min:1},
+   {q:"打包时把饮品放进袋子，还要放哪两样？",type:"text",a:"吸管、纸巾",accept:["吸管","纸巾"],min:2},
+   {q:"打完包双手递上时告知：饮品最佳饮用时间是多久？",type:"text",a:"半个小时",accept:["半个小时","半小时","30分钟"],min:1},
+   {q:"顾客离店标准话是什么？",type:"text",a:"不好意思，让您久等了。祝您喝得开心",accept:["久等","开心"],min:1},
+   {q:"红线：不得和顾客发生哪两种冲突？",type:"text",a:"言语冲突、肢体冲突",accept:["言语","肢体"],min:2},
+   {q:"红线：禁止出现＿以及＿顾客的行为？",type:"text",a:"争吵、辱骂",accept:["争吵","辱骂"],min:2},
+   {q:"红线：禁止在店铺对顾客做什么？",type:"text",a:"议论顾客",accept:["议论"],min:1},
+   {q:"顾客进店询问，任何岗位人员都要回应，切记不要出现什么现象？",type:"text",a:"不理会",accept:["不理会","不理睬"],min:1},
+   {q:"跟顾客沟通时语调及肢体不可出现不礼貌行为，不可出现什么现象？",type:"text",a:"不耐烦",accept:["不耐烦"],min:1},
+   {q:"前台多位顾客等候时：＿服务当前顾客，及时＿后面顾客？",type:"text",a:"耐心、安抚",accept:["耐心","安抚"],min:2},
+   {q:"产品制作不得随意更改什么，并按照标准流程制作？",type:"text",a:"配方",accept:["配方"],min:1},
+   {q:"时效标签严禁什么行为？",type:"text",a:"篡改日期",accept:["篡改"],min:1},
+   {q:"哪两类食品严禁使用？",type:"text",a:"过期、变质发霉",accept:["过期","变质","发霉"],min:2},
+   {q:"严禁在店铺做什么，影响店铺氛围？",type:"text",a:"传播负能量",accept:["负能量","传播"],min:1},
+   {q:"操作台内禁止出现哪三种现象？",type:"text",a:"嘻哈、打闹、无人在岗",accept:["嘻哈","打闹","无人在岗"],min:2},
+   {q:"不得在吧台区域做哪三件事？",type:"text",a:"玩手机、吃零食、换工作服",accept:["玩手机","吃零食","工作服"],min:2},
    {q:"外卖产品需在几点前准时上架？（如 9:30）",type:"text",a:"9:30",accept:["9:30","9：30","930"],min:1},
    {q:"晚上几点前不可无故下架或不报备下架？（如 21:00）",type:"text",a:"21:00",accept:["21:00","21：00","2100"],min:1},
+   {q:"营业时间内不允许私自做什么，特殊原因需报备说明？",type:"text",a:"关外卖",accept:["关外卖","关闭外卖"],min:1},
+   {q:"各平台差评占比率不得高于百分之几？（%）",type:"num",a:"0.05"},
+   {q:"售后占比率不得高于总单量百分之几？（%）",type:"num",a:"0.2"},
    {q:"服务投诉：1-3000 单以内允许几条？（条）",type:"num",a:"1"},
-   {q:"服务投诉：5000 单以内允许几条？（条）",type:"num",a:"2"},
-   {q:"服务投诉：10000 单以内允许几条？（条）",type:"num",a:"4"},
-   {q:"平台评分需时刻保持多少分及以上（大众点评除外）？（分）",type:"num",a:"4.8"},
-   {q:"电子温度计温度应在 0± 多少℃？",type:"text",a:"0±0.3℃",accept:["0.3","±0.3"],min:1},
-   {q:"茶汤需在几秒内完成过滤及搅拌？（秒）",type:"num",a:"30"},
-   {q:"店铺到货是否在几分钟内搬到仓库？（分钟）",type:"num",a:"30"},
-   {q:"仓库物料按离地几公分标准存放？（公分）",type:"num",a:"10"},
+   {q:"服务投诉：8000 单以内允许几条？（条）",type:"num",a:"3"},
+   {q:"沙冰壶每次搅拌容量不可超过几杯？（杯）",type:"num",a:"2"},
+   {q:"果酱壶每次盛装不可超过总容量的百分之几？（%）",type:"num",a:"60"},
+   {q:"果酱壶总容量不能超过多少毫升？（毫升）",type:"num",a:"1500"},
+   {q:"放入沙冰机的杯子需怎样放置，确定连接底座无松动？",type:"text",a:"垂直向下",accept:["垂直"],min:1},
+   {q:"水果进冰箱存放：外围需＿，四周需＿？",type:"text",a:"离杆、离壁",accept:["离杆","离壁"],min:2},
+   {q:"店铺员工必须怎样上岗（健康证在有效期内）？",type:"text",a:"持证上岗",accept:["持证"],min:1},
+   {q:"红线：新员工、兼职需在多久内办理健康证？",type:"text",a:"一周",accept:["一周","7天","七天"],min:1},
+   {q:"交叉污染：水槽严禁清洗什么？",type:"text",a:"拖把、地刮、下水道部件、隔渣池、私人物品",accept:["拖把","地刮","下水道","隔渣池","私人物品"],min:1},
    {q:"叫货：周一到周四截止到几点？（如 16:00）",type:"text",a:"16:00",accept:["16:00","16：00","1600"],min:1},
-   {q:"叫货：周五到周六截止到几点？（如 17:00）",type:"text",a:"17:00",accept:["17:00","17：00","1700"],min:1},
-   {q:"叫货：节假日截止到几点？（如 19:00）",type:"text",a:"19:00",accept:["19:00","19：00","1900"],min:1},
-   {q:"到店货物（味全、卡士、牛奶）不允许超过多久？",type:"text",a:"一周",accept:["一周","7天","七天"],min:1},
-   {q:"交叉污染：水槽严禁清洗什么？",type:"text",a:"拖把",accept:["拖把"],min:1},
-   {q:"门店严禁一切什么行为？",type:"text",a:"代打卡",accept:["代打卡","打卡"],min:1},
-   {q:"抹布分类：打包台用什么颜色？",type:"text",a:"蓝色",accept:["蓝色"],min:1},
-   {q:"顾客取餐时，伙伴需主动核对什么？",type:"text",a:"取餐号",accept:["取餐号","取单号","号"],min:1},
-   {q:"产品最佳饮用时间是多久？",type:"text",a:"半个小时",accept:["半个小时","半小时","30分钟"],min:1}
+   {q:"门店严禁一切什么行为，一经发现严肃处理？",type:"text",a:"代打卡",accept:["代打卡","打卡"],min:1},
+   {q:"电子温度计温度应在 0± 多少℃？",type:"text",a:"0±0.3℃",accept:["0.3","±0.3"],min:1},
+   {q:"需在几秒内完成茶汤过滤及搅拌动作？（秒）",type:"num",a:"30"},
+   {q:"仓库物料按离地几公分标准存放？（公分）",type:"num",a:"10"}
   ]},
  {id:"manager",name:"店长 / 领班考试题（食品安全）",icon:"📋",pass:90,role:"店长、领班",
   items:[
@@ -1242,9 +1254,13 @@ function examOnVisibility(){
 }
 function examBindGuard(){ EXAM_SWITCH=0; EXAM_PENDING_WARN=false; document.addEventListener("visibilitychange",examOnVisibility); window.addEventListener("blur",examOnVisibility); }
 function examUnbindGuard(){ document.removeEventListener("visibilitychange",examOnVisibility); window.removeEventListener("blur",examOnVisibility); }
+/* 姓名归一化：去空格、忽略大小写，防止改写姓名绕过锁定 */
+function examNorm(s){return String(s||"").toLowerCase().replace(/\s+/g,"");}
+/* 门店员工名单（来自工资模块），考生姓名必须从中选择 */
+function examRoster(){return [...new Set((typeof SALARY!=="undefined"?SALARY:[]).map(e=>(e.name||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"zh"));}
 /* 该考生该套试卷是否处于锁定期（上次不及格且未满7天） */
 function examLock(name,examId){
-  const recs=EXAM_RECORDS.filter(r=>r.name===name&&r.examId===examId).sort((a,b)=>b.at-a.at);
+  const recs=EXAM_RECORDS.filter(r=>examNorm(r.name)===examNorm(name)&&r.examId===examId).sort((a,b)=>b.at-a.at);
   const last=recs[0];
   if(last&&!last.pass){
     const unlock=last.at+EXAM_PASS_LOCK_DAYS*86400000;
@@ -1261,7 +1277,7 @@ function examHome(){
   const nm=EXAM_NAME;
   const papers=EXAMS.map(e=>{
     const locked=nm?examLock(nm,e.id):null;
-    const recs=nm?EXAM_RECORDS.filter(r=>r.name===nm&&r.examId===e.id).sort((a,b)=>b.at-a.at):[];
+    const recs=nm?EXAM_RECORDS.filter(r=>examNorm(r.name)===examNorm(nm)&&r.examId===e.id).sort((a,b)=>b.at-a.at):[];
     const best=recs.length?Math.max(...recs.map(r=>r.score)):null;
     const passed=recs.some(r=>r.pass);
     let status="";
@@ -1278,10 +1294,14 @@ function examHome(){
       <div style="margin-top:6px">${btn}</div>
     </div>`;
   }).join("");
+  const roster=examRoster();
+  const nameField=roster.length
+    ?`<select id="examName" onchange="EXAM_NAME=this.value;examHome()"><option value="">— 请选择姓名 —</option>${roster.map(n=>`<option value="${n}"${n===nm?" selected":""}>${n}</option>`).join("")}</select>`
+    :`<input id="examName" value="${nm}" placeholder="请输入你的姓名" oninput="EXAM_NAME=this.value.trim();" onchange="examHome()">`;
   document.getElementById("examBody").innerHTML=`
     <div class="card" style="margin-bottom:16px">
-      <div class="field" style="max-width:340px"><label>考生姓名 *（成绩与补考锁定按姓名记录）</label>
-        <input id="examName" value="${nm}" placeholder="请输入你的姓名" oninput="EXAM_NAME=this.value.trim();" onchange="examHome()"></div>
+      <div class="field" style="max-width:340px"><label>考生姓名 *（从员工名单选择，成绩与补考锁定按姓名记录）</label>
+        ${nameField}</div>
       <div style="color:var(--muted);font-size:12.5px;margin-top:4px">💡 选择要考的试卷开始答题。提交后自动判分：<b>数字必须精准，文字答对大意即可</b>。一次不及格需隔 ${EXAM_PASS_LOCK_DAYS} 天才能重考同一套。</div>
     </div>
     ${!nm?`<div class="ex-locked" style="background:#fff8ec;border-color:#f0d9a8;color:#8a6300">✍️ 请先在上方填写<b>考生姓名</b>，再选择试卷。</div>`:`<div class="ex-papers">${papers}</div>`}
@@ -1303,6 +1323,8 @@ function examHistoryTable(){
 /* 答题页 */
 function examStart(id){
   const e=EXAMS.find(x=>x.id===id); if(!e)return;
+  const _roster=examRoster();
+  if(_roster.length&&!_roster.some(n=>examNorm(n)===examNorm(EXAM_NAME))){toast("考生姓名需从员工名单中选择");examHome();return;}
   const locked=examLock(EXAM_NAME,id);
   if(locked){toast("该试卷锁定至 "+examFmtDate(locked));examHome();return;}
   EXAM_CUR={exam:e,answers:new Array(e.items.length).fill("")}; EXAM_STAGE="quiz";
@@ -1318,7 +1340,7 @@ function examStart(id){
       <div><div style="font-weight:900;font-size:17px">${e.name}</div>
         <div style="color:var(--muted);font-size:12.5px;margin-top:3px">考生：${EXAM_NAME} · 共 ${e.items.length} 题 · 及格 ${e.pass} 分 · 数字精准/文字对大意</div></div>
     </div>
-    <div class="ex-locked" style="background:#fff4e5;border-color:#f0d9a8;color:#8a6300;margin-bottom:16px">🔒 <b>防切屏已开启</b>：考试期间请勿切换到其他 App 或页面。已切屏 <b id="exSwitch">0</b> / ${EXAM_MAX_SWITCH} 次，达 ${EXAM_MAX_SWITCH} 次将<b>强制交卷并记为违规</b>。</div>
+    <div class="ex-locked" id="exGuardBanner" style="background:#fff4e5;border-color:#f0d9a8;color:#8a6300;margin-bottom:16px">🔒 <b>防切屏已开启</b>：考试期间请勿切换到其他 App 或页面。已切屏 <b id="exSwitch">0</b> / ${EXAM_MAX_SWITCH} 次，达 ${EXAM_MAX_SWITCH} 次将<b>强制交卷并记为违规</b>。</div>
     ${qs}
     <div style="display:flex;gap:10px;margin:6px 0 20px"><button class="save" style="margin:0;width:auto;padding:12px 30px" onclick="examSubmit()">提交并自动判分</button>
       <button class="btn-ghost" onclick="examHome()">取消</button></div>`;
@@ -1332,7 +1354,8 @@ function examGradeItem(user,it){
   if(it.type==="num"){
     const un=u.match(/\d+(\.\d+)?/g)||[];
     const an=String(it.a).match(/\d+(\.\d+)?/g)||[];
-    return an.length>0 && an.every(x=>un.includes(x));
+    // 数字必须精准：标准答案的数字全部命中，且不允许考生多写数字（防"2到3杯"蒙对"2杯"）
+    return an.length>0 && un.length===an.length && an.every(x=>un.includes(x));
   }
   const nu=norm(u), kws=(it.accept&&it.accept.length?it.accept:[it.a]);
   const hit=kws.filter(k=>nu.includes(norm(k))).length;
@@ -1341,20 +1364,22 @@ function examGradeItem(user,it){
 function examSubmit(forced){
   if(EXAM_STAGE!=="quiz"||!EXAM_CUR)return;
   EXAM_STAGE="result"; examUnbindGuard();
-  const e=EXAM_CUR.exam, per=examPerScore(e);
+  document.getElementById("exGuardBanner")?.remove(); // 考试结束，移除防切屏提示
+  const e=EXAM_CUR.exam;
   let score=0, correct=0;
   e.items.forEach((it,i)=>{
     const ok=examGradeItem(EXAM_CUR.answers[i],it);
-    if(ok){score+=per;correct++;}
+    if(ok){correct++;}
     const box=document.getElementById("exq"+i), inp=document.getElementById("exa"+i);
     box.classList.add(ok?"right":"wrong");
     if(inp)inp.disabled=true;
     const fb=document.createElement("div");
     fb.className="ex-fb "+(ok?"ok":"no");
-    fb.innerHTML=ok?`✓ 正确（+${per}）`:`✗ 扣 ${per} 分 · 参考答案：<b>${e.items[i].a}</b>`;
+    fb.innerHTML=ok?`✓ 正确`:`✗ 答错 · 参考答案：<b>${e.items[i].a}</b>`;
     box.appendChild(fb);
   });
-  score=Math.min(100,score);
+  // 按答对比例计分，各卷满分统一为100、90分及格=90%正确率（修复题数不整除时满分凑不满/及格线被稀释）
+  score=e.items.length?Math.round(correct/e.items.length*100):0;
   const forcedSubmit=forced===true;
   const pass=score>=e.pass && !forcedSubmit;   // 违规强制交卷一律判不通过
   const rec={name:EXAM_NAME,examId:e.id,examName:e.name,score,total:100,correct,pass,at:Date.now(),switchCount:EXAM_SWITCH,violated:forcedSubmit};
@@ -2814,8 +2839,9 @@ function renderStoreSalary(){
       </div>
       ${salaryKPIHtml(sid,STORE_SAL_MONTH)}
       <div style="font-size:12px;color:var(--muted);background:var(--primary-soft);border-radius:9px;padding:10px 12px;margin-bottom:12px;line-height:1.85">
+        ${comm.overPool?`<div style="background:#fdeeec;color:#c0392b;border:1px solid #f0c9c2;border-radius:8px;padding:7px 10px;margin-bottom:8px;font-weight:700">⚠️ 提成分配（¥${Math.round(comm.actualTotal).toLocaleString()}）已接近或超过提成池（¥${Math.round(comm.pool).toLocaleString()}）。本店有 ${comm.nMgr} 名店长、${comm.L} 名领班，店长×0.05＋领班×0.025 叠加会突破 100%，请核对人数或手动核定提成。</div>`:""}
         💰 <b style="color:var(--primary)">提成核对</b>：员工到手提成合计 <b style="color:var(--good)">¥${Math.round(comm.actualTotal).toLocaleString()}</b>；店铺基金 <b>¥${Math.round(comm.fund).toLocaleString()}</b>；提成工资＋店铺基金总额 <b style="color:var(--primary)">¥${Math.round(comm.grandTotal).toLocaleString()}</b>。<br>
-        测算口径（仅作参考）：人均产值 <b>¥${Math.round(comm.perCapita).toLocaleString()}</b> → 区间 <b>${comm.bracket}</b> → 比例 <b>${(comm.rate*100).toFixed(1)}%</b>；理论提成池 = 正式员工 ${comm.N} 人 × 人均产值 × ${(comm.rate*100).toFixed(1)}% = <b>¥${Math.round(comm.pool).toLocaleString()}</b>。分配：店长 ×0.05、每名领班 ×0.025、全体正式员工均摊 ×0.85；员工分配占比 <b>${comm.employeeShare.toFixed(3).replace(/0+$/,'').replace(/\.$/,'')}</b>，店铺基金占比 <b>${comm.fundShare.toFixed(3).replace(/0+$/,'').replace(/\.$/,'')}</b>。基金按已核对员工提成反推：¥${Math.round(comm.actualTotal).toLocaleString()} ÷ ${comm.employeeShare.toFixed(3)} × ${comm.fundShare.toFixed(3)}，向下取整 = <b>¥${Math.round(comm.fund).toLocaleString()}</b>。无领班时基金0.10（领班那份0.025落入基金），1名领班0.075，2名领班0.05。
+        测算口径（仅作参考）：人均产值 <b>¥${Math.round(comm.perCapita).toLocaleString()}</b> → 区间 <b>${comm.bracket}</b> → 比例 <b>${(comm.rate*100).toFixed(1)}%</b>；理论提成池 = 正式员工 ${comm.N} 人 × 人均产值 × ${(comm.rate*100).toFixed(1)}% = <b>¥${Math.round(comm.pool).toLocaleString()}</b>。分配：店长 ×0.05、每名领班 ×0.025、全体正式员工均摊 ×0.85；员工分配占比 <b>${comm.employeeShare.toFixed(3).replace(/0+$/,'').replace(/\.$/,'')}</b>，店铺基金占比 <b>${comm.fundShare.toFixed(3).replace(/0+$/,'').replace(/\.$/,'')}</b>。店铺基金 = 提成池扣除员工到手提成后的余额：¥${Math.round(comm.pool).toLocaleString()} − ¥${Math.round(comm.actualTotal).toLocaleString()}，向下取整且不为负 = <b>¥${Math.round(comm.fund).toLocaleString()}</b>。无领班时基金0.10（领班那份0.025落入基金），1名领班0.075，2名领班0.05。
         ${edit?`<button class="sal-mini" style="margin-left:8px" onclick="salaryApplyCommission('${sid}')">按测算覆盖已核对值</button>`:""}
       </div>
       <div style="font-size:12px;color:var(--muted);background:var(--bg);border-radius:9px;padding:9px 12px;margin:8px 0 12px;line-height:1.7">📌 <b>假期规则</b>：每位员工每月额度 ${MONTHLY_VAC} 天，当月未休可累积结转至次月（例：连续两月未休共 ${MONTHLY_VAC*2} 天）。${edit?`点「假期结转下月」即按「上月剩余 + ${MONTHLY_VAC} 天」生成下月余假。`:""}</div>
@@ -4006,7 +4032,7 @@ function salaryFloorFor(position){return SALARY_FLOOR[position]||0;}
 // 有效保底：满勤(出勤天数≥当月满勤=当月天数−4，或出勤留空按整月)享受全额保底；缺勤当月不享受保底(返回0)；非正式岗位无保底
 function salaryFloorEff(position,attendance,month){
   const base=salaryFloorFor(position); if(!base)return 0;
-  if(/-02$/.test(String(month||"")))return 0; // 2月不参与保底（需管理员手动核定）
+  if(salIsFeb(month))return 0; // 2月不参与保底（需管理员手动核定）
   const att=parseFloat(attendance), full=salaryWorkdays(month);
   if(isNaN(att)||!full)return base;   // 出勤无数字 → 正式岗位按整月享受全额保底
   return att>=full?base:0;            // 缺勤当月不享受满勤保底，按实际工资项发
@@ -4194,13 +4220,13 @@ function salaryCalcGross(auto){
   if(auto)g.value=salMoney(finalGross);
 }
 function salaryFloorHint(pos,att,month,floor,core,finalGross){
-  const fEl=document.getElementById("se_floor"); if(fEl){const std=salaryFloorFor(pos);fEl.value=std?("¥"+std+(/-02$/.test(String(month||""))?"（2月不计）":"")):"无保底";}
+  const fEl=document.getElementById("se_floor"); if(fEl){const std=salaryFloorFor(pos);fEl.value=std?("¥"+std+(salIsFeb(month)?"（2月不计）":"")):"无保底";}
   const el=document.getElementById("se_floor_hint");if(!el)return;
   const i2r=document.getElementById("se_i2r");
   if(i2r&&i2r.checked){el.innerHTML=`🎓→👤 实习转正当月：按实习段 + 转正段相加实发（不享受满勤保底），应发 <b>¥${salMoney(finalGross)}</b>`;el.style.color="var(--primary)";return;}
   const std=salaryFloorFor(pos);
   if(!std){el.textContent=pos?"该职位无保底工资":"";el.style.color="var(--muted)";return;}
-  if(!floor){el.textContent=/-02$/.test(String(month||""))?`2月不参与保底，按实际工资项发（由管理员手动核定）`:`缺勤月（出勤 ${att||"?"} < 满勤 ${salaryWorkdays(month)} 天）不享受保底，按实际工资项发`;el.style.color="var(--muted)";return;}
+  if(!floor){el.textContent=salIsFeb(month)?`2月不参与保底，按实际工资项发（由管理员手动核定）`:`缺勤月（出勤 ${att||"?"} < 满勤 ${salaryWorkdays(month)} 天）不享受保底，按实际工资项发`;el.style.color="var(--muted)";return;}
   if(core<floor){el.innerHTML=`⛑ 已触发保底：不含加班/工龄合计 ¥${salMoney(core)} ＜ ${pos}保底 ¥${floor} → 按保底发，应发 = ¥${floor} + 加班/工龄 = <b>¥${salMoney(finalGross)}</b>`;el.style.color="var(--warn)";}
   else{el.innerHTML=`✓ 不含加班/工龄合计 ¥${salMoney(core)} ≥ ${pos}保底 ¥${floor}，按实际工资项发`;el.style.color="var(--good)";}
 }
@@ -4245,6 +4271,7 @@ function salaryCalcOvertime(){
 const DAILY_HOURS=8;       // 每人每天标准工时（用于月产值估算）
 const MONTH_REST_DAYS=4;   // 每月休息天数（应出勤=当月天数-4）
 function daysInMonthStr(m){const p=(m||"").split("-").map(Number);if(p.length<2||!p[0])return 30;return new Date(p[0],p[1],0).getDate();}
+function salIsFeb(m){return (String(m||"").split("-")[1]|0)===2;} // 解析月份数字，兼容 2026-2 / 2026-02
 function salaryWorkdays(m){return Math.max(0,daysInMonthStr(m)-MONTH_REST_DAYS);}
 function salaryKPIs(sid,month){
   const rev=(ENTRIES[sid+"|"+month]||{}).sales||0;
@@ -4310,11 +4337,14 @@ function salaryCommission(sid,month){
   const actualTotal=Object.values(byId).reduce((n,x)=>n+x.amount,0);
   const estimatedTotal=Object.values(byId).reduce((n,x)=>n+x.estimatedAmount,0);
   const employeeShare=Math.max(0.000001,1-fundShare);
-  const fund=Math.floor(actualTotal*fundShare/employeeShare);       // 已核对员工提成对应员工分配占比，反推基金并向下取整
-  const estimatedFund=Math.floor(estimatedTotal*fundShare/employeeShare);
+  // 基金 = 提成池扣除员工实发后的余额，向下取整且不为负（正常情况与旧算法一致；防止员工分配>池时基金变负/超发）
+  const fund=Math.max(0,Math.floor(pool-actualTotal));
+  const estimatedFund=Math.max(0,Math.floor(pool-estimatedTotal));
+  // 分配超过提成池预警：多店长(调店交接)或领班超编时店长/领班奖金叠加会突破100%，需人工核对人数
+  const overPool=actualTotal>pool+1 || nMgr>1 || L>4;
   const grandTotal=actualTotal+fund;                               // 所有员工到手提成 + 店铺基金
   const delta=salRound(actualTotal-estimatedTotal);
-  return {perCapita,rate,bracket:br.label,rev:k.rev,pool,workdays,N,nMgr,L,nOther,fund,estimatedFund,grandTotal,fundShare,employeeShare,splitShare,byId,actualTotal,estimatedTotal,delta};
+  return {perCapita,rate,bracket:br.label,rev:k.rev,pool,workdays,N,nMgr,L,nOther,fund,estimatedFund,grandTotal,fundShare,employeeShare,splitShare,byId,actualTotal,estimatedTotal,delta,overPool};
 }
 async function salaryApplyCommission(sid){
   if(!can("edit")){toast("无权限");return;}

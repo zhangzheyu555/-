@@ -258,24 +258,34 @@ async function sGet(k){
     return raw==null?null:JSON.parse(raw);
   }catch(e){console.error("读取数据失败",e);return null;}
 }
+// 返回 true=已存入权威存储(云端/宿主/服务器)；false=仅暂存本机(服务器保存失败，已弹窗告警)
 async function sSet(k,v){
   try{
     if(CLOUD_OK&&CLOUDDB){
-      try{await CLOUDDB.collection(CLOUD_KV).doc(k).set({value:v});return;}
+      try{await CLOUDDB.collection(CLOUD_KV).doc(k).set({value:v});return true;}
       catch(e){console.error("云端保存失败，回退本地：",e);}
     }
     const value=JSON.stringify(v);
     if(window.storage&&typeof window.storage.set==="function"){
-      await window.storage.set(k,value,false);return;
+      await window.storage.set(k,value,false);return true;
     }
+    // 通过后端打开时，服务器数据库才是权威存储：保存失败必须让用户知道，不能假装成功
     if(location.protocol==="http:"||location.protocol==="https:"){
+      let serverErr=null;
       try{
         const r=await fetch("/api/storage",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:k,value})});
-        if(r.ok)return;
-      }catch(_){/* API 不可用时继续使用浏览器本地存储 */}
+        if(r.ok)return true;
+        serverErr="HTTP "+r.status;
+      }catch(e){ serverErr=(e&&e.message)||"网络错误"; }
+      localStorage.setItem(STORAGE_PREFIX+k,value); // 仍在本机留一份应急备份，避免直接丢数据
+      console.error("服务器保存失败("+serverErr+")，已暂存本机：",k);
+      toast("⚠️ 未能保存到服务器（"+serverErr+"），已暂存本机。请检查网络或后端后重试，勿关闭页面");
+      return false;
     }
+    // 直接以 file:// 打开时本机存储即为主存储，正常返回
     localStorage.setItem(STORAGE_PREFIX+k,value);
-  }catch(e){console.error(e);toast("保存失败，请重试");}
+    return true;
+  }catch(e){console.error(e);toast("保存失败，请重试");return false;}
 }
 
 /* 操作日志（本地） */
