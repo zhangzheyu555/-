@@ -2,10 +2,17 @@ package com.storeprofit.system.platform.system;
 
 import com.storeprofit.system.common.ApiResponse;
 import com.storeprofit.system.platform.auth.AuthService;
+import java.io.IOException;
+import java.io.InputStream;
 import java.time.Instant;
 import java.util.List;
+import java.util.Properties;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.env.Environment;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -14,19 +21,32 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/system")
 public class SystemController {
+  private static final Logger log = LoggerFactory.getLogger(SystemController.class);
   private final AuthService authService;
   private final Environment environment;
+  private final JdbcTemplate jdbcTemplate;
   private final String version;
   private final Instant startupTime = Instant.now();
+  private final Properties buildProperties = loadBuildProperties();
 
+  @Autowired
   public SystemController(
       AuthService authService,
       Environment environment,
-      @Value("${app.version:0.1.0}") String version
+      @Value("${app.version:0.1.0}") String version,
+      JdbcTemplate jdbcTemplate
   ) {
     this.authService = authService;
     this.environment = environment;
     this.version = version;
+    this.jdbcTemplate = jdbcTemplate;
+  }
+
+  SystemController(AuthService authService, Environment environment, String version) {
+    this.authService = authService;
+    this.environment = environment;
+    this.version = version;
+    this.jdbcTemplate = null;
   }
 
   @GetMapping("/overview")
@@ -46,8 +66,66 @@ public class SystemController {
 
   @GetMapping("/version")
   public ApiResponse<VersionInfo> version() {
-    return ApiResponse.ok(new VersionInfo(version, startupTime.toString()));
+    String buildTime = buildProperties.getProperty("build.time", "unknown");
+    String sourceVersion = buildProperties.getProperty(
+        "build.sourceVersion",
+        "source-" + version + "-runtime-" + startupTime
+    );
+    return ApiResponse.ok(new VersionInfo(
+        version,
+        version,
+        buildTime,
+        sourceVersion,
+        databaseMigrationVersion(),
+        activeEnvironment(),
+        startupTime.toString()
+    ));
   }
 
-  public record VersionInfo(String version, String startupTime) {}
+  private String activeEnvironment() {
+    String[] profiles = environment.getActiveProfiles();
+    return profiles.length == 0 ? "default" : String.join(",", profiles);
+  }
+
+  private String databaseMigrationVersion() {
+    if (jdbcTemplate == null) {
+      return "unavailable";
+    }
+    try {
+      String migrationVersion = jdbcTemplate.queryForObject("""
+          select version
+          from flyway_schema_history
+          where success = 1
+          order by installed_rank desc
+          limit 1
+          """, String.class);
+      return migrationVersion == null || migrationVersion.isBlank() ? "none" : migrationVersion;
+    } catch (RuntimeException ex) {
+      log.warn("Unable to read database migration version");
+      return "unavailable";
+    }
+  }
+
+  private static Properties loadBuildProperties() {
+    Properties properties = new Properties();
+    try (InputStream stream = SystemController.class.getClassLoader()
+        .getResourceAsStream("META-INF/build-info.properties")) {
+      if (stream != null) {
+        properties.load(stream);
+      }
+    } catch (IOException ignored) {
+      // The endpoint still returns runtime source information when build metadata is unavailable.
+    }
+    return properties;
+  }
+
+  public record VersionInfo(
+      String version,
+      String applicationVersion,
+      String buildTime,
+      String sourceVersion,
+      String databaseMigrationVersion,
+      String environment,
+      String startupTime
+  ) {}
 }

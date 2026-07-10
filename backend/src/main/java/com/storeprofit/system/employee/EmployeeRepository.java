@@ -121,26 +121,28 @@ public class EmployeeRepository {
       String employmentType,
       BigDecimal baseSalary,
       String status,
-      String remark
+      String remark,
+      String dataSource
   ) {
     namedJdbcTemplate.update("""
         insert into employee(
           id, tenant_id, store_id, store_name, brand_name, name, role, position,
-          employment_type, base_salary, status, remark, created_at, updated_at
+          employment_type, base_salary, status, remark, data_source, created_at, updated_at
         )
         values(
           :id, :tenantId, :storeId, :storeName, :brandName, :name, :role, :position,
-          :employmentType, :baseSalary, :status, :remark, current_timestamp, current_timestamp
+          :employmentType, :baseSalary, :status, :remark, :dataSource, current_timestamp, current_timestamp
         )
         on duplicate key update
-          store_name = values(store_name),
-          brand_name = values(brand_name),
-          role = values(role),
-          position = values(position),
-          employment_type = values(employment_type),
-          base_salary = values(base_salary),
-          status = values(status),
-          remark = values(remark),
+          store_name = if(data_source = 'LEGACY_SEED', values(store_name), store_name),
+          brand_name = if(data_source = 'LEGACY_SEED', values(brand_name), brand_name),
+          role = if(data_source = 'LEGACY_SEED', values(role), role),
+          position = if(data_source = 'LEGACY_SEED', values(position), position),
+          employment_type = if(data_source = 'LEGACY_SEED', values(employment_type), employment_type),
+          base_salary = if(data_source = 'LEGACY_SEED', values(base_salary), base_salary),
+          status = if(data_source = 'LEGACY_SEED', values(status), status),
+          remark = if(data_source = 'LEGACY_SEED', values(remark), remark),
+          data_source = if(data_source = 'LEGACY_SEED', values(data_source), data_source),
           updated_at = current_timestamp
         """,
         new MapSqlParameterSource()
@@ -156,6 +158,7 @@ public class EmployeeRepository {
             .addValue("baseSalary", amount(baseSalary))
             .addValue("status", status == null || status.isBlank() ? "在职" : status)
             .addValue("remark", blankToNull(remark))
+            .addValue("dataSource", dataSource == null || dataSource.isBlank() ? "MANUAL_ENTRY" : dataSource)
     );
   }
 

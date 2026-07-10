@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/assistant")
 public class AssistantController {
   private static final Set<String> CHAT_ROLES = Set.of(
-      "ADMIN", "OWNER", "BOSS", "FINANCE", "WAREHOUSE", "STORE_MANAGER", "SUPERVISOR", "OPERATIONS"
+      "ADMIN", "OWNER", "BOSS", "FINANCE", "WAREHOUSE", "STORE_MANAGER", "SUPERVISOR", "OPERATIONS", "OPS"
   );
   private static final Set<String> STATUS_ROLES = Set.of("ADMIN", "OWNER", "BOSS");
 

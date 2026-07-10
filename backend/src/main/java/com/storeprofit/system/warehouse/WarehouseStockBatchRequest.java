@@ -13,6 +13,18 @@ public record WarehouseStockBatchRequest(
     String expiryDate,
     @NotNull @Positive BigDecimal quantity,
     @NotNull @PositiveOrZero BigDecimal unitCost,
-    String note
+    String note,
+    String clientRequestId
 ) {
+  public WarehouseStockBatchRequest(
+      Long itemId,
+      String batchNo,
+      String receivedDate,
+      String expiryDate,
+      BigDecimal quantity,
+      BigDecimal unitCost,
+      String note
+  ) {
+    this(itemId, batchNo, receivedDate, expiryDate, quantity, unitCost, note, null);
+  }
 }

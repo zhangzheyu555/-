@@ -6,6 +6,7 @@ import type { WarehouseItem } from '../../api/warehouse'
 const props = defineProps<{
   items: WarehouseItem[]
   actioningId: string
+  canManage?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -77,23 +78,29 @@ function statusTone(status?: string) {
             </td>
             <td>{{ qty(item.stockQuantity, item.unit) }}</td>
             <td>
-              <input v-model="forms[item.id].minStockQuantity" class="inline-input" type="number" min="0" step="0.01" />
+              <input v-if="props.canManage" v-model="forms[item.id].minStockQuantity" class="inline-input" type="number" min="0" step="0.01" />
+              <span v-else>{{ qty(item.minStockQuantity, item.unit) }}</span>
             </td>
             <td>
-              <label class="check-line">
+              <label v-if="props.canManage" class="check-line">
                 <input v-model="forms[item.id].alertEnabled" type="checkbox" />
                 启用
               </label>
+              <span v-else>{{ item.alertEnabled === false ? '未启用' : '已启用' }}</span>
             </td>
             <td>
-              <input v-model="forms[item.id].expiryAlertDays" class="inline-input small" type="number" min="0" step="1" />
-              <span class="unit-text">天</span>
+              <template v-if="props.canManage">
+                <input v-model="forms[item.id].expiryAlertDays" class="inline-input small" type="number" min="0" step="1" />
+                <span class="unit-text">天</span>
+              </template>
+              <span v-else>{{ item.expiryAlertDays || 0 }} 天</span>
             </td>
             <td><StatusBadge :label="item.stockStatus || '正常'" :tone="statusTone(item.stockStatus)" /></td>
             <td>
-              <button class="mini-button primary" type="button" :disabled="actioningId === `alert-${item.id}`" @click="save(item)">
+              <button v-if="props.canManage" class="mini-button primary" type="button" :disabled="actioningId === `alert-${item.id}`" @click="save(item)">
                 设置预警
               </button>
+              <span v-else class="readonly-text">只读</span>
             </td>
           </tr>
           <tr v-if="!items.length">
@@ -130,5 +137,10 @@ function statusTone(status?: string) {
   margin-left: 6px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.readonly-text {
+  color: var(--muted);
+  font-size: 13px;
 }
 </style>

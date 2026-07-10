@@ -99,14 +99,14 @@ public class WarehousePrintService {
   }
 
   private void requireReceiptAccess(AuthUser user) {
-    if (user != null && List.of("ADMIN", "BOSS", "WAREHOUSE", "FINANCE").contains(user.role())) {
+    if (user != null && List.of("ADMIN", "BOSS", "OWNER", "WAREHOUSE").contains(user.role())) {
       return;
     }
     throw new BusinessException("FORBIDDEN", "无权下载入库单", HttpStatus.FORBIDDEN);
   }
 
   private void requireDeliveryAccess(AuthUser user, String storeId) {
-    if (user != null && List.of("ADMIN", "BOSS", "WAREHOUSE").contains(user.role())) {
+    if (user != null && List.of("ADMIN", "BOSS", "OWNER", "WAREHOUSE").contains(user.role())) {
       return;
     }
     if (user != null && "STORE_MANAGER".equals(user.role()) && storeId != null && storeId.equals(user.storeId())) {
@@ -116,7 +116,7 @@ public class WarehousePrintService {
   }
 
   private void requireReturnAccess(AuthUser user, String storeId) {
-    if (user != null && List.of("ADMIN", "BOSS", "WAREHOUSE", "FINANCE").contains(user.role())) {
+    if (user != null && List.of("ADMIN", "BOSS", "OWNER", "WAREHOUSE").contains(user.role())) {
       return;
     }
     if (user != null && "STORE_MANAGER".equals(user.role()) && storeId != null && storeId.equals(user.storeId())) {

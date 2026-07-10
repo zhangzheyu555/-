@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { loginApi, logoutApi, type SessionUser } from '../api/auth'
-import { cancelProtectedRequests } from '../api/http'
+import { allowProtectedRequests, cancelProtectedRequests } from '../api/http'
 
 const TOKEN_KEY = 'ai_profit_vue_token'
 const USER_KEY = 'ai_profit_vue_user'
@@ -98,6 +98,7 @@ export const useAuthStore = defineStore('auth', {
         if (!normalizedUser) {
           throw new Error('登录返回的账号信息不完整，请重新登录')
         }
+        allowProtectedRequests()
         this.user = normalizedUser
         localStorage.setItem(TOKEN_KEY, data.token)
         localStorage.setItem(USER_KEY, JSON.stringify(normalizedUser))

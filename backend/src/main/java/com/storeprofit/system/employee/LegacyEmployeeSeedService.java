@@ -22,10 +22,41 @@ import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Component;
 
+/**
+ * One-time seed service to import employee records from a legacy database.js file.
+ *
+ * <h3>Data source format</h3>
+ * Reads a file containing JavaScript arrays:
+ * <pre>const SALARY_SEED = [{sid, month, name, position, base, vacationNote}, ...];
+ * const SALARY_SEED_Q1 = [{...}, ...];</pre>
+ *
+ * <h3>Import logic</h3>
+ * <ol>
+ *   <li>Parse SALARY_SEED + SALARY_SEED_Q1 rows (e.g. 194 total rows)</li>
+ *   <li>Filter: skip blank storeId/name rows and stores that don't exist in store_branch</li>
+ *   <li>Deduplicate by (store_id + name), keeping the latest month's data per employee</li>
+ *   <li>Insert remaining unique employees via {@link EmployeeRepository#upsertSeed}</li>
+ * </ol>
+ *
+ * <h3>194 / 181 / 13 breakdown</h3>
+ * <ul>
+ *   <li><b>194</b> = total raw rows parsed from SALARY_SEED + SALARY_SEED_Q1 (including multi-month duplicates)</li>
+ *   <li><b>181</b> = unique (store_id + name) employees after deduplication and store validation</li>
+ *   <li><b>13</b> = rows filtered out BEFORE deduplication due to blank storeId/name or store not found in DB</li>
+ * </ul>
+ * Not all 181 are "在岗": some may have "已离职" in position/remark and will be imported with status "离职".
+ *
+ * <h3>Production safety</h3>
+ * This seed is DISABLED by default (app.seed.legacy-employee-enabled=false).
+ * It must only be enabled in dev/demo environments with an explicit legacy file path.
+ * When enabled, upsertSeed sets data_source='LEGACY_SEED' and will NOT overwrite
+ * employees whose data_source is not LEGACY_SEED (e.g. MANUAL_ENTRY or IMPORT).
+ */
 @Component
 public class LegacyEmployeeSeedService implements ApplicationRunner {
   private static final Logger log = LoggerFactory.getLogger(LegacyEmployeeSeedService.class);
   private static final long DEFAULT_TENANT_ID = 1L;
+  private static final String SOURCE_LEGACY_SEED = "LEGACY_SEED";
   private static final TypeReference<List<JsonNode>> JSON_NODE_LIST = new TypeReference<>() {
   };
 
@@ -49,6 +80,7 @@ public class LegacyEmployeeSeedService implements ApplicationRunner {
   @Override
   public void run(ApplicationArguments args) throws Exception {
     if (!legacyEmployeeSeedEnabled) {
+      log.info("Legacy employee seed is DISABLED (production-safe). Set APP_SEED_LEGACY_EMPLOYEE_ENABLED=true to enable for demo/dev only.");
       return;
     }
     if (legacyEmployeeSeedFile.isBlank()) {
@@ -99,7 +131,8 @@ public class LegacyEmployeeSeedService implements ApplicationRunner {
         employmentTypeFromPosition(position),
         amount(row, "base"),
         statusFrom(position, remark),
-        truncate(remark, 255)
+        truncate(remark, 255),
+        SOURCE_LEGACY_SEED
     );
   }
 

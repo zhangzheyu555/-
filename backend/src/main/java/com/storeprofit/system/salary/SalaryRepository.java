@@ -154,8 +154,8 @@ public class SalaryRepository {
     return jdbcTemplate.update("delete from salary_record where tenant_id = ? and id = ?", tenantId, id);
   }
 
-  public void updateStatus(long tenantId, String id, String status, Long submittedBy, Long reviewedBy) {
-    jdbcTemplate.update("""
+  public int updateStatus(long tenantId, String id, String status, Long submittedBy, Long reviewedBy, int expectedVersion) {
+    return jdbcTemplate.update("""
         update salary_record
         set status = ?,
             submitted_by = coalesce(?, submitted_by),
@@ -163,19 +163,20 @@ public class SalaryRepository {
             reviewed_at = case when ? is null then reviewed_at else current_timestamp end,
             version = version + 1,
             updated_at = current_timestamp
-        where tenant_id = ? and id = ?
+        where tenant_id = ? and id = ? and version = ?
         """,
         status,
         submittedBy,
         reviewedBy,
         reviewedBy,
         tenantId,
-        id
+        id,
+        expectedVersion
     );
   }
 
-  public void updateStatusWithNote(long tenantId, String id, String status, Long reviewedBy, String reviewNote) {
-    jdbcTemplate.update("""
+  public int updateStatusWithNote(long tenantId, String id, String status, Long reviewedBy, String reviewNote, int expectedVersion) {
+    return jdbcTemplate.update("""
         update salary_record
         set status = ?,
             reviewed_by = ?,
@@ -183,40 +184,43 @@ public class SalaryRepository {
             reviewed_at = current_timestamp,
             version = version + 1,
             updated_at = current_timestamp
-        where tenant_id = ? and id = ?
+        where tenant_id = ? and id = ? and version = ?
         """,
         status,
         reviewedBy,
         reviewNote,
         tenantId,
-        id
+        id,
+        expectedVersion
     );
   }
 
-  public void markPaid(long tenantId, String id) {
-    jdbcTemplate.update("""
+  public int markPaid(long tenantId, String id, int expectedVersion) {
+    return jdbcTemplate.update("""
         update salary_record
         set status = 'PAID',
             paid_at = current_timestamp,
             version = version + 1,
             updated_at = current_timestamp
-        where tenant_id = ? and id = ? and status = 'APPROVED'
+        where tenant_id = ? and id = ? and status = 'APPROVED' and version = ?
         """,
         tenantId,
-        id
+        id,
+        expectedVersion
     );
   }
 
-  public void lockRecord(long tenantId, String id) {
-    jdbcTemplate.update("""
+  public int lockRecord(long tenantId, String id, int expectedVersion) {
+    return jdbcTemplate.update("""
         update salary_record
         set status = 'LOCKED',
             version = version + 1,
             updated_at = current_timestamp
-        where tenant_id = ? and id = ? and status in ('APPROVED', 'PAID')
+        where tenant_id = ? and id = ? and status in ('APPROVED', 'PAID') and version = ?
         """,
         tenantId,
-        id
+        id,
+        expectedVersion
     );
   }
 
@@ -240,12 +244,33 @@ public class SalaryRepository {
       String month,
       String reason
   ) {
+    logAction(tenantId, operatorId, operatorName, action, id, storeId, month, reason, null, null);
+  }
+
+  /**
+   * Log an action with before/after status for audit trail.
+   * The status values are stored as JSON in the before_json/after_json columns.
+   */
+  public void logAction(
+      long tenantId,
+      long operatorId,
+      String operatorName,
+      String action,
+      String id,
+      String storeId,
+      String month,
+      String reason,
+      String beforeStatus,
+      String afterStatus
+  ) {
+    String beforeJson = beforeStatus == null ? null : "{\"status\":\"" + beforeStatus + "\"}";
+    String afterJson = afterStatus == null ? null : "{\"status\":\"" + afterStatus + "\"}";
     jdbcTemplate.update("""
         insert into operation_log(
           tenant_id, operator_id, operator_name, action, target_type, target_id,
-          store_id, month, reason, created_at
+          store_id, month, reason, before_json, after_json, created_at
         )
-        values (?, ?, ?, ?, 'salary_record', ?, ?, ?, ?, current_timestamp)
+        values (?, ?, ?, ?, 'salary_record', ?, ?, ?, ?, ?, ?, current_timestamp)
         """,
         tenantId,
         operatorId,
@@ -254,7 +279,9 @@ public class SalaryRepository {
         id,
         storeId,
         month,
-        reason
+        reason,
+        beforeJson,
+        afterJson
     );
   }
 
@@ -337,6 +364,7 @@ public class SalaryRepository {
           performance = ?,
           deduct_uniform = ?,
           return_uniform = ?,
+          version = version + 1,
           updated_at = current_timestamp
         where tenant_id = ? and id = ?
         """,
@@ -367,6 +395,69 @@ public class SalaryRepository {
         amount(request.returnUniform()),
         tenantId,
         id
+    );
+  }
+
+  public int updateWithVersion(long tenantId, String id, SalaryRecordRequest request, int expectedVersion) {
+    return jdbcTemplate.update("""
+        update salary_record set
+          store_id = ?,
+          month = ?,
+          employee_id = ?,
+          employee_name = ?,
+          position = ?,
+          attendance = ?,
+          gross = ?,
+          normal_hours = ?,
+          ot_hours = ?,
+          work_hours = ?,
+          vacation_left = ?,
+          vacation_note = ?,
+          base = ?,
+          social = ?,
+          post = ?,
+          meal = ?,
+          full_attendance = ?,
+          commission = ?,
+          overtime = ?,
+          seniority = ?,
+          late_night = ?,
+          subsidy = ?,
+          performance = ?,
+          deduct_uniform = ?,
+          return_uniform = ?,
+          version = version + 1,
+          updated_at = current_timestamp
+        where tenant_id = ? and id = ? and version = ?
+        """,
+        request.storeId(),
+        request.month(),
+        blankToNull(request.employeeId()),
+        request.employeeName().trim(),
+        blankToNull(request.position()),
+        blankToNull(request.attendance()),
+        amount(request.gross()),
+        amount(request.normalHours()),
+        amount(request.otHours()),
+        amount(request.workHours()),
+        amount(request.vacationLeft()),
+        blankToNull(request.vacationNote()),
+        amount(request.base()),
+        amount(request.social()),
+        amount(request.post()),
+        amount(request.meal()),
+        amount(request.fullAttendance()),
+        amount(request.commission()),
+        amount(request.overtime()),
+        amount(request.seniority()),
+        amount(request.lateNight()),
+        amount(request.subsidy()),
+        amount(request.performance()),
+        amount(request.deductUniform()),
+        amount(request.returnUniform()),
+        tenantId,
+        id,
+        expectedVersion
     );
   }
 

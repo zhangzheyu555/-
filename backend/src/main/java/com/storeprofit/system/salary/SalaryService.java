@@ -22,7 +22,7 @@ public class SalaryService {
   private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
   private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
   private static final String STATUS_DRAFT = "DRAFT";
-  private static final String STATUS_PENDING_REVIEW = "PENDING_REVIEW";
+  private static final String STATUS_SUBMITTED = "SUBMITTED";
   private static final String STATUS_APPROVED = "APPROVED";
   private static final String STATUS_REJECTED = "REJECTED";
   private static final String STATUS_PAID = "PAID";
@@ -290,7 +290,10 @@ public class SalaryService {
     if (!STATUS_APPROVED.equals(record.status())) {
       throw new BusinessException("SALARY_STATUS_INVALID", "只有已审核的工资记录可以标记发放", HttpStatus.CONFLICT);
     }
-    salaryRepository.markPaid(user.tenantId(), record.id());
+    int updated = salaryRepository.markPaid(user.tenantId(), record.id(), record.version());
+    if (updated == 0) {
+      throw new BusinessException("VERSION_CONFLICT", "工资记录已被其他用户修改，请刷新后重试", HttpStatus.CONFLICT);
+    }
     salaryRepository.logAction(
         user.tenantId(), user.id(), user.displayName(), "salary_mark_paid", record.id(), record.storeId(), record.month(), "工资已发放");
     reconcileTodos(user, record.month());
@@ -304,7 +307,10 @@ public class SalaryService {
     if (!List.of(STATUS_APPROVED, STATUS_PAID).contains(record.status())) {
       throw new BusinessException("SALARY_STATUS_INVALID", "只有已审核或已发放的工资记录可以锁定", HttpStatus.CONFLICT);
     }
-    salaryRepository.lockRecord(user.tenantId(), record.id());
+    int updated = salaryRepository.lockRecord(user.tenantId(), record.id(), record.version());
+    if (updated == 0) {
+      throw new BusinessException("VERSION_CONFLICT", "工资记录已被其他用户修改，请刷新后重试", HttpStatus.CONFLICT);
+    }
     salaryRepository.logAction(
         user.tenantId(), user.id(), user.displayName(), "salary_lock", record.id(), record.storeId(), record.month(), "工资已锁定");
     reconcileTodos(user, record.month());
@@ -353,7 +359,7 @@ public class SalaryService {
   private String statusLabel(String status) {
     return switch (status == null ? "DRAFT" : status) {
       case "DRAFT" -> "草稿";
-      case "PENDING_REVIEW" -> "待审核";
+      case "SUBMITTED" -> "待审核";
       case "APPROVED" -> "已审核";
       case "REJECTED" -> "已驳回";
       case "PAID" -> "已发放";
@@ -399,7 +405,10 @@ public class SalaryService {
     if (!List.of(STATUS_DRAFT, STATUS_REJECTED).contains(record.status())) {
       throw new BusinessException("SALARY_STATUS_INVALID", "只有草稿或已驳回的工资记录可以提交审核", HttpStatus.CONFLICT);
     }
-    salaryRepository.updateStatus(user.tenantId(), record.id(), STATUS_PENDING_REVIEW, user.id(), null);
+    int updated = salaryRepository.updateStatus(user.tenantId(), record.id(), STATUS_SUBMITTED, user.id(), null, record.version());
+    if (updated == 0) {
+      throw new BusinessException("VERSION_CONFLICT", "工资记录已被其他用户修改，请刷新后重试", HttpStatus.CONFLICT);
+    }
     salaryRepository.logAction(
         user.tenantId(), user.id(), user.displayName(), "salary_submit", record.id(), record.storeId(), record.month(), "工资记录已提交审核");
     reconcileTodos(user, record.month());
@@ -411,7 +420,10 @@ public class SalaryService {
     requireReviewRole(user);
     SalaryRecordResponse record = requireRecord(user, id);
     requirePendingReview(record);
-    salaryRepository.updateStatus(user.tenantId(), record.id(), STATUS_APPROVED, null, user.id());
+    int updated = salaryRepository.updateStatus(user.tenantId(), record.id(), STATUS_APPROVED, null, (Long) user.id(), record.version());
+    if (updated == 0) {
+      throw new BusinessException("VERSION_CONFLICT", "工资记录已被其他用户修改，请刷新后重试", HttpStatus.CONFLICT);
+    }
     salaryRepository.logAction(
         user.tenantId(), user.id(), user.displayName(), "salary_approve", record.id(), record.storeId(), record.month(), "工资记录已审核完成");
     reconcileTodos(user, record.month());
@@ -424,7 +436,10 @@ public class SalaryService {
     SalaryRecordResponse record = requireRecord(user, id);
     requirePendingReview(record);
     String reason = note == null || note.isBlank() ? "工资记录需要调整后重新提交" : note.trim();
-    salaryRepository.updateStatus(user.tenantId(), record.id(), STATUS_REJECTED, null, user.id());
+    int updated = salaryRepository.updateStatusWithNote(user.tenantId(), record.id(), STATUS_REJECTED, user.id(), reason, record.version());
+    if (updated == 0) {
+      throw new BusinessException("VERSION_CONFLICT", "工资记录已被其他用户修改，请刷新后重试", HttpStatus.CONFLICT);
+    }
     salaryRepository.logAction(
         user.tenantId(), user.id(), user.displayName(), "salary_reject", record.id(), record.storeId(), record.month(), reason);
     reconcileTodos(user, record.month());
@@ -540,13 +555,13 @@ public class SalaryService {
   }
 
   private void requireEditableStatus(SalaryRecordResponse record) {
-    if (STATUS_APPROVED.equals(record.status()) || STATUS_PENDING_REVIEW.equals(record.status())) {
+    if (STATUS_APPROVED.equals(record.status()) || STATUS_SUBMITTED.equals(record.status())) {
       throw new BusinessException("SALARY_STATUS_LOCKED", "已提交审核或已完成的工资记录不能直接修改", HttpStatus.CONFLICT);
     }
   }
 
   private void requirePendingReview(SalaryRecordResponse record) {
-    if (!STATUS_PENDING_REVIEW.equals(record.status())) {
+    if (!STATUS_SUBMITTED.equals(record.status())) {
       throw new BusinessException("SALARY_STATUS_INVALID", "只有待审核的工资记录可以审核", HttpStatus.CONFLICT);
     }
   }

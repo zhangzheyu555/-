@@ -6,16 +6,21 @@ export interface ApiResponse<T> {
   success: boolean
   message?: string
   code?: string
+  requestId?: string
   data: T
 }
 
 export class ApiError extends Error {
   status?: number
+  code?: string
+  requestId?: string
 
-  constructor(message: string, status?: number) {
+  constructor(message: string, status?: number, code?: string, requestId?: string) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.code = code
+    this.requestId = requestId
   }
 }
 
@@ -26,6 +31,7 @@ export const http = axios.create({
 
 const activeProtectedRequests = new Set<AbortController>()
 const controllerByRequest = new WeakMap<object, AbortController>()
+let protectedRequestsBlocked = false
 
 function isProtectedApiRequest(url?: string) {
   return Boolean(url?.startsWith('/api/') && !['/api/auth/login', '/api/auth/logout'].includes(url))
@@ -40,16 +46,24 @@ function releaseProtectedRequest(config?: object) {
 }
 
 export function cancelProtectedRequests() {
+  protectedRequestsBlocked = true
   for (const controller of activeProtectedRequests) {
     controller.abort('用户已退出登录')
   }
   activeProtectedRequests.clear()
 }
 
+export function allowProtectedRequests() {
+  protectedRequestsBlocked = false
+}
+
 http.interceptors.request.use((config) => {
   const token = getStoredToken()
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
+  }
+  if (isProtectedApiRequest(config.url) && protectedRequestsBlocked) {
+    throw new axios.CanceledError('用户已退出登录')
   }
   if (isProtectedApiRequest(config.url) && !config.signal) {
     const controller = new AbortController()
@@ -75,11 +89,13 @@ http.interceptors.response.use(
     const status = error.response?.status
     const message = extractResponseMessage(error.response?.data) || error.message || '接口请求失败'
     const requestId = extractRequestId(error.response?.data)
+    const code = extractResponseCode(error.response?.data)
 
     const logPayload: Record<string, unknown> = {
       method: error.config?.method?.toUpperCase(),
       url: error.config?.url,
       status,
+      code,
       message,
     }
     if (requestId) logPayload.requestId = requestId
@@ -101,7 +117,7 @@ http.interceptors.response.use(
       }
     }
 
-    return Promise.reject(new ApiError(message, status))
+    return Promise.reject(new ApiError(message, status, code, requestId))
   },
 )
 
@@ -119,10 +135,16 @@ function extractRequestId(data: unknown) {
   return String(payload.requestId || '')
 }
 
+function extractResponseCode(data: unknown) {
+  if (!data || typeof data !== 'object') return ''
+  const payload = data as Record<string, unknown>
+  return String(payload.code || '')
+}
+
 function unwrap<T>(payload: ApiResponse<T>): T {
   if (!payload || payload.success === false) {
     console.error('[API Business Error]', payload)
-    throw new ApiError(payload?.message || '接口返回异常')
+    throw new ApiError(payload?.message || '接口返回异常', undefined, payload?.code, payload?.requestId)
   }
   return payload.data
 }

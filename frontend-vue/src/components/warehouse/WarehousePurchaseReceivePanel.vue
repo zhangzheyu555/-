@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import WarehousePrintButtons from './WarehousePrintButtons.vue'
 import type { WarehouseItem, WarehouseStockBatch } from '../../api/warehouse'
 
@@ -9,10 +9,12 @@ const props = defineProps<{
   actioningId: string
   downloadingId: string
   mode?: 'receive' | 'records'
+  canManage?: boolean
+  successMessage?: string
 }>()
 
 const emit = defineEmits<{
-  receive: [payload: { itemId: number; batchNo: string; receivedDate: string; expiryDate?: string; quantity: number; unitCost: number; note?: string }]
+  receive: [payload: { itemId: number; batchNo: string; receivedDate: string; expiryDate?: string; quantity: number; unitCost: number; note?: string; clientRequestId: string }]
   downloadReceipt: [batchId: number, itemName: string, batchNo: string]
 }>()
 
@@ -28,12 +30,27 @@ const form = reactive({
 
 const enabledItems = computed(() => props.items.filter((item) => item.active !== false))
 const selectedItem = computed(() => enabledItems.value.find((item) => item.id === Number(form.itemId)))
+const clientRequestId = ref('')
+const submittedActionId = ref('')
+
+watch(
+  () => props.actioningId,
+  (actioningId, previousActionId) => {
+    if (submittedActionId.value && previousActionId === submittedActionId.value && !actioningId && props.successMessage === '采购到货已入库') {
+      resetForm()
+    }
+  },
+)
 
 function submit() {
   const itemId = Number(form.itemId)
   const quantity = Number(form.quantity)
   const unitCost = Number(form.unitCost || 0)
   if (!itemId || !form.batchNo.trim() || quantity <= 0) return
+  if (!clientRequestId.value) {
+    clientRequestId.value = `stock-${crypto.randomUUID().replace(/-/g, '')}`
+  }
+  submittedActionId.value = `stock:${clientRequestId.value}`
   emit('receive', {
     itemId,
     batchNo: form.batchNo.trim(),
@@ -42,11 +59,17 @@ function submit() {
     quantity,
     unitCost,
     note: form.note.trim() || undefined,
+    clientRequestId: clientRequestId.value,
   })
+}
+
+function resetForm() {
   form.batchNo = ''
   form.quantity = ''
   form.unitCost = ''
   form.note = ''
+  clientRequestId.value = ''
+  submittedActionId.value = ''
 }
 
 function money(value: number | undefined) {
@@ -60,7 +83,7 @@ function qty(value: number | undefined, unit?: string) {
 
 <template>
   <div class="receive-grid">
-    <form v-if="props.mode !== 'records'" class="content-card receive-form" @submit.prevent="submit">
+    <form v-if="props.mode !== 'records' && props.canManage" class="content-card receive-form" @submit.prevent="submit">
       <div class="table-heading">
         <div>
           <h3>采购到货入库</h3>
@@ -101,12 +124,12 @@ function qty(value: number | undefined, unit?: string) {
           <input v-model="form.note" placeholder="供应商 / 采购单号 / 说明" />
         </label>
       </div>
-      <button class="primary-button submit-inline" type="submit" :disabled="!selectedItem || !form.batchNo || Number(form.quantity) <= 0">
-        确认入库
+      <button class="primary-button submit-inline" type="submit" :disabled="!selectedItem || !form.batchNo || Number(form.quantity) <= 0 || Boolean(actioningId)">
+        {{ actioningId ? '正在入库' : '确认入库' }}
       </button>
     </form>
 
-    <div class="content-card" :class="{ 'records-only': props.mode === 'records' }">
+    <div class="content-card" :class="{ 'records-only': props.mode === 'records' || !props.canManage }">
       <div class="table-heading">
         <div>
           <h3>入库记录</h3>

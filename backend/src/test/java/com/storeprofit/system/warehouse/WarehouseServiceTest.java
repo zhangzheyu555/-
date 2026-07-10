@@ -199,6 +199,72 @@ class WarehouseServiceTest {
   }
 
   @Test
+  void bossIsReadonlyAndStoreRequestsAreIdempotent() {
+    assertThatThrownBy(() -> service.saveItem(boss(), itemRequest("BOSS-WRITE", "老板不能维护")))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
+    assertThatThrownBy(() -> service.createRequisition(
+        boss(),
+        new WarehouseRequisitionRequest(
+            "rg1",
+            List.of(new WarehouseRequisitionLineRequest(1L, BigDecimal.ONE, "越权叫货")),
+            "老板不能代门店叫货",
+            "boss-request"
+        )
+    )).isInstanceOf(BusinessException.class);
+
+    WarehouseRequisitionRequest request = new WarehouseRequisitionRequest(
+        "rg1",
+        List.of(new WarehouseRequisitionLineRequest(1L, new BigDecimal("2"), "幂等叫货")),
+        "同一次叫货请求",
+        "req-idempotent-001"
+    );
+    WarehouseRequisitionResponse first = service.createRequisition(storeManager(), request);
+    WarehouseRequisitionResponse repeated = service.createRequisition(storeManager(), request);
+
+    assertThat(repeated.id()).isEqualTo(first.id());
+    assertThat(jdbcTemplate.queryForObject(
+        "select count(*) from store_requisition where tenant_id = 1",
+        Integer.class
+    )).isEqualTo(1);
+  }
+
+  @Test
+  void stockReceiveRequestIsIdempotentAndCategoryDeleteProtectsReferencedData() {
+    WarehouseStockBatchRequest receive = new WarehouseStockBatchRequest(
+        1L,
+        "IDEMPOTENT-BATCH",
+        "2026-07-10",
+        "2026-08-10",
+        new BigDecimal("3"),
+        new BigDecimal("8"),
+        "重复点击测试",
+        "stock-idempotent-001"
+    );
+    service.receiveStock(warehouseManager(), receive);
+    service.receiveStock(warehouseManager(), receive);
+
+    assertThat(batchQuantity("IDEMPOTENT-BATCH")).isEqualByComparingTo("3.00");
+    assertThat(jdbcTemplate.queryForObject(
+        "select count(*) from warehouse_stock_movement where source_id = 'IDEMPOTENT-BATCH'",
+        Integer.class
+    )).isEqualTo(1);
+
+    WarehouseItemCategoryResponse category = service.saveItemCategory(
+        warehouseManager(),
+        new WarehouseItemCategoryRequest(null, "可删除分类", null, 90, true)
+    );
+    service.deleteItemCategory(warehouseManager(), category.id());
+    assertThat(service.itemCategories(warehouseManager()))
+        .extracting(WarehouseItemCategoryResponse::name)
+        .doesNotContain("可删除分类");
+
+    assertThatThrownBy(() -> service.deleteItemCategory(warehouseManager(), 1L))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("CATEGORY_IN_USE"));
+  }
+
+  @Test
   void warehouseManagerShipsByReceivedDateFifoAcrossBatches() {
     jdbcTemplate.update("delete from warehouse_stock_batch where item_id = 1");
     jdbcTemplate.update("""
@@ -742,6 +808,10 @@ class WarehouseServiceTest {
     return new AuthUser(2L, 1L, "default", "warehouse", "", "仓库管理员", "WAREHOUSE", null, true);
   }
 
+  private AuthUser boss() {
+    return new AuthUser(5L, 1L, "default", "boss", "", "老板", "BOSS", null, true);
+  }
+
   private AuthUser storeManager() {
     return new AuthUser(3L, 1L, "default", "rg1", "", "店长", "STORE_MANAGER", "rg1", true);
   }
@@ -775,6 +845,17 @@ class WarehouseServiceTest {
           enabled tinyint(1) not null default 1,
           created_at timestamp not null default current_timestamp,
           updated_at timestamp null
+        )
+        """);
+    jdbcTemplate.execute("""
+        create table warehouse_request_dedup (
+          id bigint auto_increment primary key,
+          tenant_id bigint not null,
+          request_type varchar(60) not null,
+          request_key varchar(80) not null,
+          business_id varchar(120),
+          created_at timestamp default current_timestamp,
+          unique(tenant_id, request_type, request_key)
         )
         """);
     jdbcTemplate.execute("""

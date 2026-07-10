@@ -8,6 +8,7 @@ defineProps<{
   requisitions: WarehouseRequisition[]
   actioningId: string
   downloadingId: string
+  canManage?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -88,7 +89,7 @@ function lineText(row: WarehouseRequisition) {
                     {{ expandedId === row.id ? '收起明细' : '查看明细' }}
                   </button>
                   <button
-                    v-if="row.status === 'SUBMITTED'"
+                    v-if="canManage && row.status === 'SUBMITTED'"
                     class="mini-button primary"
                     type="button"
                     :disabled="actioningId === row.id"
@@ -97,7 +98,7 @@ function lineText(row: WarehouseRequisition) {
                     审核通过
                   </button>
                   <button
-                    v-if="row.status === 'APPROVED'"
+                    v-if="canManage && row.status === 'APPROVED'"
                     class="mini-button primary"
                     type="button"
                     :disabled="actioningId === row.id"
@@ -106,7 +107,7 @@ function lineText(row: WarehouseRequisition) {
                     发货出库
                   </button>
                   <button
-                    v-if="row.status === 'SUBMITTED' || row.status === 'APPROVED'"
+                    v-if="canManage && (row.status === 'SUBMITTED' || row.status === 'APPROVED')"
                     class="mini-button"
                     type="button"
                     :disabled="actioningId === row.id"

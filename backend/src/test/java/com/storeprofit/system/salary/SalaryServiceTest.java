@@ -96,6 +96,8 @@ class SalaryServiceTest {
           store_id varchar(64) null,
           month char(7) null,
           reason varchar(255) null,
+          before_json clob null,
+          after_json clob null,
           created_at timestamp not null default current_timestamp
         )
         """);
@@ -198,7 +200,7 @@ class SalaryServiceTest {
 
     assertThat(draft.employeeId()).isEqualTo("emp-alice");
     assertThat(draft.status()).isEqualTo("DRAFT");
-    assertThat(submitted.status()).isEqualTo("PENDING_REVIEW");
+    assertThat(submitted.status()).isEqualTo("SUBMITTED");
     assertThat(approved.status()).isEqualTo("APPROVED");
     assertThat(approved.reviewedBy()).isEqualTo(boss().id());
   }

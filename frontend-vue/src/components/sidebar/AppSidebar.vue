@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { AlertTriangle, BarChart3, Bot, ClipboardList, ClipboardPenLine, Database, Download, GraduationCap, Home, LogOut, Package, ReceiptText, Route, ShieldCheck, Truck, Undo2, UserRound, UserRoundCog, Warehouse } from 'lucide-vue-next'
+import { BarChart3, Bot, ClipboardList, ClipboardPenLine, Database, Download, GraduationCap, Home, LogOut, Package, ReceiptText, Route, ShieldCheck, Truck, Undo2, UserRound, UserRoundCog, Warehouse } from 'lucide-vue-next'
 import { useAuthStore } from '../../stores/auth'
 
 interface MenuItem {
@@ -79,6 +79,7 @@ function adminMenuGroups(): MenuGroup[] {
         { label: '门店管理', to: '/stores', icon: Home },
         { label: '账号权限', to: '/users', icon: UserRoundCog },
         { label: '平台配置', to: '/platform-login', icon: UserRoundCog },
+        { label: '仓库中心', to: '/warehouse', icon: Warehouse },
         { label: '培训考试', to: '/exam-center', icon: GraduationCap },
         { label: '操作日志', to: '/logs', icon: ClipboardPenLine },
       ],
@@ -123,17 +124,16 @@ const menuGroups = computed<MenuGroup[]>(() => {
         items: [
           { label: '今日待办', to: '/todos', icon: ClipboardList },
           { label: '仓库中心', to: '/warehouse', icon: Warehouse },
+          { label: '库存物料', to: '/warehouse/inventory', icon: Package },
+          { label: '门店叫货', to: '/warehouse?tab=requisitions', icon: ClipboardList },
           { label: '采购入库', to: '/warehouse/purchase', icon: Truck },
-          { label: '配送退货单', to: '/warehouse/returns', icon: Undo2 },
-          { label: '库存预警', to: '/warehouse/alerts', icon: AlertTriangle },
         ],
       },
       {
         title: '库存资料',
         items: [
-          { label: '商品档案', to: '/warehouse/items', icon: Package },
+          { label: '物料档案', to: '/warehouse/items', icon: Package },
           { label: '出入库记录', to: '/warehouse/movements', icon: ReceiptText },
-          { label: '入库记录', to: '/warehouse/receipts', icon: ReceiptText },
         ],
       },
     ],

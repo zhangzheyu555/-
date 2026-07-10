@@ -102,6 +102,7 @@ public class WarehouseService {
     if (request.categoryId() != null && !warehouseRepository.itemCategoryEnabled(user.tenantId(), request.categoryId())) {
       throw new BusinessException("CATEGORY_DISABLED", "商品类别不存在或已停用", HttpStatus.BAD_REQUEST);
     }
+    validateItemImage(request.imageUrl());
     long itemId = warehouseRepository.upsertItem(user.tenantId(), request);
     warehouseRepository.replaceItemDepartments(user.tenantId(), itemId, request.departments());
     warehouseRepository.logAction(user.tenantId(), user.id(), user.displayName(), "保存物料", request.code(), null, request.name());
@@ -124,6 +125,9 @@ public class WarehouseService {
       if (!warehouseRepository.itemCategoryExists(user.tenantId(), request.parentId())) {
         throw new BusinessException("CATEGORY_PARENT_NOT_FOUND", "上级类别不存在", HttpStatus.BAD_REQUEST);
       }
+      if (request.id() != null && categoryWouldCreateCycle(user.tenantId(), request.id(), request.parentId())) {
+        throw new BusinessException("BAD_CATEGORY_PARENT", "类别不能移动到自己的下级分类中", HttpStatus.BAD_REQUEST);
+      }
     }
     if (warehouseRepository.itemCategoryNameExists(user.tenantId(), request.parentId(), name, request.id())) {
       throw new BusinessException("CATEGORY_DUPLICATED", "同级类别名称不能重复", HttpStatus.CONFLICT);
@@ -145,6 +149,22 @@ public class WarehouseService {
     boolean enabled = request == null || request.enabled() == null || request.enabled();
     warehouseRepository.setItemCategoryEnabled(user.tenantId(), categoryId, enabled);
     warehouseRepository.logAction(user.tenantId(), user.id(), user.displayName(), enabled ? "启用商品类别" : "停用商品类别", String.valueOf(categoryId), null, "");
+  }
+
+  @Transactional
+  public void deleteItemCategory(AuthUser user, long categoryId) {
+    requireWarehouseManage(user);
+    if (!warehouseRepository.itemCategoryExists(user.tenantId(), categoryId)) {
+      throw new BusinessException("CATEGORY_NOT_FOUND", "商品类别不存在", HttpStatus.NOT_FOUND);
+    }
+    if (warehouseRepository.itemCategoryChildCount(user.tenantId(), categoryId) > 0) {
+      throw new BusinessException("CATEGORY_HAS_CHILDREN", "请先删除或调整子类别", HttpStatus.CONFLICT);
+    }
+    if (warehouseRepository.itemCategoryItemCount(user.tenantId(), categoryId) > 0) {
+      throw new BusinessException("CATEGORY_IN_USE", "该类别下仍有物料，不能删除", HttpStatus.CONFLICT);
+    }
+    warehouseRepository.deleteItemCategory(user.tenantId(), categoryId);
+    warehouseRepository.logAction(user.tenantId(), user.id(), user.displayName(), "删除商品类别", String.valueOf(categoryId), null, "");
   }
 
   @Transactional
@@ -195,6 +215,10 @@ public class WarehouseService {
     if (request.expiryDate() != null && !request.expiryDate().isBlank()) {
       parseDate(request.expiryDate(), "到期日期");
     }
+    String requestKey = normalizeClientRequestId(request.clientRequestId());
+    if (requestKey != null && !warehouseRepository.reserveRequest(user.tenantId(), "WAREHOUSE_STOCK_RECEIVE", requestKey)) {
+      return;
+    }
     warehouseRepository.upsertBatch(user.tenantId(), request);
     Long batchId = warehouseRepository.batchId(user.tenantId(), request.itemId(), request.batchNo()).orElse(null);
     warehouseRepository.insertMovement(
@@ -209,6 +233,9 @@ public class WarehouseService {
         request.note(),
         user.id()
     );
+    if (requestKey != null) {
+      warehouseRepository.completeReservedRequest(user.tenantId(), "WAREHOUSE_STOCK_RECEIVE", requestKey, String.valueOf(batchId));
+    }
     warehouseRepository.logAction(user.tenantId(), user.id(), user.displayName(), "仓库入库", request.batchNo(), null, request.note());
   }
 
@@ -485,10 +512,22 @@ public class WarehouseService {
 
   @Transactional
   public WarehouseRequisitionResponse createRequisition(AuthUser user, WarehouseRequisitionRequest request) {
-    requireWarehouseRead(user);
+    requireStoreRequisitionCreate(user);
     String storeId = normalizeStoreForSubmit(user, request.storeId());
     if (!warehouseRepository.storeExists(user.tenantId(), storeId)) {
       throw new BusinessException("STORE_NOT_FOUND", "门店不存在", HttpStatus.BAD_REQUEST);
+    }
+    String requestKey = normalizeClientRequestId(request.clientRequestId());
+    if (requestKey != null) {
+      var previousId = warehouseRepository.reservedRequestBusinessId(user.tenantId(), "STORE_REQUISITION", requestKey);
+      if (previousId.isPresent()) {
+        return requireRequisition(user.tenantId(), previousId.get());
+      }
+      if (!warehouseRepository.reserveRequest(user.tenantId(), "STORE_REQUISITION", requestKey)) {
+        return warehouseRepository.reservedRequestBusinessId(user.tenantId(), "STORE_REQUISITION", requestKey)
+            .map(id -> requireRequisition(user.tenantId(), id))
+            .orElseThrow(() -> new BusinessException("REQUEST_IN_PROGRESS", "叫货单正在提交，请稍后刷新", HttpStatus.CONFLICT));
+      }
     }
     Map<Long, WarehouseItemResponse> items = warehouseRepository.items(user.tenantId()).stream()
         .collect(Collectors.toMap(WarehouseItemResponse::id, Function.identity()));
@@ -517,6 +556,9 @@ public class WarehouseService {
           draft.note()
       );
     }
+    if (requestKey != null) {
+      warehouseRepository.completeReservedRequest(user.tenantId(), "STORE_REQUISITION", requestKey, id);
+    }
     warehouseRepository.logAction(user.tenantId(), user.id(), user.displayName(), "提交叫货", id, storeId, request.note());
     return warehouseRepository.requisition(user.tenantId(), id)
         .orElseThrow(() -> new BusinessException("REQ_NOT_FOUND", "叫货单保存失败", HttpStatus.INTERNAL_SERVER_ERROR));
@@ -525,7 +567,7 @@ public class WarehouseService {
   @Transactional
   public void review(AuthUser user, String requisitionId, WarehouseRequisitionReviewRequest request) {
     requireWarehouseManage(user);
-    WarehouseRequisitionResponse requisition = requireRequisition(user.tenantId(), requisitionId);
+    WarehouseRequisitionResponse requisition = requireRequisitionForUpdate(user.tenantId(), requisitionId);
     if (!"SUBMITTED".equals(requisition.status())) {
       throw new BusinessException("BAD_STATUS", "只有待审核叫货单可以审核", HttpStatus.CONFLICT);
     }
@@ -550,7 +592,7 @@ public class WarehouseService {
   @Transactional
   public void ship(AuthUser user, String requisitionId) {
     requireWarehouseManage(user);
-    WarehouseRequisitionResponse requisition = requireRequisition(user.tenantId(), requisitionId);
+    WarehouseRequisitionResponse requisition = requireRequisitionForUpdate(user.tenantId(), requisitionId);
     if (!List.of("SUBMITTED", "APPROVED").contains(requisition.status())) {
       throw new BusinessException("BAD_STATUS", "只有待审核或待配货叫货单可以配货", HttpStatus.CONFLICT);
     }
@@ -579,7 +621,7 @@ public class WarehouseService {
   @Transactional
   public void receiveByStore(AuthUser user, String requisitionId, WarehouseReceiptRequest request) {
     requireStoreReceiver(user);
-    WarehouseRequisitionResponse requisition = requireRequisition(user.tenantId(), requisitionId);
+    WarehouseRequisitionResponse requisition = requireRequisitionForUpdate(user.tenantId(), requisitionId);
     if (!"SHIPPED".equals(requisition.status())) {
       throw new BusinessException("BAD_STATUS", "这张叫货单还没有发货，不能确认收货", HttpStatus.CONFLICT);
     }
@@ -659,7 +701,7 @@ public class WarehouseService {
 
   private void deductStock(AuthUser user, WarehouseRequisitionResponse requisition, long itemId, BigDecimal quantity) {
     BigDecimal remaining = amount(quantity);
-    List<WarehouseStockBatchRow> batches = warehouseRepository.positiveBatches(user.tenantId(), itemId);
+    List<WarehouseStockBatchRow> batches = warehouseRepository.positiveBatchesForUpdate(user.tenantId(), itemId);
     BigDecimal available = batches.stream().map(WarehouseStockBatchRow::quantity).reduce(BigDecimal.ZERO, BigDecimal::add);
     if (available.compareTo(remaining) < 0) {
       throw new BusinessException("INSUFFICIENT_STOCK", "仓库库存不足，无法配货", HttpStatus.CONFLICT);
@@ -779,6 +821,11 @@ public class WarehouseService {
 
   private WarehouseRequisitionResponse requireRequisition(long tenantId, String requisitionId) {
     return warehouseRepository.requisition(tenantId, requisitionId)
+        .orElseThrow(() -> new BusinessException("REQ_NOT_FOUND", "叫货单不存在", HttpStatus.NOT_FOUND));
+  }
+
+  private WarehouseRequisitionResponse requireRequisitionForUpdate(long tenantId, String requisitionId) {
+    return warehouseRepository.requisitionForUpdate(tenantId, requisitionId)
         .orElseThrow(() -> new BusinessException("REQ_NOT_FOUND", "叫货单不存在", HttpStatus.NOT_FOUND));
   }
 
@@ -1010,6 +1057,61 @@ public class WarehouseService {
     return requestedStoreId.trim();
   }
 
+  private boolean categoryWouldCreateCycle(long tenantId, long categoryId, long parentId) {
+    Map<Long, Long> parents = new HashMap<>();
+    for (WarehouseItemCategoryResponse category : warehouseRepository.itemCategories(tenantId)) {
+      parents.put(category.id(), category.parentId());
+    }
+    Long current = parentId;
+    while (current != null) {
+      if (current.equals(categoryId)) {
+        return true;
+      }
+      current = parents.get(current);
+    }
+    return false;
+  }
+
+  private String normalizeClientRequestId(String value) {
+    if (value == null || value.isBlank()) {
+      return null;
+    }
+    String requestId = value.trim();
+    if (requestId.length() > 80 || !requestId.matches("[A-Za-z0-9_-]+")) {
+      throw new BusinessException("BAD_REQUEST_ID", "请求标识不正确，请刷新后重试", HttpStatus.BAD_REQUEST);
+    }
+    return requestId;
+  }
+
+  private void validateItemImage(String value) {
+    if (value == null || value.isBlank()) {
+      return;
+    }
+    String image = value.trim();
+    if (image.startsWith("data:")) {
+      int marker = image.indexOf(";base64,");
+      if (marker <= "data:image/".length()) {
+        throw new BusinessException("BAD_ITEM_IMAGE", "物料图片格式不正确", HttpStatus.BAD_REQUEST);
+      }
+      String mediaType = image.substring(5, marker).toLowerCase();
+      if (!List.of("image/jpeg", "image/jpg", "image/png", "image/webp").contains(mediaType)) {
+        throw new BusinessException("BAD_ITEM_IMAGE", "物料图片仅支持 JPG、PNG 或 WEBP", HttpStatus.BAD_REQUEST);
+      }
+      try {
+        byte[] bytes = Base64.getDecoder().decode(image.substring(marker + 8));
+        if (bytes.length == 0 || bytes.length > 2 * 1024 * 1024) {
+          throw new BusinessException("ITEM_IMAGE_TOO_LARGE", "物料图片不能超过 2MB", HttpStatus.PAYLOAD_TOO_LARGE);
+        }
+      } catch (IllegalArgumentException ex) {
+        throw new BusinessException("BAD_ITEM_IMAGE", "物料图片格式不正确", HttpStatus.BAD_REQUEST);
+      }
+      return;
+    }
+    if (!image.startsWith("https://") && !image.startsWith("http://") && !image.startsWith("/api/")) {
+      throw new BusinessException("BAD_ITEM_IMAGE", "物料图片地址不正确", HttpStatus.BAD_REQUEST);
+    }
+  }
+
   private void saveReturnAttachments(AuthUser user, String returnId, List<WarehouseReturnAttachmentRequest> attachments) {
     if (attachments == null || attachments.isEmpty()) {
       return;
@@ -1055,7 +1157,7 @@ public class WarehouseService {
   }
 
   private void requireWarehouseRead(AuthUser user) {
-    if (!List.of("ADMIN", "BOSS", "WAREHOUSE", "STORE_MANAGER", "FINANCE", "OPERATIONS").contains(user.role())) {
+    if (!List.of("ADMIN", "BOSS", "OWNER", "WAREHOUSE", "STORE_MANAGER").contains(user.role())) {
       throw new BusinessException("FORBIDDEN", "无权访问仓库中心", HttpStatus.FORBIDDEN);
     }
   }
@@ -1065,8 +1167,14 @@ public class WarehouseService {
   }
 
   private void requireWarehouseManage(AuthUser user) {
-    if (!List.of("ADMIN", "BOSS", "WAREHOUSE").contains(user.role())) {
-      throw new BusinessException("FORBIDDEN", "仅老板和仓库管理员可维护仓库数据", HttpStatus.FORBIDDEN);
+    if (!List.of("ADMIN", "WAREHOUSE").contains(user.role())) {
+      throw new BusinessException("FORBIDDEN", "仅仓库管理员可维护仓库数据", HttpStatus.FORBIDDEN);
+    }
+  }
+
+  private void requireStoreRequisitionCreate(AuthUser user) {
+    if (!"STORE_MANAGER".equals(user.role())) {
+      throw new BusinessException("FORBIDDEN", "仅门店人员可提交叫货申请", HttpStatus.FORBIDDEN);
     }
   }
 
@@ -1077,13 +1185,13 @@ public class WarehouseService {
   }
 
   private void requireReturnReview(AuthUser user) {
-    if (!List.of("ADMIN", "BOSS", "WAREHOUSE").contains(user.role())) {
-      throw new BusinessException("FORBIDDEN", "仅仓库管理员和老板可审核配送退货单", HttpStatus.FORBIDDEN);
+    if (!List.of("ADMIN", "WAREHOUSE").contains(user.role())) {
+      throw new BusinessException("FORBIDDEN", "仅仓库管理员可审核配送退货单", HttpStatus.FORBIDDEN);
     }
   }
 
   private void requireReturnRead(AuthUser user) {
-    if (!List.of("ADMIN", "BOSS", "WAREHOUSE", "STORE_MANAGER", "FINANCE").contains(user.role())) {
+    if (!List.of("ADMIN", "BOSS", "OWNER", "WAREHOUSE", "STORE_MANAGER").contains(user.role())) {
       throw new BusinessException("FORBIDDEN", "无权查看配送退货单", HttpStatus.FORBIDDEN);
     }
   }
@@ -1095,8 +1203,8 @@ public class WarehouseService {
   }
 
   private void requireStoreReceiver(AuthUser user) {
-    if (!List.of("ADMIN", "BOSS", "WAREHOUSE", "STORE_MANAGER").contains(user.role())) {
-      throw new BusinessException("FORBIDDEN", "仅仓库、老板或对应店长可确认收货", HttpStatus.FORBIDDEN);
+    if (!"STORE_MANAGER".equals(user.role())) {
+      throw new BusinessException("FORBIDDEN", "仅对应门店可确认收货", HttpStatus.FORBIDDEN);
     }
   }
 

@@ -50,7 +50,7 @@ public class ExamCenterRepository {
         left join training_exam_question q
           on q.tenant_id = p.tenant_id and q.paper_id = p.id and q.enabled = 1
         where p.tenant_id = ?
-        """ + enabledFilter + """
+        """ + enabledFilter + "\n" + """
         group by p.id, p.paper_code, p.paper_name, p.role_scope, p.pass_score, p.enabled
         order by p.updated_at desc, p.id desc
         """, (rs, rowNum) -> new ExamPaperSummaryResponse(

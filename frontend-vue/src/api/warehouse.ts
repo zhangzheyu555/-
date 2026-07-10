@@ -1,4 +1,4 @@
-import { apiGet, apiPost, http } from './http'
+import { apiDelete, apiGet, apiPost, http } from './http'
 
 export interface WarehouseSummary {
   itemCount: number
@@ -26,7 +26,19 @@ export interface WarehouseItem {
   categoryId?: number
   categoryName?: string
   category?: string
+  imageUrl?: string
   unit?: string
+  purchaseUnit?: string
+  stockUnit?: string
+  ingredientUnit?: string
+  unitConversionText?: string
+  spec?: string
+  warehouseLocation?: string
+  shelfLifeDays?: number
+  cupsPerUnit?: number
+  dailyUsageEstimate?: number
+  minStockDays?: number
+  maxStockDays?: number
   stockQuantity: number
   storeStockQuantity: number
   warehouseAvailableQuantity: number
@@ -40,6 +52,49 @@ export interface WarehouseItem {
   alertLevel: string
   alertText: string
   active: boolean
+  itemDescription?: string
+  sortOrder?: number
+  itemAttributes?: string
+  departments?: WarehouseItemDepartment[]
+}
+
+export interface WarehouseItemDepartment {
+  id?: number
+  departmentName: string
+  departmentCode?: string
+  departmentGroup?: string
+  purchaseMethod?: string
+  supplierName?: string
+}
+
+export interface WarehouseItemPayload {
+  id?: number
+  code: string
+  name: string
+  categoryId?: number | null
+  category?: string
+  imageUrl?: string
+  unit?: string
+  purchaseUnit?: string
+  stockUnit?: string
+  ingredientUnit?: string
+  unitConversionText?: string
+  spec?: string
+  warehouseLocation?: string
+  unitPrice?: number
+  shelfLifeDays?: number | null
+  cupsPerUnit?: number
+  dailyUsageEstimate?: number
+  minStockDays?: number
+  maxStockDays?: number
+  minStockQuantity?: number
+  alertEnabled?: boolean
+  expiryAlertDays?: number | null
+  itemDescription?: string
+  sortOrder?: number
+  itemAttributes?: string
+  active?: boolean
+  departments?: WarehouseItemDepartment[]
 }
 
 export interface WarehouseRequisitionLine {
@@ -241,6 +296,7 @@ export interface WarehouseRequisitionCreatePayload {
     note?: string
   }>
   note?: string
+  clientRequestId?: string
 }
 
 export function getWarehouseOverview() {
@@ -249,6 +305,28 @@ export function getWarehouseOverview() {
 
 export function getWarehouseItemCategories() {
   return apiGet<WarehouseItemCategory[]>('/api/warehouse/item-categories')
+}
+
+export function saveWarehouseItem(payload: WarehouseItemPayload) {
+  return apiPost<void, WarehouseItemPayload>('/api/warehouse/items', payload)
+}
+
+export function setWarehouseItemEnabled(itemId: number, enabled: boolean) {
+  return apiPost<void, { enabled: boolean }>(`/api/warehouse/items/${itemId}/enabled`, { enabled })
+}
+
+export function saveWarehouseItemCategory(payload: {
+  id?: number
+  name: string
+  parentId?: number | null
+  sortOrder?: number
+  enabled?: boolean
+}) {
+  return apiPost<WarehouseItemCategory, typeof payload>('/api/warehouse/item-categories', payload)
+}
+
+export function deleteWarehouseItemCategory(categoryId: number) {
+  return apiDelete<void>(`/api/warehouse/item-categories/${categoryId}`)
 }
 
 export function createWarehouseRequisition(payload: WarehouseRequisitionCreatePayload) {
@@ -278,6 +356,7 @@ export function receiveWarehouseStock(payload: {
   quantity: number
   unitCost: number
   note?: string
+  clientRequestId?: string
 }) {
   return apiPost<void, typeof payload>('/api/warehouse/stock-batches', payload)
 }

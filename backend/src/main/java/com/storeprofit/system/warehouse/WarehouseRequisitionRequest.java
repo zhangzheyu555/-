@@ -7,6 +7,14 @@ import java.util.List;
 public record WarehouseRequisitionRequest(
     String storeId,
     @NotEmpty List<@Valid WarehouseRequisitionLineRequest> lines,
-    String note
+    String note,
+    String clientRequestId
 ) {
+  public WarehouseRequisitionRequest(
+      String storeId,
+      List<WarehouseRequisitionLineRequest> lines,
+      String note
+  ) {
+    this(storeId, lines, note, null);
+  }
 }

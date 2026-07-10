@@ -8,6 +8,7 @@ defineProps<{
   returns: WarehouseReturnOrder[]
   actioningId: string
   downloadingId: string
+  canManage?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -83,7 +84,7 @@ function lineText(row: WarehouseReturnOrder) {
                     {{ expandedId === row.id ? '收起明细' : '查看详情' }}
                   </button>
                   <button
-                    v-if="row.status === 'SUBMITTED'"
+                    v-if="canManage && row.status === 'SUBMITTED'"
                     class="mini-button primary"
                     type="button"
                     :disabled="actioningId === `return-review-${row.id}`"
@@ -92,7 +93,7 @@ function lineText(row: WarehouseReturnOrder) {
                     审核通过
                   </button>
                   <button
-                    v-if="row.status === 'SUBMITTED'"
+                    v-if="canManage && row.status === 'SUBMITTED'"
                     class="mini-button"
                     type="button"
                     :disabled="actioningId === `return-review-${row.id}`"
@@ -101,7 +102,7 @@ function lineText(row: WarehouseReturnOrder) {
                     驳回
                   </button>
                   <button
-                    v-if="row.status === 'APPROVED'"
+                    v-if="canManage && row.status === 'APPROVED'"
                     class="mini-button primary"
                     type="button"
                     :disabled="actioningId === `return-receive-${row.id}`"

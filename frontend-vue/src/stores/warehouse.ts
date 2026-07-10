@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import {
   createWarehouseRequisition,
+  deleteWarehouseItemCategory,
   downloadWarehousePdf,
   getWarehouseReturns,
   getWarehouseItemCategories,
@@ -11,13 +12,17 @@ import {
   reviewWarehouseRequisition,
   reviewWarehouseReturn,
   shipWarehouseRequisition,
+  saveWarehouseItem,
+  saveWarehouseItemCategory,
+  setWarehouseItemEnabled,
   updateWarehouseAlertSettings,
   type WarehouseItemCategory,
+  type WarehouseItemPayload,
   type WarehouseOverview,
   type WarehouseReturnOrder,
 } from '../api/warehouse'
 
-export type WarehouseTab = 'overview' | 'requisitions' | 'inventory' | 'purchase' | 'alerts' | 'returns' | 'movements' | 'receipts' | 'prints'
+export type WarehouseTab = 'overview' | 'requisitions' | 'inventory' | 'purchase' | 'catalog' | 'alerts' | 'returns' | 'movements' | 'receipts' | 'prints'
 
 export const useWarehouseStore = defineStore('warehouse', {
   state: () => ({
@@ -55,8 +60,9 @@ export const useWarehouseStore = defineStore('warehouse', {
         if (!this.categoryExists(this.selectedCategory)) {
           this.selectedCategory = 'all'
         }
-      } catch {
-        this.categories = []
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : '物料分类加载失败'
+        throw error
       } finally {
         this.categoryLoading = false
       }
@@ -64,8 +70,9 @@ export const useWarehouseStore = defineStore('warehouse', {
     async loadReturns() {
       try {
         this.returns = await getWarehouseReturns()
-      } catch {
-        this.returns = []
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : '配送退货单加载失败'
+        throw error
       }
     },
     async loadAll() {
@@ -73,7 +80,7 @@ export const useWarehouseStore = defineStore('warehouse', {
     },
     setTab(tab: string | null | undefined) {
       const normalized = String(tab || 'overview') as WarehouseTab
-      this.activeTab = ['overview', 'requisitions', 'inventory', 'purchase', 'alerts', 'returns', 'movements', 'receipts', 'prints'].includes(normalized)
+      this.activeTab = ['overview', 'requisitions', 'inventory', 'purchase', 'catalog', 'alerts', 'returns', 'movements', 'receipts', 'prints'].includes(normalized)
         ? normalized
         : 'overview'
     },
@@ -93,13 +100,18 @@ export const useWarehouseStore = defineStore('warehouse', {
       }
       return false
     },
-    async submitRequisition(itemId: number, quantity: number, note?: string) {
+    async submitRequisition(
+      lines: Array<{ itemId: number; requestedQuantity: number; note?: string }>,
+      note?: string,
+      clientRequestId?: string,
+    ) {
       this.submitting = true
       this.actionMessage = ''
       try {
         await createWarehouseRequisition({
-          lines: [{ itemId, requestedQuantity: quantity, note }],
+          lines,
           note,
+          clientRequestId,
         })
         this.actionMessage = '叫货单已提交'
         await this.loadOverview()
@@ -168,8 +180,9 @@ export const useWarehouseStore = defineStore('warehouse', {
       quantity: number
       unitCost: number
       note?: string
+      clientRequestId?: string
     }) {
-      await this.runAction(`receive-${payload.itemId}-${payload.batchNo}`, async () => {
+      await this.runAction(`stock:${payload.clientRequestId || `${payload.itemId}-${payload.batchNo}`}`, async () => {
         await receiveWarehouseStock(payload)
         this.actionMessage = '采购到货已入库'
       })
@@ -178,6 +191,31 @@ export const useWarehouseStore = defineStore('warehouse', {
       await this.runAction(`alert-${itemId}`, async () => {
         await updateWarehouseAlertSettings(itemId, payload)
         this.actionMessage = '库存预警已保存'
+      })
+    },
+    async saveItem(payload: WarehouseItemPayload) {
+      const actionId = payload.id ? `item:${payload.id}` : `item:new:${payload.code}`
+      await this.runAction(actionId, async () => {
+        await saveWarehouseItem(payload)
+        this.actionMessage = payload.id ? '物料档案已更新' : '物料档案已新增'
+      })
+    },
+    async setItemEnabled(itemId: number, enabled: boolean) {
+      await this.runAction(`item-enabled:${itemId}`, async () => {
+        await setWarehouseItemEnabled(itemId, enabled)
+        this.actionMessage = enabled ? '物料已启用' : '物料已停用'
+      })
+    },
+    async saveCategory(payload: { id?: number; name: string; parentId?: number | null; sortOrder?: number; enabled?: boolean }) {
+      await this.runAction(`category:${payload.id || 'new'}`, async () => {
+        await saveWarehouseItemCategory(payload)
+        this.actionMessage = payload.id ? '物料分类已更新' : '物料分类已新增'
+      })
+    },
+    async deleteCategory(categoryId: number) {
+      await this.runAction(`category-delete:${categoryId}`, async () => {
+        await deleteWarehouseItemCategory(categoryId)
+        this.actionMessage = '物料分类已删除'
       })
     },
     async reviewReturn(returnId: string, approved: boolean, note?: string) {

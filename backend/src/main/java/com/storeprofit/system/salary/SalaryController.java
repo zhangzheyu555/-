@@ -7,25 +7,34 @@ import java.util.List;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.PutMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/salaries")
 public class SalaryController {
   private final AuthService authService;
+  private final SalaryQueryService salaryQueryService;
+  private final SalaryGenerationService salaryGenerationService;
+  private final SalaryWorkflowService salaryWorkflowService;
+  private final SalaryExportService salaryExportService;
+
+  // Backward-compatible: keep old SalaryService reference for any code that still uses it
+  @SuppressWarnings("unused")
   private final SalaryService salaryService;
 
-  public SalaryController(AuthService authService, SalaryService salaryService) {
+  public SalaryController(
+      AuthService authService,
+      SalaryQueryService salaryQueryService,
+      SalaryGenerationService salaryGenerationService,
+      SalaryWorkflowService salaryWorkflowService,
+      SalaryExportService salaryExportService,
+      SalaryService salaryService
+  ) {
     this.authService = authService;
+    this.salaryQueryService = salaryQueryService;
+    this.salaryGenerationService = salaryGenerationService;
+    this.salaryWorkflowService = salaryWorkflowService;
+    this.salaryExportService = salaryExportService;
     this.salaryService = salaryService;
   }
 
@@ -37,7 +46,7 @@ public class SalaryController {
       @RequestParam(required = false) String storeId,
       @RequestParam(defaultValue = "false") boolean allMonths
   ) {
-    return ApiResponse.ok(salaryService.records(authService.requireUser(authorization), month, brandId, storeId, allMonths));
+    return ApiResponse.ok(salaryQueryService.records(authService.requireUser(authorization), month, brandId, storeId, allMonths));
   }
 
   @GetMapping("/page")
@@ -49,7 +58,7 @@ public class SalaryController {
       @RequestParam(defaultValue = "1") int page,
       @RequestParam(defaultValue = "20") int size
   ) {
-    return ApiResponse.ok(salaryService.recordsPaged(authService.requireUser(authorization), month, brandId, storeId, page, size));
+    return ApiResponse.ok(salaryQueryService.recordsPaged(authService.requireUser(authorization), month, brandId, storeId, page, size));
   }
 
   @GetMapping("/summary")
@@ -59,7 +68,7 @@ public class SalaryController {
       @RequestParam(required = false) Long brandId,
       @RequestParam(required = false) String storeId
   ) {
-    return ApiResponse.ok(salaryService.summary(authService.requireUser(authorization), month, brandId, storeId));
+    return ApiResponse.ok(salaryQueryService.summary(authService.requireUser(authorization), month, brandId, storeId));
   }
 
   @GetMapping("/preview")
@@ -68,7 +77,7 @@ public class SalaryController {
       @RequestParam String storeId,
       @RequestParam String month
   ) {
-    return ApiResponse.ok(salaryService.previewGeneration(authService.requireUser(authorization), storeId, month));
+    return ApiResponse.ok(salaryGenerationService.previewGeneration(authService.requireUser(authorization), storeId, month));
   }
 
   @GetMapping("/export")
@@ -78,7 +87,7 @@ public class SalaryController {
       @RequestParam(required = false) Long brandId,
       @RequestParam(required = false) String storeId
   ) {
-    String csv = salaryService.exportCsv(authService.requireUser(authorization), month, brandId, storeId);
+    String csv = salaryExportService.exportCsv(authService.requireUser(authorization), month, brandId, storeId);
     byte[] bytes = csv.getBytes(java.nio.charset.StandardCharsets.UTF_8);
     return ResponseEntity.ok()
         .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"salary-export.csv\"")
@@ -91,7 +100,7 @@ public class SalaryController {
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @PathVariable String id
   ) {
-    return ApiResponse.ok(salaryService.getRecord(authService.requireUser(authorization), id));
+    return ApiResponse.ok(salaryQueryService.getRecord(authService.requireUser(authorization), id));
   }
 
   @PostMapping
@@ -99,7 +108,7 @@ public class SalaryController {
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @Valid @RequestBody SalaryRecordRequest request
   ) {
-    return ApiResponse.ok(salaryService.save(authService.requireUser(authorization), null, request));
+    return ApiResponse.ok(salaryWorkflowService.save(authService.requireUser(authorization), null, request));
   }
 
   @PostMapping("/generate")
@@ -107,7 +116,7 @@ public class SalaryController {
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @Valid @RequestBody SalaryGenerateRequest request
   ) {
-    return ApiResponse.ok(salaryService.generate(authService.requireUser(authorization), request));
+    return ApiResponse.ok(salaryGenerationService.generate(authService.requireUser(authorization), request));
   }
 
   @PostMapping("/generate-report")
@@ -115,7 +124,7 @@ public class SalaryController {
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @Valid @RequestBody SalaryGenerateRequest request
   ) {
-    return ApiResponse.ok(salaryService.generateWithReport(authService.requireUser(authorization), request));
+    return ApiResponse.ok(salaryGenerationService.generateWithReport(authService.requireUser(authorization), request));
   }
 
   @PutMapping("/{id}")
@@ -124,7 +133,7 @@ public class SalaryController {
       @PathVariable String id,
       @Valid @RequestBody SalaryRecordRequest request
   ) {
-    return ApiResponse.ok(salaryService.save(authService.requireUser(authorization), id, request));
+    return ApiResponse.ok(salaryWorkflowService.save(authService.requireUser(authorization), id, request));
   }
 
   @PostMapping("/{id}/submit")
@@ -132,7 +141,7 @@ public class SalaryController {
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @PathVariable String id
   ) {
-    return ApiResponse.ok(salaryService.submit(authService.requireUser(authorization), id));
+    return ApiResponse.ok(salaryWorkflowService.submit(authService.requireUser(authorization), id));
   }
 
   @PostMapping("/{id}/approve")
@@ -140,7 +149,7 @@ public class SalaryController {
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @PathVariable String id
   ) {
-    return ApiResponse.ok(salaryService.approve(authService.requireUser(authorization), id));
+    return ApiResponse.ok(salaryWorkflowService.approve(authService.requireUser(authorization), id));
   }
 
   @PostMapping("/{id}/reject")
@@ -149,7 +158,7 @@ public class SalaryController {
       @PathVariable String id,
       @RequestBody(required = false) SalaryReviewRequest request
   ) {
-    return ApiResponse.ok(salaryService.reject(
+    return ApiResponse.ok(salaryWorkflowService.reject(
         authService.requireUser(authorization), id, request == null ? null : request.note()));
   }
 
@@ -158,7 +167,7 @@ public class SalaryController {
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @PathVariable String id
   ) {
-    return ApiResponse.ok(salaryService.markPaid(authService.requireUser(authorization), id));
+    return ApiResponse.ok(salaryWorkflowService.markPaid(authService.requireUser(authorization), id));
   }
 
   @PostMapping("/{id}/lock")
@@ -166,7 +175,7 @@ public class SalaryController {
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @PathVariable String id
   ) {
-    return ApiResponse.ok(salaryService.lockRecord(authService.requireUser(authorization), id));
+    return ApiResponse.ok(salaryWorkflowService.lockRecord(authService.requireUser(authorization), id));
   }
 
   @DeleteMapping("/{id}")
@@ -174,7 +183,7 @@ public class SalaryController {
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @PathVariable String id
   ) {
-    salaryService.delete(authService.requireUser(authorization), id);
+    salaryWorkflowService.delete(authService.requireUser(authorization), id);
     return ApiResponse.ok();
   }
 }

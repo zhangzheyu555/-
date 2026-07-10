@@ -14,22 +14,33 @@ import org.junit.jupiter.api.Test;
 
 class SalaryControllerTest {
   private final AuthService authService = mock(AuthService.class);
+  private final SalaryQueryService salaryQueryService = mock(SalaryQueryService.class);
+  private final SalaryGenerationService salaryGenerationService = mock(SalaryGenerationService.class);
+  private final SalaryWorkflowService salaryWorkflowService = mock(SalaryWorkflowService.class);
+  private final SalaryExportService salaryExportService = mock(SalaryExportService.class);
   private final SalaryService salaryService = mock(SalaryService.class);
-  private final SalaryController controller = new SalaryController(authService, salaryService);
+  private final SalaryController controller = new SalaryController(
+      authService,
+      salaryQueryService,
+      salaryGenerationService,
+      salaryWorkflowService,
+      salaryExportService,
+      salaryService
+  );
   private final AuthUser boss = new AuthUser(1L, 1L, "default", "boss", "", "Boss", "BOSS", null, true);
 
   @Test
   void listUsesAuthenticatedUserAndWrapsResponse() {
     SalaryRecordResponse row = response("pay-1");
     when(authService.requireUser("Bearer token")).thenReturn(boss);
-    when(salaryService.records(boss, "2026-05", 1L, "s1", false)).thenReturn(List.of(row));
+    when(salaryQueryService.records(boss, "2026-05", 1L, "s1", false)).thenReturn(List.of(row));
 
     ApiResponse<List<SalaryRecordResponse>> result = controller.records("Bearer token", "2026-05", 1L, "s1", false);
 
     assertThat(result.success()).isTrue();
     assertThat(result.data()).containsExactly(row);
     verify(authService).requireUser("Bearer token");
-    verify(salaryService).records(boss, "2026-05", 1L, "s1", false);
+    verify(salaryQueryService).records(boss, "2026-05", 1L, "s1", false);
   }
 
   @Test
@@ -37,14 +48,14 @@ class SalaryControllerTest {
     SalaryRecordRequest request = request();
     SalaryRecordResponse row = response("pay-created");
     when(authService.requireUser("Bearer token")).thenReturn(boss);
-    when(salaryService.save(boss, null, request)).thenReturn(row);
+    when(salaryWorkflowService.save(boss, null, request)).thenReturn(row);
 
     ApiResponse<SalaryRecordResponse> result = controller.create("Bearer token", request);
 
     assertThat(result.success()).isTrue();
     assertThat(result.data()).isSameAs(row);
     verify(authService).requireUser("Bearer token");
-    verify(salaryService).save(boss, null, request);
+    verify(salaryWorkflowService).save(boss, null, request);
   }
 
   @Test
@@ -52,15 +63,15 @@ class SalaryControllerTest {
     SalaryRecordRequest request = request();
     SalaryRecordResponse row = response("pay-1");
     when(authService.requireUser("Bearer token")).thenReturn(boss);
-    when(salaryService.save(boss, "pay-1", request)).thenReturn(row);
+    when(salaryWorkflowService.save(boss, "pay-1", request)).thenReturn(row);
 
     ApiResponse<SalaryRecordResponse> updated = controller.update("Bearer token", "pay-1", request);
     ApiResponse<Void> deleted = controller.delete("Bearer token", "pay-1");
 
     assertThat(updated.data()).isSameAs(row);
     assertThat(deleted.success()).isTrue();
-    verify(salaryService).save(boss, "pay-1", request);
-    verify(salaryService).delete(boss, "pay-1");
+    verify(salaryWorkflowService).save(boss, "pay-1", request);
+    verify(salaryWorkflowService).delete(boss, "pay-1");
   }
 
   @Test
@@ -75,12 +86,12 @@ class SalaryControllerTest {
         new BigDecimal("70.00")
     );
     when(authService.requireUser("Bearer token")).thenReturn(boss);
-    when(salaryService.summary(boss, "2026-05", 1L, "s1")).thenReturn(summary);
+    when(salaryQueryService.summary(boss, "2026-05", 1L, "s1")).thenReturn(summary);
 
     ApiResponse<SalarySummaryResponse> result = controller.summary("Bearer token", "2026-05", 1L, "s1");
 
     assertThat(result.data()).isSameAs(summary);
-    verify(salaryService).summary(boss, "2026-05", 1L, "s1");
+    verify(salaryQueryService).summary(boss, "2026-05", 1L, "s1");
   }
 
   private SalaryRecordRequest request() {

@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -381,6 +382,34 @@ public class WarehouseRepository {
     );
   }
 
+  public int itemCategoryItemCount(long tenantId, long categoryId) {
+    Integer count = jdbcTemplate.queryForObject(
+        "select count(*) from warehouse_item where tenant_id = ? and category_id = ?",
+        Integer.class,
+        tenantId,
+        categoryId
+    );
+    return count == null ? 0 : count;
+  }
+
+  public int itemCategoryChildCount(long tenantId, long categoryId) {
+    Integer count = jdbcTemplate.queryForObject(
+        "select count(*) from warehouse_item_category where tenant_id = ? and parent_id = ?",
+        Integer.class,
+        tenantId,
+        categoryId
+    );
+    return count == null ? 0 : count;
+  }
+
+  public void deleteItemCategory(long tenantId, long categoryId) {
+    jdbcTemplate.update(
+        "delete from warehouse_item_category where tenant_id = ? and id = ?",
+        tenantId,
+        categoryId
+    );
+  }
+
   public Optional<Long> itemIdByCode(long tenantId, String code) {
     try {
       return Optional.ofNullable(jdbcTemplate.queryForObject(
@@ -524,6 +553,19 @@ public class WarehouseRepository {
         blankToNull(note),
         submittedBy
     );
+  }
+
+  public Optional<WarehouseRequisitionResponse> requisitionForUpdate(long tenantId, String requisitionId) {
+    List<String> ids = jdbcTemplate.query(
+        "select id from store_requisition where tenant_id = ? and id = ? for update",
+        (rs, rowNum) -> rs.getString("id"),
+        tenantId,
+        requisitionId
+    );
+    if (ids.isEmpty()) {
+      return Optional.empty();
+    }
+    return requisition(tenantId, requisitionId);
   }
 
   public void insertRequisitionLine(
@@ -679,6 +721,48 @@ public class WarehouseRepository {
         where tenant_id = ? and item_id = ? and quantity > 0
         order by received_date asc, created_at asc, id asc
         """, this::mapBatch, tenantId, itemId);
+  }
+
+  public List<WarehouseStockBatchRow> positiveBatchesForUpdate(long tenantId, long itemId) {
+    return jdbcTemplate.query("""
+        select id, item_id, batch_no, expiry_date, quantity
+        from warehouse_stock_batch
+        where tenant_id = ? and item_id = ? and quantity > 0
+        order by received_date asc, created_at asc, id asc
+        for update
+        """, this::mapBatch, tenantId, itemId);
+  }
+
+  public boolean reserveRequest(long tenantId, String requestType, String requestKey) {
+    try {
+      jdbcTemplate.update("""
+          insert into warehouse_request_dedup(tenant_id, request_type, request_key, created_at)
+          values (?, ?, ?, current_timestamp)
+          """, tenantId, requestType, requestKey);
+      return true;
+    } catch (DuplicateKeyException ex) {
+      return false;
+    }
+  }
+
+  public void completeReservedRequest(long tenantId, String requestType, String requestKey, String businessId) {
+    jdbcTemplate.update("""
+        update warehouse_request_dedup
+        set business_id = ?
+        where tenant_id = ? and request_type = ? and request_key = ?
+        """, blankToNull(businessId), tenantId, requestType, requestKey);
+  }
+
+  public Optional<String> reservedRequestBusinessId(long tenantId, String requestType, String requestKey) {
+    return jdbcTemplate.query("""
+        select business_id
+        from warehouse_request_dedup
+        where tenant_id = ? and request_type = ? and request_key = ?
+        limit 1
+        """, (rs, rowNum) -> rs.getString("business_id"), tenantId, requestType, requestKey)
+        .stream()
+        .filter(value -> value != null && !value.isBlank())
+        .findFirst();
   }
 
   public List<WarehouseStockBatchResponse> stockBatches(long tenantId) {

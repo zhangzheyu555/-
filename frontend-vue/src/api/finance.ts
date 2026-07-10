@@ -139,7 +139,7 @@ export interface SalaryRecord {
   performance?: number
   deductUniform?: number
   returnUniform?: number
-  status?: 'DRAFT' | 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED' | 'PAID' | 'LOCKED'
+  status?: 'DRAFT' | 'SUBMITTED' | 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED' | 'PAID' | 'LOCKED'
   submittedBy?: number
   reviewedBy?: number
   reviewedAt?: string
