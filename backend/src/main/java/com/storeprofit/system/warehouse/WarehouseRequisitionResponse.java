@@ -14,9 +14,11 @@ public record WarehouseRequisitionResponse(
     String submittedBy,
     String reviewedBy,
     String shippedBy,
+    String receivedBy,
     String submittedAt,
     String reviewedAt,
     String shippedAt,
+    String receivedAt,
     List<WarehouseRequisitionLineResponse> lines
 ) {
 }

@@ -6,6 +6,7 @@ import com.storeprofit.system.finance.FinanceService;
 import com.storeprofit.system.finance.ProfitEntryRequest;
 import com.storeprofit.system.organization.OrganizationRepository;
 import com.storeprofit.system.organization.StoreResponse;
+import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -30,17 +31,20 @@ public class ProfitImportService {
   private final OrganizationRepository organizationRepository;
   private final FinanceRepository financeRepository;
   private final FinanceService financeService;
+  private final AccessControlService accessControl;
 
   public ProfitImportService(
       SpreadsheetProfitParser spreadsheetProfitParser,
       OrganizationRepository organizationRepository,
       FinanceRepository financeRepository,
-      FinanceService financeService
+      FinanceService financeService,
+      AccessControlService accessControl
   ) {
     this.spreadsheetProfitParser = spreadsheetProfitParser;
     this.organizationRepository = organizationRepository;
     this.financeRepository = financeRepository;
     this.financeService = financeService;
+    this.accessControl = accessControl;
   }
 
   public ProfitImportRecognizeResponse recognize(
@@ -50,6 +54,10 @@ public class ProfitImportService {
       String storeId,
       String month
   ) {
+    accessControl.requireFinanceWrite(user);
+    if (storeId != null && !storeId.isBlank()) {
+      accessControl.requireStoreAccess(user, storeId, "预览经营数据导入");
+    }
     validateFile(file);
     ProfitImportSourceType sourceType = detectSourceType(file, requestedSourceType);
     if (sourceType == ProfitImportSourceType.SCREENSHOT) {
@@ -88,6 +96,7 @@ public class ProfitImportService {
 
   @Transactional
   public ProfitImportCommitResponse commit(AuthUser user, ProfitImportCommitRequest request) {
+    accessControl.requireFinanceWrite(user);
     if (request == null || request.rows() == null || request.rows().isEmpty()) {
       throw new BusinessException("IMPORT_EMPTY", "请选择至少一条识别结果后再确认导入", HttpStatus.BAD_REQUEST);
     }

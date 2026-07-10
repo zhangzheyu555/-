@@ -8,6 +8,8 @@ public record WarehouseSummaryResponse(
     int expiringCount,
     int overstockCount,
     int pendingRequisitionCount,
+    int pendingReceiptCount,
+    int pendingPurchaseCount,
     BigDecimal stockValue
 ) {
 }

@@ -75,20 +75,50 @@ public class AuthRepository {
   }
 
   public List<String> storeScope(long tenantId, long userId, String role, String directStoreId) {
-    if ("ADMIN".equals(role) || "BOSS".equals(role) || "FINANCE".equals(role)
-        || "SUPERVISOR".equals(role) || "WAREHOUSE".equals(role) || "OPERATIONS".equals(role)) {
+    if ("ADMIN".equals(role) || "BOSS".equals(role) || "FINANCE".equals(role) || "OWNER".equals(role)) {
       return List.of("all");
     }
-    List<String> scoped = jdbcTemplate.queryForList(
+    List<String> scoped = assignedStoreScope(tenantId, userId);
+    if (!scoped.isEmpty()) {
+      return scoped;
+    }
+    return directStoreId == null || directStoreId.isBlank() ? List.of() : List.of(directStoreId);
+  }
+
+  public Optional<AuthUser> user(long tenantId, long userId) {
+    try {
+      return Optional.ofNullable(jdbcTemplate.queryForObject("""
+          select u.id, u.tenant_id, t.name as tenant_name, u.username, u.password_hash,
+                 u.display_name, u.role, u.store_id, u.enabled
+          from auth_user u
+          join tenant t on t.id = u.tenant_id
+          where u.tenant_id = ? and u.id = ?
+          """, this::mapUser, tenantId, userId));
+    } catch (EmptyResultDataAccessException ex) {
+      return Optional.empty();
+    }
+  }
+
+  public List<String> assignedStoreScope(long tenantId, long userId) {
+    return jdbcTemplate.queryForList(
         "select store_id from user_store_scope where tenant_id = ? and user_id = ? order by store_id",
         String.class,
         tenantId,
         userId
     );
-    if (!scoped.isEmpty()) {
-      return scoped;
+  }
+
+  public void replaceStoreScope(long tenantId, long userId, List<String> storeIds) {
+    jdbcTemplate.update("delete from user_store_scope where tenant_id = ? and user_id = ?", tenantId, userId);
+    if (storeIds == null) {
+      return;
     }
-    return directStoreId == null || directStoreId.isBlank() ? List.of() : List.of(directStoreId);
+    for (String storeId : storeIds) {
+      jdbcTemplate.update("""
+          insert into user_store_scope(tenant_id, user_id, store_id, created_at)
+          values (?, ?, ?, current_timestamp)
+          """, tenantId, userId, storeId);
+    }
   }
 
   public boolean userExists(long tenantId, String username) {
@@ -143,11 +173,55 @@ public class AuthRepository {
         """, role, displayName, storeId, tenantId, username);
   }
 
+  public void updatePassword(long tenantId, String username, String passwordHash) {
+    jdbcTemplate.update("""
+        update auth_user
+        set password_hash = ?
+        where tenant_id = ? and username = ?
+        """, passwordHash, tenantId, username);
+  }
+
   public void createUser(long tenantId, String username, String passwordHash, String displayName, String role, String storeId) {
     jdbcTemplate.update("""
         insert into auth_user(tenant_id, username, password_hash, display_name, role, store_id, enabled, created_at)
         values (?, ?, ?, ?, ?, ?, 1, current_timestamp)
         """, tenantId, username, passwordHash, displayName, role, storeId);
+  }
+
+  public boolean updateUser(
+      long tenantId,
+      long userId,
+      String displayName,
+      String role,
+      String storeId,
+      boolean enabled
+  ) {
+    return jdbcTemplate.update("""
+        update auth_user
+        set display_name = ?, role = ?, store_id = ?, enabled = ?
+        where tenant_id = ? and id = ?
+        """, displayName, role, storeId, enabled, tenantId, userId) > 0;
+  }
+
+  public int activeAdminCount(long tenantId) {
+    Integer count = jdbcTemplate.queryForObject("""
+        select count(*)
+        from auth_user
+        where tenant_id = ? and role = 'ADMIN' and enabled = 1
+        """, Integer.class, tenantId);
+    return count == null ? 0 : count;
+  }
+
+  public void updatePasswordByUserId(long tenantId, long userId, String passwordHash) {
+    jdbcTemplate.update("""
+        update auth_user
+        set password_hash = ?
+        where tenant_id = ? and id = ?
+        """, passwordHash, tenantId, userId);
+  }
+
+  public void deleteTokensForUser(long tenantId, long userId) {
+    jdbcTemplate.update("delete from auth_token where tenant_id = ? and user_id = ?", tenantId, userId);
   }
 
   private AuthUser mapUser(ResultSet rs, int rowNum) throws SQLException {

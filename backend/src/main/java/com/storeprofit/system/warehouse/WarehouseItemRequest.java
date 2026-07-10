@@ -1,22 +1,37 @@
 package com.storeprofit.system.warehouse;
 
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.PositiveOrZero;
 import java.math.BigDecimal;
+import java.util.List;
 
 public record WarehouseItemRequest(
+    Long id,
     @NotBlank String code,
     @NotBlank String name,
+    Long categoryId,
     String category,
+    String imageUrl,
     String unit,
+    String purchaseUnit,
+    String stockUnit,
+    String ingredientUnit,
+    String unitConversionText,
     String spec,
-    @NotNull @PositiveOrZero BigDecimal unitPrice,
+    String warehouseLocation,
+    @PositiveOrZero BigDecimal unitPrice,
     Integer shelfLifeDays,
-    @NotNull @PositiveOrZero BigDecimal cupsPerUnit,
-    @NotNull @PositiveOrZero BigDecimal dailyUsageEstimate,
+    @PositiveOrZero BigDecimal cupsPerUnit,
+    @PositiveOrZero BigDecimal dailyUsageEstimate,
     Integer minStockDays,
     Integer maxStockDays,
-    Boolean active
+    @PositiveOrZero BigDecimal minStockQuantity,
+    Boolean alertEnabled,
+    Integer expiryAlertDays,
+    String itemDescription,
+    Integer sortOrder,
+    String itemAttributes,
+    Boolean active,
+    List<WarehouseItemDepartmentRequest> departments
 ) {
 }

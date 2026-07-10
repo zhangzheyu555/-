@@ -10,17 +10,20 @@ import org.springframework.core.io.ClassPathResource;
 
 class StaticResourceCacheTest {
   @Test
-  void staticResourceConfigAllowsBrowserReuse() throws IOException {
+  void backendDoesNotExposeLegacyRuntimeStaticResources() throws IOException {
     PropertySource<?> applicationYaml = new YamlPropertySourceLoader()
         .load("application", new ClassPathResource("application.yml"))
         .getFirst();
 
+    assertThat(applicationYaml.getProperty("spring.web.resources.static-locations[0]")).isNull();
     assertThat(applicationYaml.getProperty("spring.web.resources.cache.cachecontrol.no-cache"))
-        .isNotEqualTo(true);
-    assertThat(applicationYaml.getProperty("spring.web.resources.cache.cachecontrol.cache-public"))
         .isEqualTo(true);
+    assertThat(applicationYaml.getProperty("spring.web.resources.cache.cachecontrol.must-revalidate"))
+        .isEqualTo(true);
+    assertThat(applicationYaml.getProperty("spring.web.resources.cache.cachecontrol.cache-public"))
+        .isNull();
     assertThat(applicationYaml.getProperty("spring.web.resources.cache.cachecontrol.max-age"))
-        .isEqualTo("1h");
+        .isNull();
     assertThat(applicationYaml.getProperty("server.compression.enabled"))
         .isEqualTo(true);
     assertThat(applicationYaml.getProperty("server.compression.mime-types[0]"))

@@ -1,0 +1,23 @@
+create table if not exists employee (
+  id varchar(120) not null primary key,
+  tenant_id bigint not null default 1,
+  store_id varchar(64) not null,
+  store_name varchar(160) null,
+  brand_name varchar(120) null,
+  name varchar(120) not null,
+  phone varchar(40) null,
+  role varchar(80) null,
+  position varchar(80) null,
+  employment_type varchar(40) null,
+  base_salary decimal(14,2) not null default 0,
+  status varchar(40) not null default '在职',
+  hire_date date null,
+  remark varchar(255) null,
+  created_at timestamp not null default current_timestamp,
+  updated_at timestamp null default null,
+  unique key uk_employee_tenant_store_name (tenant_id, store_id, name),
+  index idx_employee_tenant_store (tenant_id, store_id),
+  index idx_employee_status (tenant_id, status),
+  constraint fk_employee_tenant foreign key (tenant_id) references tenant(id),
+  constraint fk_employee_store foreign key (store_id) references store_branch(id)
+) engine=InnoDB default charset=utf8mb4 collate=utf8mb4_unicode_ci;

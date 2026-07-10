@@ -1,0 +1,19 @@
+[Unit]
+Description=AI Profit OS Store Profit Backend
+After=network-online.target mysql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/store-profit/backend
+EnvironmentFile=/opt/store-profit/env/store-profit.env
+ExecStart=/usr/bin/java -jar /opt/store-profit/backend/store-profit-backend-0.1.0-SNAPSHOT.jar --server.address=127.0.0.1 --server.port=8080
+Restart=always
+RestartSec=5
+SuccessExitStatus=143
+User=storeprofit
+Group=storeprofit
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

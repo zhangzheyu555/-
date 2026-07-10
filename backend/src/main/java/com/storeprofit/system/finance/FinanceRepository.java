@@ -150,10 +150,26 @@ public class FinanceRepository {
     return count != null && count > 0;
   }
 
+  public void deleteEntry(long tenantId, String storeId, String month) {
+    jdbcTemplate.update(
+        "delete from profit_entry where tenant_id = ? and store_id = ? and month = ?",
+        tenantId,
+        storeId,
+        month
+    );
+  }
+
   public void logSave(long tenantId, Long operatorId, String operatorName, String storeId, String month) {
     jdbcTemplate.update("""
         insert into operation_log(tenant_id, operator_id, operator_name, action, target_type, target_id, store_id, month, reason, created_at)
         values (?, ?, ?, '保存', 'profit_entry', ?, ?, ?, '利润录入保存', current_timestamp)
+        """, tenantId, operatorId, operatorName, storeId + "|" + month, storeId, month);
+  }
+
+  public void logDelete(long tenantId, Long operatorId, String operatorName, String storeId, String month) {
+    jdbcTemplate.update("""
+        insert into operation_log(tenant_id, operator_id, operator_name, action, target_type, target_id, store_id, month, reason, created_at)
+        values (?, ?, ?, 'delete', 'profit_entry', ?, ?, ?, 'profit entry deleted', current_timestamp)
         """, tenantId, operatorId, operatorName, storeId + "|" + month, storeId, month);
   }
 
@@ -199,6 +215,7 @@ public class FinanceRepository {
         loss,
         costOther,
         costSum,
+        ratio(costSum, income),
         gross,
         ratio(gross, income),
         rent,
