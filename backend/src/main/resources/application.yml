@@ -1,0 +1,116 @@
+server:
+  port: ${SERVER_PORT:8080}
+  compression:
+    enabled: true
+    min-response-size: 1KB
+    mime-types:
+      - text/html
+      - text/xml
+      - text/plain
+      - text/javascript
+      - text/css
+      - application/javascript
+      - application/json
+
+spring:
+  application:
+    name: store-profit-backend
+  web:
+    resources:
+      cache:
+        cachecontrol:
+          no-cache: true
+          must-revalidate: true
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:store_profit}?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 25MB
+
+app:
+  version: 0.5.0-phase5-admin-export
+  seed:
+    demo-enabled: ${APP_SEED_DEMO_ENABLED:false}
+    legacy-employee-enabled: ${APP_SEED_LEGACY_EMPLOYEE_ENABLED:false}
+    legacy-employee-file: ${APP_SEED_LEGACY_EMPLOYEE_FILE:}
+  bootstrap:
+    default-users-enabled: ${APP_BOOTSTRAP_DEFAULT_USERS_ENABLED:false}
+    default-users-password: ${APP_BOOTSTRAP_DEFAULT_USERS_PASSWORD:}
+    store-manager-accounts-enabled: ${APP_BOOTSTRAP_STORE_MANAGER_ACCOUNTS_ENABLED:false}
+    store-manager-password: ${APP_BOOTSTRAP_STORE_MANAGER_PASSWORD:}
+  migration:
+    auto-run: ${APP_MIGRATION_AUTO_RUN:false}
+  inspection:
+    detect-url: ${INSPECTION_DETECT_URL:http://127.0.0.1:8000/detect}
+    export-url: ${INSPECTION_EXPORT_URL:http://127.0.0.1:8000/export}
+    timeout: ${INSPECTION_TIMEOUT:60s}
+  eleme:
+    app-key: ${ELEME_APP_KEY:}
+    app-secret: ${ELEME_APP_SECRET:}
+    access-token: ${ELEME_ACCESS_TOKEN:}
+    base-url: ${ELEME_BASE_URL:https://api-be.ele.me/}
+    timeout: ${ELEME_TIMEOUT:20s}
+    # 已授权门店（shopId:门店名），逗号分隔；留空时接口返回未配置状态，不生成示例营业数据
+    shops: ${ELEME_SHOPS:}
+  auth:
+    token-ttl-hours: 12
+  exception:
+    # 经营异常阈值可通过环境同名配置覆盖，不在前端写死。
+    cost-ratio-threshold: ${APP_EXCEPTION_COST_RATIO_THRESHOLD:0.45}
+    revenue-decline-threshold: ${APP_EXCEPTION_REVENUE_DECLINE_THRESHOLD:0.20}
+    auto-reconcile-enabled: ${APP_EXCEPTION_AUTO_RECONCILE_ENABLED:true}
+    auto-reconcile-initial-delay-ms: ${APP_EXCEPTION_AUTO_RECONCILE_INITIAL_DELAY_MS:60000}
+    auto-reconcile-delay-ms: ${APP_EXCEPTION_AUTO_RECONCILE_DELAY_MS:3600000}
+  exam:
+    risk-completion-rate: ${APP_EXAM_RISK_COMPLETION_RATE:80}
+    risk-pass-rate: ${APP_EXAM_RISK_PASS_RATE:80}
+    risk-overdue-count: ${APP_EXAM_RISK_OVERDUE_COUNT:3}
+    risk-average-score: ${APP_EXAM_RISK_AVERAGE_SCORE:70}
+  cors:
+    allowed-origin-patterns:
+      - "http://localhost:*"
+      - "http://127.0.0.1:*"
+      - "http://175.178.89.183:*"
+      - "https://175.178.89.183:*"
+  assistant:
+    deepseek:
+      enabled: ${DEEPSEEK_ENABLED:true}
+      api-key: ${DEEPSEEK_API_KEY:${DEEPSEEK_KEY:${OPENAI_API_KEY:}}}
+      base-url: ${DEEPSEEK_BASE_URL:${OPENAI_BASE_URL:https://api.deepseek.com}}
+      model: ${DEEPSEEK_MODEL:deepseek-v4-flash}
+      max-tokens: ${DEEPSEEK_MAX_TOKENS:1200}
+      temperature: ${DEEPSEEK_TEMPERATURE:0.2}
+      connect-timeout: ${DEEPSEEK_CONNECT_TIMEOUT:5s}
+      timeout: ${DEEPSEEK_TIMEOUT:45s}
+      blocked-words:
+        - 赌博
+        - 博彩
+        - 色情
+        - 黄色
+        - 毒品
+        - 黑客
+        - 攻击
+        - 破解
+        - 木马
+        - 病毒
+        - 脱库
+        - 撞库
+        - 身份证号
+        - 银行卡
+        - 密钥
+        - 令牌
+        - api key
+        - apikey
+        - access token
+
+logging:
+  level:
+    com.storeprofit.system: INFO

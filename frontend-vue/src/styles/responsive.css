@@ -1,0 +1,403 @@
+.mobile-menu-button,
+.mobile-nav-backdrop,
+.mobile-nav-drawer {
+  display: none;
+}
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink);
+}
+
+.topbar-title {
+  min-width: 0;
+}
+
+@media (max-width: 768px) {
+  html,
+  body,
+  #app {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  body {
+    min-width: 0;
+  }
+
+  .app-shell {
+    display: block;
+    width: 100%;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .sidebar-desktop {
+    display: none;
+  }
+
+  .mobile-menu-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 44px;
+    height: 44px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #fff;
+    color: var(--ink);
+  }
+
+  .mobile-nav-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 39;
+    background: rgba(20, 22, 28, 0.42);
+  }
+
+  .mobile-nav-drawer {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 40;
+    width: min(84vw, 320px);
+    background: var(--surface);
+    box-shadow: 18px 0 48px rgba(18, 21, 28, 0.24);
+    transform: translateX(-105%);
+    transition: transform 0.18s ease;
+    overflow: hidden;
+  }
+
+  .mobile-nav-drawer.open {
+    transform: translateX(0);
+  }
+
+  .mobile-nav-head {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 14px 8px;
+  }
+
+  .mobile-nav-head b {
+    font-size: 18px;
+  }
+
+  .sidebar-mobile {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    position: static;
+    border-right: 0;
+    padding: 8px 14px 22px;
+    overflow: hidden;
+  }
+
+  .sidebar-mobile .brand {
+    flex-shrink: 0;
+    margin-bottom: 14px;
+  }
+
+  .sidebar-mobile .nav-list {
+    display: block;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+  }
+
+  .sidebar-mobile .primary-navigation,
+  .sidebar-mobile .utility-navigation {
+    display: grid;
+    align-content: start;
+    gap: 12px;
+  }
+
+  .sidebar-mobile .nav-group {
+    gap: 8px;
+  }
+
+  .sidebar-mobile .nav-group-title {
+    padding-top: 6px;
+  }
+
+  .sidebar-mobile .nav-link {
+    min-height: 44px;
+    white-space: normal;
+  }
+
+  .sidebar-mobile .sidebar-footer {
+    flex: none;
+    padding-bottom: max(2px, env(safe-area-inset-bottom));
+  }
+
+  .app-main {
+    width: 100%;
+    height: 100dvh;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+    padding: max(12px, env(safe-area-inset-top)) 12px calc(44px + env(safe-area-inset-bottom));
+  }
+
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    align-items: center;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 10px;
+    margin: -12px -12px 12px;
+    padding: 10px 12px;
+    background: rgba(242, 243, 245, 0.96);
+    border-bottom: 1px solid var(--line);
+    backdrop-filter: blur(10px);
+  }
+
+  .topbar h1 {
+    margin: 0;
+    font-size: 20px;
+  }
+
+  .topbar .page-kicker {
+    font-size: 11px;
+  }
+
+  .top-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+    gap: 8px;
+  }
+
+  .top-actions .ghost-button {
+    min-height: 36px;
+    padding: 7px 10px;
+    font-size: 12px;
+  }
+
+  .role-pill {
+    min-width: 0;
+    padding: 7px 10px;
+  }
+
+  .page-panel {
+    width: 100%;
+    max-width: 100%;
+    border-radius: 12px;
+    padding: 14px;
+  }
+
+  .page-head {
+    align-items: stretch;
+    flex-direction: column;
+    min-height: 0;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .page-head h2 {
+    font-size: 20px;
+  }
+
+  .login-screen {
+    min-height: 100dvh;
+    padding: 16px;
+  }
+
+  .login-card {
+    padding: 24px 18px;
+    border-radius: 14px;
+  }
+
+  .login-card h1 {
+    font-size: 20px;
+  }
+
+  .primary-button,
+  .ghost-button,
+  .mini-button,
+  .question-card,
+  .category-button,
+  .upload-button {
+    min-height: 44px;
+  }
+
+  input,
+  select,
+  textarea,
+  .form-grid input,
+  .form-grid select {
+    min-height: 42px;
+    max-width: 100%;
+  }
+
+  .metric-grid,
+  .quick-grid,
+  .form-grid,
+  .store-warehouse-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .warehouse-page,
+  .warehouse-workbench,
+  .warehouse-stat-grid,
+  .warehouse-overview-grid,
+  .summary-lines,
+  .content-card,
+  .side-card {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .warehouse-stat-grid {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+  }
+
+  .warehouse-tabs {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    max-width: 100%;
+    overflow-x: auto;
+    padding-bottom: 8px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .warehouse-tab {
+    flex: 0 0 auto;
+    min-height: 44px;
+  }
+
+  .metric-card,
+  .question-card {
+    min-height: 74px;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .metric-card b {
+    font-size: 25px;
+  }
+
+  .table-heading,
+  .finance-panel-head,
+  .inspection-panel-head {
+    align-items: stretch !important;
+    flex-direction: column;
+  }
+
+  .table-wrap {
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  table {
+    min-width: 680px;
+  }
+
+  th,
+  td {
+    padding: 10px 11px;
+  }
+
+  .finance-tabs,
+  .inspection-tabs {
+    display: flex !important;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scroll-snap-type: x proximity;
+  }
+
+  .finance-tab,
+  .inspection-tab {
+    min-width: 146px;
+    min-height: 64px;
+    scroll-snap-align: start;
+  }
+
+  .finance-todo-card,
+  .inspection-issue-card,
+  .finance-row-card,
+  .data-check-card,
+  .warehouse-card,
+  .boss-action-card {
+    grid-template-columns: 1fr !important;
+  }
+
+  .finance-todo-fields,
+  .inspection-issue-fields {
+    grid-template-columns: 1fr !important;
+  }
+
+  .finance-todo-actions,
+  .inspection-issue-actions,
+  .finance-actions,
+  .warehouse-actions,
+  .review-actions,
+  .data-check-side {
+    justify-content: flex-start !important;
+  }
+
+  .mini-button {
+    width: auto;
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  .side-card {
+    position: static;
+  }
+
+  .empty-state {
+    min-height: 128px;
+    padding: 22px 12px;
+  }
+}
+
+@media (max-width: 430px) {
+  .app-main {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .page-panel {
+    padding: 12px;
+  }
+
+  .top-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .top-actions .ghost-button,
+  .role-pill {
+    width: 100%;
+  }
+
+  table {
+    min-width: 620px;
+  }
+}
