@@ -191,9 +191,12 @@ public class WarehouseService {
     if (!warehouseRepository.activeItemExists(user.tenantId(), request.itemId())) {
       throw new BusinessException("ITEM_NOT_FOUND", "商品不存在或已停用", HttpStatus.BAD_REQUEST);
     }
-    parseDate(request.receivedDate(), "到货日期");
+    LocalDate receivedDate = parseDate(request.receivedDate(), "到货日期");
     if (request.expiryDate() != null && !request.expiryDate().isBlank()) {
-      parseDate(request.expiryDate(), "到期日期");
+      LocalDate expiryDate = parseDate(request.expiryDate(), "到期日期");
+      if (expiryDate.isBefore(receivedDate)) {
+        throw new BusinessException("BAD_EXPIRY_DATE", "到期日期不能早于到货日期", HttpStatus.BAD_REQUEST);
+      }
     }
     warehouseRepository.upsertBatch(user.tenantId(), request);
     Long batchId = warehouseRepository.batchId(user.tenantId(), request.itemId(), request.batchNo()).orElse(null);

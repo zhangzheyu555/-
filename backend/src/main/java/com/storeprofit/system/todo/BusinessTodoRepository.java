@@ -121,6 +121,7 @@ public class BusinessTodoRepository {
       Long operatorId,
       String operatorName
   ) {
+    // 注意拼接处必须留空白：两个文本块直接相连会生成 "current_timestampwhere" 这种非法 SQL。
     String completedAt = target.terminal() ? "current_timestamp" : "null";
     return namedJdbcTemplate.update("""
         update business_todo
@@ -128,7 +129,7 @@ public class BusinessTodoRepository {
             last_operator_id = :operatorId,
             last_operator_name = :operatorName,
             updated_at = current_timestamp,
-            completed_at = """ + completedAt + """
+            completed_at = """ + " " + completedAt + " " + """
         where tenant_id = :tenantId and id = :id and status = :expectedStatus
         """,
         new MapSqlParameterSource()

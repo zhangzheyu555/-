@@ -180,7 +180,7 @@ public class OperationsBusinessRepository {
             total_amount, note, created_by, created_at, updated_at
           )
           values (?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, current_timestamp, current_timestamp)
-          """, Statement.RETURN_GENERATED_KEYS);
+          """, new String[]{"id"}); // 显式只取 id：H2 会把所有 default 列都当 generated key 返回，getKey() 会炸
       ps.setLong(1, tenantId);
       ps.setString(2, checkNo);
       ps.setString(3, storeId);
@@ -388,7 +388,7 @@ public class OperationsBusinessRepository {
             score, passed, violated, submitted_by, submitted_at, created_at
           )
           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp, current_timestamp)
-          """, Statement.RETURN_GENERATED_KEYS);
+          """, new String[]{"id"}); // 显式只取 id：H2 会把所有 default 列都当 generated key 返回，getKey() 会炸
       ps.setLong(1, tenantId);
       ps.setLong(2, paperId);
       if (campaignId == null) {

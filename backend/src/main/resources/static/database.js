@@ -289,9 +289,7 @@ async function sGet(k){
     return raw==null?null:JSON.parse(raw);
   }catch(e){console.error("读取数据失败",e);return null;}
 }
-<<<<<<< HEAD
 // 返回 true=已存入权威存储(云端/宿主/服务器)；false=仅暂存本机(服务器保存失败，已弹窗告警)
-=======
 let STORAGE_BACKEND_TOKEN="", STORAGE_BACKEND_TOKEN_PROMISE=null;
 function backendUsernameForRole(role=(typeof LOGIN_ROLE==="string"&&LOGIN_ROLE)||CURRENT_ROLE){
   if(role==="财务")return "finance";
@@ -302,6 +300,8 @@ function backendUsernameForRole(role=(typeof LOGIN_ROLE==="string"&&LOGIN_ROLE)|
   return "boss";
 }
 async function storageBackendToken(){
+  // /api/app/login 现在返回的就是正式后端 token，直接复用，不再二次登录。
+  if(APP_TOKEN)return APP_TOKEN;
   if(STORAGE_BACKEND_TOKEN)return STORAGE_BACKEND_TOKEN;
   let pass="";
   try{ pass=typeof LOGIN_PASS==="string"?LOGIN_PASS:""; }catch(_){ pass=""; }
@@ -322,7 +322,6 @@ async function storageBackendToken(){
   }).catch(()=>"").finally(()=>{STORAGE_BACKEND_TOKEN_PROMISE=null;});
   return STORAGE_BACKEND_TOKEN_PROMISE;
 }
->>>>>>> codex/deepseek-assistant
 async function sSet(k,v){
   try{
     if(CLOUD_OK&&CLOUDDB){
@@ -337,7 +336,6 @@ async function sSet(k,v){
     if(location.protocol==="http:"||location.protocol==="https:"){
       let serverErr=null;
       try{
-<<<<<<< HEAD
         const r=await fetch("/api/storage",{method:"POST",headers:appAuthHeaders({"Content-Type":"application/json"}),body:JSON.stringify({key:k,value})});
         if(r.ok)return true;
         serverErr="HTTP "+r.status;
@@ -346,15 +344,6 @@ async function sSet(k,v){
       console.error("服务器保存失败("+serverErr+")，已暂存本机：",k);
       toast("⚠️ 未能保存到服务器（"+serverErr+"），已暂存本机。请检查网络或后端后重试，勿关闭页面");
       return false;
-=======
-        const token=await storageBackendToken();
-        if(token){
-          const r=await fetch("/api/storage",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},body:JSON.stringify({key:k,value})});
-          if(r.ok)return;
-          if(r.status===401||r.status===403)STORAGE_BACKEND_TOKEN="";
-        }
-      }catch(_){/* API 不可用时继续使用浏览器本地存储 */}
->>>>>>> codex/deepseek-assistant
     }
     // 直接以 file:// 打开时本机存储即为主存储，正常返回
     localStorage.setItem(STORAGE_PREFIX+k,value);

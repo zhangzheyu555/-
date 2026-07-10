@@ -106,7 +106,9 @@ public class AccessControlService {
   }
 
   public void requireUserManagementWrite(AuthUser user) {
-    requireRole(user, "维护账号权限", Set.of("ADMIN"));
+    // 引导流程会把 admin 迁移成 BOSS（migrateAdminAccountToBoss），只留 ADMIN 会导致
+    // 系统里没有任何账号能建号/改密；老板本就是旧版页面用户权限页的使用者。
+    requireRole(user, "维护账号权限", Set.of("ADMIN", "BOSS", "OWNER"));
   }
 
   public void requireDataExport(AuthUser user) {
@@ -114,7 +116,10 @@ public class AccessControlService {
   }
 
   public void requireLegacyStorageAccess(AuthUser user) {
-    requireRole(user, "访问历史兼容数据", Set.of("ADMIN", "BOSS", "OWNER"));
+    // 旧版页面是全角色共用的：店长录报销、督导录巡检、财务录利润都要读写共享 KV。
+    // 读放行到全部内部角色；写仍由 StorageService.KEY_WRITE_ROLES 按 key 细分控制。
+    requireRole(user, "访问历史兼容数据",
+        Set.of("ADMIN", "BOSS", "OWNER", "FINANCE", "SUPERVISOR", "WAREHOUSE", "OPERATIONS", "STORE_MANAGER"));
   }
 
   public void requireAttachmentWrite(AuthUser user, String storeId) {

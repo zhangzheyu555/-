@@ -49,7 +49,9 @@ public class SalaryController {
       @RequestParam(defaultValue = "1") int page,
       @RequestParam(defaultValue = "20") int size
   ) {
-    return ApiResponse.ok(salaryService.recordsPaged(authService.requireUser(authorization), month, brandId, storeId, page, size));
+    // page<1 时 offset 为负，H2/MySQL 都会报错落 500，这里直接夹到合法下限。
+    return ApiResponse.ok(salaryService.recordsPaged(
+        authService.requireUser(authorization), month, brandId, storeId, Math.max(1, page), Math.max(1, size)));
   }
 
   @GetMapping("/summary")

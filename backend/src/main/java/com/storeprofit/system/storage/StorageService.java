@@ -27,7 +27,13 @@ public class StorageService {
       "expenses",
       "inspections",
       "logs",
-      "schema_v"
+      "schema_v",
+      // 旧版页面（static/index.html）的功能数据键：数据分析上传、考试成绩、店铺盘存、培训覆盖
+      "ana_uploads",
+      "exam_records",
+      "inv_overrides",
+      "train_ov",
+      "train_fruit_ov"
   );
   private static final Set<String> BLOCKED_WRITE_KEYS = Set.of(
       "accounts",
@@ -36,14 +42,22 @@ public class StorageService {
       "passwords"
   );
   private static final Set<String> OWNER_ROLES = Set.of("BOSS", "ADMIN");
-  private static final Map<String, Set<String>> KEY_WRITE_ROLES = Map.of(
-      "stores", OWNER_ROLES,
-      "entries", Set.of("BOSS", "ADMIN", "FINANCE"),
-      "salary", Set.of("BOSS", "ADMIN", "FINANCE"),
-      "expenses", Set.of("BOSS", "ADMIN", "FINANCE", "STORE_MANAGER"),
-      "inspections", Set.of("BOSS", "ADMIN", "SUPERVISOR"),
-      "logs", Set.of("BOSS", "ADMIN", "FINANCE", "SUPERVISOR", "STORE_MANAGER", "WAREHOUSE", "OPERATIONS"),
-      "schema_v", OWNER_ROLES
+  private static final Set<String> ALL_INTERNAL_ROLES =
+      Set.of("BOSS", "ADMIN", "FINANCE", "SUPERVISOR", "STORE_MANAGER", "WAREHOUSE", "OPERATIONS");
+  private static final Map<String, Set<String>> KEY_WRITE_ROLES = Map.ofEntries(
+      Map.entry("stores", OWNER_ROLES),
+      Map.entry("entries", Set.of("BOSS", "ADMIN", "FINANCE")),
+      Map.entry("salary", Set.of("BOSS", "ADMIN", "FINANCE")),
+      Map.entry("expenses", Set.of("BOSS", "ADMIN", "FINANCE", "STORE_MANAGER")),
+      Map.entry("inspections", Set.of("BOSS", "ADMIN", "SUPERVISOR")),
+      Map.entry("logs", ALL_INTERNAL_ROLES),
+      Map.entry("schema_v", OWNER_ROLES),
+      Map.entry("ana_uploads", Set.of("BOSS", "ADMIN", "OPERATIONS")),
+      // 考试是各角色（含店长带新员工）都会提交的
+      Map.entry("exam_records", ALL_INTERNAL_ROLES),
+      Map.entry("inv_overrides", Set.of("BOSS", "ADMIN", "OPERATIONS", "STORE_MANAGER")),
+      Map.entry("train_ov", Set.of("BOSS", "ADMIN", "OPERATIONS")),
+      Map.entry("train_fruit_ov", Set.of("BOSS", "ADMIN", "OPERATIONS"))
   );
 
   private final JdbcTemplate jdbcTemplate;
@@ -123,7 +137,7 @@ public class StorageService {
             file_size, storage_path, content, uploaded_by, uploaded_at
           )
           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
-          """, Statement.RETURN_GENERATED_KEYS);
+          """, new String[]{"id"}); // 显式只取 id：H2 会把所有 default 列都当 generated key 返回，getKey() 会炸
       statement.setLong(1, user.tenantId());
       statement.setString(2, normalizedStoreId);
       statement.setString(3, normalizedBusinessType);

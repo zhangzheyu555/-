@@ -48,4 +48,13 @@ public class ProfitImportController {
   ) {
     return ApiResponse.ok(profitImportService.commit(authService.requireUser(authorization), request));
   }
+
+  // Vue 前端（frontend-vue/src/api/imports.ts）不带 importId 直接 POST /commit，行内已含全部提交信息。
+  @PostMapping("/commit")
+  public ApiResponse<ProfitImportCommitResponse> commitRows(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @RequestBody ProfitImportCommitRequest request
+  ) {
+    return ApiResponse.ok(profitImportService.commit(authService.requireUser(authorization), request));
+  }
 }
