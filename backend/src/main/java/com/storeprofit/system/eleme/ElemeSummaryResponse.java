@@ -6,8 +6,8 @@ import java.util.List;
 /**
  * 饿了么订单营业额聚合结果（文档步骤 4：按门店 + 日期维度汇总 totalPrice / income）。
  *
- * @param mode        LIVE=已配置凭证调真实接口；DEMO=未配置，返回示例数据
- * @param note        展示给前端的说明（授权限制 / 30 天窗口 / 示例提示）
+ * @param mode        LIVE=真实接口；UNCONFIGURED=未配置；ERROR=平台调用失败
+ * @param note        展示给前端的业务状态说明，不包含凭证或技术堆栈
  * @param days        统计窗口天数（接口仅支持最近 30 天）
  * @param generatedAt 生成时间
  * @param totalPrice  订单总额 SUM(totalPrice)

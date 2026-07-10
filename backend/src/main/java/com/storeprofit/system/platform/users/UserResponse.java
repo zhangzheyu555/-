@@ -4,6 +4,8 @@ import java.util.List;
 
 public record UserResponse(
     long id,
+    long tenantId,
+    String tenantName,
     String username,
     String displayName,
     String role,

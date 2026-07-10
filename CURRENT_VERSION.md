@@ -1,27 +1,30 @@
-# 当前最新版本
+# 当前版本
 
-日期：2026-07-06
+日期：2026-07-10
 
-当前最新版本以旧版门店利润系统页面为主线：
+当前正式版本为 Vue3 多门店经营管理系统：
 
-- 主入口：`http://127.0.0.1:8080/index.html`
-- 前端：旧版 `index.html + database.js`
-- 托管方式：Spring Boot 静态资源目录 `backend/src/main/resources/static/`
-- 后端：Java Spring Boot
-- 数据库：MySQL，数据库名 `store_profit`
-- 数据读写：旧版前端通过 `/api/storage` 读写后端兼容存储，数据落到 MySQL
-- 登录优化：登录页先显示，系统数据在后台加载，避免进入页面时长时间停在“正在加载数据”
-- CloudBase：后端化版本已关闭 CloudBase 连接，避免本地环境卡顿
+- 正式前端：`frontend-vue`（Vue 3、TypeScript、Pinia、Vue Router）。
+- 正式后端：`backend`（Spring Boot、JdbcTemplate、Flyway）。
+- 真实数据源：MySQL。
+- 正式入口：Vue3 应用；开发环境为 `http://127.0.0.1:5173/`，生产环境由 Nginx 托管 `frontend-vue/dist`。
+- 后端接口：`http://127.0.0.1:8080/api/**`。
 
-默认登录：
+旧版边界：
 
-- 管理员：`123`
-- 老板：`boss888`
-- 店长：使用对应门店的 `code` 或 `id`
+- 顶层 `index.html`、`database.js`、`runtime-static/` 和 `backend/src/main/resources/static/` 仅用于旧版视觉、交互和数据迁移参考。
+- 旧 HTML 只能经 `/legacy/` 只读入口回看，不能作为正式入口或新功能承载位置。
+- `web/` 是冻结实验目录，不再继续开发。
 
-后续开发原则：
+账号与数据安全：
 
-- 以旧版视觉和交互为基准继续改。
-- 不再把 `web/` 下的新 Vue 工作台作为当前主版本。
-- 新功能优先接入当前旧版页面和 Java/MySQL 后端。
-- 除非明确要求，不推送远程仓库。
+- 生产环境不创建默认账号、固定密码或示例业务数据。
+- 账号由系统管理员在“账号权限”中创建和维护。
+- 业务数据、附件、待办和操作日志均写入 MySQL；浏览器 `localStorage` 仅保存登录会话。
+
+当前开发原则：
+
+- 旧 HTML 仅作为样式与交互参考，不再作为业务标准或运行时数据来源。
+- 新功能优先复用 Vue3、Spring Boot、MySQL 和 Flyway。
+- 金额、成本、利润与比例由后端使用 `BigDecimal` 计算。
+- 不推送远程仓库，除非用户明确要求。

@@ -12,7 +12,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Random;
 import java.util.TreeMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,8 +24,8 @@ import org.springframework.web.client.RestClient;
  * 饿了么订单拉取与营业额聚合服务。
  *
  * <p>流程遵循接入文档：授权门店 → 订单列表 eleme.order.getOrders → 订单详情 eleme.order.getOrder
- * → 按 shopId + 日期聚合 totalPrice / income。已配置 appKey/appSecret/token 时调真实接口；
- * 未配置时返回带明显标识的示例数据，供前端“平台登录”页展示。接口仅支持最近 30 天。
+ * → 按 shopId + 日期聚合 totalPrice / income。仅在已配置 appKey/appSecret/token 时调真实接口；
+ * 未配置或调用失败时返回空结果和明确状态，绝不伪造营业数据。接口仅支持最近 30 天。
  */
 @Service
 public class ElemeOrderService {
@@ -35,9 +34,6 @@ public class ElemeOrderService {
   private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
   private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
   private static final int MAX_DAYS = 30;
-
-  private static final List<String> DEMO_SHOPS = List.of(
-      "1001:吾悦广场店", "1002:万达广场店", "1003:荆州之星店");
 
   private final ElemeProperties properties;
 
@@ -52,7 +48,7 @@ public class ElemeOrderService {
         "最近 " + days + " 天", null);
   }
 
-  /** 按自然月聚合（文档只支持最近 30 天订单，超窗口的历史月份仅示例展示）。 */
+  /** 按自然月聚合；文档只支持最近 30 天订单。 */
   public ElemeSummaryResponse summaryForMonth(String month) {
     java.time.YearMonth ym;
     try {
@@ -75,19 +71,20 @@ public class ElemeOrderService {
   private ElemeSummaryResponse summaryForDates(List<LocalDate> dates, int days,
       String rangeLabel, String beyondWindowMonth) {
     if (properties.isConfigured() && beyondWindowMonth == null) {
+      if (resolveShops().isEmpty()) {
+        return unavailable(days, "UNCONFIGURED", "未配置已授权门店，暂时无法拉取订单数据。");
+      }
       try {
         return live(days);
       } catch (Exception ex) {
-        log.warn("饿了么真实接口调用失败，回退示例数据：{}", ex.getMessage());
-        return demoForDates(dates, "⚠️ 已配置凭证但接口调用失败（" + ex.getMessage()
-            + "），当前展示为示例数据。请核对 appKey/appSecret/门店授权 token 及网关地址。");
+        log.error("饿了么真实接口调用失败，未返回模拟营业数据", ex);
+        return unavailable(days, "ERROR", "饿了么订单接口暂时不可用，请检查平台配置后重试。");
       }
     }
-    String note = beyondWindowMonth != null
-        ? "🔸 " + beyondWindowMonth + " 超出订单接口的最近 30 天窗口，无法拉取真实历史订单，当前为示例数据。"
-        : "🔸 未配置饿了么应用凭证，当前为 " + rangeLabel + " 示例数据。配置 ELEME_APP_KEY / ELEME_APP_SECRET / "
-            + "ELEME_ACCESS_TOKEN 后自动切换为真实订单（仅限已授权门店、最近 30 天）。";
-    return demoForDates(dates, note);
+    if (beyondWindowMonth != null) {
+      return unavailable(days, "UNAVAILABLE", beyondWindowMonth + " 超出订单接口最近 30 天可查询范围，暂无可用数据。");
+    }
+    return unavailable(days, "UNCONFIGURED", "未配置饿了么订单接口，暂无可用数据。");
   }
 
   private List<LocalDate> datesBack(LocalDate today, int days) {
@@ -218,34 +215,11 @@ public class ElemeOrderService {
     return ids;
   }
 
-  /* ---------------- 示例数据 ---------------- */
-
-  private ElemeSummaryResponse demoForDates(List<LocalDate> dates, String note) {
-    Map<String, long[]> counts = new TreeMap<>();
-    Map<String, BigDecimal[]> money = new TreeMap<>();
-    Map<String, String> shopNames = new LinkedHashMap<>();
-    for (String shopEntry : resolveShops()) {
-      String[] pair = shopEntry.split(":", 2);
-      String shopId = pair[0].trim();
-      String shopName = pair.length > 1 ? pair[1].trim() : shopId;
-      shopNames.put(shopId, shopName);
-      for (LocalDate date : dates) {
-        // 以门店+日期做种子，保证每次刷新数据稳定（非随机跳动）
-        Random rnd = new Random((long) (shopId + date).hashCode());
-        long orders = 40 + rnd.nextInt(120);
-        BigDecimal total = BigDecimal.valueOf(orders * (18 + rnd.nextInt(14)))
-            .setScale(2, RoundingMode.HALF_UP);
-        BigDecimal income = total.multiply(BigDecimal.valueOf(0.82))
-            .setScale(2, RoundingMode.HALF_UP);
-        String key = shopId + "|" + date.format(DATE);
-        counts.put(key, new long[] {orders});
-        money.put(key, new BigDecimal[] {total, income});
-      }
-    }
-    return build(dates.size(), "DEMO", note, counts, money, shopNames);
-  }
-
   /* ---------------- 汇总组装 ---------------- */
+
+  private ElemeSummaryResponse unavailable(int days, String mode, String note) {
+    return build(days, mode, note, Map.of(), Map.of(), Map.of());
+  }
 
   private ElemeSummaryResponse build(int days, String mode, String note,
       Map<String, long[]> counts, Map<String, BigDecimal[]> money, Map<String, String> shopNames) {
@@ -274,7 +248,7 @@ public class ElemeOrderService {
   }
 
   private List<String> resolveShops() {
-    return properties.getShops().isEmpty() ? DEMO_SHOPS : properties.getShops();
+    return properties.getShops();
   }
 
   /* ---------------- 工具 ---------------- */

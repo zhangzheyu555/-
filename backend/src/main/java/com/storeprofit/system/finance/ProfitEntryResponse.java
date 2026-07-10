@@ -21,6 +21,7 @@ public record ProfitEntryResponse(
     BigDecimal loss,
     BigDecimal costOther,
     BigDecimal costSum,
+    BigDecimal costRatio,
     BigDecimal gross,
     BigDecimal grossMargin,
     BigDecimal rent,

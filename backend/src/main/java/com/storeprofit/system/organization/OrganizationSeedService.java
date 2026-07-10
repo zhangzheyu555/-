@@ -2,36 +2,56 @@ package com.storeprofit.system.organization;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.storeprofit.system.platform.tenant.TenantDefaults;
 import jakarta.annotation.PostConstruct;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
 
 @Service
 public class OrganizationSeedService {
   private final OrganizationRepository repository;
   private final ObjectMapper objectMapper;
+  private final Environment environment;
+  private final boolean demoSeedEnabled;
+  private final boolean migrationAutoRun;
 
-  public OrganizationSeedService(OrganizationRepository repository, ObjectMapper objectMapper) {
+  public OrganizationSeedService(
+      OrganizationRepository repository,
+      ObjectMapper objectMapper,
+      Environment environment,
+      @Value("${app.seed.demo-enabled:false}") boolean demoSeedEnabled,
+      @Value("${app.migration.auto-run:false}") boolean migrationAutoRun
+  ) {
     this.repository = repository;
     this.objectMapper = objectMapper;
+    this.environment = environment;
+    this.demoSeedEnabled = demoSeedEnabled;
+    this.migrationAutoRun = migrationAutoRun;
   }
 
   @PostConstruct
   public void seed() {
-    seedBrands();
-    if (repository.storeCount() > 0) {
+    if (!shouldSeedDemoData() && !migrationAutoRun) {
       return;
     }
-    if (!seedStoresFromLegacyJson()) {
+    seedBrands();
+    if (repository.storeCount(TenantDefaults.DEFAULT_TENANT_ID) > 0) {
+      return;
+    }
+    boolean migrated = migrationAutoRun && seedStoresFromLegacyJson();
+    if (!migrated && shouldSeedDemoData()) {
       seedFallbackStores();
     }
   }
 
   private void seedBrands() {
-    repository.ensureBrand("RG", "茹果", "#EF7E3D", 10);
-    repository.ensureBrand("BW", "霸王茶姬", "#9A3340", 20);
-    repository.ensureBrand("RX", "瑞幸咖啡", "#2E6BD6", 30);
+    repository.ensureBrand(TenantDefaults.DEFAULT_TENANT_ID, "RG", "茹果", "#EF7E3D", 10);
+    repository.ensureBrand(TenantDefaults.DEFAULT_TENANT_ID, "BW", "霸王茶姬", "#9A3340", 20);
+    repository.ensureBrand(TenantDefaults.DEFAULT_TENANT_ID, "RX", "瑞幸咖啡", "#2E6BD6", 30);
   }
 
   private boolean seedStoresFromLegacyJson() {
@@ -46,7 +66,7 @@ public class OrganizationSeedService {
           }
           String brandName = text(item.get("brand"));
           long brandId = brandId(brandName);
-          repository.upsertStore(new StoreUpsertRequest(
+          repository.upsertStore(TenantDefaults.DEFAULT_TENANT_ID, new StoreUpsertRequest(
               id,
               textOrDefault(item.get("code"), id),
               name,
@@ -58,7 +78,7 @@ public class OrganizationSeedService {
               text(item.get("note"))
           ));
         }
-        return repository.storeCount() > 0;
+        return repository.storeCount(TenantDefaults.DEFAULT_TENANT_ID) > 0;
       } catch (Exception ex) {
         return false;
       }
@@ -69,19 +89,19 @@ public class OrganizationSeedService {
     long rg = brandId("茹果");
     long bw = brandId("霸王茶姬");
     long rx = brandId("瑞幸咖啡");
-    repository.upsertStore(new StoreUpsertRequest("rg1", "RG001", "保利店", rg, "荆州", "李瑜", "", "营业中", "默认种子门店"));
-    repository.upsertStore(new StoreUpsertRequest("rg4", "RG004", "荆州之星店", rg, "荆州", "孔繁丽", "", "营业中", "默认种子门店"));
-    repository.upsertStore(new StoreUpsertRequest("rg8", "RG008", "长大店", rg, "荆州", "", "", "营业中", "默认种子门店"));
-    repository.upsertStore(new StoreUpsertRequest("bw2", "BW002", "万达店", bw, "汕头", "", "", "营业中", "默认种子门店"));
-    repository.upsertStore(new StoreUpsertRequest("bw5", "BW005", "环美店", bw, "汕头", "", "", "营业中", "默认种子门店"));
-    repository.upsertStore(new StoreUpsertRequest("rx3", "RX003", "长江大学店", rx, "荆州", "", "", "营业中", "默认种子门店"));
+    repository.upsertStore(TenantDefaults.DEFAULT_TENANT_ID, new StoreUpsertRequest("rg1", "RG001", "保利店", rg, "荆州", "李瑞", "", "营业中", "默认种子门店"));
+    repository.upsertStore(TenantDefaults.DEFAULT_TENANT_ID, new StoreUpsertRequest("rg4", "RG004", "荆州之星店", rg, "荆州", "孔繁中", "", "营业中", "默认种子门店"));
+    repository.upsertStore(TenantDefaults.DEFAULT_TENANT_ID, new StoreUpsertRequest("rg8", "RG008", "长大店", rg, "荆州", "", "", "营业中", "默认种子门店"));
+    repository.upsertStore(TenantDefaults.DEFAULT_TENANT_ID, new StoreUpsertRequest("bw2", "BW002", "万达店", bw, "汕头", "", "", "营业中", "默认种子门店"));
+    repository.upsertStore(TenantDefaults.DEFAULT_TENANT_ID, new StoreUpsertRequest("bw5", "BW005", "环美店", bw, "汕头", "", "", "营业中", "默认种子门店"));
+    repository.upsertStore(TenantDefaults.DEFAULT_TENANT_ID, new StoreUpsertRequest("rx3", "RX003", "长江大学店", rx, "荆州", "", "", "营业中", "默认种子门店"));
   }
 
   private long brandId(String brandName) {
     return switch (brandName) {
-      case "霸王茶姬" -> repository.ensureBrand("BW", "霸王茶姬", "#9A3340", 20);
-      case "瑞幸咖啡" -> repository.ensureBrand("RX", "瑞幸咖啡", "#2E6BD6", 30);
-      default -> repository.ensureBrand("RG", "茹果", "#EF7E3D", 10);
+      case "霸王茶姬" -> repository.ensureBrand(TenantDefaults.DEFAULT_TENANT_ID, "BW", "霸王茶姬", "#9A3340", 20);
+      case "瑞幸咖啡" -> repository.ensureBrand(TenantDefaults.DEFAULT_TENANT_ID, "RX", "瑞幸咖啡", "#2E6BD6", 30);
+      default -> repository.ensureBrand(TenantDefaults.DEFAULT_TENANT_ID, "RG", "茹果", "#EF7E3D", 10);
     };
   }
 
@@ -92,5 +112,10 @@ public class OrganizationSeedService {
   private String textOrDefault(Object value, String fallback) {
     String text = text(value);
     return text.isBlank() ? fallback : text;
+  }
+
+  private boolean shouldSeedDemoData() {
+    return demoSeedEnabled || Arrays.stream(environment.getActiveProfiles())
+        .anyMatch(profile -> "dev".equalsIgnoreCase(profile) || "demo".equalsIgnoreCase(profile));
   }
 }

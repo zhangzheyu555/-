@@ -6,6 +6,9 @@ __MACOSX/
 application-local.yml
 backend/src/main/resources/application-local.yml
 backend/target/
+backend/output/
+frontend-vue/dist/
+frontend-vue/test-results/
 .playwright-cli/
 .superpowers/
 node_modules/
@@ -22,3 +25,19 @@ inspection-service/__pycache__/
 
 # 本地 H2 文件数据库（local profile 持久化数据，勿入库）
 backend/data/
+
+# Generated verification artifacts and local runtime logs
+logs/
+output/
+test-results/
+
+# Local databases, business exports and backups
+*.mv.db
+*.trace.db
+*.sqlite
+*.sqlite3
+*.dump
+*.bak
+*.backup
+store-data-backup.json
+backend/src/main/resources/static/门店数据备份.json

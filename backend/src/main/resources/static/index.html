@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>门店利润系统 · 38店</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23EE7E3E'/%3E%3Cpath d='M18 44V22h8v22h-8zm10 0V14h8v30h-8zm10 0V28h8v16h-8z' fill='white'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet">
@@ -107,7 +108,9 @@
 
   /* KPIs */
   .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
-  @media(max-width:760px){.kpis{grid-template-columns:repeat(2,1fr)}.kpi .val{font-size:21px}}
+  .kpis.wh-kpis{grid-template-columns:repeat(5,minmax(0,1fr))}
+  @media(max-width:1100px){.kpis.wh-kpis{grid-template-columns:repeat(3,1fr)}}
+  @media(max-width:760px){.kpis{grid-template-columns:repeat(2,1fr)}.kpis.wh-kpis{grid-template-columns:repeat(2,1fr)}.kpi .val{font-size:21px}}
   .kpi{min-width:0}
   .kpi .lab{font-size:12px;color:var(--muted);font-weight:600}
   .kpi .val{font-size:25px;font-weight:900;letter-spacing:-.02em;margin-top:3px}
@@ -242,11 +245,11 @@
   .bmsg.rich table{width:100%;border-collapse:collapse;font-size:12.5px;margin:6px 0 2px}
   .bmsg.rich th,.bmsg.rich td{padding:6px 9px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
   .bmsg.rich th{color:var(--muted);font-weight:700;background:var(--bg)}
-  .bmsg.rich td.amt,.bmsg.rich th.amt{text-align:right;font-variant-numeric:tabular-nums}
+  .bmsg.rich td.amt,.bmsg.rich th.amt{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
   .bmsg.rich .kpis{display:flex;flex-wrap:wrap;gap:9px;margin:6px 0 9px}
-  .bmsg.rich .kpi{flex:1;min-width:118px;background:var(--bg);border-radius:12px;padding:10px 13px}
+  .bmsg.rich .kpi{flex:1;min-width:132px;background:var(--bg);border-radius:12px;padding:10px 13px}
   .bmsg.rich .kpi .k{font-size:11.5px;color:var(--muted)}
-  .bmsg.rich .kpi .val{font-size:19px;font-weight:800;margin-top:3px;font-variant-numeric:tabular-nums}
+  .bmsg.rich .kpi .val{font-size:19px;font-weight:800;margin-top:3px;font-variant-numeric:tabular-nums;white-space:nowrap;word-break:normal}
   .bmsg.rich .pos{color:#16a34a}.bmsg.rich .neg{color:#dc2626}
   /* 营业总收入 高亮（品牌橙色渐变字 + 柔和底色卡片） */
   .bmsg.rich .kpi.rev{background:var(--primary-soft);box-shadow:inset 0 0 0 1px rgba(238,126,62,.18)}
@@ -258,6 +261,21 @@
   .bmsg.rich .qlinks{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
   .bmsg.rich .qlink{font-size:12px;border:1px solid var(--line);background:#fff;border-radius:99px;padding:5px 11px;color:var(--primary);cursor:pointer;transition:.15s}
   .bmsg.rich .qlink:hover{border-color:var(--primary);background:var(--primary-soft)}
+  .bot-storebar{display:grid;grid-template-columns:minmax(260px,360px) 1fr;gap:12px;margin-bottom:14px;align-items:stretch}
+  .bot-storepanel,.bot-store-summary{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px 16px;box-shadow:0 8px 24px rgba(31,35,48,.05)}
+  .bot-store-eyebrow{font-size:11px;font-weight:800;color:var(--muted);margin-bottom:7px}
+  .bot-storepick{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .bot-storepick select{max-width:100%}
+  .bot-store-note{font-size:12px;color:var(--muted);line-height:1.5;margin-top:8px}
+  .bot-store-summary{display:grid;grid-template-columns:repeat(4,minmax(112px,1fr));gap:10px}
+  .bot-store-summary .mini{background:var(--bg);border-radius:10px;padding:10px 12px;min-width:0}
+  .bot-store-summary .mini .k{font-size:11px;color:var(--muted);white-space:nowrap}
+  .bot-store-summary .mini .v{font-size:18px;font-weight:900;margin-top:4px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bot-store-summary .mini.good .v{color:var(--good)}
+  .bot-store-summary .mini.bad .v{color:var(--bad)}
+  .bot-store-summary .mini.warn .v{color:var(--warn)}
+  .bot-store-summary.empty{display:block;color:var(--muted);font-size:13px;line-height:1.7}
+  .bot-chat-card{padding-top:16px}
   .botchips{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0 4px}
   .bchip{font-size:12px;border:1px solid var(--line);background:#fff;border-radius:99px;padding:6px 11px;color:var(--ink);transition:.15s}
   .bchip:hover{border-color:var(--primary);color:var(--primary)}
@@ -266,6 +284,15 @@
   .botinput input:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft)}
   .botinput button{background:var(--primary);color:#fff;border:0;border-radius:11px;padding:0 20px;font-size:14px;font-weight:700}
   .botinput button:disabled{background:#c9cdd6}
+  @media(max-width:900px){
+    .bot-storebar{grid-template-columns:1fr}
+    .bot-store-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+  }
+  @media(max-width:560px){
+    .bot-store-summary{grid-template-columns:1fr}
+    .botinput{align-items:stretch}
+    .botinput button{min-height:44px}
+  }
   /* 员工工资 */
   .sal-tb{width:100%;border-collapse:collapse;font-size:13.5px}
   .sal-tb th{text-align:left;font-size:11.5px;font-weight:700;color:var(--muted);padding:11px 12px;border-bottom:1px solid var(--line);white-space:nowrap;position:sticky;top:0;background:var(--surface)}
@@ -295,7 +322,7 @@
     .kpi .val{font-size:20px}
   }
   @media(max-width:400px){
-    .kpis{grid-template-columns:1fr}
+    .kpis,.kpis.wh-kpis{grid-template-columns:1fr}
   }
   /* 新人培训 */
   .tr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:16px}
@@ -366,10 +393,15 @@
   .ex-locked{background:#fdf3f2;border:1px solid #f3c9c5;color:#c0392b;border-radius:14px;padding:16px 18px;line-height:1.7}
   .ex-scorebig{font-size:52px;font-weight:900;letter-spacing:-.02em;line-height:1}
 </style>
+<<<<<<< HEAD
 <script src="./xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <!-- 腾讯云开发 CloudBase Web SDK：用于多端共享数据 + 报销截图云存储（未配置环境ID时不影响本地使用） -->
 <script src="./cloudbase.full.js"></script>
+=======
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+>>>>>>> codex/deepseek-assistant
 </head>
 <body>
 
@@ -384,7 +416,7 @@
     <input type="password" id="pin" placeholder="请输入密码" autocomplete="off">
     <div class="err" id="loginErr"></div>
     <button class="go" id="loginBtn">登 录</button>
-    <div class="hint" id="loginHint">输入不同密码进入对应角色（管理员 / 老板 / 店长）</div>
+    <div class="hint" id="loginHint">输入对应角色密码进入系统（老板 / 店长 / 财务 / 督导 / 仓库 / 运营）</div>
   </div>
 </div>
 
@@ -397,17 +429,23 @@
       <button class="tab" data-v="report"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V5a2 2 0 00-2-2h-4"/><rect x="9" y="2" width="6" height="4" rx="1"/><path d="M8 11h8M8 15h5"/></svg><span class="lab">利润表</span></button>
       <button class="tab" data-v="detail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l1.5-5h15L21 9"/><path d="M4 9v10a1 1 0 001 1h14a1 1 0 001-1V9"/><path d="M3 9h18"/><path d="M9 20v-6h6v6"/></svg><span class="lab">门店详情</span></button>
       <button class="tab" data-v="inspect"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg><span class="lab">督导巡店</span></button>
+<<<<<<< HEAD
       <button class="tab" data-v="bot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 01-8.5 8.5 9 9 0 01-4-1L3 20l1-3.5a8.38 8.38 0 01-1-4A8.5 8.5 0 0121 11.5z"/><circle cx="9" cy="11.5" r="1"/><circle cx="13" cy="11.5" r="1"/></svg><span class="lab">数据助手</span></button>
       <button class="tab" data-v="analysis"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="3" y1="20" x2="21" y2="20"/></svg><span class="lab">数据分析</span></button>
       <button class="tab" data-v="train"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10L12 5 2 10l10 5 10-5z"/><path d="M6 12v5c0 1.5 2.7 3 6 3s6-1.5 6-3v-5"/></svg><span class="lab">新人培训</span></button>
       <button class="tab" data-v="exam"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg><span class="lab">考试系统</span></button>
       <button class="tab" data-v="inv"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/></svg><span class="lab">店铺盘存</span></button>
+=======
+      <button class="tab" data-v="bot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 01-8.5 8.5 9 9 0 01-4-1L3 20l1-3.5a8.38 8.38 0 01-1-4A8.5 8.5 0 0121 11.5z"/><circle cx="9" cy="11.5" r="1"/><circle cx="13" cy="11.5" r="1"/></svg><span class="lab">门店助手</span></button>
+>>>>>>> codex/deepseek-assistant
       <button class="tab" data-v="entry"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg><span class="lab">数据录入</span></button>
       <button class="tab" data-v="expense"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2h11l3 3v17l-2.5-1.7L15 22l-2.5-1.7L10 22l-2.5-1.7L5 22z"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="9" y1="12" x2="15" y2="12"/></svg><span class="lab">报销栏</span></button>
       <button class="tab" data-v="export"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 9 12 4 17 9"/><line x1="12" y1="4" x2="12" y2="16"/></svg><span class="lab">数据导出</span></button>
       <button class="tab" data-v="stores"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1.2"/><circle cx="3.5" cy="12" r="1.2"/><circle cx="3.5" cy="18" r="1.2"/></svg><span class="lab">门店管理</span></button>
       <button class="tab" data-v="logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg><span class="lab">操作日志</span></button>
       <button class="tab" data-v="fetch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14L21 3"/><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/></svg><span class="lab">平台登录</span></button>
+      <button class="tab" data-v="warehouse"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-5 9 5"/><path d="M5 10v10h14V10"/><path d="M9 20v-6h6v6"/><path d="M8 10h8"/></svg><span class="lab">仓库中心</span></button>
+      <button class="tab" data-v="operations"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 15l3-4 3 2 4-7"/><circle cx="8" cy="15" r="1"/><circle cx="11" cy="11" r="1"/><circle cx="14" cy="13" r="1"/><circle cx="18" cy="6" r="1"/></svg><span class="lab">运营中心</span></button>
       <button class="tab" data-v="users"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg><span class="lab">用户权限</span></button>
       <button class="tab" data-v="salary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4"/><circle cx="12" cy="12" r="3.2"/><path d="M5 8a3 3 0 003 3M19 16a3 3 0 00-3-3"/><rect x="3" y="4" width="18" height="16" rx="2"/></svg><span class="lab">员工工资</span></button>
     </nav>
@@ -422,7 +460,7 @@
           <input id="topSearch" placeholder="搜索任何数据，回车直接问助手…" autocomplete="off">
         </div>
         <div class="rolebox">
-          <select id="roleSel" class="monthsel" title="角色预览（仅管理员可见）"><option>管理员</option><option>老板</option><option>财务</option><option>督导</option><option>店长</option></select>
+          <select id="roleSel" class="monthsel" title="角色预览（仅老板可见）"><option>老板</option><option>财务</option><option>督导</option><option>店长</option><option>仓库管理员</option><option>运营</option></select>
           <select id="roleStore" class="monthsel" style="display:none;max-width:130px"></select>
         </div>
       </div>
@@ -482,14 +520,25 @@
     <!-- BOT (数据助手) -->
     <div class="view" id="v-bot">
       <div class="h">
-        <h1>数据助手</h1>
+        <h1>门店经营助手</h1>
         <div class="right"><button class="btn-ghost" id="botClear">清空对话</button></div>
       </div>
-      <div class="card">
+      <div class="bot-storebar">
+        <div class="bot-storepanel">
+          <div class="bot-store-eyebrow">当前门店</div>
+          <div class="bot-storepick">
+            <select class="monthsel" id="botStore"></select>
+            <select class="monthsel" id="botMonth"></select>
+          </div>
+          <div class="bot-store-note" id="botStoreNote"></div>
+        </div>
+        <div class="bot-store-summary" id="botStoreSummary"></div>
+      </div>
+      <div class="card bot-chat-card">
         <div id="botMsgs" class="botmsgs"></div>
         <div class="botchips" id="botChips"></div>
         <div class="botinput">
-          <input id="botInput" placeholder="输入需求即可，例如：保利店7月营业额 / 荆州之星店人员名单 / 7月净利排名" autocomplete="off">
+          <input id="botInput" placeholder="问当前门店，例如：本月营业额 / 净利润 / 成本异常" autocomplete="off">
           <button id="botSend">发送</button>
         </div>
       </div>
@@ -509,11 +558,11 @@
           <div id="aiZone" style="border:1.5px dashed #b9c0cf;border-radius:12px;padding:14px;background:#f7f9fc;margin-bottom:14px">
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
               <div style="border-right:1px solid var(--line);padding-right:10px">
-                <div style="font-size:12.5px;font-weight:700;margin-bottom:6px">📷 截图识别</div>
-                <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Ctrl+V 粘贴 或 上传企迈截图</div>
+                <div style="font-size:12.5px;font-weight:700;margin-bottom:6px">📷 截图识别 <span style="color:var(--warn);font-size:11px">待配置</span></div>
+                <div style="font-size:11px;color:var(--muted);margin-bottom:8px">当前仅支持预览截图；不会自动读取图片金额</div>
                 <div style="display:flex;gap:6px">
                   <label class="btn-ghost" style="cursor:pointer;font-size:12px;padding:6px 10px">选图<input type="file" id="aiFile" accept="image/*" style="display:none"></label>
-                  <button class="save" id="aiBtn" style="width:auto;margin:0;padding:6px 12px;font-size:12px">识别填入</button>
+                  <button class="save" id="aiBtn" style="width:auto;margin:0;padding:6px 12px;font-size:12px">查看状态</button>
                 </div>
               </div>
               <div>
@@ -521,12 +570,13 @@
                 <div style="font-size:11px;color:var(--muted);margin-bottom:8px">上传"营业额与支出"表，自动兼容乱格式</div>
                 <div style="display:flex;gap:6px">
                   <label class="btn-ghost" style="cursor:pointer;font-size:12px;padding:6px 10px">选表<input type="file" id="xlFile" accept=".xlsx,.xls,.csv" style="display:none"></label>
-                  <button class="save" id="xlBtn" style="width:auto;margin:0;padding:6px 12px;font-size:12px">识别填入</button>
+                  <button class="save" id="xlBtn" style="width:auto;margin:0;padding:6px 12px;font-size:12px">生成预览</button>
                 </div>
               </div>
             </div>
             <div id="aiPreview" style="display:none;margin-top:10px"><img id="aiImg" style="max-width:100%;max-height:200px;border-radius:8px;border:1px solid var(--line)"></div>
             <div id="aiStatus" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
+            <div id="importPreview" style="display:none;margin-top:10px"></div>
           </div>
 
           <div class="section-t" style="margin-top:6px">① 收入（元）<span style="font-weight:400;color:var(--muted);font-size:12px"> · 实收 = 总额 − 退款 − 优惠</span></div>
@@ -618,6 +668,7 @@
     <!-- FETCH (平台登录入口) -->
     <div class="view" id="v-fetch"></div>
 
+<<<<<<< HEAD
     <!-- ANALYSIS (数据分析：出肉率×单杯用量 采购量测算) -->
     <div class="view" id="v-analysis">
       <div class="h"><h1>数据分析</h1></div>
@@ -751,6 +802,11 @@
         </table>
       </div>
     </div>
+=======
+    <!-- WAREHOUSE / OPERATIONS (建设中角色工作台) -->
+    <div class="view" id="v-warehouse"></div>
+    <div class="view" id="v-operations"></div>
+>>>>>>> codex/deepseek-assistant
 
     <!-- USERS (用户权限) -->
     <div class="view" id="v-salary"></div>
@@ -828,7 +884,7 @@
 <script src="./database.js"></script>
 <script>
 /* 运行时状态（种子数据与存储层见 ./database.js） */
-let STORES=[], ENTRIES={}, LOGS=[], PIN=null, AUTHED=false;
+let STORES=[], ENTRIES={}, LOGS=[], PIN=null, AUTHED=false, LOGIN_PASS="";
 let INSPECTIONS=[];  // 督导巡检记录
 let DATA_READY=false, DATA_INIT_PROMISE=null, DATA_INIT_ERROR=null;
 /* ---------- init / auth ---------- */
@@ -944,9 +1000,8 @@ async function init(){
   }
     LOGS=await sGet("logs")||[];
     INSPECTIONS=await sGet("inspections")||[];
-    ACCOUNTS=await sGet("accounts")||[];
-    if(!ACCOUNTS.length){ ACCOUNTS=defaultAccounts(); await sSet("accounts",ACCOUNTS); } // 首次自动生成默认账号（管理员/老板/各店店长）
-    { const _adm=ACCOUNTS.find(a=>a.role==="管理员"); if(_adm&&_adm.pass==="admin888"){ _adm.pass="123"; await sSet("accounts",ACCOUNTS); } } // 一次性：旧默认管理员密码 admin888 → 123
+    ACCOUNTS=normalizeAccounts(await sGet("accounts")||[]);
+    await sSet("accounts",ACCOUNTS); // 首次/升级时生成老板、财务、督导、仓库、运营与各店店长账号
     DATA_READY=true;
     DATA_INIT_ERROR=null;
   }catch(e){
@@ -1001,6 +1056,16 @@ async function login(){
   }finally{
     btn.disabled=false; btn.textContent="登 录";
   }
+<<<<<<< HEAD
+=======
+  const a=findByPass(v);
+  if(!a){err.textContent="密码不正确";return;}
+  LOGIN_PASS=v;
+  BOT_BACKEND_TOKEN="";
+  try{ STORAGE_BACKEND_TOKEN=""; }catch(_){}
+  LOGIN_ROLE=a.role; CURRENT_ROLE=a.role; MANAGED_SID=a.sid||null; LOGIN_USER=a.name||a.role;
+  enterApp();
+>>>>>>> codex/deepseek-assistant
 }
 function enterApp(){
   AUTHED=true;
@@ -1013,10 +1078,13 @@ function setupRoles(){
   rs.innerHTML=STORES.map(s=>`<option value="${s.id}">${s.name}</option>`).join("");
   if(!MANAGED_SID)MANAGED_SID=STORES[0]?.id||null;
   rs.value=MANAGED_SID||"";
-  document.getElementById("roleSel").value=CURRENT_ROLE;
+  const roleSel=document.getElementById("roleSel");
+  roleSel.innerHTML=ROLE_OPTIONS.map(r=>`<option>${r}</option>`).join("");
+  roleSel.value=ROLE_OPTIONS.includes(CURRENT_ROLE)?CURRENT_ROLE:"老板";
   document.getElementById("roleSel").onchange=e=>{ CURRENT_ROLE=e.target.value; if(CURRENT_ROLE==="店长"&&!MANAGED_SID)MANAGED_SID=STORES[0]?.id; applyRole(); };
   rs.onchange=e=>{ MANAGED_SID=e.target.value; applyRole(); };
 }
+<<<<<<< HEAD
 document.getElementById("logoutBtn").onclick=async ()=>{
   try{ await fetch("/api/app/logout",{method:"POST",headers:appAuthHeaders()}); }catch(_){}
   setAppToken(""); AUTHED=false; DATA_READY=false;
@@ -1048,6 +1116,75 @@ document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{
   if(t.dataset.v==="inv")invInit();
   if(t.dataset.v==="exam")examInit();
 });
+=======
+document.getElementById("logoutBtn").onclick=()=>{AUTHED=false;LOGIN_PASS="";BOT_BACKEND_TOKEN="";try{STORAGE_BACKEND_TOKEN="";}catch(_){}document.getElementById("app").style.display="none";document.getElementById("pin").value="";document.getElementById("loginErr").textContent="";showLogin();};
+function closeActiveModalByEscape(){
+  const global=document.getElementById("salGlobalModal");
+  if(global&&global.innerHTML.trim()){
+    if(typeof expCloseForm==="function")expCloseForm();
+    if(typeof salaryCloseModal==="function")salaryCloseModal();
+    return true;
+  }
+  const importPreview=document.getElementById("importPreview");
+  if(importPreview&&importPreview.style.display!=="none"&&importPreview.innerHTML.trim()){
+    importPreview.style.display="none";
+    importPreview.innerHTML="";
+    const st=document.getElementById("aiStatus");
+    if(st)st.textContent="";
+    return true;
+  }
+  const storeSalary=document.getElementById("storeSalaryMount");
+  if(storeSalary&&storeSalary.innerHTML.trim()){
+    if(typeof closeStoreSalary==="function")closeStoreSalary();
+    return true;
+  }
+  const storeModal=document.getElementById("storeModal");
+  if(storeModal&&storeModal.style.display!=="none"){
+    storeModal.style.display="none";
+    return true;
+  }
+  return false;
+}
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"&&closeActiveModalByEscape()){
+    e.preventDefault();
+    e.stopPropagation();
+  }
+});
+
+/* ---------- nav ---------- */
+function renderViewByName(v){
+  if(v==="dash")renderDash();
+  if(v==="report")renderReport();
+  if(v==="expense")renderExpense();
+  if(v==="detail")renderDetail();
+  if(v==="inspect")renderInspect();
+  if(v==="bot")botInit();
+  if(v==="stores")renderStores();
+  if(v==="logs")renderLogs();
+  if(v==="export")renderExport();
+  if(v==="fetch")renderFetch();
+  if(v==="warehouse")renderWarehouse();
+  if(v==="operations")renderOperations();
+  if(v==="users")renderUsers();
+  if(v==="salary")renderSalary();
+}
+function activateTab(v){
+  const btn=document.querySelector(`.tab[data-v="${v}"]`);
+  const view=document.getElementById("v-"+v);
+  if(!btn||!view)return;
+  document.querySelectorAll(".tab").forEach(x=>x.classList.remove("on"));
+  document.querySelectorAll(".view").forEach(x=>x.classList.remove("on"));
+  btn.classList.add("on");
+  view.classList.add("on");
+  renderViewByName(v);
+}
+function renderActiveView(){
+  const on=document.querySelector(".view.on");
+  if(on)renderViewByName(on.id.replace("v-",""));
+}
+document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>activateTab(t.dataset.v));
+>>>>>>> codex/deepseek-assistant
 
 /* ================= 考试系统（题库来自桌面《考试真题》文件夹，填空智能判分）=================
    判分规则：数字空必须精准；文字空命中关键词（大概意思对）即得分。
@@ -2122,6 +2259,7 @@ function liveCalc(){
   document.getElementById("c_margin").textContent=c.income>0?(c.margin*100).toFixed(1)+"%":"—";
 }
 document.getElementById("saveBtn").onclick=async()=>{
+  if(!can("edit")){toast("当前角色不能修改利润数据");return;}
   const sid=document.getElementById("eStore").value, m=document.getElementById("eMonth").value;
   const prev=ENTRIES[eKey(sid,m)];
   const e=entryFromForm();
@@ -2135,7 +2273,7 @@ document.getElementById("saveBtn").onclick=async()=>{
 };
 
 document.getElementById("delEntryBtn").onclick=async()=>{
-  if(!can("delete")){toast("仅管理员可删除数据");return;}
+  if(!can("delete")){toast("仅老板可删除数据");return;}
   const sid=document.getElementById("eStore").value, m=document.getElementById("eMonth").value;
   const key=eKey(sid,m), prev=ENTRIES[key];
   if(!prev){toast("该月没有数据");return;}
@@ -2145,83 +2283,236 @@ document.getElementById("delEntryBtn").onclick=async()=>{
   await logOp("删除","数据录入",sid,m,prev,null);
   loadEntryForm(); toast("已删除 "+m+" 数据");
 };
-const EXTRACT_RULES=`只返回纯JSON，不要解释、不要markdown围栏。\n格式：{"month":"YYYY-MM或null","revenue":{"微信":0,"支付宝":0,"现金":0,"美团外卖":0,"饿了么":0,"美团团购":0,"抖音团购":0,"京东小时达":0,"高德":0,"其他":0,"合计":0},"expense":{"原料":0,"人工":0,"房租":0,"水电":0,"平台手续费":0,"其他":0}}\n规则：\n- 没有的字段填0；金额是数字(元)，去掉逗号、￥、空格。\n- revenue取"收入/营业额"工作表里"合计"那一行的各渠道金额与合计。\n- expense按类归并：原料=物料/订货/采购/鲜奶/茶/果汁等进货；人工=工资/社保；房租=房租；水电=水费/电费/电费充值；平台手续费=手续费(多退少补后净额)；其他=报销及其余。退款/月度调整不计入expense。\n- 只有营业额数据就只填revenue，只有支出就只填expense。`;
+const IMPORT_FIELD_TO_FORM={sales:"sales",refund:"refund",discount:"discount",material:"material",packaging:"packaging",loss:"loss",costOther:"cost_other",rent:"rent",labor:"labor",utility:"utility",property:"property",commission:"commission",promo:"promo",repair:"repair",equip:"equip",expOther:"exp_other"};
+const IMPORT_FIELD_LABELS={sales:"营业总收入",refund:"退款金额",discount:"优惠金额",material:"原材料成本",packaging:"包材成本",loss:"损耗成本",costOther:"其他成本",rent:"房租",labor:"人工工资",utility:"水电费",property:"物业费",commission:"平台佣金",promo:"推广费",repair:"维修费",equip:"设备费",expOther:"其他费用"};
+let _aiFile=null,_xlFile=null,IMPORT_RESULT=null;
 
-function fillFromObj(obj,st){
-  const rev=obj.revenue||{}, exp=obj.expense||{};
-  const channels=["微信","支付宝","现金","美团外卖","饿了么","美团团购","抖音团购","京东小时达","高德","其他"];
-  let revTotal=+rev["合计"]||0;
-  if(!revTotal)revTotal=channels.reduce((s,k)=>s+(+rev[k]||0),0);
-  if(revTotal){document.getElementById("f_sales").value=Math.round(revTotal);window._aiChannels=Object.fromEntries(channels.map(k=>[k,+rev[k]||0]));}
-  const map={material:"原料",labor:"人工",rent:"房租",utility:"水电",commission:"平台手续费",exp_other:"其他"};
-  let gotExp=false;
-  for(const k in map){const v=+exp[map[k]]||0;if(v){document.getElementById("f_"+k).value=Math.round(v);gotExp=true;}}
-  if(obj.month&&/^\d{4}-\d{2}$/.test(obj.month))document.getElementById("eMonth").value=obj.month;
-  liveCalc();
-  st.innerHTML="✅ 已识别"+(revTotal?` · 营收¥${Math.round(revTotal).toLocaleString()}`:"")+(gotExp?" · 含支出":"")+" — 请核对后保存";
+function importPreviewEl(){return document.getElementById("importPreview");}
+function importStatusEl(){return document.getElementById("aiStatus");}
+function importClearPreview(){
+  IMPORT_RESULT=null;
+  const p=importPreviewEl();
+  if(p){p.style.display="none";p.innerHTML="";}
 }
-async function callAI(contentBlocks,st){
-  st.textContent="🔎 AI识别中，请稍候…";
-  try{
-    const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1500,messages:[{role:"user",content:contentBlocks}]})});
-    const data=await res.json();
-    let txt=(data.content||[]).map(c=>c.text||"").join("").replace(/```json|```/g,"").trim();
-    fillFromObj(JSON.parse(txt),st);
-  }catch(err){st.textContent="❌ 识别失败，请重试或手动录入。("+(err.message||err)+")";}
+function importAmount(v){return "¥"+Math.round(+v||0).toLocaleString("zh-CN");}
+function importEscape(v){
+  return String(v==null?"":v).replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch]));
 }
-
-/* 截图 */
-let _aiImg=null;
-function setAiImg(dataUrl){
-  const m=dataUrl.match(/^data:(image\/\w+);base64,(.+)$/);if(!m)return;
-  _aiImg={media:m[1],b64:m[2]};
+function importFieldChips(values){
+  const chips=Object.keys(IMPORT_FIELD_TO_FORM).filter(k=>values&&values[k]!=null&&+values[k]!==0).map(k=>
+    `<span style="display:inline-flex;gap:4px;align-items:center;border:1px solid var(--line);border-radius:999px;padding:3px 8px;background:#fff;font-size:11px"><b>${IMPORT_FIELD_LABELS[k]}</b><span class="tnum">${importAmount(values[k])}</span></span>`
+  );
+  return chips.length?chips.join(""):'<span style="color:var(--muted);font-size:12px">未识别到金额字段</span>';
+}
+function importStatusText(row){
+  if(row.status==="SAVED")return '<span style="color:var(--good);font-weight:800">已导入</span>';
+  if(row.status==="CONFLICT")return '<span style="color:var(--warn);font-weight:800">已有数据</span>';
+  if(row.status==="ERROR")return '<span style="color:var(--bad);font-weight:800">需处理</span>';
+  return '<span style="color:var(--good);font-weight:800">可导入</span>';
+}
+function importSelectedMonth(){
+  return (document.getElementById("eMonth")||{}).value||"";
+}
+function importMonthMismatch(row){
+  const selected=importSelectedMonth();
+  return !!(row&&row.month&&selected&&row.month!==selected);
+}
+function importMonthMismatchNotice(row,i){
+  if(!importMonthMismatch(row))return "";
+  const selected=importSelectedMonth();
+  return `<div style="margin-top:8px;border:1px solid rgba(245,158,11,.35);background:#fffbeb;color:#92400e;border-radius:9px;padding:8px 10px;font-size:11.5px;line-height:1.6">
+    表格识别月份为 <b>${importEscape(row.month)}</b>，当前页面选择月份为 <b>${importEscape(selected)}</b>。系统不会静默改月份。
+    <label style="display:flex;gap:6px;align-items:center;margin-top:5px;font-weight:700">
+      <input type="checkbox" class="imp-month-confirm" data-i="${i}">
+      确认按表格识别月份 ${importEscape(row.month)} 导入
+    </label>
+  </div>`;
+}
+function setAiImg(dataUrl,file){
+  _aiFile=file||null;
   document.getElementById("aiImg").src=dataUrl;
   document.getElementById("aiPreview").style.display="block";
-  document.getElementById("aiStatus").textContent="已载入截图，点「识别填入」";
+  importClearPreview();
+  importStatusEl().textContent="已载入截图预览。当前未配置视觉识别，不会自动读取图片金额，请使用 Excel/CSV 导入或手工录入。";
 }
-document.getElementById("aiFile").onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>setAiImg(r.result);r.readAsDataURL(f);};
+document.getElementById("aiFile").onchange=e=>{
+  const f=e.target.files[0];if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>setAiImg(r.result,f);
+  r.readAsDataURL(f);
+};
 document.addEventListener("paste",e=>{
   if(!document.getElementById("v-entry").classList.contains("on"))return;
-  const it=[...(e.clipboardData||{}).items||[]].find(i=>i.type.startsWith("image/"));
-  if(it){const f=it.getAsFile();const r=new FileReader();r.onload=()=>setAiImg(r.result);r.readAsDataURL(f);}
+  const it=[...(e.clipboardData||{}).items||[]].find(i=>i.type&&i.type.startsWith("image/"));
+  if(it){const f=it.getAsFile();const r=new FileReader();r.onload=()=>setAiImg(r.result,f);r.readAsDataURL(f);}
 });
 document.getElementById("aiBtn").onclick=()=>{
-  if(!_aiImg){toast("请先粘贴或上传截图");return;}
-  callAI([{type:"image",source:{type:"base64",media_type:_aiImg.media,data:_aiImg.b64}},
-          {type:"text",text:"这是企迈系统导出的某门店某月营业数据截图，请提取。\n"+EXTRACT_RULES}],
-         document.getElementById("aiStatus"));
+  importStatusEl().textContent="截图识别待配置：当前版本只预览图片，不会自动读取图片金额。请使用 Excel/CSV 导入，或按截图手工录入后保存。";
+  toast("截图识别待配置，先用表格导入或手工录入");
 };
 
-/* Excel表格 */
-function wbToText(wb){
-  const names=wb.SheetNames, isWallet=names.includes("账单总览");
-  let pick;
-  if(isWallet)pick=names.filter(n=>/账单总览/.test(n));
-  else{pick=names.filter(n=>/收入|营业额|支出|差额|对比|汇总/.test(n));if(!pick.length)pick=names.slice(0,5);}
-  let out="";
-  pick.forEach(sn=>{
-    const csv=XLSX.utils.sheet_to_csv(wb.Sheets[sn],{blankrows:false});
-    if(csv.trim())out+=`\n## 工作表：${sn}\n`+csv.slice(0,5000);
-  });
-  return {text:out.slice(0,16000),isWallet};
-}
 document.getElementById("xlFile").onchange=e=>{
   const f=e.target.files[0];if(!f)return;
-  const st=document.getElementById("aiStatus");st.textContent="📊 正在读取 "+f.name+" …";
-  const r=new FileReader();
-  r.onload=()=>{
-    try{
-      const wb=XLSX.read(new Uint8Array(r.result),{type:"array"});
-      const {text,isWallet}=wbToText(wb);
-      if(isWallet)st.innerHTML='⚠️ 这是企迈"钱包原始账单"，数据散在几百个分表里。建议改传该店的「营业额与支出」表，或用截图。仍尝试识别总览…';
-      if(!text.trim()){st.textContent="❌ 没读到可识别内容";return;}
-      callAI([{type:"text",text:"以下是某门店某月『营业额与支出』Excel导出的文本（格式可能不规整），请提取。\n"+EXTRACT_RULES+"\n\n表格内容：\n"+text}],st);
-    }catch(err){st.textContent="❌ Excel解析失败："+(err.message||err);}
-  };
-  r.readAsArrayBuffer(f);
+  _xlFile=f;
+  importClearPreview();
+  importStatusEl().textContent="已选择表格："+f.name+"，点击「生成预览」";
   e.target.value="";
 };
+document.getElementById("xlBtn").onclick=()=>{
+  if(!_xlFile){toast("请先选择 Excel/CSV 表格");return;}
+  profitImportRecognize(_xlFile,"AUTO");
+};
+
+async function profitImportRecognize(file,sourceType){
+  if(!can("import")){toast("当前角色不能导入利润数据");return;}
+  const st=importStatusEl();
+  const preview=importPreviewEl();
+  st.textContent="正在上传到后端解析…";
+  preview.style.display="none";
+  preview.innerHTML="";
+  try{
+    const token=await storageBackendToken();
+    if(!token){st.textContent="请先用老板或财务账号登录后再导入";toast("导入需要后端登录授权");return;}
+    const fd=new FormData();
+    fd.append("file",file,file.name||"import-file");
+    fd.append("sourceType",sourceType||"AUTO");
+    fd.append("storeId",document.getElementById("eStore").value||"");
+    fd.append("month",document.getElementById("eMonth").value||"");
+    const res=await fetch("/api/imports/profit/recognize",{method:"POST",headers:{Authorization:"Bearer "+token},body:fd});
+    const body=await res.json().catch(()=>null);
+    if(!res.ok||!body||!body.success){throw new Error((body&&body.message)||"识别接口调用失败");}
+    IMPORT_RESULT=body.data;
+    st.textContent=(IMPORT_RESULT.rows||[]).length?"已生成预览，请核对后填入或确认导入":"未生成可导入行";
+    renderImportPreview(IMPORT_RESULT);
+  }catch(err){
+    st.textContent="识别失败："+(err.message||err);
+  }
+}
+function renderImportPreview(data){
+  const preview=importPreviewEl();
+  const errors=(data.errors||[]).map(e=>`<div style="color:var(--bad);font-size:12px;margin-top:6px">${importEscape(e)}</div>`).join("");
+  const rows=data.rows||[];
+  if(!rows.length){
+    preview.innerHTML=`<div style="border:1px solid var(--line);border-radius:10px;background:#fff;padding:12px">${errors||'<span style="color:var(--muted);font-size:12px">没有可预览的数据</span>'}</div>`;
+    preview.style.display="block";
+    return;
+  }
+  const mismatchCount=rows.filter(importMonthMismatch).length;
+  preview.innerHTML=`
+    <div style="border:1px solid var(--line);border-radius:12px;background:#fff;padding:12px">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+        <div style="font-weight:800;font-size:13px">导入预览 <span style="color:var(--muted);font-weight:600">共 ${rows.length} 行</span></div>
+        <button class="save" type="button" onclick="importCommitSelected()" style="width:auto;margin:0;padding:8px 12px;font-size:12px">确认导入选中行</button>
+      </div>
+      ${mismatchCount?`<div style="border:1px solid rgba(245,158,11,.35);background:#fffbeb;color:#92400e;border-radius:10px;padding:9px 11px;margin-bottom:10px;font-size:12px">有 ${mismatchCount} 行表格月份与页面月份不同。请逐行确认后再导入，避免数据落错月份。</div>`:""}
+      ${errors}
+      <div style="display:flex;flex-direction:column;gap:8px">
+        ${rows.map((row,i)=>importRowHtml(row,i)).join("")}
+      </div>
+    </div>`;
+  preview.style.display="block";
+}
+function importRowHtml(row,i){
+  const disabled=row.status==="ERROR"||row.status==="SAVED";
+  const warnings=(row.warnings||[]).map(w=>`<div style="color:var(--warn);font-size:11px;margin-top:4px">${importEscape(w)}</div>`).join("");
+  const errors=(row.errors||[]).map(e=>`<div style="color:var(--bad);font-size:11px;margin-top:4px">${importEscape(e)}</div>`).join("");
+  return `<div style="border:1px solid var(--line);border-radius:10px;padding:10px;background:${row.status==="SAVED"?"#f4fbf7":"#fbfcff"}">
+    <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap">
+      <label style="display:flex;gap:8px;align-items:center;font-size:12px;font-weight:800">
+        <input type="checkbox" class="imp-row" data-i="${i}" ${disabled?"disabled":"checked"}>
+        ${importEscape(row.storeName||row.storeId||"未匹配门店")} · ${importEscape(row.month||"未识别月份")}
+      </label>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        ${importStatusText(row)}
+        <button class="btn-ghost" type="button" onclick="importApplyRow(${i})" style="padding:5px 9px;font-size:12px">填入当前表单</button>
+        ${row.existing&&row.status!=="SAVED"?`<label style="font-size:11px;color:var(--muted);display:flex;gap:4px;align-items:center"><input type="checkbox" class="imp-overwrite" data-i="${i}">覆盖已有</label>`:""}
+      </div>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${importFieldChips(row.values)}</div>
+    ${importMonthMismatchNotice(row,i)}
+    ${warnings}${errors}
+  </div>`;
+}
+function importApplyRow(index){
+  if(!IMPORT_RESULT||!IMPORT_RESULT.rows)return;
+  const row=IMPORT_RESULT.rows[index]; if(!row)return;
+  const s=STORES.find(x=>x.id===row.storeId);
+  if(s){
+    document.getElementById("eBrand").value=s.brand;
+    fillStoreSel();
+    document.getElementById("eStore").value=s.id;
+  }
+  if(row.month)document.getElementById("eMonth").value=row.month;
+  ENTRY_FIELDS.forEach(k=>{const el=document.getElementById("f_"+k);if(el)el.value=0;});
+  Object.keys(IMPORT_FIELD_TO_FORM).forEach(k=>{
+    const formKey=IMPORT_FIELD_TO_FORM[k], el=document.getElementById("f_"+formKey);
+    if(el&&row.values&&row.values[k]!=null)el.value=Math.round(+row.values[k]||0);
+  });
+  document.getElementById("f_note").value="导入预览";
+  liveCalc();
+  renderStoreHistory(document.getElementById("eStore").value);
+  importStatusEl().textContent="已填入当前表单，请核对后保存，或直接确认导入选中行";
+}
+async function importCommitSelected(){
+  if(!can("import")){toast("当前角色不能导入利润数据");return;}
+  if(!IMPORT_RESULT){toast("请先生成导入预览");return;}
+  const selected=[...document.querySelectorAll(".imp-row:checked")].map(el=>+el.dataset.i);
+  if(!selected.length){toast("请选择要导入的行");return;}
+  const unconfirmedMonth=selected.find(i=>{
+    const row=IMPORT_RESULT.rows[i];
+    return importMonthMismatch(row)&&!document.querySelector(`.imp-month-confirm[data-i="${i}"]`)?.checked;
+  });
+  if(unconfirmedMonth!=null){
+    const row=IMPORT_RESULT.rows[unconfirmedMonth];
+    importStatusEl().textContent=`导入已暂停：${row.storeName||row.storeId||"该行"} 的表格月份 ${row.month} 与页面月份 ${importSelectedMonth()} 不一致，请先勾选确认。`;
+    toast("请先确认月份不一致的导入行");
+    return;
+  }
+  const rows=selected.map(i=>{
+    const row=IMPORT_RESULT.rows[i];
+    const overwrite=document.querySelector(`.imp-overwrite[data-i="${i}"]`)?.checked||false;
+    return {rowId:row.rowId,storeId:row.storeId,month:row.month,overwrite,values:row.values||{},note:"文件导入"};
+  });
+  const st=importStatusEl();
+  st.textContent="正在写入后端数据…";
+  try{
+    const token=await storageBackendToken();
+    if(!token){toast("导入需要后端登录授权");return;}
+    const res=await fetch("/api/imports/profit/"+encodeURIComponent(IMPORT_RESULT.importId)+"/commit",{
+      method:"POST",
+      headers:{"Content-Type":"application/json",Authorization:"Bearer "+token},
+      body:JSON.stringify({rows})
+    });
+    const body=await res.json().catch(()=>null);
+    if(!res.ok||!body||!body.success){throw new Error((body&&body.message)||"导入保存失败");}
+    const result=body.data;
+    (result.rows||[]).forEach(savedRow=>{
+      const idx=(IMPORT_RESULT.rows||[]).findIndex(r=>r.rowId===savedRow.rowId);
+      if(idx>=0)IMPORT_RESULT.rows[idx]=savedRow;
+      if(savedRow.status==="SAVED")importSyncLocalEntry(savedRow);
+    });
+    await sSet("entries",ENTRIES);
+    renderAll();
+    renderStoreHistory(document.getElementById("eStore").value);
+    renderImportPreview(IMPORT_RESULT);
+    st.textContent=`导入完成：成功 ${result.saved} 行，跳过 ${result.skipped} 行`;
+  }catch(err){
+    st.textContent="导入失败："+(err.message||err);
+  }
+}
+function importSyncLocalEntry(row){
+  if(!row.storeId||!row.month)return;
+  const e={};
+  ENTRY_FIELDS.forEach(k=>e[k]=0);
+  Object.keys(IMPORT_FIELD_TO_FORM).forEach(k=>{
+    const formKey=IMPORT_FIELD_TO_FORM[k];
+    e[formKey]=Math.round(+(row.values&&row.values[k]||0));
+  });
+  e.note="文件导入";
+  e.by=CURRENT_USER;
+  e.at=new Date().toISOString();
+  ENTRIES[eKey(row.storeId,row.month)]=e;
+}
 function renderStoreHistory(sid){
   const wrap=document.getElementById("storeHistory");
   const rows=Object.keys(ENTRIES).filter(k=>k.startsWith(sid+"|")).map(k=>({m:k.split("|")[1],c:calc(ENTRIES[k])})).sort((a,b)=>b.m.localeCompare(a.m));
@@ -2245,7 +2536,10 @@ function renderDashMonthSel(){
 function renderDash(){
   const m=document.getElementById("dashMonth").value;
   const body=document.getElementById("dashBody");
-  const recs=visibleStores().map(s=>({s,c:calc(ENTRIES[eKey(s.id,m)])})).filter(x=>x.c);
+  const scopedStores=visibleStores();
+  const visibleBrands=[...new Set(scopedStores.map(s=>s.brand))];
+  if(DASH_BRAND&&!visibleBrands.includes(DASH_BRAND))DASH_BRAND=null;
+  const recs=scopedStores.map(s=>({s,c:calc(ENTRIES[eKey(s.id,m)])})).filter(x=>x.c);
   if(!recs.length){
     body.innerHTML=`<div class="card"><div class="empty"><b>本月还没有数据</b>去「数据录入」录入，或在「门店管理」点"填充示例数据"先看效果。</div></div>`;return;
   }
@@ -2259,15 +2553,16 @@ function renderDash(){
     <div class="card kpi"><div class="lab">合并营业收入</div><div class="val tnum">${fmt(tot.rev)}</div></div>
     <div class="card kpi"><div class="lab">合并净利润</div><div class="val tnum ${tot.net>=0?'good':''}">${fmt(tot.net)}</div></div>
     <div class="card kpi"><div class="lab">整体净利率</div><div class="val tnum">${(tm*100).toFixed(1)}<small>%</small></div></div>
-    <div class="card kpi"><div class="lab">已录入门店</div><div class="val tnum">${recs.length}<small>/ ${STORES.length}</small></div></div>
+    <div class="card kpi"><div class="lab">已录入门店</div><div class="val tnum">${recs.length}<small>/ ${scopedStores.length}</small></div></div>
   </div>`;
 
-  html+=`<div class="brands">`+Object.keys(BRANDS).map(b=>{
+  html+=`<div class="brands">`+visibleBrands.map(b=>{
     const g=bagg[b],meta=BRANDS[b],mg=g.rev>0?g.net/g.rev:0;
     const sel=DASH_BRAND===b, dim=DASH_BRAND&&!sel;
+    const brandTotal=scopedStores.filter(s=>s.brand===b).length;
     return `<div class="bcard${sel?" sel":""}${dim?" dim":""}" style="background:${meta.color}" onclick="toggleDashBrand('${b}')" tabindex="0" role="button" aria-pressed="${sel}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleDashBrand('${b}')}" title="点击只看 ${b} 的数据">
       ${sel?`<div class="bsel">✓ 查看中</div>`:""}
-      <div class="bn">${b}</div><div class="bc">${g.n} / ${BRAND_COUNT[b]} 家已录</div>
+      <div class="bn">${b}</div><div class="bc">${g.n} / ${brandTotal} 家已录</div>
       <div class="brow"><div><div class="bbig tnum">${fmtK(g.net)}</div><div style="font-size:11px;opacity:.85">净利</div></div>
       <div class="bm">营收<br><b class="tnum">${fmtK(g.rev)}</b><br>利率 ${(mg*100).toFixed(1)}%</div></div></div>`;
   }).join("")+`</div>`;
@@ -2294,7 +2589,7 @@ function renderDash(){
 
   // trend（跟随所选品类）
   const ms=allMonths();
-  const pool=DASH_BRAND?STORES.filter(s=>s.brand===DASH_BRAND):STORES;
+  const pool=DASH_BRAND?scopedStores.filter(s=>s.brand===DASH_BRAND):scopedStores;
   const poolHasData=pool.some(s=>Object.keys(ENTRIES).some(k=>k.startsWith(s.id+"|")));
   if(ms.length>1 && poolHasData){
     const series=ms.map(mm=>{const r=pool.map(s=>calc(ENTRIES[eKey(s.id,mm)])).filter(Boolean);return {m:mm,net:r.reduce((a,c)=>a+c.net,0)};});
@@ -2439,11 +2734,11 @@ function exportReportAll(){
   XLSX.writeFile(wb,`全部门店_${m}_利润汇总.xlsx`); toast("已导出汇总Excel");
 }
 
-/* ---------- 报销栏（门店上传 → 待审核 → 管理员确定无误 → 完成；历史长期保留） ---------- */
+/* ---------- 报销栏（门店上传 → 待审核 → 老板确定无误 → 完成；历史长期保留） ---------- */
 let EXPENSES=[], EXP_BRAND="all", EXP_SID="all", EXP_STATUS="all", EXP_MONTH="all", EXP_IMG="";
 const EXP_CATS=["物料采购","设备维修","水电杂费","办公用品","物流运费","其他"];
-function expCanSubmit(){return CURRENT_ROLE==="店长"||CURRENT_ROLE==="管理员"||CURRENT_ROLE==="财务";}
-function expCanReview(){return CURRENT_ROLE==="管理员";}
+function expCanSubmit(){return CURRENT_ROLE==="店长"||isBossRole()||CURRENT_ROLE==="财务";}
+function expCanReview(){return isBossRole();}
 function expId(){return "exp"+Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
 function expStoreName(sid){const s=STORES.find(x=>x.id===sid);return s?s.name:(sid||"—");}
 function expFmtTime(iso){if(!iso)return "—";const d=new Date(iso);const p=n=>String(n).padStart(2,"0");return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;}
@@ -2529,11 +2824,11 @@ async function expSubmit(){
   EXPENSES.unshift(rec);
   await sSet("expenses",EXPENSES);
   expCloseForm();
-  toast("报销已提交，等待管理员审核");
+  toast("报销已提交，等待老板审核");
   renderExpense();
 }
 async function expApprove(id){
-  if(!expCanReview()){toast("只有管理员可以审核");return;}
+  if(!expCanReview()){toast("只有老板可以审核");return;}
   const r=EXPENSES.find(x=>x.id===id); if(!r)return;
   r.status="done"; r.reviewBy=CURRENT_USER; r.reviewAt=new Date().toISOString();
   await sSet("expenses",EXPENSES);
@@ -2541,7 +2836,7 @@ async function expApprove(id){
   renderExpense();
 }
 async function expDelete(id){
-  if(CURRENT_ROLE!=="管理员"){toast("只有管理员可以删除");return;}
+  if(!isBossRole()){toast("只有老板可以删除");return;}
   EXPENSES=EXPENSES.filter(x=>x.id!==id);
   await sSet("expenses",EXPENSES);
   toast("已删除该报销记录");
@@ -2637,7 +2932,7 @@ function renderExpense(){
     const action=(r.status==="pending"&&canReview)
       ? `<button class="seg-b" style="background:#16a34a;color:#fff;border-radius:8px;padding:6px 12px;font-weight:700;font-size:12px" onclick="expApprove('${r.id}')">✓ 确定无误</button>`
       : badge+reviewInfo;
-    const del=(CURRENT_ROLE==="管理员")?`<button class="sal-ic del" title="删除" onclick="expDelete('${r.id}')">🗑</button>`:"";
+  const del=isBossRole()?`<button class="sal-ic del" title="删除" onclick="expDelete('${r.id}')">🗑</button>`:"";
     return `<tr>
       <td style="white-space:nowrap;font-weight:700;color:var(--primary)">${salEsc(expMonthOf(r))}</td>
       <td style="white-space:nowrap;color:var(--muted)">${expFmtTime(r.at)}</td>
@@ -2662,7 +2957,7 @@ function renderExpense(){
     <div class="card" style="flex:1;min-width:130px;padding:14px 16px"><div style="font-size:12px;color:var(--muted);font-weight:600">报销总额</div><div style="font-size:22px;font-weight:900" class="tnum">¥${Math.round(sumAmt).toLocaleString()}</div></div>
   </div>
   <div class="card" style="padding:11px 14px;margin-bottom:14px;font-size:12px;color:var(--muted);border-left:3px solid var(--primary);line-height:1.7">
-    📋 门店填写报销并上传<b>支付截图</b>后即进入<b style="color:#d97706">待审核</b>；管理员核对无误点击「<b style="color:#16a34a">确定无误</b>」后变为<b style="color:#16a34a">已完成</b>。所有记录长期保留于此（后台 expenses），可按门店/状态筛选查看历史。${canReview?"":(canSubmit?"（你可提交报销，审核由管理员完成）":"（当前角色为只读）")}
+  📋 门店填写报销并上传<b>支付截图</b>后即进入<b style="color:#d97706">待审核</b>；老板核对无误点击「<b style="color:#16a34a">确定无误</b>」后变为<b style="color:#16a34a">已完成</b>。所有记录长期保留于此（后台 expenses），可按门店/状态筛选查看历史。${canReview?"":(canSubmit?"（你可提交报销，审核由老板完成）":"（当前角色为只读）")}
   </div>
   <div class="card" style="padding:0;overflow-x:auto">
     <table class="sal-tb" style="font-size:12.5px">
@@ -3004,11 +3299,136 @@ function renderInspList(body){
 /* ---- 子视图2：发起巡检 ---- */
 function inspBlankDraft(){
   const first=inspStores()[0];
-  return { sid:first?first.id:null, brand:first?first.brand:Object.keys(BRANDS)[0], date:todayISO(), inspector:"", fullScore:100, deductions:[], redlines:[], note:"" };
+  return { sid:first?first.id:null, brand:first?first.brand:Object.keys(BRANDS)[0], date:todayISO(), inspector:"", fullScore:100, photos:[], aiSuggestions:[], deductions:[], redlines:[], note:"" };
 }
 const GENERIC_DIMS=["食品安全","卫生","服务","环境","其他"];
+const INSP_PHOTO_CATS=["门头","收银/吧台","后厨/仓库","冰箱/冷柜","物料/标签","员工操作","环境卫生","其他"];
+const INSP_PHOTO_AI_ENDPOINT="";
 function inspDims(brand){ const st=brandStd(brand); return st?st.groups.map(g=>g.dim):GENERIC_DIMS; }
 function inspClausesOf(brand,dim){ const st=brandStd(brand); if(!st)return []; const g=st.groups.find(g=>g.dim===dim); return g?g.items:[]; }
+function inspHtml(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+function inspPhotoId(prefix){return (prefix||"ip")+Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
+function inspEnsureMedia(d){
+  d=d||INSP_DRAFT;
+  if(!d)return {photos:[],aiSuggestions:[]};
+  if(!Array.isArray(d.photos))d.photos=[];
+  if(!Array.isArray(d.aiSuggestions))d.aiSuggestions=[];
+  return d;
+}
+function inspPhotoById(id,d){
+  d=inspEnsureMedia(d);
+  return d.photos.find(p=>p.id===id)||null;
+}
+function inspPhotoObj(p,cat){
+  if(!p)return null;
+  if(typeof p==="string")return {id:"",src:p,category:cat||"现场照片"};
+  const src=p.src||p.url||p.photo||"";
+  return src?{id:p.id||"",src,category:p.category||cat||"现场照片",createdAt:p.createdAt||p.at||"",source:p.source||""}:null;
+}
+function inspDeductionPhotos(x){
+  const out=[];
+  (Array.isArray(x&&x.photos)?x.photos:[]).forEach(p=>{const po=inspPhotoObj(p,x.dim);if(po)out.push(po);});
+  if(x&&x.photo&&!out.find(p=>p.src===x.photo))out.push({id:"",src:x.photo,category:x.dim||"现场照片"});
+  return out;
+}
+function inspRecordPhotos(r){
+  const out=[], seen=new Set();
+  function add(p,cat){
+    const po=inspPhotoObj(p,cat);
+    if(!po||seen.has(po.src))return;
+    seen.add(po.src); out.push(po);
+  }
+  (Array.isArray(r&&r.photos)?r.photos:[]).forEach(p=>add(p));
+  (r&&r.deductions||[]).forEach(d=>inspDeductionPhotos(d).forEach(p=>add(p,d.dim)));
+  return out;
+}
+function inspDimForPhoto(cat){
+  const dims=inspDims(INSP_DRAFT&&INSP_DRAFT.brand);
+  const pick=names=>dims.find(d=>names.some(n=>d.indexOf(n)>=0));
+  return (cat==="物料/标签"&&pick(["品质","食品","物料"]))||
+    ((cat==="后厨/仓库"||cat==="冰箱/冷柜"||cat==="环境卫生")&&pick(["卫生","环境","食品"]))||
+    (cat==="员工操作"&&pick(["服务","操作","人员"]))||
+    (cat==="门头"&&pick(["环境","形象"]))||
+    dims[0]||"其他";
+}
+function inspReviewIssueForPhoto(cat){
+  const map={
+    "门头":"请核对门头、灯箱、海报、陈列是否完整清洁，发现问题后改成具体描述。",
+    "收银/吧台":"请核对吧台台面、杯具、工具、标签和收银区摆放，发现问题后改成具体描述。",
+    "后厨/仓库":"请核对后厨/仓库卫生、地面、墙角、物料分区和防虫防潮，发现问题后改成具体描述。",
+    "冰箱/冷柜":"请核对冰箱温度、密封、清洁、开封物料标签和效期，发现问题后改成具体描述。",
+    "物料/标签":"请核对物料效期、开封标签、先进先出和摆放规范，发现问题后改成具体描述。",
+    "员工操作":"请核对员工着装、洗手消毒、操作流程和服务状态，发现问题后改成具体描述。",
+    "环境卫生":"请核对就餐区、地面、垃圾桶、设备表面和死角卫生，发现问题后改成具体描述。"
+  };
+  return map[cat]||"请核对照片中是否存在卫生、物料、服务或环境问题，发现后改成具体描述。";
+}
+function inspLocalSuggestion(photo){
+  const cat=photo.category||"其他";
+  return {id:inspPhotoId("is"),photoId:photo.id,dim:inspDimForPhoto(cat),issue:inspReviewIssueForPhoto(cat),deduct:1,source:"检查提示",status:"pending"};
+}
+function inspThumbsHtml(photos,empty){
+  const arr=(photos||[]).map(p=>inspPhotoObj(p)).filter(Boolean);
+  if(!arr.length)return empty||"—";
+  return `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">`+
+    arr.slice(0,4).map(p=>`<img src="${p.src}" title="${inspHtml(p.category)}" onclick="inspOpenPhoto(this.src)" style="height:42px;width:54px;object-fit:cover;border-radius:7px;border:1px solid var(--line);cursor:pointer;background:#fff">`).join("")+
+    (arr.length>4?`<span style="font-size:11px;color:var(--muted)">+${arr.length-4}</span>`:"")+`</div>`;
+}
+function inspPhotoOptionsHtml(selected){
+  const d=inspEnsureMedia(), photos=d.photos||[];
+  if(!photos.length)return "";
+  return `<select style="width:auto;min-width:138px;padding:7px 9px;font-size:12px" onchange="if(this.value){inspBindPhotoToDeduct(${selected.index},this.value);this.value=''}"><option value="">绑定已拍照片</option>`+
+    photos.map((p,i)=>`<option value="${p.id}">${inspHtml(p.category||"现场照片")} #${i+1}</option>`).join("")+`</select>`;
+}
+function inspPhotoGridHtml(){
+  const d=inspEnsureMedia(), photos=d.photos||[];
+  if(!photos.length)return `<div class="empty" style="padding:14px 8px;text-align:left"><b>还没有现场照片</b>可以一次选多张。照片会先作为证据保存，再由督导确认是否转成扣分项。</div>`;
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:12px">`+
+    photos.map((p,i)=>`<div style="background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px">
+      <img src="${p.src}" onclick="inspOpenPhoto(this.src)" style="width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:pointer">
+      <div style="display:flex;gap:6px;align-items:center;margin-top:7px">
+        <select style="flex:1;padding:6px 8px;font-size:12px" onchange="inspSetPhotoCategory('${p.id}',this.value)">${INSP_PHOTO_CATS.map(c=>`<option ${c===(p.category||"其他")?"selected":""}>${c}</option>`).join("")}</select>
+        <button class="del" title="删除照片" onclick="inspDeletePhoto('${p.id}')">✕</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:5px">照片 #${i+1} · ${inspHtml(p.status||"已保存")}</div>
+    </div>`).join("")+`</div>`;
+}
+function inspSuggestionById(id){
+  return (inspEnsureMedia().aiSuggestions||[]).find(s=>s.id===id)||null;
+}
+function inspSuggestionsHtml(){
+  const d=inspEnsureMedia();
+  const pending=(d.aiSuggestions||[]).filter(s=>s.status!=="ignored"&&s.status!=="accepted");
+  if(!pending.length)return `<div style="font-size:12px;color:var(--muted);margin-top:12px">暂无待确认建议。可拍照后由系统生成核对提示，或直接在下方手动添加扣分项。</div>`;
+  const dims=inspDims(d.brand);
+  return `<div style="margin-top:12px"><div class="section-t">待督导确认（${pending.length}）</div>`+
+    pending.map(s=>{
+      const p=inspPhotoById(s.photoId,d);
+      const source=s.source==="AI"?"AI识别":"检查提示";
+      return `<div style="border:1px solid var(--line);background:#fff;border-radius:10px;padding:10px;margin-bottom:8px">
+        <div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap">
+          ${p?`<img src="${p.src}" onclick="inspOpenPhoto(this.src)" style="width:74px;height:56px;object-fit:cover;border-radius:7px;border:1px solid var(--line);cursor:pointer">`:""}
+          <div style="flex:1;min-width:220px">
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:7px">
+              <span style="font-size:11px;font-weight:800;color:${s.source==="AI"?"var(--primary)":"var(--muted)"};background:${s.source==="AI"?"var(--primary-soft)":"var(--bg)"};border-radius:99px;padding:2px 8px">${source}</span>
+              <select style="width:auto;min-width:120px;padding:6px 8px;font-size:12px" onchange="inspUpdateSuggestion('${s.id}','dim',this.value)">${dims.map(dm=>`<option ${dm===(s.dim||"")?"selected":""}>${dm}</option>`).join("")}</select>
+              <span style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--muted)">扣<input type="number" min="0" value="${s.deduct||1}" style="width:58px;padding:5px 7px" oninput="inspUpdateSuggestion('${s.id}','deduct',this.value)">分</span>
+            </div>
+            <input value="${inspHtml(s.issue||"")}" style="width:100%;padding:8px 10px;font-size:13px" oninput="inspUpdateSuggestion('${s.id}','issue',this.value)">
+            ${s.source==="AI"?"":`<div style="font-size:11px;color:var(--muted);margin-top:5px">这是按照片类型生成的核对提示，不会自动扣分；只有点“采纳”后才进入扣分清单。</div>`}
+          </div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <button class="btn-ghost" style="font-size:12px;padding:7px 10px;color:var(--good)" onclick="inspAcceptSuggestion('${s.id}')">采纳</button>
+            <button class="btn-ghost" style="font-size:12px;padding:7px 10px" onclick="inspIgnoreSuggestion('${s.id}')">忽略</button>
+          </div>
+        </div>
+      </div>`;
+    }).join("")+`</div>`;
+}
+function inspOpenPhoto(src){
+  const w=window.open("","_blank");
+  if(w)w.document.write(`<title>巡检照片</title><body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${src}" style="max-width:100%;max-height:100vh;object-fit:contain"></body>`);
+}
 
 function renderInspNew(body){
   if(!INSP_DRAFT) INSP_DRAFT=inspBlankDraft();
@@ -3030,19 +3450,21 @@ function renderInspNew(body){
     ${st?'':`<div style="font-size:12px;color:var(--warn);background:var(--warn-s,#FFF7E6);border-radius:8px;padding:8px 10px">该品牌（${d.brand}）的稽核标准尚未录入，可在下方自由填写维度与问题，或在「稽核标准」页了解茹菓示例。</div>`}
   </div>`;
 
-  // 拍照识别（支持拖入照片）
+  // 现场照片证据 + 拍照识别（支持拖入照片）
   html+=`<div class="card" id="inspDropZone" style="margin-bottom:14px;border:1.5px dashed #b9c0cf;background:#f7f9fc"
     ondragover="event.preventDefault();this.style.background='#e8f0fe';this.style.borderColor='#4a7dff'"
     ondragleave="this.style.background='#f7f9fc';this.style.borderColor='#b9c0cf'"
     ondrop="inspDropPhotos(event);this.style.background='#f7f9fc';this.style.borderColor='#b9c0cf'">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-      <div><div style="font-weight:700">📷 现场拍照识别（辅助）</div><div style="font-size:11.5px;color:var(--muted);margin-top:3px">把现场照片<b>直接拖到这个卡片</b>，或点按钮拍照/选图（可多张）。本地卫生识别模型自动找问题并生成扣分项，督导可再核对增删。</div></div>
+      <div><div style="font-weight:700">📷 现场照片证据 / 拍照识别（辅助）</div><div style="font-size:11.5px;color:var(--muted);margin-top:3px">把现场照片直接拖到这个卡片，或点按钮拍照/选图（可多张）。系统会先保存证据，再生成待核对建议；督导确认后才进入扣分清单。</div></div>
       <div style="display:flex;gap:6px;align-items:center">
         <label class="btn-ghost" style="cursor:pointer;font-size:12px;padding:7px 12px">拍照/选图<input type="file" id="insp_photo" accept="image/*" capture="environment" multiple style="display:none" onchange="inspPhotoRecognize(this)"></label>
         ${INSP_AI_RESULTS.length?`<button class="save" style="width:auto;margin:0;padding:7px 14px;font-size:12px" onclick="inspExportExcel()">📊 生成Excel（${INSP_AI_RESULTS.length}张）</button>`:''}
       </div>
     </div>
-    <div id="insp_photo_status" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
+    <div id="insp_photo_status" style="font-size:12px;color:var(--muted);margin-top:8px">${(d.photos||[]).length?`已保存 ${(d.photos||[]).length} 张现场照片`:""}</div>
+    ${inspPhotoGridHtml()}
+    ${inspSuggestionsHtml()}
   </div>`;
 
   // 得分实时卡
@@ -3058,7 +3480,7 @@ function renderInspNew(body){
   // 扣分项列表
   html+=`<div class="card" style="margin-bottom:14px"><div class="section-t">扣分项清单（${d.deductions.length}）</div>`;
   if(!d.deductions.length){
-    html+=`<div class="empty" style="padding:18px">还没有扣分项。门店各项达标即满分；下方添加发现的问题，或用上方拍照识别。</div>`;
+    html+=`<div class="empty" style="padding:18px">还没有扣分项。门店各项达标即满分；下方添加发现的问题，或从上方照片建议中采纳。</div>`;
   }else{
     html+=d.deductions.map((x,i)=>`<div style="border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#fff">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
@@ -3067,8 +3489,10 @@ function renderInspNew(body){
       </div>
       <div style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap;align-items:center">
         <div style="display:flex;align-items:center;gap:5px"><span style="font-size:12px;color:var(--muted)">扣</span><input type="number" value="${x.deduct||0}" min="0" style="width:64px" oninput="INSP_DRAFT.deductions[${i}].deduct=+this.value||0;inspLiveScore()"><span style="font-size:12px;color:var(--muted)">分</span></div>
-        <input value="${(x.issue||'').replace(/"/g,'&quot;')}" placeholder="问题描述" style="flex:1;min-width:160px" oninput="INSP_DRAFT.deductions[${i}].issue=this.value">
-        ${x.photo?`<img src="${x.photo}" style="height:42px;border-radius:6px;border:1px solid var(--line)" title="已附照片">`:`<label class="btn-ghost" style="cursor:pointer;font-size:11px;padding:5px 9px">附照片<input type="file" accept="image/*" capture="environment" style="display:none" onchange="inspAttachPhoto(${i},this)"></label>`}
+        <input value="${inspHtml(x.issue||'')}" placeholder="问题描述" style="flex:1;min-width:160px" oninput="INSP_DRAFT.deductions[${i}].issue=this.value">
+        ${inspThumbsHtml(inspDeductionPhotos(x),`<span style="font-size:12px;color:var(--muted)">未绑定照片</span>`)}
+        ${inspPhotoOptionsHtml({index:i})}
+        <label class="btn-ghost" style="cursor:pointer;font-size:11px;padding:5px 9px">新拍证据<input type="file" accept="image/*" capture="environment" style="display:none" onchange="inspAttachPhoto(${i},this)"></label>
       </div></div>`).join("");
   }
   // 添加扣分项子表单
@@ -3082,6 +3506,7 @@ function renderInspNew(body){
     </div>
     <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
       <input id="nd_issue" placeholder="问题描述（如：开封物料未贴时效标签）" style="flex:1;min-width:200px">
+      ${d.photos&&d.photos.length?`<select id="nd_photo" style="width:auto;min-width:140px"><option value="">不绑定照片</option>${d.photos.map((p,i)=>`<option value="${p.id}">${inspHtml(p.category||"现场照片")} #${i+1}</option>`).join("")}</select>`:""}
       <button class="btn-ghost" onclick="inspAddDeduct()" style="padding:8px 16px">添加</button>
     </div></div>`;
   html+=`</div>`;
@@ -3128,7 +3553,9 @@ function inspAddDeduct(){
   }
   const deduct=+document.getElementById("nd_deduct").value||sugg;
   const issue=document.getElementById("nd_issue").value.trim();
-  d.deductions.push({dim,code,item,issue,deduct,photo:""});
+  const photoId=document.getElementById("nd_photo")?document.getElementById("nd_photo").value:"";
+  const p=photoId?inspPhotoById(photoId,d):null;
+  d.deductions.push({dim,code,item,issue,deduct,photo:p?p.src:"",photos:p?[{id:p.id,src:p.src,category:p.category||dim}]:[]});
   renderInspect();
 }
 function inspDelDeduct(i){ INSP_DRAFT.deductions.splice(i,1); renderInspect(); }
@@ -3142,16 +3569,31 @@ function inspToggleRedline(i,on){
 function inspCompress(file,cb){
   const r=new FileReader();
   r.onload=()=>{ const img=new Image(); img.onload=()=>{
-    const max=900; let w=img.width,h=img.height; if(w>max){h=Math.round(h*max/w);w=max;}
+    const max=1000; let w=img.width,h=img.height;
+    if(w>h&&w>max){h=Math.round(h*max/w);w=max;}
+    else if(h>=w&&h>max){w=Math.round(w*max/h);h=max;}
     const cv=document.createElement("canvas"); cv.width=w; cv.height=h;
-    cv.getContext("2d").drawImage(img,0,0,w,h);
-    cb(cv.toDataURL("image/jpeg",0.7));
+    const ctx=cv.getContext("2d"); ctx.fillStyle="#fff"; ctx.fillRect(0,0,w,h); ctx.drawImage(img,0,0,w,h);
+    cb(cv.toDataURL("image/jpeg",0.72));
   }; img.onerror=()=>cb(null); img.src=r.result; };
   r.onerror=()=>cb(null); r.readAsDataURL(file);
 }
+function inspCompressAsync(file){
+  return new Promise(res=>inspCompress(file,res));
+}
 function inspAttachPhoto(i,input){
   const f=input.files[0]; if(!f)return;
-  inspCompress(f,durl=>{ if(durl){ INSP_DRAFT.deductions[i].photo=durl; renderInspect(); } });
+  input.value="";
+  inspCompress(f,durl=>{
+    const d=inspEnsureMedia(), item=d.deductions[i];
+    if(!durl||!item)return;
+    const p={id:inspPhotoId("ip"),src:durl,category:item.dim||"扣分证据",status:"已绑定扣分项",createdAt:new Date().toISOString(),source:"manual"};
+    d.photos.push(p);
+    item.photos=Array.isArray(item.photos)?item.photos:[];
+    item.photos.push({id:p.id,src:p.src,category:p.category});
+    item.photo=item.photo||p.src;
+    renderInspect();
+  });
 }
 /* ---- 现场拍照识别：本地卫生识别模型 + Excel 导出 ---- */
 const INSP_API_BASE=location.protocol==="file:"?"http://127.0.0.1:8080":"";
@@ -3180,22 +3622,29 @@ function inspDropPhotos(ev){
   inspRecognizeFiles(files);
 }
 async function inspPhotoRecognize(input){
-  const files=[...input.files]; input.value="";
+  const files=[...input.files].filter(f=>(f.type||"").startsWith("image/"));
+  input.value="";
   if(files.length) await inspRecognizeFiles(files);
 }
 async function inspRecognizeFiles(files){
+  const d=inspEnsureMedia();
   const st=document.getElementById("insp_photo_status");
-  let okN=0,failN=0;
-  for(let i=0;i<files.length;i++){
-    const f=files[i];
-    if(st)st.textContent=`🔎 本地卫生识别模型分析中… ${i+1}/${files.length}（${f.name}）`;
+  let added=0, failed=0, modelN=0, suggestionN=0;
+  const imageFiles=[...files].filter(f=>(f.type||"").startsWith("image/"));
+  for(let i=0;i<imageFiles.length;i++){
+    const f=imageFiles[i];
+    if(st)st.textContent=`正在处理 ${i+1}/${imageFiles.length} 张照片：${f.name||"现场照片"}`;
+    const durl=await inspCompressAsync(f);
+    if(!durl){failed++;continue;}
+    const p={id:inspPhotoId("ip"),src:durl,category:"其他",status:"已保存",createdAt:new Date().toISOString(),source:"upload",name:f.name||""};
+    d.photos.push(p); added++;
+    let pushedSuggestion=false;
     try{
       const fd=new FormData(); fd.append("file",f,f.name||"photo.jpg");
       const res=await fetch(INSP_API_BASE+"/api/inspections/detect",{method:"POST",body:fd});
       const data=await res.json().catch(()=>null);
       if(!res.ok||!data||!data.success) throw new Error((data&&data.message)||("HTTP "+res.status));
       const r=data.data||{};
-      const origDurl=await inspFileToDataUrl(f);
       const annoDurl=r.annotated_image?await inspShrinkDataUrlAsync(r.annotated_image):"";
       INSP_AI_RESULTS.push({
         image_id:r.image_id||"", filename:f.name||"photo.jpg",
@@ -3203,19 +3652,99 @@ async function inspRecognizeFiles(files){
         deduction_project:r.deduction_project||"", deduction_content:r.deduction_content||"",
         deduction_score:r.deduction_score??"", detection_count:r.detection_count??0,
         detection_summary:r.detection_summary||"", timestamp:new Date().toISOString().slice(0,19),
-        original_image:origDurl||"", annotated_image:annoDurl||origDurl||""
+        original_image:durl||"", annotated_image:annoDurl||durl||""
       });
-      if(!r.passed){
+      p.status=r.passed===true?"识别通过":"已识别";
+      p.source="yolo";
+      modelN++;
+      const hasIssue=r.passed===false||r.deduction_content||r.deduction_project||(+r.deduction_score||0)!==0;
+      if(hasIssue){
         const dims=inspDims(INSP_DRAFT.brand);
-        const dim=dims.find(x=>/卫生|环境/.test(x))||dims[0];
-        INSP_DRAFT.deductions.push({dim,code:"",item:r.deduction_project||"",issue:r.deduction_content||r.auto_status||"现场卫生问题",deduct:Math.min(5,Math.abs(+r.deduction_score||1)),photo:annoDurl||"",_ai:true});
+        const dim=dims.find(x=>/卫生|环境|食品/.test(x))||dims[0]||inspDimForPhoto(p.category);
+        d.aiSuggestions.push({
+          id:inspPhotoId("is"),
+          photoId:p.id,
+          dim,
+          issue:r.deduction_content||r.auto_status||r.detection_summary||"现场卫生问题",
+          deduct:Math.min(5,Math.abs(+r.deduction_score||1)),
+          source:"AI",
+          status:"pending"
+        });
+        pushedSuggestion=true;
+        suggestionN++;
       }
-      okN++;
-    }catch(err){ failN++; if(st)st.textContent=`❌ ${f.name} 识别失败（${err.message||err}）`; }
+    }catch(err){
+      failed++;
+      p.status="识别服务不可用，已保存照片";
+      p.error=String(err&&err.message||err||"");
+    }
+    if(!pushedSuggestion){
+      d.aiSuggestions.push(inspLocalSuggestion(p));
+      suggestionN++;
+    }
   }
   renderInspect();
   const st2=document.getElementById("insp_photo_status");
-  if(st2)st2.textContent=`✅ 识别完成：${okN} 张成功${failN?`，${failN} 张失败（请确认后端和卫生识别服务已启动）`:""}。有问题的照片已生成扣分项，可点「生成Excel」导出汇总表。`;
+  if(st2)st2.textContent=`已保存 ${added} 张照片；模型成功 ${modelN} 张；生成 ${suggestionN} 条待核对建议${failed?`；${failed} 张未完成识别`:""}。`;
+  toast(`已保存 ${added} 张照片${suggestionN?`，生成 ${suggestionN} 条待核对建议`:""}${failed?`，${failed} 张识别未完成`:""}`);
+}
+async function inspAnalyzePhotoBackend(photo){
+  if(!INSP_PHOTO_AI_ENDPOINT)return [];
+  try{
+    const res=await fetch(INSP_PHOTO_AI_ENDPOINT,{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({sid:INSP_DRAFT.sid,brand:INSP_DRAFT.brand,date:INSP_DRAFT.date,category:photo.category,image:photo.src})});
+    if(!res.ok)return [];
+    const data=await res.json();
+    const arr=Array.isArray(data)?data:(data.suggestions||data.items||[]);
+    return Array.isArray(arr)?arr.filter(x=>x&&x.issue).slice(0,6):[];
+  }catch(_){ return []; }
+}
+function inspSetPhotoCategory(id,cat){
+  const d=inspEnsureMedia(), p=inspPhotoById(id,d);
+  if(!p)return;
+  p.category=cat||"其他";
+  (d.aiSuggestions||[]).filter(s=>s.photoId===id&&s.source!=="AI"&&s.status==="pending").forEach(s=>{
+    s.dim=inspDimForPhoto(p.category);
+    s.issue=inspReviewIssueForPhoto(p.category);
+  });
+  renderInspect();
+}
+function inspDeletePhoto(id){
+  const d=inspEnsureMedia(), p=inspPhotoById(id,d);
+  if(!p)return;
+  d.photos=d.photos.filter(x=>x.id!==id);
+  d.aiSuggestions=(d.aiSuggestions||[]).filter(s=>s.photoId!==id);
+  (d.deductions||[]).forEach(x=>{
+    x.photos=(Array.isArray(x.photos)?x.photos:[]).filter(ph=>ph.id!==id&&ph.src!==p.src);
+    if(x.photo===p.src)x.photo=(x.photos[0]&&x.photos[0].src)||"";
+  });
+  renderInspect();
+}
+function inspBindPhotoToDeduct(i,id){
+  const d=inspEnsureMedia(), p=inspPhotoById(id,d), item=d.deductions[i];
+  if(!p||!item)return;
+  item.photos=Array.isArray(item.photos)?item.photos:[];
+  if(!item.photos.find(x=>x.id===p.id||x.src===p.src))item.photos.push({id:p.id,src:p.src,category:p.category||item.dim});
+  item.photo=item.photo||p.src;
+  renderInspect();
+}
+function inspUpdateSuggestion(id,key,val){
+  const s=inspSuggestionById(id); if(!s)return;
+  if(key==="deduct")s.deduct=+val||0;
+  else s[key]=val;
+}
+function inspAcceptSuggestion(id){
+  const d=inspEnsureMedia(), s=inspSuggestionById(id);
+  if(!s)return;
+  const p=s.photoId?inspPhotoById(s.photoId,d):null;
+  d.deductions.push({dim:s.dim||inspDims(d.brand)[0],code:"",item:"",issue:(s.issue||"").trim(),deduct:+s.deduct||1,photo:p?p.src:"",photos:p?[{id:p.id,src:p.src,category:p.category||s.dim}]:[],_ai:s.source==="AI"});
+  s.status="accepted";
+  renderInspect();
+}
+function inspIgnoreSuggestion(id){
+  const s=inspSuggestionById(id); if(!s)return;
+  s.status="ignored";
+  renderInspect();
 }
 async function inspExportExcel(){
   if(!INSP_AI_RESULTS.length){ toast("请先识别照片"); return; }
@@ -3259,7 +3788,11 @@ async function inspSave(){
   if(!d.date){ toast("请选择巡检日期"); return; }
   const rec={ id:"insp"+Date.now(), sid:d.sid, brand:d.brand, date:d.date,
     inspector:(d.inspector||"").trim()||CURRENT_USER, fullScore:+d.fullScore||100,
-    deductions:d.deductions.map(x=>({dim:x.dim||"",code:x.code||"",item:x.item||"",issue:(x.issue||"").trim(),deduct:+x.deduct||0,photo:x.photo||""})),
+    photos:(d.photos||[]).map(p=>({id:p.id||inspPhotoId("ip"),src:p.src||"",category:p.category||"现场照片",createdAt:p.createdAt||"",source:p.source||""})).filter(p=>p.src),
+    deductions:d.deductions.map(x=>{
+      const photos=inspDeductionPhotos(x).map(p=>({id:p.id||"",src:p.src,category:p.category||x.dim||"现场照片"}));
+      return {dim:x.dim||"",code:x.code||"",item:x.item||"",issue:(x.issue||"").trim(),deduct:+x.deduct||0,photo:(x.photo||((photos[0]||{}).src)||""),photos};
+    }),
     redlines:d.redlines.map(x=>({item:x.item})), note:(d.note||"").trim(),
     by:CURRENT_USER, at:new Date().toISOString() };
   INSPECTIONS.unshift(rec);
@@ -3317,6 +3850,16 @@ function renderInspDetail(body,id){
         <div style="font-size:15px;font-weight:800;color:${ok?'var(--good)':'var(--bad)'}">${ok?'✓ 合格':'⚠ 不合格（红线）'}</div>
       </div>
     </div></div>`;
+  const evidence=inspRecordPhotos(r);
+  if(evidence.length){
+    html+=`<div class="card" style="margin-bottom:14px">
+      <div class="section-t">现场照片证据（${evidence.length}）</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px">`+
+      evidence.map((p,i)=>`<div style="border:1px solid var(--line);border-radius:10px;padding:7px;background:#fff">
+        <img src="${p.src}" onclick="inspOpenPhoto(this.src)" style="width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:pointer">
+        <div style="font-size:11px;color:var(--muted);margin-top:5px">${inspHtml(p.category||"现场照片")} #${i+1}</div>
+      </div>`).join("")+`</div></div>`;
+  }
   html+=inspStoreTrend(r.sid,r.id);
   // 红线
   if((r.redlines||[]).length){
@@ -3330,7 +3873,7 @@ function renderInspDetail(body,id){
     html+=`<div class="empty" style="padding:16px">无扣分项，各项达标 🎉</div>`;
   }else{
     html+=`<div style="overflow-x:auto"><table class="ranktbl" style="min-width:560px"><thead><tr><th>维度</th><th>条款</th><th>问题描述</th><th class="r">扣分</th><th>照片</th></tr></thead><tbody>`+
-      r.deductions.map(x=>`<tr><td>${x.dim||'—'}</td><td style="color:var(--muted)">${x.code||'—'}${x.item?'<br>'+x.item:''}</td><td>${x.issue||'—'}</td><td class="r tnum" style="color:var(--bad);font-weight:700">-${x.deduct||0}</td><td>${x.photo?`<img src="${x.photo}" style="height:46px;border-radius:6px;border:1px solid var(--line);cursor:pointer" onclick="window.open('').document.write('<img src=\\'${x.photo}\\' style=max-width:100%>')">`:'—'}</td></tr>`).join("")+
+      r.deductions.map(x=>`<tr><td>${x.dim||'—'}</td><td style="color:var(--muted)">${x.code||'—'}${x.item?'<br>'+x.item:''}</td><td>${x.issue||'—'}</td><td class="r tnum" style="color:var(--bad);font-weight:700">-${x.deduct||0}</td><td>${inspThumbsHtml(inspDeductionPhotos(x),'—')}</td></tr>`).join("")+
       `</tbody></table></div>`;
   }
   html+=`</div>`;
@@ -3356,7 +3899,7 @@ function inspDownloadBlob(blob,name){
 async function inspExport(id){
   const r=INSPECTIONS.find(x=>x.id===id); if(!r){toast("无记录");return;}
   const s=STORES.find(x=>x.id===r.sid);
-  const hasPhoto=(r.deductions||[]).some(d=>d.photo);
+  const hasPhoto=inspRecordPhotos(r).length>0;
   toast(hasPhoto?"正在生成巡检表（含照片）…":"正在生成巡检表…");
   const ok=await inspLoadExcelJS();
   if(ok&&window.ExcelJS){
@@ -3409,7 +3952,8 @@ async function inspExportRich(r,s){
       const cc=ws.getCell(row,3); cc.value=-(d.deduct||0); cc.font={bold:true,color:BAD}; cc.alignment=ctr;
       bdRow(row);
       let h=34;
-      if(d.photo){ const m=d.photo.match(/^data:image\/(\w+);base64,(.+)$/);
+      const firstPhoto=(inspDeductionPhotos(d)[0]||{}).src||"";
+      if(firstPhoto){ const m=firstPhoto.match(/^data:image\/(\w+);base64,(.+)$/);
         if(m){ let ext=m[1].toLowerCase(); if(ext==="jpg")ext="jpeg";
           try{ const imgId=wb.addImage({base64:m[2],extension:ext});
             ws.addImage(imgId,{tl:{col:3.05,row:(row-1)+0.05},ext:{width:120,height:90}}); h=72; }catch(e){}
@@ -3432,7 +3976,7 @@ async function inspExportRich(r,s){
   const td=ws.getCell(row,4); td.value=sc+" / "+(r.fullScore||100); td.font={bold:true,size:13,color:ok?GOOD:BAD}; td.alignment=ctr; bdRow(row); ws.getRow(row).height=24;
   const buf=await wb.xlsx.writeBuffer();
   inspDownloadBlob(new Blob([buf],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}),`${s?s.name:r.sid}_${r.date||""}_巡检表.xlsx`);
-  toast("巡检表已导出"+((r.deductions||[]).some(d=>d.photo)?"（含照片）":""));
+  toast("巡检表已导出"+(inspRecordPhotos(r).length?"（含照片）":""));
 }
 // 保底版（SheetJS，纯文字无照片）
 function inspExportBasic(r,s){
@@ -3450,7 +3994,7 @@ function inspExportBasic(r,s){
   XLSX.writeFile(wb,`${s?s.name:r.sid}_${r.date||""}_巡检表.xlsx`);
 }
 async function inspDelete(id){
-  if(!can("delete")){toast("仅管理员可删除");return;}
+  if(!can("delete")){toast("仅老板可删除");return;}
   const r=INSPECTIONS.find(x=>x.id===id); if(!r)return;
   const s=STORES.find(x=>x.id===r.sid);
   if(!confirm(`删除「${s?s.name:r.sid}」${r.date} 的巡检记录？此操作会记入日志。`))return;
@@ -3491,13 +4035,113 @@ function renderInspStd(body){
 
 /* ---------- 数据助手（本地简单问答） ---------- */
 let BOT_HISTORY=[], botBusy=false;
-const BOT_DEFAULT_MONTH="2026-07";
-const BOT_DEFAULT_MONTH_TEXT="7月";
-const BOT_CHIPS=[`保利店${BOT_DEFAULT_MONTH_TEXT}营业额`,`${BOT_DEFAULT_MONTH_TEXT}各店净利排名`,`${BOT_DEFAULT_MONTH_TEXT}哪些店在亏损？`,"荆州之星店人员名单","霸王茶姬各月营收","美佳华店员工工资"];
+let BOT_BACKEND_TOKEN="", BOT_BACKEND_TOKEN_PROMISE=null;
+let BOT_SID=null, BOT_MONTH=null;
 function escHtml(s){return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
-function buildDataContext(){
-  let csv="品牌,门店,月份,营业总收入,实收,原材料,成本合计,毛利,房租,人工,水电,平台佣金,费用合计,净利,净利率\n";
-  visibleStores().forEach(s=>{
+function botJsArg(s){return String(s).replace(/\\/g,"\\\\").replace(/'/g,"\\'").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+function botQLink(q,label){return `<span class="qlink" onclick="botAsk('${botJsArg(q)}')">${escHtml(label||q)}</span>`;}
+function botAllEntryMonths(stores){
+  const ids=new Set((stores&&stores.length?stores:visibleStores()).map(s=>s.id));
+  return [...new Set(Object.keys(ENTRIES).map(k=>{
+    const p=k.split("|"); return ids.has(p[0])&&/^\d{4}-\d{2}$/.test(p[1]||"")?p[1]:null;
+  }).filter(Boolean))].sort();
+}
+function botLatestEntryMonth(stores){
+  const months=botAllEntryMonths(stores);
+  if(months.length)return months[months.length-1];
+  const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
+}
+function botMonthText(m){return (+String(m).split("-")[1]||0)+"月";}
+function botDefaultMonthText(){return botMonthText(botLatestEntryMonth());}
+function botScopedStores(){
+  const stores=visibleStores();
+  return stores.length?stores:STORES;
+}
+function botCurrentStore(){
+  const stores=botScopedStores();
+  if(!stores.length)return null;
+  if(CURRENT_ROLE==="店长"&&MANAGED_SID)BOT_SID=MANAGED_SID;
+  if(BOT_SID&&stores.some(s=>s.id===BOT_SID))return stores.find(s=>s.id===BOT_SID);
+  const withData=stores.find(s=>Object.keys(ENTRIES).some(k=>k.startsWith(s.id+"|")));
+  BOT_SID=(withData||stores[0]).id;
+  return stores.find(s=>s.id===BOT_SID)||null;
+}
+function botCurrentMonth(store){
+  const months=botAllEntryMonths(store?[store]:botScopedStores());
+  if(months.length&&BOT_MONTH&&months.includes(BOT_MONTH))return BOT_MONTH;
+  BOT_MONTH=months.length?months[months.length-1]:botLatestEntryMonth(store?[store]:botScopedStores());
+  return BOT_MONTH;
+}
+function botChips(){
+  const store=botCurrentStore(), month=botCurrentMonth(store), t=botMonthText(month);
+  if(!store)return ["本月营业额","净利润","成本异常"];
+  return [`${store.name}${t}营业额`,`${store.name}${t}净利润`,`${store.name}${t}成本异常`,` ${store.name}各月营收`.trim()];
+}
+function botMonthHint(months,makeQuestion){
+  const list=(months&&months.length?months:botAllEntryMonths()).sort();
+  if(!list.length)return `<div class="qsub">当前系统还没有可用的经营数据月份。</div>`;
+  const links=list.map(m=>botQLink(makeQuestion?makeQuestion(m):`${botMonthText(m)}各店净利排名`,mLabel(m))).join("");
+  return `<div class="qsub">当前已有经营数据月份：${list.map(mLabel).join("、")}。</div><div class="qlinks">${links}</div>`;
+}
+function botStoreSummaryHtml(store,month){
+  if(!store)return "还没有可查看的门店。";
+  const e=ENTRIES[eKey(store.id,month)];
+  if(!e){
+    const months=botAllEntryMonths([store]);
+    return `<b>${escHtml(store.name)} ${mLabel(month)} 暂无经营数据</b><br>${months.length?`可切换到：${months.map(mLabel).join("、")}`:"这家店还没有录入月份。"}`;
+  }
+  const c=calc(e), good=c.net>=0, margin=(c.margin*100).toFixed(1)+"%";
+  let status="正常", cls=good?"good":"bad";
+  if(c.net<0)status="亏损";
+  else if(c.margin<.08){status="低利润";cls="warn";}
+  return `
+    <div class="mini"><div class="k">营业额</div><div class="v">${fmt(c.sales)}</div></div>
+    <div class="mini ${good?"good":"bad"}"><div class="k">净利润</div><div class="v">${fmt(c.net)}</div></div>
+    <div class="mini ${good?"good":"bad"}"><div class="k">净利率</div><div class="v">${margin}</div></div>
+    <div class="mini ${cls}"><div class="k">状态</div><div class="v">${status}</div></div>`;
+}
+function botRenderStoreContext(){
+  const storeSel=document.getElementById("botStore"), monthSel=document.getElementById("botMonth");
+  if(!storeSel||!monthSel)return;
+  const stores=botScopedStores();
+  const store=botCurrentStore();
+  const storeOptions=stores.map(s=>`<option value="${s.id}" ${store&&s.id===store.id?"selected":""}>${s.name}（${s.brand}）</option>`).join("");
+  storeSel.innerHTML=storeOptions||`<option>暂无门店</option>`;
+  storeSel.disabled=CURRENT_ROLE==="店长"||stores.length<=1;
+  storeSel.onchange=e=>{BOT_SID=e.target.value;BOT_MONTH=null;BOT_HISTORY=[];botInit();};
+
+  const month=botCurrentMonth(store);
+  const months=botAllEntryMonths(store?[store]:stores);
+  monthSel.innerHTML=(months.length?months.slice().reverse():[month]).map(m=>`<option value="${m}" ${m===month?"selected":""}>${m}</option>`).join("");
+  monthSel.disabled=!months.length;
+  monthSel.onchange=e=>{BOT_MONTH=e.target.value;BOT_HISTORY=[];botInit();};
+
+  const note=document.getElementById("botStoreNote");
+  if(note&&store){
+    const rawNote=store.note||"当前门店经营数据";
+    note.textContent=rawNote.startsWith(store.brand)?rawNote:`${store.brand} · ${rawNote}`;
+  }else if(note)note.textContent="当前角色暂无门店数据";
+  const summary=document.getElementById("botStoreSummary");
+  if(summary){
+    const hasData=store&&ENTRIES[eKey(store.id,month)];
+    summary.classList.toggle("empty",!hasData);
+    summary.innerHTML=botStoreSummaryHtml(store,month);
+  }
+  const chips=document.getElementById("botChips");
+  if(chips)chips.innerHTML=botChips().map(c=>`<button class="bchip" onclick="botAsk(this.textContent)">${escHtml(c)}</button>`).join("");
+  const input=document.getElementById("botInput");
+  if(input&&store)input.placeholder=`问 ${store.name}，例如：本月营业额 / 净利润 / 成本异常`;
+}
+function buildDataContext(q){
+  const store=botCurrentStore();
+  const wantsAll=/各店|全部门店|所有门店|全门店|门店排名|排名|哪家|哪个店|哪些店|亏损门店|top/i.test(q||"");
+  const stores=wantsAll?botScopedStores():(store?[store]:botScopedStores());
+  const latest=botLatestEntryMonth(stores);
+  let csv=`当前门店经营助手数据；未指定月份时默认使用当前门店最新已录入月份：${latest}（${mLabel(latest)}）。\n`;
+  if(store&&!wantsAll)csv+=`当前门店：${store.name}（${store.brand}）。请只围绕该门店回答。\n`;
+  if(wantsAll)csv+=`用户明确要求跨门店对比，本次提供当前角色可见门店数据。\n`;
+  csv+="品牌,门店,月份,营业总收入,实收,原材料,成本合计,毛利,房租,人工,水电,平台佣金,费用合计,净利,净利率\n";
+  stores.forEach(s=>{
     Object.keys(ENTRIES).filter(k=>k.startsWith(s.id+"|")).sort().forEach(k=>{
       const c=calc(ENTRIES[k]);
       csv+=[s.brand,s.name,k.split("|")[1],Math.round(c.sales),Math.round(c.income),Math.round(c.material),Math.round(c.costSum),Math.round(c.gross),Math.round(c.rent),Math.round(c.labor),Math.round(c.utility),Math.round(c.commission),Math.round(c.expSum),Math.round(c.net),(c.margin*100).toFixed(1)+"%"].join(",")+"\n";
@@ -3516,23 +4160,23 @@ function botRender(){
   document.getElementById("botSend").disabled=botBusy;
 }
 function botInit(){
-  document.getElementById("botChips").innerHTML=BOT_CHIPS.map(c=>`<button class="bchip" onclick="botAsk(this.textContent)">${c}</button>`).join("");
+  botRenderStoreContext();
   if(!BOT_HISTORY.length){
-    BOT_HISTORY=[{role:"assistant",html:`<div class="qhead">你好，我是数据助手 👋</div><div class="qsub">当前先提供本地简单查询，不接入 AI 分析。直接输入门店、月份、指标即可。</div>
+    const store=botCurrentStore(), latest=botCurrentMonth(store), latestText=botMonthText(latest), name=store?store.name:"当前门店";
+    BOT_HISTORY=[{role:"assistant",html:`<div class="qhead">${name} 经营助手</div><div class="qsub">先按当前门店给出本地结果；DeepSeek 可用时补充智能分析。未输入月份时默认查看 ${mLabel(latest)}。</div>
       <div class="qlinks">
-        <span class="qlink" onclick="botAsk('保利店7月营业额')">保利店7月营业额</span>
-        <span class="qlink" onclick="botAsk('7月各店净利排名')">7月各店净利排名</span>
-        <span class="qlink" onclick="botAsk('7月哪些店在亏损？')">7月哪些店在亏损？</span>
-        <span class="qlink" onclick="botAsk('荆州之星店人员名单')">荆州之星店人员名单</span>
-        <span class="qlink" onclick="botAsk('霸王茶姬各月营收')">霸王茶姬各月营收</span>
-      </div>
-      <div class="qsub" style="margin-top:10px">支持：① 某店某月的营业额/净利/成本等任意指标　② 排名与亏损筛查　③ 人员名单与员工工资　④ 直接输入门店/地区/人名等关键字搜索。</div>`}];
+        ${botQLink(`${name}${latestText}营业额`,"看营业额")}
+        ${botQLink(`${name}${latestText}净利润`,"看净利润")}
+        ${botQLink(`${name}${latestText}成本异常`,"查成本异常")}
+        ${botQLink(`${name}各月营收`,"看趋势")}
+      </div>`}];
   }
   botRender();
 }
 /* ===== 本地查询引擎：无需联网，直接从数据生成直观结果 ===== */
 const CN_NUM={零:0,一:1,二:2,两:2,三:3,四:4,五:5,六:6,七:7,八:8,九:9,十:10};
 function cnToNum(s){ if(CN_NUM[s]!=null)return CN_NUM[s]; if(s.length===2&&s[0]==="十")return 10+(CN_NUM[s[1]]||0); return 0; }
+function botMonthNum(s){ const n=/^\d+$/.test(String(s))?+s:cnToNum(String(s)); return n>=1&&n<=12?n:0; }
 function mLabel(m){const p=m.split("-");return p[0]+"年"+(+p[1])+"月";}
 const BOT_METRICS=[
   {keys:["营业额","营业总收入","营收","流水","总收入","营业","收入"],f:"sales",label:"营业总收入"},
@@ -3550,10 +4194,31 @@ const BOT_METRICS=[
 ];
 function botParseMonths(q){
   const set=new Set(); let m;
-  let re=/(20\d{2})[-\/.年](\d{1,2})/g; while(m=re.exec(q)) set.add(`${m[1]}-${String(+m[2]).padStart(2,"0")}`);
-  re=/(\d{1,2})\s*月/g; while(m=re.exec(q)){const mo=+m[1]; if(mo>=1&&mo<=12)set.add(`2026-${String(mo).padStart(2,"0")}`);}
-  re=/([一二两三四五六七八九十]{1,3})月/g; while(m=re.exec(q)){const mo=cnToNum(m[1]); if(mo>=1&&mo<=12)set.add(`2026-${String(mo).padStart(2,"0")}`);}
+  const defaultYear=botLatestEntryMonth().split("-")[0]||String(new Date().getFullYear());
+  let re=/(20\d{2})[-\/.](\d{1,2})\s*(?:-|到|至|~)\s*(20\d{2})[-\/.](\d{1,2})/g;
+  while(m=re.exec(q)){
+    const sy=+m[1], sm=+m[2], ey=+m[3], em=+m[4];
+    const start=sy*12+sm, end=ey*12+em;
+    for(let x=Math.min(start,end);x<=Math.max(start,end);x++){const y=Math.floor((x-1)/12), mo=(x-1)%12+1; set.add(`${y}-${String(mo).padStart(2,"0")}`);}
+  }
+  re=/(?:(20\d{2})\s*年?)?\s*(1[0-2]|[1-9]|[一二两三四五六七八九十]{1,3})\s*(?:-|到|至|~)\s*(?:(20\d{2})\s*年?)?\s*(1[0-2]|[1-9]|[一二两三四五六七八九十]{1,3})\s*月/g;
+  while(m=re.exec(q)){
+    const y=+(m[1]||m[3]||defaultYear);
+    const a=botMonthNum(m[2]), b=botMonthNum(m[4]);
+    if(a&&b){for(let mo=Math.min(a,b);mo<=Math.max(a,b);mo++)set.add(`${y}-${String(mo).padStart(2,"0")}`);}
+  }
+  re=/(20\d{2})[-\/.年](\d{1,2})/g; while(m=re.exec(q)) set.add(`${m[1]}-${String(+m[2]).padStart(2,"0")}`);
+  re=/(\d{1,2})\s*月/g; while(m=re.exec(q)){const mo=+m[1]; if(mo>=1&&mo<=12)set.add(`${defaultYear}-${String(mo).padStart(2,"0")}`);}
+  re=/([一二两三四五六七八九十]{1,3})月/g; while(m=re.exec(q)){const mo=cnToNum(m[1]); if(mo>=1&&mo<=12)set.add(`${defaultYear}-${String(mo).padStart(2,"0")}`);}
   return [...set].sort();
+}
+function botWantsMultiMonth(q){return /各月|每月|趋势|全部月份|所有月份|月度|1-5月|1到5月|1至5月/.test(q)||botParseMonths(q).length>1;}
+function botScopeStores(stores,brand){return stores&&stores.length?stores:(brand?visibleStores().filter(s=>s.brand===brand):visibleStores());}
+function botQueryMonths(q,scope){
+  const parsed=botParseMonths(q);
+  if(parsed.length)return parsed;
+  if(botWantsMultiMonth(q)){const months=botAllEntryMonths(scope); if(months.length)return months;}
+  return [botLatestEntryMonth(scope)];
 }
 function botMatchStores(q){
   return visibleStores().filter(s=>{ const base=s.name.replace(/店$/,""); return q.includes(s.name)||(base.length>=2&&q.includes(base)); });
@@ -3573,7 +4238,7 @@ function botSalaryMonths(){ return [...new Set(SALARY.map(e=>e.month))].sort(); 
 
 function botStoreCard(s,m,mt){
   const e=ENTRIES[eKey(s.id,m)];
-  if(!e) return `<div class="qhead">${s.brand} · ${s.name} · ${mLabel(m)}</div><div class="qsub">该门店本月暂无数据记录。</div>`;
+  if(!e) return `<div class="qhead">${s.brand} · ${s.name} · ${mLabel(m)}</div><div class="qsub">该门店本月暂无数据记录。</div>${botMonthHint(botAllEntryMonths([s]),mm=>`${s.name}${botMonthText(mm)}${mt?mt.label:"营业额"}`)}`;
   const c=calc(e), nc=c.net>=0?"pos":"neg";
   let lead="";
   if(mt&&!["sales","income","net","margin"].includes(mt.f))
@@ -3608,7 +4273,7 @@ function botRank(q,m,mt){
   mt=mt||BOT_METRICS.find(x=>x.f==="net");
   const low=/最低|最少|最差|垫底|最亏/.test(q), lossOnly=/亏损|亏钱|赔/.test(q);
   let rows=visibleStores().map(s=>{const e=ENTRIES[eKey(s.id,m)]; if(!e)return null; const c=calc(e); return {s,c,v:c[mt.f]};}).filter(Boolean);
-  if(!rows.length) return {html:`<div class="qhead">${mLabel(m)} · 暂无经营数据</div><div class="qsub">当前没有找到该月份的门店经营记录。可以先录入 ${mLabel(m)} 数据，或改问已有月份的数据。</div>`};
+  if(!rows.length) return {html:`<div class="qhead">${mLabel(m)} · 暂无经营数据</div><div class="qsub">当前没有找到该月份的门店经营记录。可以先录入 ${mLabel(m)} 数据，或改问已有月份的数据。</div>${botMonthHint(botAllEntryMonths(),mm=>`${botMonthText(mm)}各店${mt.label}排名`)}`};
   if(lossOnly){ rows=rows.filter(r=>r.c.net<0).sort((a,b)=>a.c.net-b.c.net);
     if(!rows.length) return {html:`<div class="qhead">${mLabel(m)} · 亏损门店</div><div class="qsub">本月没有门店出现亏损 🎉</div>`}; }
   else rows.sort((a,b)=>low?a.v-b.v:b.v-a.v);
@@ -3618,6 +4283,41 @@ function botRank(q,m,mt){
   const title=lossOnly?`${mLabel(m)} · 亏损门店（${rows.length}家）`:`${mLabel(m)} · ${mt.label}${low?"（升序）":"排名"}`;
   return {html:`<div class="qhead">${title}</div>
     <table><thead><tr><th>#</th><th>门店</th><th class="amt">${mt.label}</th>${showNet?'<th class="amt">净利润</th>':""}</tr></thead><tbody>${body}</tbody></table>`};
+}
+function botStoreMultiMonth(stores,months,mt){
+  mt=mt||BOT_METRICS.find(x=>x.f==="sales");
+  let rows=[];
+  stores.forEach(s=>months.forEach(m=>{
+    const e=ENTRIES[eKey(s.id,m)]; if(!e)return;
+    const c=calc(e), nc=c.net>=0?"pos":"neg";
+    rows.push({s,m,c,nc});
+  }));
+  if(!rows.length){
+    return {html:`<div class="qhead">${stores.map(s=>s.name).join("、")} · 多月份经营</div><div class="qsub">所选月份暂无这些门店的经营数据。</div>${botMonthHint(botAllEntryMonths(stores),mm=>`${stores[0]?.name||""}${botMonthText(mm)}${mt.label}`)}`};
+  }
+  const body=rows.map(r=>`<tr><td>${r.s.name}<span style="color:var(--muted)"> · ${r.s.brand}</span></td><td>${mLabel(r.m)}</td><td class="amt">${dispVal(r.c,mt)}</td><td class="amt">${fmt(r.c.sales)}</td><td class="amt ${r.nc}">${fmt(r.c.net)}</td><td class="amt ${r.nc}">${(r.c.margin*100).toFixed(1)}%</td></tr>`).join("");
+  return {html:`<div class="qhead">${stores.map(s=>s.name).join("、")} · ${mt.label}多月份查询</div>
+    <div class="qsub">已按有数据月份统计：${[...new Set(rows.map(r=>mLabel(r.m)))].join("、")}。</div>
+    <table><thead><tr><th>门店</th><th>月份</th><th class="amt">${mt.label}</th><th class="amt">营业额</th><th class="amt">净利润</th><th class="amt">净利率</th></tr></thead><tbody>${body}</tbody></table>`};
+}
+function botRangeRank(q,months,mt){
+  mt=mt||BOT_METRICS.find(x=>x.f==="net");
+  const low=/最低|最少|最差|垫底|最亏/.test(q), lossOnly=/亏损|亏钱|赔/.test(q);
+  let rows=visibleStores().map(s=>{
+    let sales=0,income=0,gross=0,net=0,val=0,count=0;
+    months.forEach(m=>{const e=ENTRIES[eKey(s.id,m)]; if(!e)return; const c=calc(e); count++; sales+=c.sales; income+=c.income; gross+=c.gross; net+=c.net; val+=c[mt.f]||0;});
+    if(!count)return null;
+    if(mt.f==="margin")val=income>0?net/income:0;
+    else if(mt.f==="grossMargin")val=income>0?gross/income:0;
+    return {s,sales,income,net,val,count};
+  }).filter(Boolean);
+  if(lossOnly)rows=rows.filter(r=>r.net<0);
+  if(!rows.length)return {html:`<div class="qhead">${months.map(mLabel).join(" 至 ")} · 暂无经营数据</div>${botMonthHint(botAllEntryMonths(),mm=>`${botMonthText(mm)}各店${mt.label}排名`)}`};
+  rows.sort((a,b)=>low?a.val-b.val:b.val-a.val);
+  const body=rows.map((r,i)=>{const nc=r.net>=0?"pos":"neg";return `<tr><td>${i+1}</td><td>${r.s.name}<span style="color:var(--muted)"> · ${r.s.brand}</span></td><td class="amt">${mt.pct?(r.val*100).toFixed(1)+"%":fmt(r.val)}</td><td class="amt">${fmt(r.sales)}</td><td class="amt ${nc}">${fmt(r.net)}</td><td class="amt">${r.count}个月</td></tr>`;}).join("");
+  return {html:`<div class="qhead">${mLabel(months[0])} 至 ${mLabel(months[months.length-1])} · ${lossOnly?"亏损门店":mt.label+"区间排名"}</div>
+    <div class="qsub">金额类指标按月份求和，净利率按区间净利润 / 区间实收收入计算。</div>
+    <table><thead><tr><th>#</th><th>门店</th><th class="amt">${mt.label}</th><th class="amt">营业额</th><th class="amt">净利润</th><th class="amt">覆盖</th></tr></thead><tbody>${body}</tbody></table>`};
 }
 function botBrandMonthly(brand){
   const stores=visibleStores().filter(s=>s.brand===brand);
@@ -3655,14 +4355,15 @@ function botKeyword(q){
   if(!stores.length&&!staff.length) return null;
   let html="";
   if(stores.length){
-    const list=stores.slice(0,20).map(s=>`<span class="qlink" onclick="botAsk('${s.name}${BOT_DEFAULT_MONTH_TEXT}营业额')">${s.name}<span style="color:var(--muted)"> · ${s.brand}</span></span>`).join("");
-    html+=`<div class="qhead">找到 ${stores.length} 家相关门店</div><div class="qsub">点击查看该店 ${BOT_DEFAULT_MONTH_TEXT}经营数据：</div><div class="qlinks">${list}</div>`;
+    const list=stores.slice(0,20).map(s=>botQLink(`${s.name}${botMonthText(botLatestEntryMonth([s]))}营业额`,`${s.name} · ${s.brand}`)).join("");
+    html+=`<div class="qhead">找到 ${stores.length} 家相关门店</div><div class="qsub">点击查看该店最新已录入月份经营数据：</div><div class="qlinks">${list}</div>`;
   }
   if(staff.length){ const d=botStaffDetail(staff); if(d)html+=(html?"<br>":"")+d.html; }
   return {html};
 }
 function localAnswer(q){
-  const stores=botMatchStores(q), brand=botMatchBrand(q), metric=botMatchMetric(q), months=botParseMonths(q);
+  const stores=botMatchStores(q), brand=botMatchBrand(q), metric=botMatchMetric(q);
+  const scope=botScopeStores(stores,brand), months=botQueryMonths(q,scope), wantsMulti=botWantsMultiMonth(q)||months.length>1;
   const wantPerson=/人员|名单|员工|职员|团队|几个人|多少人|人数|花名册|店长是谁|谁是店长/.test(q)||(/工资|薪资|薪水/.test(q)&&!/人工/.test(q));
   const wantRank=/排名|最高|最低|最多|最少|最赚|最亏|最好|最差|哪家|哪个|哪些|垫底|亏损|亏钱|前几|top/i.test(q);
   // 1) 人名 → 工资明细
@@ -3672,27 +4373,109 @@ function localAnswer(q){
   if(wantPerson){ const tgt=stores.length?stores:(brand?visibleStores().filter(s=>s.brand===brand):null);
     if(tgt) return botPersonnel(tgt,months[0]); }
   // 3) 排名 / 亏损筛查
-  if(wantRank){ const m=months[0]||BOT_DEFAULT_MONTH; const r=botRank(q,m,metric); if(r)return r; }
+  if(wantRank){ const r=wantsMulti?botRangeRank(q,months,metric):botRank(q,months[0],metric); if(r)return r; }
   // 4) 品牌 × 各月 / 趋势 / 汇总
-  if(brand&&!stores.length&&(/各月|趋势|每月|汇总|合计|总营收|总营业|总净利/.test(q)||!months.length)) return botBrandMonthly(brand);
+  if(brand&&!stores.length&&(/各月|趋势|每月|汇总|合计|总营收|总营业|总净利/.test(q)||!botParseMonths(q).length)) return botBrandMonthly(brand);
   // 5) 具体门店
   if(stores.length){
-    if(months.length||metric) return {html:stores.map(s=>botStoreCard(s,months[0]||BOT_DEFAULT_MONTH,metric)).join("<br>")};
+    if(wantsMulti) return botStoreMultiMonth(stores,months,metric);
+    if(botParseMonths(q).length||metric) return {html:stores.map(s=>botStoreCard(s,months[0],metric)).join("<br>")};
     return {html:stores.slice(0,6).map(s=>botStoreTrend(s)).join("<br>")};
   }
   // 6) 仅月份（无门店）→ 当月排名
-  if(months.length){ const r=botRank(q,months[0],metric||BOT_METRICS.find(x=>x.f==="net")); if(r)return r; }
+  if(botParseMonths(q).length){ const r=wantsMulti?botRangeRank(q,months,metric||BOT_METRICS.find(x=>x.f==="net")):botRank(q,months[0],metric||BOT_METRICS.find(x=>x.f==="net")); if(r)return r; }
   // 7) 关键字搜索
   return botKeyword(q);
 }
 function botSimpleFallback(){
-  return `<div class="qhead">暂时只支持简单数据查询</div><div class="qsub">现在不接入 AI 小助手。请按「门店 + 月份 + 指标」提问，或查询排名、亏损、人员名单。</div>
+  const store=botCurrentStore(), latest=botCurrentMonth(store), t=botMonthText(latest), name=store?store.name:"当前门店";
+  return `<div class="qhead">本地规则暂未识别</div><div class="qsub">可以围绕${name}直接问营业额、净利润、成本异常或趋势；DeepSeek 后端可用时会补充更自由的智能分析。</div>
     <div class="qlinks">
-      <span class="qlink" onclick="botAsk('保利店7月营业额')">保利店7月营业额</span>
-      <span class="qlink" onclick="botAsk('7月各店净利排名')">7月各店净利排名</span>
-      <span class="qlink" onclick="botAsk('7月哪些店在亏损？')">7月哪些店在亏损？</span>
-      <span class="qlink" onclick="botAsk('荆州之星店人员名单')">荆州之星店人员名单</span>
+      ${botQLink(`${name}${t}营业额`,"看营业额")}
+      ${botQLink(`${name}${t}净利润`,"看净利润")}
+      ${botQLink(`${name}${t}成本异常`,"查成本异常")}
+      ${botQLink(`${name}各月营收`,"看趋势")}
     </div>`;
+}
+function botAssistantHistory(){
+  return BOT_HISTORY.filter(m=>m.text).slice(-8).map(m=>({role:m.role==="assistant"?"assistant":"user",content:m.text}));
+}
+async function botBackendToken(){
+  if(BOT_BACKEND_TOKEN)return BOT_BACKEND_TOKEN;
+  if(!LOGIN_PASS)return "";
+  if(BOT_BACKEND_TOKEN_PROMISE)return BOT_BACKEND_TOKEN_PROMISE;
+  const backendUsername=typeof backendUsernameForRole==="function"?backendUsernameForRole(LOGIN_ROLE):(LOGIN_ROLE==="财务"?"finance":"boss");
+  if(!backendUsername)return "";
+  BOT_BACKEND_TOKEN_PROMISE=fetch("/api/auth/login",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({username:backendUsername,password:LOGIN_PASS})
+  }).then(async r=>{
+    if(!r.ok)return "";
+    const j=await r.json();
+    BOT_BACKEND_TOKEN=(j&&j.success&&j.data&&j.data.token)||"";
+    return BOT_BACKEND_TOKEN;
+  }).catch(()=>"").finally(()=>{BOT_BACKEND_TOKEN_PROMISE=null;});
+  return BOT_BACKEND_TOKEN_PROMISE;
+}
+async function botDeepSeekAnswer(q){
+  const token=await botBackendToken();
+  if(!token)return null;
+  const r=await fetch("/api/assistant/chat",{
+    method:"POST",
+    headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},
+    body:JSON.stringify({message:q,history:botAssistantHistory(),dataContext:buildDataContext(q)})
+  });
+  if(!r.ok)return null;
+  const j=await r.json();
+  return j&&j.success&&j.data?j.data:null;
+}
+function botAiSourceLabel(resp){
+  const ds=(resp&&resp.dataSource)||"";
+  if(ds==="FRONTEND_CONTEXT")return "当前页面可见数据";
+  if(ds==="BACKEND_FINANCE")return "后端财务库数据";
+  if(ds==="AI_ENRICHED_FRONTEND_CONTEXT")return "DeepSeek + 当前页面可见数据";
+  if(ds==="AI_ENRICHED_BACKEND_FINANCE")return "DeepSeek + 后端财务库数据";
+  if(ds==="SYSTEM_GUARDRAIL")return "系统安全边界";
+  if(ds==="LOCAL_RULES")return "本地规则";
+  const source=(resp&&resp.source)||"";
+  if(source.includes("frontend-context"))return "当前页面可见数据";
+  if(source.includes("backend-finance"))return "后端财务库数据";
+  if(source.includes("deepseek"))return "DeepSeek 智能分析";
+  if(source.includes("blocked")||source.includes("out-of-scope"))return "系统安全边界";
+  return "当前系统可见数据";
+}
+function botVisibleScopeText(){
+  const stores=visibleStores();
+  if(CURRENT_ROLE==="店长"&&MANAGED_SID){
+    const s=stores[0]||STORES.find(x=>x.id===MANAGED_SID);
+    return s?`本店：${s.name}`:"本店";
+  }
+  return `当前可见 ${stores.length} 家门店`;
+}
+function botLocalTrustHtml(){
+  return `<div class="qsub">数据来源：页面本地规则 · ${escHtml(botVisibleScopeText())}。页面本地结果优先。</div>`;
+}
+function botAiHtml(resp){
+  resp=resp||{};
+  const source=resp.aiUsed?"DeepSeek 智能分析":(resp.source&&resp.source.includes("backend-finance")?"后端财务库回答":"本地规则回答");
+  const basis=botAiSourceLabel(resp);
+  const month=resp.month?` · 月份 ${escHtml(resp.month)}`:"";
+  const scope=botVisibleScopeText();
+  const warnings=Array.isArray(resp.warnings)&&resp.warnings.length
+    ? `<div class="qsub">${resp.warnings.map(w=>escHtml(w)).join("；")}</div>`
+    : "";
+  const text=escHtml(resp.answer||"").replace(/\n/g,"<br>");
+  return `<div class="qhead">${source}</div><div class="qsub">数据来源：${escHtml(basis)}${month} · ${escHtml(scope)}。页面本地结果优先。</div>${warnings}<div>${text}</div>`;
+}
+function botScopedQuestion(q){
+  const store=botCurrentStore();
+  if(!store)return q;
+  if(botMatchStores(q).length||botMatchBrand(q))return q;
+  if(/各店|全部门店|所有门店|全门店|门店排名|排名|哪家|哪个店|哪些店|亏损门店|top/i.test(q))return q;
+  const month=botCurrentMonth(store);
+  const hasMonth=botParseMonths(q).length||/本月|这个月|当前月|最新|当月/.test(q);
+  return `${store.name}${hasMonth?"":botMonthText(month)}${q}`;
 }
 
 async function botAsk(q){
@@ -3700,10 +4483,15 @@ async function botAsk(q){
   if(!q||botBusy)return;
   document.getElementById("botInput").value="";
   BOT_HISTORY.push({role:"user",text:q});botRender();
+  const askQ=botScopedQuestion(q);
   // —— 本地引擎优先，立即直观呈现 ——
-  let local=null; try{ local=localAnswer(q); }catch(e){ console.error("localAnswer",e); }
-  if(local&&(local.html||local.text)){ BOT_HISTORY.push({role:"assistant",html:local.html,text:local.text||""}); botRender(); return; }
-  BOT_HISTORY.push({role:"assistant",html:botSimpleFallback()});
+  let local=null; try{ local=localAnswer(askQ); }catch(e){ console.error("localAnswer",e); }
+  if(local&&(local.html||local.text)){ BOT_HISTORY.push({role:"assistant",html:local.html?botLocalTrustHtml()+local.html:null,text:local.text||""}); botRender(); }
+  botBusy=true; botRender();
+  let ai=null; try{ ai=await botDeepSeekAnswer(askQ); }catch(e){ console.warn("botDeepSeekAnswer",e); }
+  botBusy=false;
+  if(ai&&(ai.aiUsed||!local)){ BOT_HISTORY.push({role:"assistant",html:botAiHtml(ai),text:ai.answer||""}); botRender(); return; }
+  if(!local){ BOT_HISTORY.push({role:"assistant",html:botSimpleFallback()}); }
   botRender();
 }
 document.getElementById("botSend").onclick=()=>botAsk();
@@ -3969,15 +4757,275 @@ async function renderEleme(month){
   }
 }
 
+/* ---------- 仓库中心 / 运营角色工作台 ---------- */
+function renderRolePending(hostId,title,subtitle,steps){
+  const host=document.getElementById(hostId); if(!host)return;
+  host.innerHTML=`
+    <div class="h"><h1>${title}</h1></div>
+    <div class="card" style="border-left:4px solid var(--primary);margin-bottom:16px">
+      <div style="font-weight:800;font-size:16px;margin-bottom:6px">${subtitle}</div>
+      <div style="font-size:13px;color:var(--muted);line-height:1.7">这个职业入口已经独立出来，当前先不接入真实业务数据，避免把未完成模块伪装成可用功能。</div>
+    </div>
+    <div class="grid2">
+      ${steps.map(s=>`<div class="card"><div class="section-t">${s[0]}</div><div style="font-size:13px;color:var(--muted);line-height:1.7">${s[1]}</div></div>`).join("")}
+    </div>`;
+}
+let WAREHOUSE_DATA=null, WAREHOUSE_LOADING=false, WAREHOUSE_ERROR="";
+function warehouseCanManage(){return isBossRole()||CURRENT_ROLE==="仓库管理员";}
+function warehouseCanOrder(){return warehouseCanManage()||CURRENT_ROLE==="店长";}
+function whMoney(v){return "¥"+Math.round(Number(v||0)).toLocaleString("zh-CN");}
+function whQty(v){return Number(v||0).toLocaleString("zh-CN",{maximumFractionDigits:1});}
+function whKpi(label,value,unit){return `<div class="card kpi"><div class="lab">${label}</div><div class="val">${value}${unit?`<small>${unit}</small>`:""}</div></div>`;}
+function whAlertLabel(level){
+  return {LOW:"低库存",EXPIRING:"临期",OVERSTOCK:"积压",OK:"正常",WARN:"提醒",RISK:"风险"}[level]||level||"-";
+}
+function whAlertColor(level){
+  return level==="OK"?"var(--good)":(level==="LOW"||level==="WARN"?"var(--warn)":"var(--bad)");
+}
+async function warehouseApi(path,options={}){
+  const token=await storageBackendToken();
+  if(!token)throw new Error("请使用老板、仓库管理员或正式门店账号登录后再进入仓库中心");
+  const r=await fetch(path,{
+    ...options,
+    headers:{"Content-Type":"application/json","Authorization":"Bearer "+token,...(options.headers||{})}
+  });
+  const j=await r.json().catch(()=>null);
+  if(!r.ok||!j||j.success===false)throw new Error((j&&j.message)||"仓库接口请求失败");
+  return j.data;
+}
+async function warehouseLoad(force=false){
+  if(WAREHOUSE_LOADING)return;
+  if(force)WAREHOUSE_DATA=null;
+  WAREHOUSE_LOADING=true; WAREHOUSE_ERROR="";
+  renderWarehouse();
+  try{
+    WAREHOUSE_DATA=await warehouseApi("/api/warehouse/overview");
+  }catch(e){
+    WAREHOUSE_ERROR=e.message||"仓库数据加载失败";
+  }finally{
+    WAREHOUSE_LOADING=false;
+    renderWarehouse();
+  }
+}
+function whNum(id){return Number(document.getElementById(id)?.value||0);}
+function whText(id){return (document.getElementById(id)?.value||"").trim();}
+async function warehouseSaveItem(){
+  try{
+    const payload={
+      code:whText("whItemCode"),
+      name:whText("whItemName"),
+      category:whText("whItemCategory"),
+      unit:whText("whItemUnit")||"件",
+      spec:whText("whItemSpec"),
+      unitPrice:whNum("whItemPrice"),
+      shelfLifeDays:Math.round(whNum("whItemShelf")),
+      cupsPerUnit:whNum("whItemCups"),
+      dailyUsageEstimate:whNum("whItemDaily"),
+      minStockDays:Math.round(whNum("whItemMinDays"))||7,
+      maxStockDays:Math.round(whNum("whItemMaxDays"))||60,
+      active:true
+    };
+    if(!payload.code||!payload.name){toast("请填写物料编码和名称");return;}
+    await warehouseApi("/api/warehouse/items",{method:"POST",body:JSON.stringify(payload)});
+    toast("物料已保存");
+    await warehouseLoad(true);
+  }catch(e){toast(e.message||"保存失败");}
+}
+async function warehouseReceiveStock(){
+  try{
+    const payload={
+      itemId:Number(whText("whBatchItem")),
+      batchNo:whText("whBatchNo"),
+      receivedDate:whText("whReceivedDate"),
+      expiryDate:whText("whExpiryDate")||null,
+      quantity:whNum("whBatchQty"),
+      unitCost:whNum("whBatchCost"),
+      note:whText("whBatchNote")
+    };
+    if(!payload.itemId||!payload.batchNo||!payload.receivedDate||payload.quantity<=0){toast("请填写入库物料、批次、日期和数量");return;}
+    await warehouseApi("/api/warehouse/stock-batches",{method:"POST",body:JSON.stringify(payload)});
+    toast("入库已记录");
+    await warehouseLoad(true);
+  }catch(e){toast(e.message||"入库失败");}
+}
+async function warehouseSubmitOrder(){
+  try{
+    const payload={
+      storeId:whText("whStore")||MANAGED_SID,
+      lines:[{itemId:Number(whText("whReqItem")),requestedQuantity:whNum("whReqQty"),note:whText("whReqNote")}],
+      note:whText("whReqNote")
+    };
+    if(!payload.storeId||!payload.lines[0].itemId||payload.lines[0].requestedQuantity<=0){toast("请选择门店、物料并填写叫货数量");return;}
+    await warehouseApi("/api/warehouse/requisitions",{method:"POST",body:JSON.stringify(payload)});
+    toast("叫货单已提交");
+    await warehouseLoad(true);
+  }catch(e){toast(e.message||"提交失败");}
+}
+async function warehouseReview(id,approved){
+  try{
+    const note=approved?"审核通过":"仓库驳回";
+    await warehouseApi(`/api/warehouse/requisitions/${encodeURIComponent(id)}/review`,{method:"POST",body:JSON.stringify({approved,note,lines:[]})});
+    toast(approved?"已审核通过":"已驳回");
+    await warehouseLoad(true);
+  }catch(e){toast(e.message||"操作失败");}
+}
+async function warehouseShip(id){
+  try{
+    if(!confirm("确认按叫货单完成配货并扣减库存？"))return;
+    await warehouseApi(`/api/warehouse/requisitions/${encodeURIComponent(id)}/ship`,{method:"POST",body:"{}"});
+    toast("已完成配货");
+    await warehouseLoad(true);
+  }catch(e){toast(e.message||"配货失败");}
+}
+function whReqActions(r){
+  const actions=[];
+  if(r.status==="SUBMITTED"){
+    actions.push(`<button class="btn-ghost" style="padding:6px 10px;font-size:12px" onclick="warehouseReview('${r.id}',true)">通过</button>`);
+    actions.push(`<button class="btn-ghost" style="padding:6px 10px;font-size:12px" onclick="warehouseReview('${r.id}',false)">驳回</button>`);
+  }
+  if(r.status==="SUBMITTED"||r.status==="APPROVED"){
+    actions.push(`<button class="save" style="width:auto;padding:8px 12px" onclick="warehouseShip('${r.id}')">配货</button>`);
+  }
+  return actions.length?`<div style="display:flex;gap:6px;flex-wrap:wrap">${actions.join("")}</div>`:"-";
+}
+function renderWarehouse(){
+  const host=document.getElementById("v-warehouse"); if(!host)return;
+  if(!WAREHOUSE_DATA&&!WAREHOUSE_LOADING)warehouseLoad();
+  const data=WAREHOUSE_DATA;
+  const canManage=warehouseCanManage();
+  const canOrder=warehouseCanOrder();
+  const itemOpts=(data?.items||[]).map(i=>`<option value="${i.id}">${escHtml(i.name)} · 库存 ${whQty(i.stockQuantity)}${escHtml(i.unit||"")}</option>`).join("");
+  const storeOpts=visibleStores().map(s=>`<option value="${s.id}">${escHtml(s.name)}</option>`).join("");
+  host.innerHTML=`
+    <div class="h">
+      <h1>仓库中心</h1>
+      <button class="btn-ghost" onclick="warehouseLoad(true)">刷新库存</button>
+    </div>
+    ${WAREHOUSE_LOADING&&!data?`<div class="card">正在读取仓库数据...</div>`:""}
+    ${WAREHOUSE_ERROR?`<div class="card" style="border-left:4px solid var(--bad);color:var(--bad)">${escHtml(WAREHOUSE_ERROR)}</div>`:""}
+    ${data?`
+      <div class="kpis wh-kpis" style="margin-bottom:16px">
+        ${whKpi("物料数",data.summary.itemCount,"项")}
+        ${whKpi("库存金额",whMoney(data.summary.stockValue),"")}
+        ${whKpi("低库存",data.summary.lowStockCount,"项")}
+        ${whKpi("临期风险",data.summary.expiringCount,"项")}
+        ${whKpi("待处理叫货",data.summary.pendingRequisitionCount,"单")}
+      </div>
+      <div class="grid2">
+        <div class="card">
+          <div class="section-t">库存预警</div>
+          ${data.alerts.length?data.alerts.slice(0,8).map(a=>`
+            <div style="display:flex;gap:10px;align-items:flex-start;border-bottom:1px solid var(--line);padding:9px 0">
+              <span style="font-size:12px;font-weight:800;color:${a.type==="LOW"?"var(--warn)":"var(--bad)"}">${whAlertLabel(a.type)}</span>
+              <div><b>${escHtml(a.itemName)}</b><div style="font-size:12px;color:var(--muted);margin-top:2px">${escHtml(a.message)}</div></div>
+            </div>`).join(""):`<div style="font-size:13px;color:var(--muted)">暂无库存风险</div>`}
+        </div>
+        <div class="card">
+          <div class="section-t">门店叫货</div>
+          ${canOrder?`
+            <div class="grid2" style="grid-template-columns:${CURRENT_ROLE==="店长"?"1fr":"1fr 1fr"};gap:10px">
+              ${CURRENT_ROLE==="店长"?`<input type="hidden" id="whStore" value="${MANAGED_SID||""}">`:`<div class="field"><label>门店</label><select id="whStore">${storeOpts}</select></div>`}
+              <div class="field"><label>物料</label><select id="whReqItem">${itemOpts}</select></div>
+            </div>
+            <div class="grid2" style="gap:10px">
+              <div class="field"><label>叫货数量</label><input type="number" min="0.01" step="0.01" id="whReqQty" placeholder="例如 1"></div>
+              <div class="field"><label>备注</label><input id="whReqNote" placeholder="例如 本周补货"></div>
+            </div>
+            <button class="save" onclick="warehouseSubmitOrder()">提交叫货</button>
+          `:`<div style="font-size:13px;color:var(--muted)">当前角色只能查看仓库信息。</div>`}
+        </div>
+      </div>
+      ${canManage?`
+        <div class="grid2" style="margin-top:16px">
+          <div class="card">
+            <div class="section-t">新增 / 更新物料</div>
+            <div class="grid2" style="gap:10px">
+              <div class="field"><label>编码</label><input id="whItemCode" placeholder="如 CUP-700"></div>
+              <div class="field"><label>名称</label><input id="whItemName" placeholder="如 700ml杯子"></div>
+              <div class="field"><label>分类</label><input id="whItemCategory" placeholder="原料 / 包材 / 水果"></div>
+              <div class="field"><label>单位</label><input id="whItemUnit" value="件"></div>
+              <div class="field"><label>规格</label><input id="whItemSpec" placeholder="如 15斤/件"></div>
+              <div class="field"><label>单价 ¥</label><input type="number" step="0.01" id="whItemPrice" value="0"></div>
+              <div class="field"><label>保质期天数</label><input type="number" id="whItemShelf" value="365"></div>
+              <div class="field"><label>每件可做杯数</label><input type="number" step="0.01" id="whItemCups" value="0"></div>
+              <div class="field"><label>日均用量(件)</label><input type="number" step="0.01" id="whItemDaily" value="0"></div>
+              <div class="field"><label>低库存预警天数</label><input type="number" id="whItemMinDays" value="7"></div>
+              <div class="field"><label>积压预警天数</label><input type="number" id="whItemMaxDays" value="60"></div>
+            </div>
+            <button class="save" onclick="warehouseSaveItem()">保存物料</button>
+          </div>
+          <div class="card">
+            <div class="section-t">采购到货入库</div>
+            <div class="grid2" style="gap:10px">
+              <div class="field"><label>物料</label><select id="whBatchItem">${itemOpts}</select></div>
+              <div class="field"><label>批次号</label><input id="whBatchNo" value="B${Date.now().toString().slice(-6)}"></div>
+              <div class="field"><label>到货日期</label><input type="date" id="whReceivedDate" value="${todayISO()}"></div>
+              <div class="field"><label>到期日期</label><input type="date" id="whExpiryDate"></div>
+              <div class="field"><label>入库数量</label><input type="number" min="0.01" step="0.01" id="whBatchQty" placeholder="例如 10"></div>
+              <div class="field"><label>入库单价 ¥</label><input type="number" min="0" step="0.01" id="whBatchCost" value="0"></div>
+            </div>
+            <div class="field"><label>备注</label><input id="whBatchNote" placeholder="供应商 / 采购单号"></div>
+            <button class="save" onclick="warehouseReceiveStock()">确认入库</button>
+          </div>
+        </div>`:""}
+      <div class="card" style="margin-top:16px;overflow-x:auto">
+        <div class="section-t">物料库存台账</div>
+        <table class="ranktbl" style="min-width:980px">
+          <thead><tr><th>物料</th><th>分类</th><th>库存</th><th>可用天数</th><th>最近效期</th><th>每件杯数</th><th>金额</th><th>状态</th></tr></thead>
+          <tbody>${data.items.map(i=>`
+            <tr>
+              <td><b>${escHtml(i.name)}</b><div style="font-size:12px;color:var(--muted)">${escHtml(i.code)} · ${escHtml(i.spec||"")}</div></td>
+              <td>${escHtml(i.category||"-")}</td>
+              <td>${whQty(i.stockQuantity)} ${escHtml(i.unit||"")}</td>
+              <td>${Number(i.daysAvailable||0)>0?whQty(i.daysAvailable)+" 天":"未配置"}</td>
+              <td>${escHtml(i.nearestExpiryDate||"-")}</td>
+              <td>${whQty(i.cupsPerUnit)} 杯</td>
+              <td>${whMoney(i.stockValue)}</td>
+              <td><span style="font-weight:800;color:${whAlertColor(i.alertLevel)}">${whAlertLabel(i.alertLevel)}</span><div style="font-size:12px;color:var(--muted)">${escHtml(i.alertText||"")}</div></td>
+            </tr>`).join("")}</tbody>
+        </table>
+      </div>
+      <div class="card" style="margin-top:16px;overflow-x:auto">
+        <div class="section-t">门店叫货单</div>
+        ${data.requisitions.length?`
+          <table class="ranktbl" style="min-width:1000px">
+            <thead><tr><th>单号</th><th>门店</th><th>物料</th><th>金额</th><th>状态</th><th>提交时间</th><th>操作</th></tr></thead>
+            <tbody>${data.requisitions.map(r=>`
+              <tr>
+                <td><b>${escHtml(r.id)}</b><div style="font-size:12px;color:var(--muted)">${escHtml(r.note||"")}</div></td>
+                <td>${escHtml(r.storeName||r.storeId)}</td>
+                <td>${r.lines.map(l=>`${escHtml(l.itemName)} × ${whQty(l.approvedQuantity||l.requestedQuantity)}${escHtml(l.unit||"")}`).join("<br>")}</td>
+                <td>${whMoney(r.totalAmount)}</td>
+                <td><b>${escHtml(r.statusLabel)}</b></td>
+                <td>${escHtml(r.submittedAt||"")}</td>
+                <td>${canManage?whReqActions(r):"-"}</td>
+              </tr>`).join("")}</tbody>
+          </table>`:`<div style="font-size:13px;color:var(--muted)">暂无叫货单</div>`}
+      </div>
+    `:""}`;
+}
+function renderOperations(){
+  renderRolePending("v-operations","运营中心","运营工作台 · 建设中",[
+    ["未来负责","门店活动、运营任务、销售目标、异常跟进和经营动作复盘。"],
+    ["现在可见","先只开放独立入口和权限展示，不混入老板、财务、督导的工作页面。"],
+    ["下一步接入","先做运营任务清单，再接 AI 经营建议和任务闭环。"]
+  ]);
+}
+
 /* ---------- 用户权限（本地模拟；真实多用户需后端） ---------- */
 const ROLE_MATRIX=[
-  ["查看所有门店","✓","✓","仅本店"],
-  ["新增 / 修改数据","✓","✓","✕"],
-  ["删除数据","✓","✕","✕"],
-  ["Excel 导入","✓","✓","✕"],
-  ["Excel 导出","✓","✓","✕"],
-  ["管理门店","✓","✓","✕"],
-  ["管理用户","✓","✕","✕"],
+  ["查看经营数据","全部","全部","全部","本店","建设中","建设中"],
+  ["新增 / 修改利润数据","✓","✓","✕","✕","✕","✕"],
+  ["删除数据","✓","✕","✕","✕","✕","✕"],
+  ["Excel / CSV 导入","✓","✓","✕","✕","✕","✕"],
+  ["财务导出","✓","✓","✕","✕","✕","✕"],
+  ["报销提交 / 审核","审核","提交/处理","✕","提交","✕","✕"],
+  ["督导巡店","✓","✕","✓","查看","✕","✕"],
+  ["员工工资","✓","✓","✕","✕","✕","✕"],
+  ["门店管理","✓","✕","✕","✕","✕","✕"],
+  ["用户权限","✓","✕","✕","✕","✕","✕"],
+  ["仓库中心","全部","✕","✕","叫货","入库/配货","✕"],
+  ["运营中心","查看","✕","✕","✕","✕","建设中"],
 ];
 function renderUsers(){
   const body=document.getElementById("usersBody");
@@ -3985,11 +5033,11 @@ function renderUsers(){
   body.innerHTML=`
     <div class="card" style="margin-bottom:16px;border-left:4px solid var(--primary)">
       <div style="font-weight:700;margin-bottom:4px">当前角色：${CURRENT_USER}</div>
-      <div style="font-size:13px;color:var(--muted);line-height:1.7">右上角可切换角色预览权限效果（本地模拟）。正式多用户登录、账号管理、按门店授权需对接后端（user / user_store_permission 表）。</div>
+      <div style="font-size:13px;color:var(--muted);line-height:1.7">老板是最高权限，负责全部业务；店长可查看本店并提交叫货；仓库管理员负责物料、入库、审核和配货；运营先保留独立入口，后续再接真实业务。</div>
     </div>
     <div class="card" style="overflow-x:auto"><div class="section-t">角色权限矩阵</div>
-      <table class="ranktbl" style="min-width:560px"><thead><tr><th>权限</th><th style="text-align:center">管理员</th><th style="text-align:center">财务人员</th><th style="text-align:center">门店负责人</th></tr></thead>
-      <tbody>${ROLE_MATRIX.map(r=>`<tr><td style="font-weight:600">${r[0]}</td><td style="text-align:center">${yn(r[1])}</td><td style="text-align:center">${yn(r[2])}</td><td style="text-align:center">${yn(r[3])}</td></tr>`).join("")}</tbody></table>
+      <table class="ranktbl" style="min-width:880px"><thead><tr><th>权限</th><th style="text-align:center">老板</th><th style="text-align:center">财务</th><th style="text-align:center">督导</th><th style="text-align:center">店长</th><th style="text-align:center">仓库管理员</th><th style="text-align:center">运营</th></tr></thead>
+      <tbody>${ROLE_MATRIX.map(r=>`<tr><td style="font-weight:600">${r[0]}</td>${r.slice(1).map(v=>`<td style="text-align:center">${yn(v)}</td>`).join("")}</tr>`).join("")}</tbody></table>
     </div>`;
 }
 document.getElementById("addStoreBtn").onclick=async()=>{
@@ -4048,7 +5096,11 @@ function salaryFloorFor(position){return SALARY_FLOOR[position]||0;}
 // 有效保底：满勤(出勤天数≥当月满勤=当月天数−4，或出勤留空按整月)享受全额保底；缺勤当月不享受保底(返回0)；非正式岗位无保底
 function salaryFloorEff(position,attendance,month){
   const base=salaryFloorFor(position); if(!base)return 0;
+<<<<<<< HEAD
   if(salIsFeb(month))return 0; // 2月不参与保底（需管理员手动核定）
+=======
+  if(/-02$/.test(String(month||"")))return 0; // 2月不参与保底（需老板手动核定）
+>>>>>>> codex/deepseek-assistant
   const att=parseFloat(attendance), full=salaryWorkdays(month);
   if(isNaN(att)||!full)return base;   // 出勤无数字 → 正式岗位按整月享受全额保底
   return att>=full?base:0;            // 缺勤当月不享受满勤保底，按实际工资项发
@@ -4242,7 +5294,11 @@ function salaryFloorHint(pos,att,month,floor,core,finalGross){
   if(i2r&&i2r.checked){el.innerHTML=`🎓→👤 实习转正当月：按实习段 + 转正段相加实发（不享受满勤保底），应发 <b>¥${salMoney(finalGross)}</b>`;el.style.color="var(--primary)";return;}
   const std=salaryFloorFor(pos);
   if(!std){el.textContent=pos?"该职位无保底工资":"";el.style.color="var(--muted)";return;}
+<<<<<<< HEAD
   if(!floor){el.textContent=salIsFeb(month)?`2月不参与保底，按实际工资项发（由管理员手动核定）`:`缺勤月（出勤 ${att||"?"} < 满勤 ${salaryWorkdays(month)} 天）不享受保底，按实际工资项发`;el.style.color="var(--muted)";return;}
+=======
+  if(!floor){el.textContent=/-02$/.test(String(month||""))?`2月不参与保底，按实际工资项发（由老板手动核定）`:`缺勤月（出勤 ${att||"?"} < 满勤 ${salaryWorkdays(month)} 天）不享受保底，按实际工资项发`;el.style.color="var(--muted)";return;}
+>>>>>>> codex/deepseek-assistant
   if(core<floor){el.innerHTML=`⛑ 已触发保底：不含加班/工龄合计 ¥${salMoney(core)} ＜ ${pos}保底 ¥${floor} → 按保底发，应发 = ¥${floor} + 加班/工龄 = <b>¥${salMoney(finalGross)}</b>`;el.style.color="var(--warn)";}
   else{el.innerHTML=`✓ 不含加班/工龄合计 ¥${salMoney(core)} ≥ ${pos}保底 ¥${floor}，按实际工资项发`;el.style.color="var(--good)";}
 }
@@ -4463,7 +5519,7 @@ async function salaryDelete(id){
   salaryAfterChange();toast("已删除");
 }
 async function salaryDeleteMonth(){
-  if(!can("delete")){toast("只有管理员可以删除");return;}
+  if(!can("delete")){toast("只有老板可以删除");return;}
   const month=SALARY_MONTH;
   const scope=SALARY.filter(e=>e.month===month&&(SALARY_SID==="all"||e.sid===SALARY_SID));
   if(!scope.length){toast(`${month} 无可删除的工资记录`);return;}

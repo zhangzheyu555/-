@@ -2,15 +2,19 @@ package com.storeprofit.system.finance;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.storeprofit.system.platform.tenant.TenantDefaults;
 import com.storeprofit.system.storage.StorageService;
 import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.YearMonth;
 import java.time.ZoneId;
+import java.util.Arrays;
 import java.util.Iterator;
 import java.util.Map;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.DependsOn;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -20,19 +24,37 @@ public class FinanceSeedService {
   private final FinanceRepository financeRepository;
   private final StorageService storageService;
   private final ObjectMapper objectMapper;
+  private final Environment environment;
+  private final boolean demoSeedEnabled;
+  private final boolean migrationAutoRun;
 
-  public FinanceSeedService(FinanceRepository financeRepository, StorageService storageService, ObjectMapper objectMapper) {
+  public FinanceSeedService(
+      FinanceRepository financeRepository,
+      StorageService storageService,
+      ObjectMapper objectMapper,
+      Environment environment,
+      @Value("${app.seed.demo-enabled:false}") boolean demoSeedEnabled,
+      @Value("${app.migration.auto-run:false}") boolean migrationAutoRun
+  ) {
     this.financeRepository = financeRepository;
     this.storageService = storageService;
     this.objectMapper = objectMapper;
+    this.environment = environment;
+    this.demoSeedEnabled = demoSeedEnabled;
+    this.migrationAutoRun = migrationAutoRun;
   }
 
   @PostConstruct
   public void seed() {
-    if (financeRepository.profitCount() == 0) {
+    if (!shouldSeedDemoData() && !migrationAutoRun) {
+      return;
+    }
+    if (migrationAutoRun && financeRepository.profitCount(TenantDefaults.DEFAULT_TENANT_ID) == 0) {
       seedLegacyEntries();
     }
-    seedFallbackEntries();
+    if (shouldSeedDemoData()) {
+      seedFallbackEntries();
+    }
   }
 
   private int seedLegacyEntries() {
@@ -44,11 +66,11 @@ public class FinanceSeedService {
         while (fields.hasNext()) {
           Map.Entry<String, JsonNode> entry = fields.next();
           String[] parts = entry.getKey().split("\\|");
-          if (parts.length != 2 || !parts[1].matches("\\d{4}-\\d{2}") || !financeRepository.storeExists(parts[0])) {
+          if (parts.length != 2 || !parts[1].matches("\\d{4}-\\d{2}") || !financeRepository.storeExists(TenantDefaults.DEFAULT_TENANT_ID, parts[0])) {
             continue;
           }
           JsonNode value = entry.getValue();
-          financeRepository.upsert(new ProfitEntryRequest(
+          financeRepository.upsert(TenantDefaults.DEFAULT_TENANT_ID, new ProfitEntryRequest(
               parts[0],
               parts[1],
               firstAmount(value, "sales", "rev"),
@@ -80,11 +102,11 @@ public class FinanceSeedService {
 
   private void seedFallbackEntries() {
     YearMonth current = YearMonth.now(BUSINESS_ZONE);
-    for (String storeId : financeRepository.storeIds()) {
+    for (String storeId : financeRepository.storeIds(TenantDefaults.DEFAULT_TENANT_ID)) {
       for (int i = 0; i < 4; i++) {
         YearMonth month = current.minusMonths(i);
-        if (!financeRepository.entryExists(storeId, month.toString())) {
-          financeRepository.upsert(fallback(storeId, month.toString()), null);
+        if (!financeRepository.entryExists(TenantDefaults.DEFAULT_TENANT_ID, storeId, month.toString())) {
+          financeRepository.upsert(TenantDefaults.DEFAULT_TENANT_ID, fallback(storeId, month.toString()), null);
         }
       }
     }
@@ -147,5 +169,10 @@ public class FinanceSeedService {
 
   private BigDecimal percent(BigDecimal value, String ratio) {
     return value.multiply(new BigDecimal(ratio)).setScale(2, RoundingMode.HALF_UP);
+  }
+
+  private boolean shouldSeedDemoData() {
+    return demoSeedEnabled || Arrays.stream(environment.getActiveProfiles())
+        .anyMatch(profile -> "dev".equalsIgnoreCase(profile) || "demo".equalsIgnoreCase(profile));
   }
 }

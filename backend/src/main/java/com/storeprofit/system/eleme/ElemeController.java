@@ -1,10 +1,13 @@
 package com.storeprofit.system.eleme;
 
 import com.storeprofit.system.common.ApiResponse;
+import com.storeprofit.system.platform.auth.AccessControlService;
+import com.storeprofit.system.platform.auth.AuthUser;
 import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -21,24 +24,37 @@ import org.springframework.web.bind.annotation.RestController;
 public class ElemeController {
   private final ElemeProperties properties;
   private final ElemeOrderService orderService;
+  private final AccessControlService accessControl;
 
-  public ElemeController(ElemeProperties properties, ElemeOrderService orderService) {
+  public ElemeController(
+      ElemeProperties properties,
+      ElemeOrderService orderService,
+      AccessControlService accessControl
+  ) {
     this.properties = properties;
     this.orderService = orderService;
+    this.accessControl = accessControl;
   }
 
   @GetMapping("/status")
-  public ApiResponse<Map<String, Object>> status() {
+  public ApiResponse<Map<String, Object>> status(
+      @RequestHeader(value = "Authorization", required = false) String authorization
+  ) {
+    AuthUser user = accessControl.requireUser(authorization);
+    accessControl.requirePlatformAccess(user);
     return ApiResponse.ok(Map.of(
         "configured", properties.isConfigured(),
-        "mode", properties.isConfigured() ? "LIVE" : "DEMO",
-        "shopCount", properties.getShops().isEmpty() ? 3 : properties.getShops().size()));
+        "mode", properties.isConfigured() ? "LIVE" : "UNCONFIGURED",
+        "shopCount", properties.getShops().size()));
   }
 
   @GetMapping("/summary")
   public ApiResponse<ElemeSummaryResponse> summary(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
       @RequestParam(name = "month", required = false) String month,
       @RequestParam(name = "days", defaultValue = "7") int days) {
+    AuthUser user = accessControl.requireUser(authorization);
+    accessControl.requirePlatformAccess(user);
     if (month != null && !month.isBlank()) {
       return ApiResponse.ok(orderService.summaryForMonth(month));
     }

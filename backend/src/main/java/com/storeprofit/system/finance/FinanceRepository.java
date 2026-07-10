@@ -22,18 +22,19 @@ public class FinanceRepository {
     this.namedJdbcTemplate = namedJdbcTemplate;
   }
 
-  public List<ProfitEntryResponse> entries(String month, Long brandId, String storeId) {
+  public List<ProfitEntryResponse> entries(long tenantId, String month, Long brandId, String storeId) {
     StringBuilder sql = new StringBuilder("""
         select p.id, p.store_id, s.code as store_code, s.name as store_name, s.brand_id,
                b.name as brand_name, s.area, s.manager, p.month, p.sales, p.refund, p.discount,
                p.material, p.packaging, p.loss, p.cost_other, p.rent, p.labor, p.utility,
                p.property, p.commission, p.promo, p.repair, p.equip, p.exp_other, p.note
         from profit_entry p
-        join store_branch s on s.id = p.store_id
-        left join brand b on b.id = s.brand_id
-        where 1 = 1
+        join store_branch s on s.id = p.store_id and s.tenant_id = p.tenant_id
+        left join brand b on b.id = s.brand_id and b.tenant_id = s.tenant_id
+        where p.tenant_id = :tenantId
         """);
     MapSqlParameterSource params = new MapSqlParameterSource();
+    params.addValue("tenantId", tenantId);
     if (month != null && !month.isBlank()) {
       sql.append(" and p.month = :month");
       params.addValue("month", month);
@@ -51,19 +52,19 @@ public class FinanceRepository {
     return namedJdbcTemplate.query(query, params, this::mapEntry);
   }
 
-  public Optional<ProfitEntryResponse> entry(String storeId, String month) {
-    List<ProfitEntryResponse> rows = entries(month, null, storeId);
+  public Optional<ProfitEntryResponse> entry(long tenantId, String storeId, String month) {
+    List<ProfitEntryResponse> rows = entries(tenantId, month, null, storeId);
     return rows.stream().findFirst();
   }
 
-  public void upsert(ProfitEntryRequest request, Long userId) {
+  public void upsert(long tenantId, ProfitEntryRequest request, Long userId) {
     jdbcTemplate.update("""
         insert into profit_entry(
-          store_id, month, sales, refund, discount, material, packaging, loss, cost_other,
+          tenant_id, store_id, month, sales, refund, discount, material, packaging, loss, cost_other,
           rent, labor, utility, property, commission, promo, repair, equip, exp_other,
           note, created_by, updated_by, created_at
         )
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
         on duplicate key update
           sales = values(sales),
           refund = values(refund),
@@ -85,6 +86,7 @@ public class FinanceRepository {
           updated_by = values(updated_by),
           updated_at = current_timestamp
         """,
+        tenantId,
         request.storeId(),
         request.month(),
         amount(request.sales()),
@@ -109,43 +111,66 @@ public class FinanceRepository {
     );
   }
 
-  public List<String> availableMonths() {
+  public List<String> availableMonths(long tenantId) {
     return jdbcTemplate.queryForList("""
         select distinct month
         from profit_entry
+        where tenant_id = ?
         order by month desc
-        """, String.class);
+        """, String.class, tenantId);
   }
 
-  public int profitCount() {
-    Integer count = jdbcTemplate.queryForObject("select count(*) from profit_entry", Integer.class);
+  public int profitCount(long tenantId) {
+    Integer count = jdbcTemplate.queryForObject("select count(*) from profit_entry where tenant_id = ?", Integer.class, tenantId);
     return count == null ? 0 : count;
   }
 
-  public List<String> storeIds() {
-    return jdbcTemplate.queryForList("select id from store_branch order by id", String.class);
+  public List<String> storeIds(long tenantId) {
+    return jdbcTemplate.queryForList("select id from store_branch where tenant_id = ? order by id", String.class, tenantId);
   }
 
-  public boolean storeExists(String storeId) {
-    Integer count = jdbcTemplate.queryForObject("select count(*) from store_branch where id = ?", Integer.class, storeId);
+  public boolean storeExists(long tenantId, String storeId) {
+    Integer count = jdbcTemplate.queryForObject(
+        "select count(*) from store_branch where tenant_id = ? and id = ?",
+        Integer.class,
+        tenantId,
+        storeId
+    );
     return count != null && count > 0;
   }
 
-  public boolean entryExists(String storeId, String month) {
+  public boolean entryExists(long tenantId, String storeId, String month) {
     Integer count = jdbcTemplate.queryForObject(
-        "select count(*) from profit_entry where store_id = ? and month = ?",
+        "select count(*) from profit_entry where tenant_id = ? and store_id = ? and month = ?",
         Integer.class,
+        tenantId,
         storeId,
         month
     );
     return count != null && count > 0;
   }
 
-  public void logSave(Long operatorId, String operatorName, String storeId, String month) {
+  public void deleteEntry(long tenantId, String storeId, String month) {
+    jdbcTemplate.update(
+        "delete from profit_entry where tenant_id = ? and store_id = ? and month = ?",
+        tenantId,
+        storeId,
+        month
+    );
+  }
+
+  public void logSave(long tenantId, Long operatorId, String operatorName, String storeId, String month) {
     jdbcTemplate.update("""
-        insert into operation_log(operator_id, operator_name, action, target_type, target_id, store_id, month, reason, created_at)
-        values (?, ?, '保存', 'profit_entry', ?, ?, ?, '利润录入保存', current_timestamp)
-        """, operatorId, operatorName, storeId + "|" + month, storeId, month);
+        insert into operation_log(tenant_id, operator_id, operator_name, action, target_type, target_id, store_id, month, reason, created_at)
+        values (?, ?, ?, '保存', 'profit_entry', ?, ?, ?, '利润录入保存', current_timestamp)
+        """, tenantId, operatorId, operatorName, storeId + "|" + month, storeId, month);
+  }
+
+  public void logDelete(long tenantId, Long operatorId, String operatorName, String storeId, String month) {
+    jdbcTemplate.update("""
+        insert into operation_log(tenant_id, operator_id, operator_name, action, target_type, target_id, store_id, month, reason, created_at)
+        values (?, ?, ?, 'delete', 'profit_entry', ?, ?, ?, 'profit entry deleted', current_timestamp)
+        """, tenantId, operatorId, operatorName, storeId + "|" + month, storeId, month);
   }
 
   private ProfitEntryResponse mapEntry(ResultSet rs, int rowNum) throws SQLException {
@@ -190,6 +215,7 @@ public class FinanceRepository {
         loss,
         costOther,
         costSum,
+        ratio(costSum, income),
         gross,
         ratio(gross, income),
         rent,
