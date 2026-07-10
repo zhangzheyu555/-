@@ -963,7 +963,7 @@ function startFastLogin(){
   const loading=document.getElementById("loading");
   if(loading)loading.style.display="none";
   showLogin();
-  DATA_INIT_PROMISE=init().catch(()=>null);
+  // 登录已搬到后端：系统数据需登录拿到 token 后才能读，所以不再在登录前后台预加载。
 }
 function showLogin(){
   const L=document.getElementById("login");L.style.display="flex";
@@ -976,22 +976,31 @@ async function login(){
   const err=document.getElementById("loginErr");
   const btn=document.getElementById("loginBtn");
   if(!v){err.textContent="请输入密码";return;}
-  if(!DATA_READY){
-    err.textContent="正在准备系统数据，请稍等几秒…";
-    btn.disabled=true;
-    btn.textContent="正在准备";
-    await DATA_INIT_PROMISE;
-    btn.disabled=false;
-    btn.textContent="登 录";
-    if(DATA_INIT_ERROR){
+  err.textContent="";
+  btn.disabled=true; btn.textContent="正在登录";
+  try{
+    // 1) 密码交给后端校验，通过则拿到 token（登录逻辑不再在浏览器里做）
+    let d=null;
+    try{
+      const r=await fetch("/api/app/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:v})});
+      d=await r.json().catch(()=>null);
+      if(!r.ok||!d||!d.success||!d.data){ err.textContent=(d&&d.message)||"密码不正确"; return; }
+    }catch(e){ err.textContent="无法连接服务器，请检查网络后重试。"; return; }
+    setAppToken(d.data.token);
+    LOGIN_ROLE=d.data.role; CURRENT_ROLE=d.data.role; MANAGED_SID=d.data.sid||null; LOGIN_USER=d.data.name||d.data.role;
+    // 2) 拿到 token 后再加载系统数据（此时 /api/storage 请求已带 token）
+    btn.textContent="正在加载";
+    DATA_INIT_PROMISE=init();
+    await DATA_INIT_PROMISE.catch(()=>null);
+    if(!DATA_READY){
       err.textContent="数据加载失败，请刷新页面或确认后端服务正常。";
+      setAppToken("");
       return;
     }
+    enterApp();
+  }finally{
+    btn.disabled=false; btn.textContent="登 录";
   }
-  const a=findByPass(v);
-  if(!a){err.textContent="密码不正确";return;}
-  LOGIN_ROLE=a.role; CURRENT_ROLE=a.role; MANAGED_SID=a.sid||null; LOGIN_USER=a.name||a.role;
-  enterApp();
 }
 function enterApp(){
   AUTHED=true;
@@ -1008,7 +1017,14 @@ function setupRoles(){
   document.getElementById("roleSel").onchange=e=>{ CURRENT_ROLE=e.target.value; if(CURRENT_ROLE==="店长"&&!MANAGED_SID)MANAGED_SID=STORES[0]?.id; applyRole(); };
   rs.onchange=e=>{ MANAGED_SID=e.target.value; applyRole(); };
 }
-document.getElementById("logoutBtn").onclick=()=>{AUTHED=false;document.getElementById("app").style.display="none";document.getElementById("pin").value="";document.getElementById("loginErr").textContent="";showLogin();};
+document.getElementById("logoutBtn").onclick=async ()=>{
+  try{ await fetch("/api/app/logout",{method:"POST",headers:appAuthHeaders()}); }catch(_){}
+  setAppToken(""); AUTHED=false; DATA_READY=false;
+  document.getElementById("app").style.display="none";
+  document.getElementById("pin").value="";
+  document.getElementById("loginErr").textContent="";
+  showLogin();
+};
 
 /* ---------- nav ---------- */
 document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{

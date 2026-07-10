@@ -239,6 +239,14 @@ async function importBackup(input){
   }
 }
 
+/* ===== 后端登录令牌 =====
+   登录已搬到后端（POST /api/app/login）。登录成功拿到 token 后，所有 /api/storage
+   请求都要带上它，否则后端返回 401。token 只存在内存里，刷新页面即需重新登录
+   （与原本刷新即回登录页的行为一致，无回归）。 */
+let APP_TOKEN="";
+function setAppToken(t){ APP_TOKEN=t||""; }
+function appAuthHeaders(extra){ const h=Object.assign({},extra||{}); if(APP_TOKEN)h["Authorization"]="Bearer "+APP_TOKEN; return h; }
+
 async function sGet(k){
   try{
     if(CLOUD_OK&&CLOUDDB){
@@ -250,7 +258,7 @@ async function sGet(k){
     }
     if(location.protocol==="http:"||location.protocol==="https:"){
       try{
-        const r=await fetch("/api/storage?key="+encodeURIComponent(k));
+        const r=await fetch("/api/storage?key="+encodeURIComponent(k),{headers:appAuthHeaders()});
         if(r.ok){const d=await r.json();return d&&d.value!=null?JSON.parse(d.value):null;}
       }catch(_){/* API 不可用时继续使用浏览器本地存储 */}
     }
@@ -273,7 +281,7 @@ async function sSet(k,v){
     if(location.protocol==="http:"||location.protocol==="https:"){
       let serverErr=null;
       try{
-        const r=await fetch("/api/storage",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:k,value})});
+        const r=await fetch("/api/storage",{method:"POST",headers:appAuthHeaders({"Content-Type":"application/json"}),body:JSON.stringify({key:k,value})});
         if(r.ok)return true;
         serverErr="HTTP "+r.status;
       }catch(e){ serverErr=(e&&e.message)||"网络错误"; }
