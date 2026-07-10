@@ -34,11 +34,22 @@ def get_model(model_path: str) -> YOLO:
     return YOLO(model_path)
 
 
+# 标注图最长边上限：原图分辨率的 PNG base64 可达几十 MB，会撑爆 Spring 代理端读取；
+# 旧版页面入库前也只保留最长边 900，返回 1280 已绰绰有余
+ANNOTATED_MAX_SIDE = 1280
+
+
 def image_to_data_url(image: Image.Image) -> str:
+    longest = max(image.size)
+    if longest > ANNOTATED_MAX_SIDE:
+        scale = ANNOTATED_MAX_SIDE / longest
+        image = image.resize(
+            (round(image.width * scale), round(image.height * scale)), Image.LANCZOS
+        )
     buffer = BytesIO()
-    image.save(buffer, format="PNG")
+    image.convert("RGB").save(buffer, format="JPEG", quality=85)
     encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
-    return f"data:image/png;base64,{encoded}"
+    return f"data:image/jpeg;base64,{encoded}"
 
 
 def default_deduction(detections: List[dict], auto_status: str) -> dict:

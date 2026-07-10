@@ -35,8 +35,20 @@ const visibleItems = computed(() => props.items.filter((item) => {
   }
   if (props.selectedCategory === 'all') return true
   const categoryId = Number(props.selectedCategory.replace(/^id:/, ''))
-  return item.categoryId === categoryId
+  return selectedCategoryIds(categoryId).has(item.categoryId || -1)
 }))
+
+function selectedCategoryIds(categoryId: number) {
+  const ids = new Set<number>([categoryId])
+  const visit = (categories: WarehouseItemCategory[]) => {
+    for (const category of categories) {
+      if (ids.has(category.parentId || -1)) ids.add(category.id)
+      visit(category.children || [])
+    }
+  }
+  visit(props.categories)
+  return ids
+}
 
 function categoryName(item: WarehouseItem) {
   return item.categoryName || item.category || '未分类'

@@ -132,17 +132,21 @@ public class AuthRepository {
   }
 
   public void migrateAdminAccountToBoss(long tenantId) {
-    jdbcTemplate.update("""
-        update auth_user admin_user
-        left join auth_user boss_user
-          on boss_user.tenant_id = admin_user.tenant_id
-         and boss_user.username = 'boss'
-        set admin_user.username = case when boss_user.id is null then 'boss' else admin_user.username end,
-            admin_user.enabled = case when boss_user.id is null then admin_user.enabled else 0 end,
-            admin_user.role = 'BOSS',
-            admin_user.display_name = '老板'
-        where admin_user.tenant_id = ? and admin_user.username = 'admin'
-        """, tenantId);
+    // 拆成先查再改：MySQL 的 update...join 语法 H2 不认，而 MySQL 又不允许
+    // 在 update 的子查询里引用目标表。启动引导单线程执行，无并发风险。
+    if (userExists(tenantId, "boss")) {
+      jdbcTemplate.update("""
+          update auth_user
+          set enabled = 0, role = 'BOSS', display_name = '老板'
+          where tenant_id = ? and username = 'admin'
+          """, tenantId);
+    } else {
+      jdbcTemplate.update("""
+          update auth_user
+          set username = 'boss', role = 'BOSS', display_name = '老板'
+          where tenant_id = ? and username = 'admin'
+          """, tenantId);
+    }
     jdbcTemplate.update("""
         update auth_user
         set role = 'BOSS',

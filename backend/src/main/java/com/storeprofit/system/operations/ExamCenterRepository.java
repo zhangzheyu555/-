@@ -118,7 +118,7 @@ public class ExamCenterRepository {
           insert into training_exam_paper(
             tenant_id, paper_code, paper_name, role_scope, pass_score, enabled, created_at, updated_at
           ) values (?, ?, ?, ?, ?, ?, current_timestamp, current_timestamp)
-          """, Statement.RETURN_GENERATED_KEYS);
+          """, new String[]{"id"}); // 显式只取 id：H2 会把所有 default 列都当 generated key 返回，getKey() 会炸
       ps.setLong(1, tenantId);
       ps.setString(2, code);
       ps.setString(3, name);
@@ -234,7 +234,7 @@ public class ExamCenterRepository {
             tenant_id, paper_id, title, status, start_at, due_at, target_roles,
             created_by, published_by, published_at, created_at, updated_at
           ) values (?, ?, ?, 'PUBLISHED', ?, ?, ?, ?, ?, current_timestamp, current_timestamp, current_timestamp)
-          """, Statement.RETURN_GENERATED_KEYS);
+          """, new String[]{"id"}); // 显式只取 id：H2 会把所有 default 列都当 generated key 返回，getKey() 会炸
       ps.setLong(1, tenantId);
       ps.setLong(2, paperId);
       ps.setString(3, title);

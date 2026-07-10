@@ -183,6 +183,9 @@ public class RoleTodoService {
     String normalizedTodoId = requireText(todoId, "BAD_TODO", "Todo id is required");
     String reason = requireText(request == null ? null : request.reason(), "BAD_REASON", "Escalation reason is required");
     String severity = normalizeEscalationSeverity(request == null ? null : request.severity());
+    // 设计上（见 RoleTodoServiceTest.financeCanEscalateTodoWithReasonAndBossCanSeeIt）上报是
+    // 实名+必填原因的自由动作，todoId 允许是任意业务源引用，不强制对应当前可见待办；
+    // 代价是已登录角色可以用不存在的 id 制造老板待办（垃圾数据风险，接受该取舍）。
     String escalationId = "esc-" + UUID.randomUUID();
     String bossTodoId = "boss-escalation-" + escalationId;
     escalationRepository.save(new RoleTodoEscalationRecord(
