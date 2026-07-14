@@ -22,21 +22,31 @@ spring:
           no-cache: true
           must-revalidate: true
   datasource:
-    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:store_profit}?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
-    username: ${MYSQL_USERNAME:root}
-    password: ${MYSQL_PASSWORD:}
+    url: jdbc:mysql://${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}?createDatabaseIfNotExist=false&useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&sslMode=${MYSQL_SSL_MODE:DISABLED}&allowPublicKeyRetrieval=false&connectTimeout=2000&socketTimeout=2000
+    username: ${MYSQL_USERNAME}
+    password: ${MYSQL_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      connection-timeout: 2000
+      validation-timeout: 1000
+      initialization-fail-timeout: 2000
   flyway:
     enabled: true
     locations: classpath:db/migration
     encoding: UTF-8
-    baseline-on-migrate: true
+    baseline-on-migrate: false
+    out-of-order: false
+    clean-disabled: true
+    validate-on-migrate: true
+    validate-migration-naming: true
+    table: flyway_schema_history
   servlet:
     multipart:
-      max-file-size: 20MB
-      max-request-size: 25MB
+      max-file-size: 10MB
+      max-request-size: 65MB
 
 app:
+  environment: ${APP_ENV}
   version: 0.5.0-phase5-admin-export
   seed:
     demo-enabled: ${APP_SEED_DEMO_ENABLED:false}
@@ -61,8 +71,16 @@ app:
     timeout: ${ELEME_TIMEOUT:20s}
     # 已授权门店（shopId:门店名），逗号分隔；留空时接口返回未配置状态，不生成示例营业数据
     shops: ${ELEME_SHOPS:}
+    # 回调默认关闭。仅在平台/网关契约确认后，显式设置 HMAC_SHA256_BODY 和独立密钥。
+    webhook-secret: ${ELEME_WEBHOOK_SECRET:}
+    webhook-signature-mode: ${ELEME_WEBHOOK_SIGNATURE_MODE:DISABLED}
+    webhook-signature-header: ${ELEME_WEBHOOK_SIGNATURE_HEADER:X-Eleme-Signature}
+    webhook-event-id-header: ${ELEME_WEBHOOK_EVENT_ID_HEADER:X-Eleme-Event-Id}
+    webhook-max-payload-bytes: ${ELEME_WEBHOOK_MAX_PAYLOAD_BYTES:1048576}
   auth:
     token-ttl-hours: 12
+  storage:
+    expense-supplements-root: ${APP_EXPENSE_SUPPLEMENT_STORAGE_ROOT:./expense-supplements}
   exception:
     # 经营异常阈值可通过环境同名配置覆盖，不在前端写死。
     cost-ratio-threshold: ${APP_EXCEPTION_COST_RATIO_THRESHOLD:0.45}
@@ -84,13 +102,16 @@ app:
   assistant:
     deepseek:
       enabled: ${DEEPSEEK_ENABLED:true}
-      api-key: ${DEEPSEEK_API_KEY:${DEEPSEEK_KEY:${OPENAI_API_KEY:}}}
-      base-url: ${DEEPSEEK_BASE_URL:${OPENAI_BASE_URL:https://api.deepseek.com}}
+      api-key: ${DEEPSEEK_API_KEY:}
+      base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
       model: ${DEEPSEEK_MODEL:deepseek-v4-flash}
       max-tokens: ${DEEPSEEK_MAX_TOKENS:1200}
       temperature: ${DEEPSEEK_TEMPERATURE:0.2}
       connect-timeout: ${DEEPSEEK_CONNECT_TIMEOUT:5s}
-      timeout: ${DEEPSEEK_TIMEOUT:45s}
+      timeout: ${DEEPSEEK_TIMEOUT_SECONDS:45}s
+      max-requests-per-minute: ${DEEPSEEK_MAX_REQUESTS_PER_MINUTE:30}
+      circuit-failure-threshold: ${DEEPSEEK_CIRCUIT_FAILURE_THRESHOLD:3}
+      circuit-open-duration: ${DEEPSEEK_CIRCUIT_OPEN_DURATION:30s}
       blocked-words:
         - 赌博
         - 博彩

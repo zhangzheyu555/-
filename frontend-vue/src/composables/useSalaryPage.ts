@@ -1,12 +1,17 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
-import { getEmployees, type EmployeeRecord } from '../api/employees'
+import { PERMISSIONS } from '../permissions/permissions'
 import { getStores, type StoreInfo } from '../api/operations'
 import { ApiError } from '../api/http'
-import { getSalaryPage, type SalaryPageResponse } from '../api/finance'
+import { getSalaryEmployeePage, type SalaryPageResponse } from '../api/finance'
+import { useBusinessScope } from './useBusinessScope'
 
 const PAGE_SIZE = 20
+const SALARY_STATUSES = new Set([
+  'PENDING_GENERATION', 'DRAFT', 'SUBMITTED', 'PENDING_REVIEW',
+  'APPROVED', 'REJECTED', 'PAID', 'LOCKED',
+])
 
 /* ---- helpers (pure, no side-effects) ---- */
 export function currentMonth() {
@@ -20,7 +25,7 @@ export function money(v?: number) {
 
 export function statusLabel(s?: string) {
   const labels: Record<string, string> = {
-    DRAFT: '草稿', SUBMITTED: '待审核', PENDING_REVIEW: '待审核', APPROVED: '已审核',
+    PENDING_GENERATION: '待生成', DRAFT: '草稿', SUBMITTED: '待审核', PENDING_REVIEW: '待审核', APPROVED: '已审核',
     REJECTED: '已驳回', PAID: '已发放', LOCKED: '已锁定',
   }
   return labels[s || 'DRAFT'] || '草稿'
@@ -28,7 +33,7 @@ export function statusLabel(s?: string) {
 
 export function statusClass(s?: string) {
   const map: Record<string, string> = {
-    DRAFT: 'pending', SUBMITTED: 'warn', PENDING_REVIEW: 'warn', APPROVED: 'done',
+    PENDING_GENERATION: 'muted', DRAFT: 'pending', SUBMITTED: 'warn', PENDING_REVIEW: 'warn', APPROVED: 'done',
     REJECTED: 'rejected', PAID: 'done', LOCKED: 'muted',
   }
   return map[s || 'DRAFT'] || 'pending'
@@ -66,81 +71,101 @@ export function userError(e: unknown, fallback = '数据加载失败，请稍后
 export function useSalaryPage() {
   const route = useRoute()
   const auth = useAuthStore()
+  const businessScope = useBusinessScope()
 
   /* ---- reactive state ---- */
   const stores = ref<StoreInfo[]>([])
-  const employees = ref<EmployeeRecord[]>([])
   const selectedMonth = ref(currentMonth())
-  const selectedStoreId = ref('all')
+  const selectedStoreId = ref(businessScope.scopedStoreId('all') || 'all')
+  const selectedBrandId = ref<number | undefined>(businessScope.isStoreManager.value
+    ? businessScope.brandId.value ?? undefined
+    : undefined)
   const statusFilter = ref('')
   const keyword = ref('')
   const page = ref(1)
   const loading = ref(false)
   const storesLoading = ref(false)
-  const employeesLoading = ref(false)
   const error = ref('')
   const storesError = ref('')
-  const employeesError = ref('')
   const successMessage = ref('')
   const initializing = ref(true)
 
   const pageData = ref<SalaryPageResponse | null>(null)
 
   /* ---- computed ---- */
-  const canEdit = computed(() => ['ADMIN', 'BOSS', 'OWNER', 'FINANCE'].includes(auth.role))
-  const canReview = computed(() => ['ADMIN', 'BOSS', 'OWNER'].includes(auth.role))
-  const accessibleStores = computed(() => {
-    if (auth.role !== 'STORE_MANAGER' || !auth.storeScope.length) return stores.value
-    return stores.value.filter((s) => auth.storeScope.includes(s.id))
+  const canEdit = computed(() => auth.hasPermission(PERMISSIONS.SALARY_EDIT))
+  const canReview = computed(() => auth.hasPermission(PERMISSIONS.SALARY_REVIEW))
+  const canPay = computed(() => auth.hasPermission(PERMISSIONS.SALARY_PAY))
+  const canExport = computed(() => auth.hasPermission(PERMISSIONS.FINANCE_EXPORT))
+  const isStoreManager = businessScope.isStoreManager
+  const managerScopeLabel = businessScope.managerScopeLabel
+  const scopeConfigurationError = businessScope.configurationError
+  const salaryScope = computed(() => auth.dataScope('SALARY'))
+  const isOwnStoreScope = computed(() => salaryScope.value?.mode === 'OWN_STORE')
+  const effectiveStoreId = computed(() => businessScope.scopedStoreId(selectedStoreId.value))
+  const effectiveBrandId = computed<number | undefined>(() => {
+    const value = businessScope.scopedBrandId(selectedBrandId.value)
+    return value ? Number(value) : undefined
   })
+  const accessibleStores = computed(() => {
+    if (isStoreManager.value) {
+      return stores.value.filter((store) => store.id === businessScope.boundStoreId.value)
+    }
+    if (salaryScope.value?.mode === 'ALL') return stores.value
+    const allowedStoreIds = salaryScope.value?.storeIds || []
+    if (!allowedStoreIds.length) return []
+    return stores.value.filter((store) => allowedStoreIds.includes(store.id))
+  })
+  const brandOptions = computed(() => Array.from(new Map(
+    stores.value.filter((store) => store.brandId !== undefined).map((store) => [store.brandId, { id: store.brandId as number, name: store.brandName || `品牌${store.brandId}` }]),
+  ).values()))
+  const filteredAccessibleStores = computed(() => selectedBrandId.value === undefined
+    ? accessibleStores.value
+    : accessibleStores.value.filter((store) => store.brandId === selectedBrandId.value))
   const storeMap = computed(() => new Map(stores.value.map((s) => [s.id, s])))
   const selectedStoreName = computed(() => {
+    if (isStoreManager.value) {
+      return businessScope.boundStoreName.value
+        || storeMap.value.get(effectiveStoreId.value)?.name
+        || '本店'
+    }
     if (selectedStoreId.value === 'all') return '全部门店'
     return storeMap.value.get(selectedStoreId.value)?.name || selectedStoreId.value
   })
 
-  const rows = computed(() => pageData.value?.rows || [])
-  const total = computed(() => pageData.value?.total || 0)
+  const rows = computed(() => pageData.value?.content || pageData.value?.rows || [])
+  const total = computed(() => pageData.value?.totalElements ?? pageData.value?.total ?? 0)
   const totalPages = computed(() => pageData.value?.totalPages || 1)
   const summary = computed(() => pageData.value?.summary)
-  const employeeCount = computed(() => employees.value.length)
+  const employeeCount = computed(() => total.value)
+  const employeesLoading = computed(() => loading.value)
+  const employeesError = computed(() => error.value)
   const hasValidMonth = computed(() => /^\d{4}-(0[1-9]|1[0-2])$/.test(selectedMonth.value))
   const isEmployeeEmpty = computed(() => !employeesLoading.value && !employeesError.value && employeeCount.value === 0)
   const isEmpty = computed(() =>
-    !loading.value && !error.value && !employeesError.value && employeeCount.value > 0 && total.value === 0,
+    !loading.value && !error.value && employeeCount.value > 0 && total.value === 0,
   )
   const showTable = computed(() => loading.value || total.value > 0)
   const canGenerate = computed(() =>
     canEdit.value
-      && selectedStoreId.value !== 'all'
+      && Boolean(effectiveStoreId.value)
+      && effectiveStoreId.value !== 'all'
       && hasValidMonth.value
       && employeeCount.value > 0
-      && !employeesError.value
       && !loading.value,
   )
 
   const statusCounts = computed(() => {
+    if (pageData.value?.statusCounts) return pageData.value.statusCounts
     const map: Record<string, number> = {}
     for (const r of rows.value) map[r.status || 'DRAFT'] = (map[r.status || 'DRAFT'] || 0) + 1
     return map
   })
 
-  const filteredRows = computed(() => {
-    const q = keyword.value.trim()
-    const sf = statusFilter.value
-    let list = rows.value
-    if (sf) list = list.filter((r) => (r.status || 'DRAFT') === sf)
-    if (q) {
-      list = list.filter((r) =>
-        [r.employeeName, r.employeeId, r.position, r.storeName].some(
-          (v) => String(v || '').includes(q),
-        ),
-      )
-    }
-    return list
-  })
+  const filteredRows = computed(() => rows.value)
 
   /* ---- API calls ---- */
+  let pageRequestController: AbortController | null = null
   async function loadStores() {
     storesLoading.value = true
     storesError.value = ''
@@ -153,45 +178,48 @@ export function useSalaryPage() {
     }
   }
 
-  async function loadEmployees() {
-    employeesLoading.value = true
-    employeesError.value = ''
-    try {
-      employees.value = await getEmployees({
-        storeId: selectedStoreId.value === 'all' ? undefined : selectedStoreId.value,
-      })
-    } catch (e) {
-      employeesError.value = userError(e, '员工数据加载失败。')
-    } finally {
-      employeesLoading.value = false
-    }
-  }
-
   async function loadPage(p = page.value) {
+    if (scopeConfigurationError.value) {
+      pageData.value = null
+      error.value = scopeConfigurationError.value
+      return
+    }
     if (!hasValidMonth.value) {
       error.value = '请选择有效月份。'
       return
     }
+    pageRequestController?.abort()
+    const controller = new AbortController()
+    pageRequestController = controller
     loading.value = true
     error.value = ''
     try {
-      const resp = await getSalaryPage({
+      const resp = await getSalaryEmployeePage({
         month: selectedMonth.value || undefined,
-        storeId: selectedStoreId.value === 'all' ? undefined : selectedStoreId.value,
+        storeId: effectiveStoreId.value === 'all' ? undefined : effectiveStoreId.value,
+        brandId: effectiveBrandId.value,
+        status: statusFilter.value || undefined,
+        keyword: keyword.value.trim() || undefined,
         page: p,
         size: PAGE_SIZE,
-      })
+      }, controller.signal)
+      if (controller.signal.aborted) return
       pageData.value = resp
       page.value = p
     } catch (e) {
+      if (e instanceof ApiError && e.code === 'REQUEST_CANCELLED') return
+      pageData.value = null
       error.value = userError(e)
     } finally {
-      loading.value = false
+      if (pageRequestController === controller) {
+        pageRequestController = null
+        loading.value = false
+      }
     }
   }
 
   async function reloadScopeData(p = page.value) {
-    await Promise.allSettled([loadEmployees(), loadPage(p)])
+    await loadPage(p)
   }
 
   async function reloadAll() {
@@ -203,37 +231,75 @@ export function useSalaryPage() {
   function applyRouteDefaults() {
     const qStoreId = typeof route.query.storeId === 'string' ? route.query.storeId : ''
     const qMonth = typeof route.query.month === 'string' ? route.query.month : ''
-    const ids = new Set(accessibleStores.value.map((s) => s.id))
-    if (qStoreId && ids.has(qStoreId)) selectedStoreId.value = qStoreId
-    else if (auth.role === 'STORE_MANAGER' && accessibleStores.value.length)
-      selectedStoreId.value = accessibleStores.value[0].id
+    const qStatus = typeof route.query.status === 'string' ? route.query.status.toUpperCase() : ''
+    if (isStoreManager.value) {
+      selectedStoreId.value = businessScope.boundStoreId.value
+      selectedBrandId.value = businessScope.brandId.value ?? undefined
+    } else {
+      const ids = new Set(accessibleStores.value.map((s) => s.id))
+      if (qStoreId && ids.has(qStoreId)) selectedStoreId.value = qStoreId
+      else if (isOwnStoreScope.value && accessibleStores.value.length)
+        selectedStoreId.value = accessibleStores.value[0].id
+    }
     if (/^\d{4}-(0[1-9]|1[0-2])$/.test(qMonth)) selectedMonth.value = qMonth
+    if (SALARY_STATUSES.has(qStatus)) statusFilter.value = qStatus
   }
 
   /* ---- watchers ---- */
-  watch([selectedMonth, selectedStoreId], () => {
+  watch([selectedMonth, selectedBrandId, selectedStoreId, statusFilter], () => {
     if (initializing.value) return
+    if (isStoreManager.value) {
+      if (
+        selectedStoreId.value !== businessScope.boundStoreId.value
+        || selectedBrandId.value !== (businessScope.brandId.value ?? undefined)
+      ) {
+        selectedStoreId.value = businessScope.boundStoreId.value
+        selectedBrandId.value = businessScope.brandId.value ?? undefined
+        return
+      }
+      page.value = 1
+      void loadPage(1)
+      return
+    }
+    if (selectedStoreId.value !== 'all' && !filteredAccessibleStores.value.some((store) => store.id === selectedStoreId.value)) {
+      selectedStoreId.value = isOwnStoreScope.value && filteredAccessibleStores.value.length
+        ? filteredAccessibleStores.value[0].id
+        : 'all'
+      return
+    }
     page.value = 1
-    void reloadScopeData(1)
+    void loadPage(1)
+  })
+
+  let keywordTimer: ReturnType<typeof setTimeout> | undefined
+  watch(keyword, () => {
+    if (initializing.value) return
+    if (keywordTimer) clearTimeout(keywordTimer)
+    keywordTimer = setTimeout(() => {
+      page.value = 1
+      void loadPage(1)
+    }, 250)
   })
 
   watch(
-    () => [route.query.storeId, route.query.month],
+    () => [route.query.storeId, route.query.month, route.query.status],
     () => { applyRouteDefaults() },
   )
 
   return {
     // state
-    stores, employees, selectedMonth, selectedStoreId, statusFilter, keyword, page,
+    stores, selectedMonth, selectedBrandId, selectedStoreId, statusFilter, keyword, page,
     loading, storesLoading, employeesLoading, error, storesError, employeesError,
     successMessage, initializing, pageData,
     // computed
-    canEdit, canReview, accessibleStores, storeMap, selectedStoreName,
+    canEdit, canReview, canPay, canExport, isStoreManager, isOwnStoreScope,
+    managerScopeLabel, scopeConfigurationError, effectiveStoreId, effectiveBrandId,
+    accessibleStores, brandOptions, filteredAccessibleStores, storeMap, selectedStoreName,
     rows, total, totalPages, summary, employeeCount, hasValidMonth,
     isEmployeeEmpty, isEmpty, showTable, canGenerate,
     statusCounts, filteredRows,
     // methods
-    loadStores, loadEmployees, loadPage, reloadScopeData, reloadAll, applyRouteDefaults,
+    loadStores, loadPage, reloadScopeData, reloadAll, applyRouteDefaults,
     // constants
     PAGE_SIZE,
   }

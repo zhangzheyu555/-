@@ -1,5 +1,6 @@
 package com.storeprofit.system.todo;
 
+import com.storeprofit.system.platform.tenant.TenantDefaults;
 import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.ResultSet;
@@ -24,25 +25,74 @@ public class RoleTodoRepository {
 
   public List<InspectionTodoRow> failedInspections(long tenantId, Long brandId, String storeId, int limit) {
     StringBuilder sql = new StringBuilder("""
-        select ir.id, ir.store_id, s.name as store_name, b.name as brand_name,
-               ir.inspection_date, ir.score, ir.full_score, ir.note
-        from inspection_record ir
-        join store_branch s on s.id = ir.store_id and s.tenant_id = ir.tenant_id
+        with inspection_presentation as (
+          select ir.id, ir.tenant_id, ir.store_id, ir.inspection_date, ir.note,
+                 case
+                   when upper(coalesce(repair.repair_status, '')) = 'RECALCULATED'
+                     then coalesce(repair.repaired_score, ir.score)
+                   else ir.score
+                 end as display_score,
+                 case
+                   when upper(coalesce(repair.repair_status, '')) = 'RECALCULATED'
+                     then coalesce(repair.repaired_full_score, ir.full_score)
+                   else ir.full_score
+                 end as display_full_score,
+                 case
+                   when upper(coalesce(repair.repair_status, '')) = 'MANUAL_REVIEW'
+                     then 'MANUAL_REVIEW'
+                   when upper(coalesce(repair.repair_status, '')) = 'RECALCULATED' then
+                     case
+                       when upper(coalesce(repair.repaired_result_code, '')) = 'RED_LINE_FAILED'
+                         then 'RED_LINE_FAILED'
+                        when coalesce(repair.repaired_score, ir.score) >= coalesce(
+                          repair.repaired_pass_score, 180
+                        ) then 'PASSED'
+                        else 'FAILED'
+                      end
+                    else
+                      case
+                       when upper(coalesce(ir.result_code, '')) = 'RED_LINE_FAILED'
+                         or lower(trim(coalesce(ir.redlines_json, ''))) not in ('', '[]', 'null')
+                         then 'RED_LINE_FAILED'
+                        when ir.score >= 180 then 'PASSED'
+                       else 'FAILED'
+                     end
+                 end as display_result_code
+          from inspection_record ir
+          left join inspection_result_repair_audit repair
+            on repair.tenant_id = ir.tenant_id
+           and repair.inspection_record_id = ir.id
+           and repair.id = (
+             select max(latest_repair.id)
+             from inspection_result_repair_audit latest_repair
+             where latest_repair.tenant_id = ir.tenant_id
+               and latest_repair.inspection_record_id = ir.id
+           )
+        )
+        select effective_ir.id, effective_ir.store_id,
+               s.name as store_name, b.name as brand_name,
+               effective_ir.inspection_date,
+               effective_ir.display_score as score,
+               effective_ir.display_full_score as full_score,
+               effective_ir.display_result_code as result_code,
+               effective_ir.note
+        from inspection_presentation effective_ir
+        join store_branch s on s.id = effective_ir.store_id and s.tenant_id = effective_ir.tenant_id
         left join brand b on b.id = s.brand_id and b.tenant_id = s.tenant_id
-        where ir.tenant_id = :tenantId
+        where effective_ir.tenant_id = :tenantId
           and (
-            ir.passed = 0
+            effective_ir.display_result_code <> 'PASSED'
             or exists (
               select 1 from todo_action ta
-              where ta.tenant_id = ir.tenant_id
-                and ta.todo_id = concat('inspection-', ir.id)
+              where ta.tenant_id = effective_ir.tenant_id
+                and ta.todo_id = concat('inspection-', effective_ir.id)
                 and ta.status = 'DONE'
             )
           )
         """);
     MapSqlParameterSource params = new MapSqlParameterSource("tenantId", tenantId);
-    addScopeFilters(sql, params, brandId, storeId, "s", "ir");
-    sql.append(" order by ir.inspection_date desc, ir.id limit :limit");
+    addScopeFilters(sql, params, brandId, storeId, "s", "effective_ir");
+    sql.append(" order by effective_ir.inspection_date desc, effective_ir.id limit :limit");
     params.addValue("limit", limit);
     return namedJdbcTemplate.query(sql.toString(), params, this::mapInspection);
   }
@@ -336,17 +386,26 @@ public class RoleTodoRepository {
     return namedJdbcTemplate.query(sql.toString(), params, this::mapProfitRisk);
   }
 
-  public List<DataImportIssueTodoRow> dataImportIssues(int limit) {
+  public List<DataImportIssueTodoRow> dataImportIssues(long tenantId, int limit) {
+    if (tenantId != TenantDefaults.DEFAULT_TENANT_ID) {
+      return List.of();
+    }
     return namedJdbcTemplate.query("""
         select storage_key, updated_at
         from kv_storage
-        where storage_key like 'migration_error:%'
-           or storage_key like 'import_error:%'
-           or storage_key like 'legacy_error:%'
+        where :tenantId = :legacyTenantId
+          and (
+            storage_key like 'migration_error:%'
+            or storage_key like 'import_error:%'
+            or storage_key like 'legacy_error:%'
+          )
         order by updated_at desc, storage_key
         limit :limit
         """,
-        new MapSqlParameterSource("limit", limit),
+        new MapSqlParameterSource()
+            .addValue("tenantId", tenantId)
+            .addValue("legacyTenantId", TenantDefaults.DEFAULT_TENANT_ID)
+            .addValue("limit", limit),
         this::mapDataImportIssue
     );
   }
@@ -360,7 +419,8 @@ public class RoleTodoRepository {
       return markExpenseHandled(tenantId, idAfterPrefix(normalizedTodoId, "expense-"), actorUserId);
     }
     if (normalizedTodoId.startsWith("inspection-")) {
-      return markInspectionHandled(tenantId, idAfterPrefix(normalizedTodoId, "inspection-"));
+      // The completion is stored in todo_action. Historical inspection scores and outcomes are immutable.
+      return 0;
     }
     if (normalizedTodoId.startsWith("warehouse-alert-") || normalizedTodoId.startsWith("store-receipt-")) {
       return 0;
@@ -404,22 +464,6 @@ public class RoleTodoRepository {
             .addValue("tenantId", tenantId)
             .addValue("id", expenseId)
             .addValue("actorUserId", actorUserId)
-    );
-  }
-
-  private int markInspectionHandled(long tenantId, String inspectionId) {
-    if (inspectionId.isBlank()) {
-      return 0;
-    }
-    return namedJdbcTemplate.update("""
-        update inspection_record
-        set passed = 1,
-            updated_at = current_timestamp
-        where tenant_id = :tenantId and id = :id
-        """,
-        new MapSqlParameterSource()
-            .addValue("tenantId", tenantId)
-            .addValue("id", inspectionId)
     );
   }
 
@@ -474,6 +518,7 @@ public class RoleTodoRepository {
         date == null ? null : date.toLocalDate().toString(),
         rs.getBigDecimal("score"),
         rs.getBigDecimal("full_score"),
+        rs.getString("result_code"),
         rs.getString("note")
     );
   }
@@ -591,6 +636,7 @@ public class RoleTodoRepository {
       String inspectionDate,
       BigDecimal score,
       BigDecimal fullScore,
+      String resultCode,
       String note
   ) {
   }

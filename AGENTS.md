@@ -66,8 +66,8 @@ AI Profit OS / 多门店经营异常处理系统
 
 ## 权限规则
 
-- 系统管理员：维护账号、角色、门店数据范围和基础配置。
-- 老板：查看全部门店的经营指标、风险和复核事项。
+- 老板（系统管理员）：唯一最高角色，角色代码统一为 `BOSS`；拥有全部菜单、业务接口、账号权限和全部门店数据范围。
+- `ADMIN`、`OWNER` 仅作为历史角色迁移输入，不得作为当前业务角色创建或授权。
 - 财务：处理利润、工资、报销、采购单据和数据核对。
 - 店长：仅处理所属门店的数据录入、报销、整改、叫货和收货。
 - 督导：处理巡店、问题记录、整改和复核。
@@ -94,13 +94,19 @@ AI Profit OS / 多门店经营异常处理系统
 ```powershell
 mvn -q test
 mvn -q -DskipTests package
-$env:MYSQL_PASSWORD='<本机MySQL密码>'; java -jar target/store-profit-backend-0.1.0-SNAPSHOT.jar
+$env:APP_ENV='STAGING'
+$env:MYSQL_HOST='127.0.0.1'
+$env:MYSQL_PORT='3307'
+$env:MYSQL_DATABASE='store_profit_mysql8_final'
+$env:MYSQL_USERNAME='<3307最终库独立非root账号>'
+$env:MYSQL_PASSWORD='<本机MySQL密码>'
+java -jar target/store-profit-backend-0.1.0-SNAPSHOT.jar
 ```
 
 Linux/macOS 环境可用：
 
 ```bash
-MYSQL_PASSWORD=<本机MySQL密码> java -jar target/store-profit-backend-0.1.0-SNAPSHOT.jar
+APP_ENV=STAGING MYSQL_HOST=127.0.0.1 MYSQL_PORT=3307 MYSQL_DATABASE=store_profit_mysql8_final MYSQL_USERNAME=<3307最终库独立非root账号> MYSQL_PASSWORD=<本机MySQL密码> java -jar target/store-profit-backend-0.1.0-SNAPSHOT.jar
 ```
 
 ## 交付规则

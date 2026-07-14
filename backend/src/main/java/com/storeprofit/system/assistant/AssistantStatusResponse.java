@@ -5,10 +5,11 @@ import java.time.Instant;
 public record AssistantStatusResponse(
     boolean enabled,
     boolean configured,
-    String baseUrlHost,
+    String provider,
     String model,
+    String baseUrlHost,
+    long timeout,
     Instant lastSuccessAt,
-    Instant lastFailureAt,
-    String lastFailureCode
+    String lastErrorCode
 ) {
 }

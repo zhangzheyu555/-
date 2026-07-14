@@ -7,6 +7,7 @@ const props = defineProps<{
   items: WarehouseItem[]
   submitting: boolean
   successMessage: string
+  initialItemId?: number
 }>()
 
 const emit = defineEmits<{
@@ -26,6 +27,7 @@ const formNote = ref('')
 const lines = reactive<DraftLine[]>([])
 const clientRequestId = ref('')
 const wasSubmitting = ref(false)
+const initializedItemId = ref(0)
 
 const selectedItem = computed(() => props.items.find((item) => item.id === selectedItemId.value))
 
@@ -37,6 +39,19 @@ watch(
     }
     wasSubmitting.value = submitting
   },
+)
+
+watch(
+  [() => props.initialItemId, () => props.items],
+  ([initialItemId]) => {
+    const itemId = Number(initialItemId || 0)
+    if (!itemId || initializedItemId.value === itemId) return
+    const item = props.items.find((candidate) => candidate.id === itemId)
+    if (!item) return
+    initializedItemId.value = itemId
+    addItem(item)
+  },
+  { immediate: true },
 )
 
 function addLine() {
@@ -121,7 +136,7 @@ defineExpose({ addItem })
         <select v-model.number="selectedItemId">
           <option :value="0">请选择物料</option>
           <option v-for="item in items.filter((row) => row.active !== false)" :key="item.id" :value="item.id">
-            {{ item.name }} · 总仓可配 {{ qty(item.warehouseAvailableQuantity, item.stockUnit || item.unit) }}
+            {{ item.name }} · 供货仓可配 {{ qty(item.warehouseAvailableQuantity, item.stockUnit || item.unit) }}
           </option>
         </select>
       </label>
@@ -143,7 +158,7 @@ defineExpose({ addItem })
       <div v-for="(line, index) in lines" :key="line.itemId" class="requisition-line">
         <div>
           <b>{{ itemFor(line)?.name || '已删除物料' }}</b>
-          <small>{{ itemFor(line)?.code }} · 总仓可配 {{ qty(itemFor(line)?.warehouseAvailableQuantity, itemFor(line)?.stockUnit || itemFor(line)?.unit) }}</small>
+          <small>{{ itemFor(line)?.code }} · 供货仓可配 {{ qty(itemFor(line)?.warehouseAvailableQuantity, itemFor(line)?.stockUnit || itemFor(line)?.unit) }}</small>
         </div>
         <div class="quantity-editor">
           <button class="icon-button" type="button" title="减少数量" @click="changeQuantity(line, -1)"><Minus :size="15" /></button>

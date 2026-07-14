@@ -31,6 +31,21 @@ public class UserController {
     return ApiResponse.ok(userManagementService.users(authService.requireUser(authorization)));
   }
 
+  @GetMapping("/authorization/catalog")
+  public ApiResponse<AuthorizationCatalogResponse> authorizationCatalog(
+      @RequestHeader(value = "Authorization", required = false) String authorization
+  ) {
+    return ApiResponse.ok(userManagementService.authorizationCatalog(authService.requireUser(authorization)));
+  }
+
+  @GetMapping("/{userId}/authorization")
+  public ApiResponse<UserAuthorizationResponse> authorization(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable long userId
+  ) {
+    return ApiResponse.ok(userManagementService.authorization(authService.requireUser(authorization), userId));
+  }
+
   @PostMapping
   public ApiResponse<UserResponse> create(
       @RequestHeader(value = "Authorization", required = false) String authorization,
@@ -46,6 +61,26 @@ public class UserController {
       @Valid @RequestBody UserUpdateRequest request
   ) {
     return ApiResponse.ok(userManagementService.update(authService.requireUser(authorization), userId, request));
+  }
+
+  @PutMapping("/{userId}/authorization")
+  public ApiResponse<UserAuthorizationResponse> updateAuthorization(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable long userId,
+      @Valid @RequestBody UserAuthorizationUpdateRequest request
+  ) {
+    return ApiResponse.ok(userManagementService.updateAuthorization(
+        authService.requireUser(authorization), userId, request));
+  }
+
+  @PutMapping("/{userId}/access-profile")
+  public ApiResponse<UserAccessProfileResponse> updateAccessProfile(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable long userId,
+      @Valid @RequestBody UserAccessProfileUpdateRequest request
+  ) {
+    return ApiResponse.ok(userManagementService.updateAccessProfile(
+        authService.requireUser(authorization), userId, request));
   }
 
   @PostMapping("/{userId}/reset-password")

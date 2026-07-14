@@ -1,4 +1,4 @@
-import { apiGet, apiPost, http } from './http'
+import { apiDelete, apiGet, apiPost, http } from './http'
 
 export interface ExamPaperSummary {
   id: number
@@ -11,7 +11,8 @@ export interface ExamPaperSummary {
 }
 
 export interface ExamQuestionInput {
-  questionType: 'SINGLE_CHOICE' | 'TEXT' | 'NUMBER'
+  bankQuestionId?: number
+  questionType: 'SINGLE_CHOICE' | 'TEXT' | 'NUMBER' | 'ESSAY'
   questionText: string
   options: string[]
   standardAnswer: string
@@ -49,6 +50,7 @@ export interface ExamCandidate {
   displayName: string
   role: string
   roleLabel: string
+  departmentName?: string
   storeId: string
   storeName: string
 }
@@ -178,6 +180,142 @@ export interface BossExamSummary {
   riskStores: BossExamRiskStore[]
 }
 
+export interface TrainingCourse {
+  id: number
+  courseCode: string
+  title: string
+  category?: string
+  description?: string
+  coverUrl?: string
+  durationMinutes: number
+  requiredRoleScope?: string
+  enabled: boolean
+  sortOrder: number
+  materialCount: number
+  materialIds: number[]
+}
+
+export type TrainingCoursePayload = Omit<TrainingCourse, 'id' | 'materialCount'> & { id?: number }
+
+export interface TrainingMaterialRecord {
+  id: number
+  materialCode: string
+  title: string
+  category: string
+  imageUrls: string[]
+  content?: string
+  enabled: boolean
+  sortOrder: number
+  learnedCount: number
+}
+
+export type TrainingMaterialPayload = Omit<TrainingMaterialRecord, 'id' | 'learnedCount'> & { id?: number }
+
+export interface ExamQuestionCategory {
+  id: number
+  categoryCode: string
+  categoryName: string
+  description?: string
+  enabled: boolean
+  sortOrder: number
+  questionCount: number
+}
+
+export type ExamQuestionCategoryPayload = Omit<ExamQuestionCategory, 'id' | 'questionCount'> & { id?: number }
+
+export interface ExamQuestionBankItem {
+  id: number
+  questionCode: string
+  categoryId?: number
+  categoryName?: string
+  questionType: 'SINGLE_CHOICE' | 'TEXT' | 'NUMBER' | 'ESSAY'
+  questionText: string
+  options: string[]
+  standardAnswer?: string
+  answerAnalysis?: string
+  acceptKeywords?: string
+  difficulty: 'EASY' | 'MEDIUM' | 'HARD'
+  defaultScore: number
+  enabled: boolean
+  usedCount: number
+}
+
+export type ExamQuestionBankPayload = Omit<ExamQuestionBankItem, 'id' | 'categoryName' | 'usedCount'> & { id?: number }
+
+export interface ExamReviewTask {
+  attemptId: number
+  assignmentId?: number
+  examTitle?: string
+  paperName: string
+  examineeName: string
+  storeId?: string
+  storeName?: string
+  autoScore: number
+  submittedAt: string
+  reviewStatus: 'PENDING' | 'REVIEWED' | 'AUTO_GRADED'
+}
+
+export interface ExamReviewAnswer {
+  answerId: number
+  questionId: number
+  questionType: string
+  questionText: string
+  standardAnswer?: string
+  userAnswer?: string
+  maxScore: number
+  awardedScore: number
+  correct: boolean
+  reviewComment?: string
+}
+
+export interface ExamReviewDetail {
+  task: ExamReviewTask
+  answers: ExamReviewAnswer[]
+  reviewNote?: string
+}
+
+export interface ExamResultRecord {
+  attemptId: number
+  assignmentId?: number
+  campaignId?: number
+  examTitle?: string
+  paperName: string
+  userId?: number
+  examineeName: string
+  role: string
+  storeId?: string
+  storeName?: string
+  score: number
+  passed: boolean
+  violated: boolean
+  reviewStatus: string
+  submittedAt: string
+  reviewedAt?: string
+}
+
+export interface ExamWrongQuestion {
+  id: number
+  attemptId: number
+  questionId: number
+  paperName: string
+  questionType: string
+  questionText: string
+  standardAnswer?: string
+  userAnswer?: string
+  answerAnalysis?: string
+  mastered: boolean
+  createdAt: string
+}
+
+export interface ExamEncodingCheck {
+  databaseCharset: string
+  connectionCharset: string
+  suspiciousPaperCount: number
+  suspiciousQuestionCount: number
+  suspiciousMaterialCount: number
+  suspiciousHexSamples: string[]
+}
+
 export function getExamCenterOverview() {
   return apiGet<ExamCenterOverview>('/api/exam-center/overview')
 }
@@ -211,6 +349,77 @@ export function submitAssignedExam(
 
 export function getBossExamSummary() {
   return apiGet<BossExamSummary>('/api/boss/exam-summary')
+}
+
+export function getTrainingCourses() {
+  return apiGet<TrainingCourse[]>('/api/exam-center/courses')
+}
+
+export function saveTrainingCourse(payload: TrainingCoursePayload) {
+  return apiPost<TrainingCourse, TrainingCoursePayload>('/api/exam-center/courses', payload)
+}
+
+export function getTrainingMaterials() {
+  return apiGet<TrainingMaterialRecord[]>('/api/exam-center/materials')
+}
+
+export function saveTrainingMaterial(payload: TrainingMaterialPayload) {
+  return apiPost<TrainingMaterialRecord, TrainingMaterialPayload>('/api/exam-center/materials', payload)
+}
+
+export function getExamQuestionCategories() {
+  return apiGet<ExamQuestionCategory[]>('/api/exam-center/question-categories')
+}
+
+export function saveExamQuestionCategory(payload: ExamQuestionCategoryPayload) {
+  return apiPost<ExamQuestionCategory, ExamQuestionCategoryPayload>('/api/exam-center/question-categories', payload)
+}
+
+export function deleteExamQuestionCategory(categoryId: number) {
+  return apiDelete<{ deleted: boolean }>(`/api/exam-center/question-categories/${categoryId}`)
+}
+
+export function getExamQuestionBank(params?: { categoryId?: number; keyword?: string }) {
+  const search = new URLSearchParams()
+  if (params?.categoryId) search.set('categoryId', String(params.categoryId))
+  if (params?.keyword?.trim()) search.set('keyword', params.keyword.trim())
+  const query = search.toString()
+  return apiGet<ExamQuestionBankItem[]>(`/api/exam-center/questions${query ? `?${query}` : ''}`)
+}
+
+export function saveExamQuestionBankItem(payload: ExamQuestionBankPayload) {
+  return apiPost<ExamQuestionBankItem, ExamQuestionBankPayload>('/api/exam-center/questions', payload)
+}
+
+export function getExamReviews() {
+  return apiGet<ExamReviewTask[]>('/api/exam-center/reviews')
+}
+
+export function getExamReviewDetail(attemptId: number) {
+  return apiGet<ExamReviewDetail>(`/api/exam-center/reviews/${attemptId}`)
+}
+
+export function submitExamReview(
+  attemptId: number,
+  payload: { reviewNote?: string; answers: Array<{ answerId: number; awardedScore: number; comment?: string }> },
+) {
+  return apiPost<ExamReviewDetail, typeof payload>(`/api/exam-center/reviews/${attemptId}`, payload)
+}
+
+export function getExamResults() {
+  return apiGet<ExamResultRecord[]>('/api/exam-center/results')
+}
+
+export function getExamWrongQuestions() {
+  return apiGet<ExamWrongQuestion[]>('/api/exam-center/wrong-questions')
+}
+
+export function markExamWrongQuestion(wrongId: number, mastered: boolean) {
+  return apiPost<{ mastered: boolean }, { mastered: boolean }>(`/api/exam-center/wrong-questions/${wrongId}/mastered`, { mastered })
+}
+
+export function getExamEncodingCheck() {
+  return apiGet<ExamEncodingCheck>('/api/exam-center/encoding-check')
 }
 
 export async function downloadExamResults(campaignId: number, title: string) {

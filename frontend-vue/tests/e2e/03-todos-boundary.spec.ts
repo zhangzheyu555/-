@@ -1,14 +1,16 @@
 import { expect, test } from '@playwright/test'
-import { loginAs, roles } from './auth.setup'
+import { loginAs } from './auth.setup'
 
-test.describe('today todo page boundary', () => {
-  for (const role of roles) {
-    test(`${role.key} opening /todos is redirected to its workbench`, async ({ page }) => {
-      await loginAs(page, role.key)
-      await page.goto('/todos')
-      await page.waitForLoadState('networkidle')
-
-      await expect.poll(() => new URL(page.url()).pathname).toBe(role.expectedPath)
+test.describe('legacy workbench redirects', () => {
+  for (const item of [
+    { path: '/todos', expected: '/boss' },
+    { path: '/finance-data-check', expected: '/finance' },
+    { path: '/operations/analysis', expected: '/operations' },
+  ]) {
+    test(`${item.path} redirects to its current workspace`, async ({ page }) => {
+      await loginAs(page, 'boss')
+      await page.goto(item.path)
+      await expect.poll(() => new URL(page.url()).pathname).toBe(item.expected)
       await expect(page.locator('body')).not.toBeEmpty()
     })
   }

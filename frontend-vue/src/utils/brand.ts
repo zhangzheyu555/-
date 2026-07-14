@@ -22,9 +22,9 @@ export const STANDARD_BRANDS: BrandTheme[] = [
   {
     key: 'ruguo',
     name: '茹菓',
-    main: '#ef7d3c',
-    dark: '#6b3b27',
-    soft: '#fff2ea',
+    main: '#76bdb8',
+    dark: '#285f5c',
+    soft: '#e9f6f5',
   },
   {
     key: 'bawang',

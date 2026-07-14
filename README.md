@@ -40,10 +40,16 @@ create database if not exists store_profit
 
 ```powershell
 cd backend
-$env:MYSQL_USERNAME="root"
-$env:MYSQL_PASSWORD="你的MySQL密码"
+$env:APP_ENV="<TEST、QA、STAGING 或 PRODUCTION>"
+$env:MYSQL_HOST="<数据库地址>"
+$env:MYSQL_PORT="<数据库端口>"
+$env:MYSQL_DATABASE="<数据库名称>"
+$env:MYSQL_USERNAME="<数据库账号>"
+$env:MYSQL_PASSWORD="<数据库密码>"
 mvn spring-boot:run
 ```
+
+运行环境和五项数据库环境变量均为必填项。后端不会使用默认账号、默认密码或自动创建数据库；缺少配置时启动必须失败。`TEST`、`QA` 环境的数据库名还必须包含 `test` 或 `qa`，避免误连真实业务库。
 
 健康检查：
 

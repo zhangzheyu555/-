@@ -1,7 +1,9 @@
 package com.storeprofit.system.organization;
 
+import com.storeprofit.system.platform.authorization.DataScope;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.dao.EmptyResultDataAccessException;
@@ -17,23 +19,42 @@ public class OrganizationRepository {
   }
 
   public List<BrandResponse> brands(long tenantId) {
-    return jdbcTemplate.query("""
+    return brands(tenantId, null);
+  }
+
+  public List<BrandResponse> brands(long tenantId, DataScope dataScope) {
+    StringBuilder sql = new StringBuilder("""
         select id, code, name, color, sort_order
-        from brand
-        where tenant_id = ?
-        order by sort_order, id
-        """, this::mapBrand, tenantId);
+        from brand b
+        where b.tenant_id = ?
+        """);
+    ArrayList<Object> params = new ArrayList<>();
+    params.add(tenantId);
+    appendBrandScope(sql, params, dataScope);
+    sql.append(" order by b.sort_order, b.id");
+    return jdbcTemplate.query(sql.toString(), this::mapBrand, params.toArray());
   }
 
   public List<StoreResponse> stores(long tenantId) {
-    return jdbcTemplate.query("""
+    return stores(tenantId, null);
+  }
+
+  public List<StoreResponse> stores(long tenantId, DataScope dataScope) {
+    StringBuilder sql = new StringBuilder("""
         select s.id, s.code, s.name, s.brand_id, b.name as brand_name, s.area, s.manager,
-               date_format(s.open_date, '%Y-%m-%d') as open_date, s.status, s.note
+               date_format(s.open_date, '%Y-%m-%d') as open_date, s.status, s.note,
+               s.region_code, s.supply_warehouse_id, w.name as supply_warehouse_name
         from store_branch s
         left join brand b on b.id = s.brand_id and b.tenant_id = s.tenant_id
+        left join warehouse_facility w
+          on w.id = s.supply_warehouse_id and w.tenant_id = s.tenant_id
         where s.tenant_id = ?
-        order by b.sort_order, s.code, s.id
-        """, this::mapStore, tenantId);
+        """);
+    ArrayList<Object> params = new ArrayList<>();
+    params.add(tenantId);
+    appendStoreScope(sql, params, "s.id", dataScope);
+    sql.append(" order by b.sort_order, s.code, s.id");
+    return jdbcTemplate.query(sql.toString(), this::mapStore, params.toArray());
   }
 
   public long ensureBrand(long tenantId, String code, String name, String color, int sortOrder) {
@@ -56,14 +77,26 @@ public class OrganizationRepository {
   }
 
   public void upsertStore(long tenantId, StoreUpsertRequest request) {
+    Long supplyWarehouseId = request.supplyWarehouseId();
+    if (supplyWarehouseId == null && request.regionCode() != null && !request.regionCode().isBlank()) {
+      supplyWarehouseId = supplyWarehouseIdForRegion(tenantId, request.regionCode()).orElse(null);
+    }
+    upsertStore(tenantId, request, supplyWarehouseId);
+  }
+
+  public void upsertStore(long tenantId, StoreUpsertRequest request, Long supplyWarehouseId) {
     jdbcTemplate.update("""
-        insert into store_branch(id, tenant_id, brand_id, code, name, area, manager, open_date, status, note, created_at)
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+        insert into store_branch(
+          id, tenant_id, brand_id, code, name, area, region_code, supply_warehouse_id,
+          manager, open_date, status, note, created_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
         on duplicate key update
           brand_id = values(brand_id),
           code = values(code),
           name = values(name),
           area = values(area),
+          region_code = coalesce(values(region_code), region_code),
+          supply_warehouse_id = coalesce(values(supply_warehouse_id), supply_warehouse_id),
           manager = values(manager),
           open_date = values(open_date),
           status = values(status),
@@ -76,11 +109,30 @@ public class OrganizationRepository {
         blankToNull(request.code()),
         request.name(),
         blankToNull(request.area()),
+        blankToNull(request.regionCode()),
+        supplyWarehouseId,
         blankToNull(request.manager()),
         blankToNull(request.openDate()),
         request.status() == null || request.status().isBlank() ? "营业中" : request.status(),
         blankToNull(request.note())
     );
+  }
+
+  public Optional<StoreResponse> store(long tenantId, String storeId) {
+    return stores(tenantId).stream().filter(store -> store.id().equals(storeId)).findFirst();
+  }
+
+  public Optional<Long> supplyWarehouseIdForRegion(long tenantId, String regionCode) {
+    if (regionCode == null || regionCode.isBlank()) {
+      return Optional.empty();
+    }
+    return jdbcTemplate.query("""
+        select id from warehouse_facility
+        where tenant_id = ? and region_code = ? and store_supply_allowed = 1 and enabled = 1
+        order by case warehouse_type when 'CENTRAL' then 0 else 1 end, id
+        limit 1
+        """, (rs, rowNum) -> rs.getLong(1), tenantId, regionCode.trim().toUpperCase())
+        .stream().findFirst();
   }
 
   public boolean brandExists(long tenantId, long brandId) {
@@ -153,11 +205,54 @@ public class OrganizationRepository {
         rs.getString("manager"),
         rs.getString("open_date"),
         rs.getString("status"),
-        rs.getString("note")
+        rs.getString("note"),
+        rs.getString("region_code"),
+        rs.getObject("supply_warehouse_id", Long.class),
+        rs.getString("supply_warehouse_name")
     );
   }
 
   private Object blankToNull(String value) {
     return value == null || value.isBlank() ? null : value;
+  }
+
+  private void appendBrandScope(StringBuilder sql, List<Object> params, DataScope dataScope) {
+    if (dataScope == null || dataScope.allowsAllStores()) {
+      return;
+    }
+    if (dataScope.deniesStoreAccess() || dataScope.storeIds() == null || dataScope.storeIds().isEmpty()) {
+      sql.append(" and 1 = 0");
+      return;
+    }
+    sql.append(" and exists (select 1 from store_branch scoped_store")
+        .append(" where scoped_store.tenant_id = b.tenant_id")
+        .append(" and scoped_store.brand_id = b.id")
+        .append(" and scoped_store.id in (")
+        .append(placeholders(dataScope.storeIds().size()))
+        .append("))");
+    params.addAll(dataScope.storeIds());
+  }
+
+  private void appendStoreScope(
+      StringBuilder sql,
+      List<Object> params,
+      String storeColumn,
+      DataScope dataScope
+  ) {
+    if (dataScope == null || dataScope.allowsAllStores()) {
+      return;
+    }
+    if (dataScope.deniesStoreAccess() || dataScope.storeIds() == null || dataScope.storeIds().isEmpty()) {
+      sql.append(" and 1 = 0");
+      return;
+    }
+    sql.append(" and ").append(storeColumn).append(" in (")
+        .append(placeholders(dataScope.storeIds().size()))
+        .append(")");
+    params.addAll(dataScope.storeIds());
+  }
+
+  private String placeholders(int count) {
+    return String.join(", ", java.util.Collections.nCopies(count, "?"));
   }
 }

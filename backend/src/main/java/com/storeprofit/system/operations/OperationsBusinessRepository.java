@@ -17,6 +17,7 @@ import java.sql.Date;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -52,7 +53,15 @@ public class OperationsBusinessRepository {
   }
 
   public List<InventoryCheckResponse> inventoryChecks(long tenantId, String storeId) {
-    String sql = """
+    return inventoryChecks(tenantId, storeId, null);
+  }
+
+  public List<InventoryCheckResponse> inventoryChecks(
+      long tenantId,
+      String storeId,
+      Collection<String> allowedStoreIds
+  ) {
+    StringBuilder sql = new StringBuilder("""
         select id, check_no, store_id, store_name, date_format(check_date, '%Y-%m-%d') as check_date,
                status, total_amount, submitted_by, reviewed_by,
                date_format(reviewed_at, '%Y-%m-%d %H:%i:%s') as reviewed_at,
@@ -60,12 +69,17 @@ public class OperationsBusinessRepository {
                date_format(updated_at, '%Y-%m-%d %H:%i:%s') as updated_at
         from store_inventory_check
         where tenant_id = ?
-        """ + (storeId == null ? "" : " and store_id = ?") + """
-        order by check_date desc, id desc
-        limit 200
-        """;
-    Object[] args = storeId == null ? new Object[] {tenantId} : new Object[] {tenantId, storeId};
-    return jdbcTemplate.query(sql, (rs, rowNum) -> new InventoryCheckResponse(
+        """);
+    List<Object> args = new ArrayList<>();
+    args.add(tenantId);
+    if (storeId != null && !storeId.isBlank()) {
+      sql.append(" and store_id = ?");
+      args.add(storeId.trim());
+    } else {
+      appendAllowedStoreScope(sql, args, "store_id", allowedStoreIds);
+    }
+    sql.append(" order by check_date desc, id desc limit 200");
+    return jdbcTemplate.query(sql.toString(), (rs, rowNum) -> new InventoryCheckResponse(
         rs.getLong("id"),
         rs.getString("check_no"),
         rs.getString("store_id"),
@@ -81,7 +95,7 @@ public class OperationsBusinessRepository {
         rs.getString("created_at"),
         rs.getString("updated_at"),
         List.of()
-    ), args);
+    ), args.toArray());
   }
 
   public Optional<InventoryCheckResponse> inventoryCheck(long tenantId, long id) {
@@ -321,12 +335,13 @@ public class OperationsBusinessRepository {
 
   public List<QuestionForGrade> questionsForGrade(long tenantId, long paperId) {
     return jdbcTemplate.query("""
-        select id, question_text, standard_answer, accept_keywords, score
+        select id, question_type, question_text, standard_answer, accept_keywords, score
         from training_exam_question
         where tenant_id = ? and paper_id = ? and enabled = 1
         order by sort_order, id
         """, (rs, rowNum) -> new QuestionForGrade(
         rs.getLong("id"),
+        rs.getString("question_type"),
         rs.getString("question_text"),
         rs.getString("standard_answer"),
         rs.getString("accept_keywords"),
@@ -426,25 +441,37 @@ public class OperationsBusinessRepository {
   }
 
   public List<ExamAttemptResponse> examAttempts(long tenantId, String storeId, Long userId) {
-    String sql = """
+    return examAttempts(tenantId, storeId, userId, null);
+  }
+
+  public List<ExamAttemptResponse> examAttempts(
+      long tenantId,
+      String storeId,
+      Long userId,
+      Collection<String> allowedStoreIds
+  ) {
+    StringBuilder sql = new StringBuilder("""
         select id, paper_id, paper_name, examinee_name, examinee_role, store_id, store_name,
                score, passed, violated, submitted_by,
                date_format(submitted_at, '%Y-%m-%d %H:%i:%s') as submitted_at
         from training_exam_attempt
         where tenant_id = ?
-        """ + (storeId == null ? "" : " and store_id = ?") + (userId == null ? "" : " and submitted_by = ?") + """
-        order by submitted_at desc, id desc
-        limit 200
-        """;
+        """);
     List<Object> args = new ArrayList<>();
     args.add(tenantId);
-    if (storeId != null) {
-      args.add(storeId);
+    if (storeId != null && !storeId.isBlank()) {
+      sql.append(" and store_id = ?");
+      args.add(storeId.trim());
+    } else if (userId == null) {
+      appendAllowedStoreScope(sql, args, "store_id", allowedStoreIds);
     }
     if (userId != null) {
+      sql.append(" and submitted_by = ?");
       args.add(userId);
     }
-    return jdbcTemplate.query(sql, (rs, rowNum) -> mapAttempt(rsAttempt(rs), List.of()), args.toArray());
+    sql.append(" order by submitted_at desc, id desc limit 200");
+    return jdbcTemplate.query(
+        sql.toString(), (rs, rowNum) -> mapAttempt(rsAttempt(rs), List.of()), args.toArray());
   }
 
   public Optional<ExamAttemptResponse> examAttempt(long tenantId, long attemptId) {
@@ -526,18 +553,44 @@ public class OperationsBusinessRepository {
   }
 
   public List<TrainingLearningRecordResponse> learningRecords(long tenantId, String storeId) {
-    String sql = """
+    return learningRecords(tenantId, storeId, null);
+  }
+
+  public List<TrainingLearningRecordResponse> learningRecords(
+      long tenantId,
+      String storeId,
+      Collection<String> allowedStoreIds
+  ) {
+    return learningRecords(tenantId, storeId, allowedStoreIds, null);
+  }
+
+  public List<TrainingLearningRecordResponse> learningRecords(
+      long tenantId,
+      String storeId,
+      Collection<String> allowedStoreIds,
+      Long userId
+  ) {
+    StringBuilder sql = new StringBuilder("""
         select lr.id, lr.material_id, m.title as material_title, lr.user_name, lr.store_id,
                lr.learned, date_format(lr.learned_at, '%Y-%m-%d %H:%i:%s') as learned_at
         from training_learning_record lr
         join training_material m on m.tenant_id = lr.tenant_id and m.id = lr.material_id
         where lr.tenant_id = ?
-        """ + (storeId == null ? "" : " and lr.store_id = ?") + """
-        order by lr.learned_at desc, lr.id desc
-        limit 200
-        """;
-    Object[] args = storeId == null ? new Object[] {tenantId} : new Object[] {tenantId, storeId};
-    return jdbcTemplate.query(sql, (rs, rowNum) -> new TrainingLearningRecordResponse(
+        """);
+    List<Object> args = new ArrayList<>();
+    args.add(tenantId);
+    if (storeId != null && !storeId.isBlank()) {
+      sql.append(" and lr.store_id = ?");
+      args.add(storeId.trim());
+    } else if (userId == null) {
+      appendAllowedStoreScope(sql, args, "lr.store_id", allowedStoreIds);
+    }
+    if (userId != null) {
+      sql.append(" and lr.user_id = ?");
+      args.add(userId);
+    }
+    sql.append(" order by lr.learned_at desc, lr.id desc limit 200");
+    return jdbcTemplate.query(sql.toString(), (rs, rowNum) -> new TrainingLearningRecordResponse(
         rs.getLong("id"),
         rs.getLong("material_id"),
         rs.getString("material_title"),
@@ -545,7 +598,7 @@ public class OperationsBusinessRepository {
         rs.getString("store_id"),
         rs.getBoolean("learned"),
         rs.getString("learned_at")
-    ), args);
+    ), args.toArray());
   }
 
   public void logAction(long tenantId, long userId, String userName, String action, String targetType, String targetId, String storeId, String reason) {
@@ -630,6 +683,30 @@ public class OperationsBusinessRepository {
     return value == null || value.isBlank() ? null : value.trim();
   }
 
+  private void appendAllowedStoreScope(
+      StringBuilder sql,
+      List<Object> args,
+      String column,
+      Collection<String> allowedStoreIds
+  ) {
+    if (allowedStoreIds == null) {
+      return;
+    }
+    List<String> normalized = allowedStoreIds.stream()
+        .filter(value -> value != null && !value.isBlank() && !"all".equalsIgnoreCase(value))
+        .map(String::trim)
+        .distinct()
+        .toList();
+    if (normalized.isEmpty()) {
+      sql.append(" and 1 = 0");
+      return;
+    }
+    sql.append(" and ").append(column).append(" in (")
+        .append(String.join(",", Collections.nCopies(normalized.size(), "?")))
+        .append(")");
+    args.addAll(normalized);
+  }
+
   private String statusLabel(String status) {
     return switch (status == null ? "" : status) {
       case "DRAFT" -> "草稿";
@@ -642,6 +719,7 @@ public class OperationsBusinessRepository {
 
   public record QuestionForGrade(
       long id,
+      String questionType,
       String questionText,
       String standardAnswer,
       String acceptKeywords,

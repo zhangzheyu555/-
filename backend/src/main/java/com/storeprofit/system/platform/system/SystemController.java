@@ -1,7 +1,10 @@
 package com.storeprofit.system.platform.system;
 
 import com.storeprofit.system.common.ApiResponse;
+import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthService;
+import com.storeprofit.system.platform.auth.AuthUser;
 import java.io.IOException;
 import java.io.InputStream;
 import java.time.Instant;
@@ -13,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.env.Environment;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -23,6 +27,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class SystemController {
   private static final Logger log = LoggerFactory.getLogger(SystemController.class);
   private final AuthService authService;
+  private final AccessControlService accessControl;
   private final Environment environment;
   private final JdbcTemplate jdbcTemplate;
   private final String version;
@@ -32,11 +37,13 @@ public class SystemController {
   @Autowired
   public SystemController(
       AuthService authService,
+      AccessControlService accessControl,
       Environment environment,
       @Value("${app.version:0.1.0}") String version,
       JdbcTemplate jdbcTemplate
   ) {
     this.authService = authService;
+    this.accessControl = accessControl;
     this.environment = environment;
     this.version = version;
     this.jdbcTemplate = jdbcTemplate;
@@ -44,16 +51,30 @@ public class SystemController {
 
   SystemController(AuthService authService, Environment environment, String version) {
     this.authService = authService;
+    this.accessControl = null;
     this.environment = environment;
     this.version = version;
     this.jdbcTemplate = null;
+  }
+
+  SystemController(
+      AuthService authService,
+      Environment environment,
+      String version,
+      JdbcTemplate jdbcTemplate
+  ) {
+    this.authService = authService;
+    this.accessControl = null;
+    this.environment = environment;
+    this.version = version;
+    this.jdbcTemplate = jdbcTemplate;
   }
 
   @GetMapping("/overview")
   public ApiResponse<SystemOverview> overview(
       @RequestHeader(value = "Authorization", required = false) String authorization
   ) {
-    authService.requireUser(authorization);
+    requireDashboardAccess(authorization);
     String[] profiles = environment.getActiveProfiles();
     String activeProfile = profiles.length == 0 ? "default" : String.join(",", profiles);
     return ApiResponse.ok(new SystemOverview(
@@ -65,7 +86,10 @@ public class SystemController {
   }
 
   @GetMapping("/version")
-  public ApiResponse<VersionInfo> version() {
+  public ApiResponse<VersionInfo> version(
+      @RequestHeader(value = "Authorization", required = false) String authorization
+  ) {
+    requireDashboardAccess(authorization);
     String buildTime = buildProperties.getProperty("build.time", "unknown");
     String sourceVersion = buildProperties.getProperty(
         "build.sourceVersion",
@@ -82,7 +106,24 @@ public class SystemController {
     ));
   }
 
+  private AuthUser requireDashboardAccess(String authorization) {
+    AuthUser user = authService.requireUser(authorization);
+    if (accessControl != null) {
+      accessControl.requireSystemDashboardRead(user);
+      return user;
+    }
+    if (!AccessControlService.isBoss(user)) {
+      throw new BusinessException(
+          "FORBIDDEN", "当前账号没有查看系统信息的权限", HttpStatus.FORBIDDEN);
+    }
+    return user;
+  }
+
   private String activeEnvironment() {
+    String configured = environment.getProperty("app.environment");
+    if (configured != null && !configured.isBlank()) {
+      return configured;
+    }
     String[] profiles = environment.getActiveProfiles();
     return profiles.length == 0 ? "default" : String.join(",", profiles);
   }

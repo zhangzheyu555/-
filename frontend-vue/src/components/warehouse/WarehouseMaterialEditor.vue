@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ImagePlus, Plus, Trash2, X } from 'lucide-vue-next'
 import type { WarehouseItem, WarehouseItemCategory, WarehouseItemDepartment, WarehouseItemPayload } from '../../api/warehouse'
+import ModalFooter from '../ui/ModalFooter.vue'
+import UiButton from '../ui/UiButton.vue'
+import UnsavedChangesDialog from '../ui/UnsavedChangesDialog.vue'
 
 const props = defineProps<{
   item: WarehouseItem | null
@@ -40,17 +43,50 @@ interface MaterialForm {
 const fileInput = ref<HTMLInputElement | null>(null)
 const imageError = ref('')
 const form = reactive<MaterialForm>(emptyForm())
+const openingSnapshot = ref('')
+const unsavedDialogOpen = ref(false)
 
 const categoryOptions = computed(() => flattenCategories(props.categories))
+const dirty = computed(() => Boolean(openingSnapshot.value) && snapshotForm() !== openingSnapshot.value)
 
 watch(
   () => props.item,
   (item) => {
     Object.assign(form, emptyForm(item))
     imageError.value = ''
+    openingSnapshot.value = snapshotForm()
+    unsavedDialogOpen.value = false
   },
   { immediate: true },
 )
+
+onMounted(() => document.addEventListener('keydown', handleEscape))
+onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
+
+function snapshotForm() {
+  return JSON.stringify(form)
+}
+
+function requestClose() {
+  if (props.saving) return
+  if (dirty.value) {
+    unsavedDialogOpen.value = true
+    return
+  }
+  emit('close')
+}
+
+function discardChanges() {
+  if (props.saving) return
+  unsavedDialogOpen.value = false
+  emit('close')
+}
+
+function handleEscape(event: KeyboardEvent) {
+  if (event.key !== 'Escape' || unsavedDialogOpen.value) return
+  event.preventDefault()
+  requestClose()
+}
 
 function emptyForm(item: WarehouseItem | null = null): MaterialForm {
   return {
@@ -176,245 +212,315 @@ function submit() {
 </script>
 
 <template>
-  <div class="material-overlay" role="dialog" aria-modal="true" aria-label="物料档案编辑">
-    <section class="material-editor">
+  <Teleport to="body">
+    <div
+      class="material-overlay"
+      @click.self="requestClose"
+    >
+      <section class="material-editor" role="dialog" aria-modal="true" aria-labelledby="material-editor-title">
       <header class="material-editor-head">
-        <div>
-          <h2>{{ form.id ? '编辑物料档案' : '新增物料档案' }}</h2>
+        <div class="material-editor-heading">
+          <h2 id="material-editor-title">{{ form.id ? '编辑物料档案' : '新增物料档案' }}</h2>
+          <p>维护物料基础资料、库存规则和适用部门</p>
         </div>
-        <button class="icon-button" type="button" title="关闭" :disabled="saving" @click="emit('close')">
-          <X :size="20" />
-        </button>
+        <UiButton variant="ghost" icon-only type="button" title="关闭" aria-label="关闭物料编辑" :disabled="saving" @click="requestClose">
+          <template #icon><X :size="20" /></template>
+        </UiButton>
       </header>
 
-      <form @submit.prevent="submit">
-        <div class="editor-section-title">基本信息</div>
-        <div class="basic-info-grid">
-          <div class="image-column">
-            <div class="image-preview">
-              <img v-if="form.imageUrl" :src="form.imageUrl" alt="物料图片预览" />
-              <span v-else>暂无图片</span>
-            </div>
-            <input ref="fileInput" class="hidden-file" type="file" accept="image/jpeg,image/png,image/webp" @change="readImage" />
-            <div class="image-actions">
-              <button class="mini-button" type="button" @click="pickImage">
-                <ImagePlus :size="15" />
-                上传图片
+      <form class="material-editor-form" @submit.prevent="submit">
+        <div class="material-editor-body">
+          <div class="editor-section-title">
+            <span>基本信息</span>
+            <small>带名称、类别和编号的项目为必填项</small>
+          </div>
+          <div class="basic-info-grid">
+            <div class="image-column">
+              <button class="image-preview" type="button" :aria-label="form.imageUrl ? '更换物料图片' : '上传物料图片'" @click="pickImage">
+                <img v-if="form.imageUrl" :src="form.imageUrl" alt="物料图片预览" />
+                <span v-else>
+                  <ImagePlus :size="24" />
+                  上传物料图片
+                </span>
               </button>
-              <button v-if="form.imageUrl" class="mini-button" type="button" @click="clearImage">移除</button>
+              <input ref="fileInput" class="hidden-file" type="file" accept="image/jpeg,image/png,image/webp" @change="readImage" />
+              <div class="image-actions">
+                <button class="mini-button" type="button" @click="pickImage">
+                  <ImagePlus :size="15" />
+                  {{ form.imageUrl ? '更换图片' : '选择图片' }}
+                </button>
+                <button v-if="form.imageUrl" class="mini-button" type="button" @click="clearImage">移除</button>
+              </div>
+              <small v-if="imageError" class="field-error">{{ imageError }}</small>
+              <small v-else>JPG、PNG、WEBP，最大 2MB</small>
+              <fieldset class="status-radio">
+                <legend>使用状态</legend>
+                <label><input v-model="form.active" type="radio" :value="true" />启用</label>
+                <label><input v-model="form.active" type="radio" :value="false" />停用</label>
+              </fieldset>
             </div>
-            <small v-if="imageError" class="field-error">{{ imageError }}</small>
-            <small v-else>JPG、PNG、WEBP，最大 2MB</small>
-            <div class="status-radio">
-              <label><input v-model="form.active" type="radio" :value="true" />启用</label>
-              <label><input v-model="form.active" type="radio" :value="false" />停用</label>
+
+            <div class="material-form-grid">
+              <label>
+                物品名称
+                <input v-model="form.name" required maxlength="160" placeholder="请输入物品名称" />
+              </label>
+              <label>
+                类别
+                <select v-model.number="form.categoryId" required>
+                  <option :value="null" disabled>请选择分类</option>
+                  <option v-for="category in categoryOptions" :key="category.id" :value="category.id" :disabled="!category.enabled">{{ category.displayName }}</option>
+                </select>
+              </label>
+              <label>
+                编号
+                <input v-model="form.code" required maxlength="80" placeholder="例如 CUP-700" />
+              </label>
+              <label>
+                采购单位
+                <input v-model="form.purchaseUnit" maxlength="40" placeholder="例如 箱" />
+              </label>
+              <label>
+                库存单位
+                <input v-model="form.stockUnit" maxlength="40" placeholder="例如 件" />
+              </label>
+              <label>
+                配料单位
+                <input v-model="form.ingredientUnit" maxlength="40" placeholder="例如 个 / 克" />
+              </label>
+              <label class="span-two">
+                单位换算
+                <input v-model="form.unitConversionText" maxlength="160" placeholder="例如 1箱=12件，1件=1000个" />
+              </label>
+              <label>
+                采购单价
+                <input v-model="form.unitPrice" type="number" min="0" step="0.01" placeholder="0.00" />
+              </label>
+              <label>
+                规格
+                <input v-model="form.spec" maxlength="160" placeholder="例如 1000个 / 件" />
+              </label>
+              <label>
+                库位
+                <input v-model="form.warehouseLocation" maxlength="120" placeholder="例如 A-01" />
+              </label>
+              <label>
+                保质期（天）
+                <input v-model="form.shelfLifeDays" type="number" min="0" step="1" placeholder="例如 30" />
+              </label>
+              <label>
+                预警天数
+                <input v-model="form.expiryAlertDays" type="number" min="0" step="1" placeholder="例如 3" />
+              </label>
+              <label>
+                最低安全库存
+                <input v-model="form.minStockQuantity" type="number" min="0" step="0.01" placeholder="例如 20" />
+              </label>
+              <label>
+                排序
+                <input v-model="form.sortOrder" type="number" min="0" step="1" />
+              </label>
+              <label class="span-two">
+                属性
+                <input v-model="form.itemAttributes" maxlength="255" placeholder="例如 冷藏、易碎、食品原料" />
+              </label>
+              <label class="span-all">
+                物品说明
+                <textarea v-model="form.itemDescription" rows="2" maxlength="3000" placeholder="填写储存、使用或采购说明" />
+              </label>
             </div>
           </div>
 
-          <div class="material-form-grid">
-            <label>
-              物品名称
-              <input v-model="form.name" required maxlength="160" placeholder="请输入物品名称" />
-            </label>
-            <label>
-              类别
-              <select v-model.number="form.categoryId" required>
-                <option :value="null" disabled>请选择分类</option>
-                <option v-for="category in categoryOptions" :key="category.id" :value="category.id" :disabled="!category.enabled">{{ category.displayName }}</option>
-              </select>
-            </label>
-            <label>
-              编号
-              <input v-model="form.code" required maxlength="80" placeholder="例如 CUP-700" />
-            </label>
-            <label>
-              采购单位
-              <input v-model="form.purchaseUnit" maxlength="40" placeholder="例如 箱" />
-            </label>
-            <label>
-              库存单位
-              <input v-model="form.stockUnit" maxlength="40" placeholder="例如 件" />
-            </label>
-            <label>
-              配料单位
-              <input v-model="form.ingredientUnit" maxlength="40" placeholder="例如 个 / 克" />
-            </label>
-            <label class="span-two">
-              单位换算
-              <input v-model="form.unitConversionText" maxlength="160" placeholder="例如 1箱=12件，1件=1000个" />
-            </label>
-            <label>
-              采购单价
-              <input v-model="form.unitPrice" type="number" min="0" step="0.01" placeholder="0.00" />
-            </label>
-            <label>
-              规格
-              <input v-model="form.spec" maxlength="160" placeholder="例如 1000个 / 件" />
-            </label>
-            <label>
-              库位
-              <input v-model="form.warehouseLocation" maxlength="120" placeholder="例如 A-01" />
-            </label>
-            <label>
-              保质期（天）
-              <input v-model="form.shelfLifeDays" type="number" min="0" step="1" placeholder="例如 30" />
-            </label>
-            <label>
-              预警天数
-              <input v-model="form.expiryAlertDays" type="number" min="0" step="1" placeholder="例如 3" />
-            </label>
-            <label>
-              最低安全库存
-              <input v-model="form.minStockQuantity" type="number" min="0" step="0.01" placeholder="例如 20" />
-            </label>
-            <label>
-              排序
-              <input v-model="form.sortOrder" type="number" min="0" step="1" />
-            </label>
-            <label class="span-two">
-              属性
-              <input v-model="form.itemAttributes" maxlength="255" placeholder="例如 冷藏、易碎、食品原料" />
-            </label>
-            <label class="span-two">
-              物品说明
-              <textarea v-model="form.itemDescription" rows="2" maxlength="3000" placeholder="填写储存、使用或采购说明" />
-            </label>
+          <div class="editor-section-title departments-title">
+            <span>适用部门</span>
+            <button class="mini-button primary" type="button" @click="addDepartment">
+              <Plus :size="15" />
+              添加部门
+            </button>
+          </div>
+          <div class="department-table-wrap">
+            <table class="department-table">
+              <thead>
+                <tr>
+                  <th>部门名称</th>
+                  <th>部门编号</th>
+                  <th>部门分组</th>
+                  <th>采购方式</th>
+                  <th>供应商名称</th>
+                  <th><span class="visually-hidden">操作</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(department, index) in form.departments" :key="`${department.id || 'new'}-${index}`">
+                  <td><input v-model="department.departmentName" maxlength="120" placeholder="例如 采购部" /></td>
+                  <td><input v-model="department.departmentCode" maxlength="80" placeholder="编号" /></td>
+                  <td><input v-model="department.departmentGroup" maxlength="120" placeholder="分组" /></td>
+                  <td><input v-model="department.purchaseMethod" maxlength="120" placeholder="例如 集采" /></td>
+                  <td><input v-model="department.supplierName" maxlength="160" placeholder="供应商" /></td>
+                  <td>
+                    <button class="icon-button danger" type="button" title="删除部门" aria-label="删除该部门" @click="removeDepartment(index)">
+                      <Trash2 :size="16" />
+                    </button>
+                  </td>
+                </tr>
+                <tr v-if="!form.departments.length">
+                  <td colspan="6" class="empty-cell">暂无适用部门，可按需添加。</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
 
-        <div class="editor-section-title departments-title">
-          <span>适用部门</span>
-          <button class="mini-button primary" type="button" @click="addDepartment">
-            <Plus :size="15" />
-            添加
-          </button>
-        </div>
-        <div class="department-table-wrap">
-          <table class="department-table">
-            <thead>
-              <tr>
-                <th>部门名称</th>
-                <th>部门编号</th>
-                <th>部门分组</th>
-                <th>采购方式</th>
-                <th>供应商名称</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(department, index) in form.departments" :key="`${department.id || 'new'}-${index}`">
-                <td><input v-model="department.departmentName" maxlength="120" placeholder="例如 采购部" /></td>
-                <td><input v-model="department.departmentCode" maxlength="80" placeholder="编号" /></td>
-                <td><input v-model="department.departmentGroup" maxlength="120" placeholder="分组" /></td>
-                <td><input v-model="department.purchaseMethod" maxlength="120" placeholder="例如 集采" /></td>
-                <td><input v-model="department.supplierName" maxlength="160" placeholder="供应商" /></td>
-                <td>
-                  <button class="icon-button danger" type="button" title="删除部门" @click="removeDepartment(index)">
-                    <Trash2 :size="16" />
-                  </button>
-                </td>
-              </tr>
-              <tr v-if="!form.departments.length">
-                <td colspan="6" class="empty-cell">暂无适用部门，可按需添加。</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <footer class="material-editor-footer">
-          <button class="ghost-button" type="button" :disabled="saving" @click="emit('close')">取消</button>
-          <button class="primary-button" type="submit" :disabled="saving || !form.code.trim() || !form.name.trim() || !form.categoryId">
-            {{ saving ? '正在保存' : '保存物料' }}
-          </button>
-        </footer>
+        <ModalFooter>
+          <UiButton variant="secondary" type="button" :disabled="saving" @click="requestClose">取消</UiButton>
+          <UiButton
+            variant="primary"
+            type="submit"
+            :disabled="!form.code.trim() || !form.name.trim() || !form.categoryId"
+            :loading="saving"
+          >保存物料</UiButton>
+        </ModalFooter>
       </form>
-    </section>
-  </div>
+      </section>
+    </div>
+  </Teleport>
+
+  <UnsavedChangesDialog
+    :open="unsavedDialogOpen"
+    title="物料修改尚未保存"
+    message="关闭后，本次物料资料、图片和适用部门调整将不会保留。"
+    @keep-editing="unsavedDialogOpen = false"
+    @discard="discardChanges"
+  />
 </template>
 
 <style scoped>
 .material-overlay {
   position: fixed;
-  z-index: 50;
+  z-index: var(--ds-z-modal, 1400);
   inset: 0;
-  overflow: auto;
-  padding: 28px;
-  background: rgba(25, 38, 45, 0.36);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: 24px;
+  background: rgba(20, 35, 39, 0.48);
 }
 
 .material-editor {
-  width: min(1280px, 100%);
-  margin: 0 auto;
+  display: grid;
+  width: min(1180px, 100%);
+  max-height: calc(100dvh - 48px);
+  grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
-  border-radius: 6px;
+  border-radius: 8px;
   background: #fff;
-  box-shadow: 0 18px 54px rgba(15, 23, 42, 0.2);
+  box-shadow: 0 14px 36px rgba(15, 31, 35, 0.24);
 }
 
 .material-editor-head,
 .editor-section-title,
-.image-actions,
-.status-radio,
-.material-editor-footer {
+.image-actions {
   display: flex;
   align-items: center;
 }
 
 .material-editor-head {
-  min-height: 58px;
+  min-height: 70px;
   justify-content: space-between;
-  padding: 0 18px;
+  gap: 16px;
+  padding: 12px 22px;
   border-bottom: 1px solid #dfecef;
+  background: #fff;
 }
 
 .material-editor-head h2 {
   margin: 0;
-  font-size: 19px;
+  color: #182424;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.35;
 }
 
-form {
-  padding: 16px 18px 18px;
+.material-editor-heading p {
+  margin: 3px 0 0;
+  color: #657876;
+  font-size: 13px;
+}
+
+.material-editor-form {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.material-editor-body {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 20px 22px 24px;
 }
 
 .editor-section-title {
-  min-height: 38px;
   justify-content: space-between;
-  margin: 0 -18px 14px;
-  padding: 0 18px;
-  border-left: 4px solid #12afc1;
-  background: #eefafd;
-  color: #204b54;
-  font-weight: 800;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #dfe9e8;
+  color: #214846;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.editor-section-title small {
+  color: #6f817f;
+  font-size: 13px;
+  font-weight: 400;
 }
 
 .basic-info-grid {
   display: grid;
-  grid-template-columns: 176px minmax(0, 1fr);
-  gap: 18px;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
 }
 
 .image-column {
   display: grid;
   align-content: start;
-  gap: 8px;
+  gap: 10px;
 }
 
 .image-preview {
   display: grid;
-  width: 152px;
-  height: 132px;
+  width: 100%;
+  aspect-ratio: 1 / 1;
   place-items: center;
   overflow: hidden;
-  border: 1px dashed #b8c8cd;
-  background: #fbfdfe;
-  color: #93a4aa;
+  border: 1px dashed #aabfbd;
+  border-radius: 6px;
+  background: #f7fbfa;
+  color: #56716f;
   font-size: 13px;
+  text-align: center;
+}
+
+.image-preview:hover {
+  border-color: #2f7772;
+  background: #eef8f7;
+}
+
+.image-preview span {
+  display: grid;
+  place-items: center;
+  gap: 8px;
 }
 
 .image-preview img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
+  background: #fff;
 }
 
 .hidden-file {
@@ -422,55 +528,86 @@ form {
 }
 
 .image-actions,
-.status-radio {
+.status-radio label {
   gap: 8px;
 }
 
 .image-column small {
-  color: var(--muted);
-  font-size: 12px;
+  color: #6f817f;
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .image-column .field-error {
   color: var(--bad);
 }
 
+.status-radio {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin: 2px 0 0;
+  padding: 10px 0 0;
+  border: 0;
+  border-top: 1px solid #e2ebea;
+}
+
+.status-radio legend {
+  width: 100%;
+  margin-bottom: 2px;
+  padding: 0;
+  color: #526765;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .status-radio label {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  color: #475569;
-  font-size: 13px;
+  color: #334d4b;
+  font-size: 14px;
 }
 
 .material-form-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px 18px;
+  gap: 14px 16px;
 }
 
 .material-form-grid label {
   display: grid;
   gap: 6px;
-  color: #475569;
-  font-size: 13px;
+  min-width: 0;
+  color: #526765;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .material-form-grid label.span-two {
   grid-column: span 2;
 }
 
+.material-form-grid label.span-all {
+  grid-column: 1 / -1;
+}
+
 input,
 select,
 textarea {
   width: 100%;
-  min-height: 34px;
-  border: 1px solid #cdd9dd;
-  border-radius: 4px;
-  padding: 6px 9px;
+  min-height: 40px;
+  border: 1px solid #c8d8d6;
+  border-radius: 6px;
+  padding: 8px 10px;
   outline: 0;
   background: #fff;
-  color: var(--ink);
+  color: #182424;
+  font-weight: 400;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #758684;
 }
 
 textarea {
@@ -480,19 +617,19 @@ textarea {
 input:focus,
 select:focus,
 textarea:focus {
-  border-color: #28a9b8;
-  box-shadow: 0 0 0 2px rgba(40, 169, 184, 0.12);
+  border-color: #2f7772;
+  box-shadow: 0 0 0 3px rgba(118, 189, 184, 0.18);
 }
 
 .departments-title {
-  margin-top: 18px;
-  margin-bottom: 0;
+  margin-top: 26px;
+  margin-bottom: 12px;
 }
 
 .department-table-wrap {
   overflow: auto;
-  margin: 0 -18px;
-  border-bottom: 1px solid #dfecef;
+  border: 1px solid #dfe9e8;
+  border-radius: 6px;
 }
 
 .department-table {
@@ -503,9 +640,10 @@ textarea:focus {
 
 .department-table th {
   padding: 10px 12px;
-  background: #f5fbfc;
-  color: #475569;
+  background: #f3f8f7;
+  color: #526765;
   font-size: 13px;
+  font-weight: 600;
   text-align: left;
 }
 
@@ -516,16 +654,17 @@ textarea:focus {
 
 .department-table input {
   min-width: 110px;
+  min-height: 36px;
 }
 
 .department-table .icon-button {
   margin: auto;
 }
 
-.material-editor-footer {
-  justify-content: flex-end;
-  gap: 10px;
-  padding-top: 16px;
+.image-actions .mini-button,
+.departments-title .mini-button {
+  border-radius: 6px;
+  font-weight: 600;
 }
 
 .icon-button {
@@ -546,5 +685,63 @@ textarea:focus {
 .icon-button.danger:hover {
   background: #fff0ef;
   color: var(--bad);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+@media (max-width: 1100px) {
+  .material-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .material-overlay {
+    padding: 0;
+  }
+
+  .material-editor {
+    width: 100%;
+    height: 100dvh;
+    max-height: none;
+    border-radius: 0;
+  }
+
+  .material-editor-head {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .material-editor-body {
+    padding: 18px 16px 22px;
+  }
+
+  .editor-section-title {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .basic-info-grid,
+  .material-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .image-column {
+    width: min(180px, 100%);
+  }
+
+  .material-form-grid label.span-two,
+  .material-form-grid label.span-all {
+    grid-column: auto;
+  }
 }
 </style>

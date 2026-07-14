@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { Home, RefreshCw } from 'lucide-vue-next'
 import { getBrands, getStores, type BrandInfo, type StoreInfo } from '../api/operations'
 import BrandBadge from '../components/common/BrandBadge.vue'
+import PageHeader from '../components/common/PageHeader.vue'
 import { normalizeBrandName } from '../utils/brand'
 
 const stores = ref<StoreInfo[]>([])
@@ -37,18 +38,16 @@ onMounted(() => {
 
 <template>
   <section class="page-panel stores-page">
-    <div class="page-head">
-      <div>
-        <h2>门店管理</h2>
-      </div>
-      <div class="store-toolbar">
-        <button class="ghost-button" type="button" :disabled="loading" @click="load">
-          <RefreshCw :size="16" />
-          刷新
-        </button>
-        <button class="ghost-button danger" type="button" disabled>清空全部数据</button>
-      </div>
-    </div>
+    <PageHeader>
+      <template #actions>
+        <div class="store-toolbar">
+          <button class="ghost-button" type="button" :disabled="loading" @click="load">
+            <RefreshCw :size="16" />刷新
+          </button>
+          <button class="ghost-button danger" type="button" disabled>清空全部数据</button>
+        </div>
+      </template>
+    </PageHeader>
 
     <div v-if="error" class="error-box">{{ error }}</div>
     <div class="metric-grid">

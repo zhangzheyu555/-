@@ -9,6 +9,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.BadSqlGrammarException;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.multipart.MultipartException;
 
 class GlobalExceptionHandlerTest {
   private final GlobalExceptionHandler handler = new GlobalExceptionHandler();
@@ -43,6 +44,20 @@ class GlobalExceptionHandlerTest {
     assertThat(response.getBody().code()).isEqualTo("DATABASE_MIGRATION_INCOMPLETE");
     assertThat(response.getBody().message()).isEqualTo("系统升级尚未完成，请联系管理员");
     assertThat(response.getBody().requestId()).isEqualTo("request-503");
+  }
+
+  @Test
+  void malformedMultipartReturnsBadRequestInsteadOfInternalError() {
+    MockHttpServletRequest request = request("request-multipart-400");
+
+    ApiResponse<Void> response = handler.handleMalformedMultipart(
+        new MultipartException("stream ended unexpectedly"),
+        request
+    );
+
+    assertThat(response.code()).isEqualTo("BAD_MULTIPART_REQUEST");
+    assertThat(response.message()).isEqualTo("上传请求格式不正确，请重新选择文件后重试");
+    assertThat(response.requestId()).isEqualTo("request-multipart-400");
   }
 
   private MockHttpServletRequest request(String requestId) {

@@ -2,5 +2,5 @@ package com.storeprofit.system.platform.users;
 
 import jakarta.validation.constraints.NotBlank;
 
-public record UserPasswordResetRequest(@NotBlank String password) {
+public record UserPasswordResetRequest(@NotBlank String password, String currentPassword) {
 }

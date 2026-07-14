@@ -1,22 +1,33 @@
 package com.storeprofit.system.boss;
 
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
 import java.time.OffsetDateTime;
 import java.util.List;
-import java.util.Set;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 @Service
 public class BossDataHealthService {
-  private static final Set<String> OWNER_ROLES = Set.of("BOSS", "ADMIN", "OPERATIONS");
   private static final String SERVER_RULES = "SERVER_RULES";
   private static final String MYSQL = "MYSQL";
   private static final String KV = "KV";
+  private final AccessControlService accessControl;
+
+  @Autowired
+  public BossDataHealthService(AccessControlService accessControl) {
+    this.accessControl = accessControl;
+  }
+
+  /** Compatibility constructor retained for isolated service tests. */
+  public BossDataHealthService() {
+    this(null);
+  }
 
   public BossDataHealthResponse dataHealth(AuthUser user) {
-    requireOwner(user);
+    requireBossDashboard(user);
     String checkedAt = OffsetDateTime.now().toString();
     return new BossDataHealthResponse(
         SERVER_RULES,
@@ -100,9 +111,13 @@ public class BossDataHealthService {
     );
   }
 
-  private void requireOwner(AuthUser user) {
-    if (user == null || !OWNER_ROLES.contains(user.role())) {
-      throw new BusinessException("FORBIDDEN", "仅运营工作人员或管理员可查看数据健康", HttpStatus.FORBIDDEN);
+  private void requireBossDashboard(AuthUser user) {
+    if (accessControl != null) {
+      accessControl.requireSystemDashboardRead(user);
+      return;
+    }
+    if (!AccessControlService.isBoss(user)) {
+      throw new BusinessException("FORBIDDEN", "仅老板可查看数据健康", HttpStatus.FORBIDDEN);
     }
   }
 }

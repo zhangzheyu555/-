@@ -3,9 +3,13 @@ package com.storeprofit.system.importing;
 import com.storeprofit.system.organization.StoreResponse;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.StringReader;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.time.YearMonth;
 import java.util.ArrayList;
@@ -16,8 +20,14 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVParser;
+import org.apache.commons.csv.CSVRecord;
 import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.CellType;
 import org.apache.poi.ss.usermodel.DataFormatter;
+import org.apache.poi.ss.usermodel.DateUtil;
+import org.apache.poi.ss.usermodel.FormulaEvaluator;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
@@ -27,24 +37,28 @@ import org.springframework.web.multipart.MultipartFile;
 
 @Component
 public class SpreadsheetProfitParser {
+  private static final int MAX_SHEETS = 50;
+  private static final int MAX_ROWS_PER_SHEET = 10_000;
+  private static final int MAX_TOTAL_ROWS = 50_000;
+  private static final int MAX_COLUMNS = 200;
   private static final List<String> FIELD_ORDER = List.of(
       "sales", "refund", "discount", "material", "packaging", "loss", "costOther",
       "rent", "labor", "utility", "property", "commission", "promo", "repair", "equip", "expOther"
   );
   private static final Map<String, List<String>> FIELD_ALIASES = Map.ofEntries(
-      Map.entry("sales", List.of("营业总收入", "营业收入", "营业额", "收入合计", "总收入", "流水")),
+      Map.entry("sales", List.of("营业总收入", "营业收入", "营业总额", "营业额", "销售额", "收入合计", "总收入", "流水")),
       Map.entry("refund", List.of("退款金额", "退款", "售后退款", "退款合计")),
       Map.entry("discount", List.of("优惠金额", "优惠", "折扣", "活动优惠")),
-      Map.entry("material", List.of("原材料成本", "原材料", "原料", "物料", "采购", "订货")),
-      Map.entry("packaging", List.of("包材成本", "包材", "包装材料")),
+      Map.entry("material", List.of("原材料成本", "物料成本", "原材料", "原料", "物料", "采购", "订货")),
+      Map.entry("packaging", List.of("包材成本", "包装成本", "包材", "包装材料")),
       Map.entry("loss", List.of("损耗成本", "损耗", "报损")),
       Map.entry("costOther", List.of("其他成本", "成本其他")),
       Map.entry("rent", List.of("房租", "租金")),
-      Map.entry("labor", List.of("人工工资", "员工工资", "人工", "工资", "社保")),
+      Map.entry("labor", List.of("人工工资", "人工成本", "员工工资", "人工", "工资", "社保")),
       Map.entry("utility", List.of("水电费", "水电", "电费", "水费")),
       Map.entry("property", List.of("物业费", "物业")),
       Map.entry("commission", List.of("平台佣金", "平台手续费", "手续费", "佣金", "平台费")),
-      Map.entry("promo", List.of("推广费", "推广", "营销", "广告")),
+      Map.entry("promo", List.of("推广费", "营销费", "推广", "营销", "广告")),
       Map.entry("repair", List.of("维修费", "维修")),
       Map.entry("equip", List.of("设备费", "设备")),
       Map.entry("expOther", List.of("其他费用", "费用其他", "报销", "杂费"))
@@ -53,47 +67,79 @@ public class SpreadsheetProfitParser {
   private static final Pattern MONEY_PATTERN = Pattern.compile("-?\\(?\\s*(?:￥|¥|RMB)?\\s*\\d[\\d,，]*(?:\\.\\d+)?\\s*(?:万)?\\s*\\)?");
 
   public List<ProfitImportRow> parse(MultipartFile file, ProfitImportSourceType sourceType, List<StoreResponse> stores, String defaultStoreId, String defaultMonth) throws IOException {
+    List<SheetGrid> grids;
     if (sourceType == ProfitImportSourceType.CSV || isCsv(file.getOriginalFilename())) {
-      return parseCsvText(readText(file), stores, defaultStoreId, defaultMonth);
+      grids = List.of(new SheetGrid("CSV", parseCsv(readText(file))));
+    } else {
+      try (Workbook workbook = WorkbookFactory.create(file.getInputStream())) {
+        grids = workbookGrids(workbook);
+      }
     }
-    try (Workbook workbook = WorkbookFactory.create(file.getInputStream())) {
-      return parseWorkbook(workbook, stores, defaultStoreId, defaultMonth);
+    List<ProfitImportRow> rows = parseGrids(grids, stores, defaultStoreId, defaultMonth);
+    if (rows.isEmpty()) {
+      throw new ProfitImportParseException(headerDiagnostic(grids, defaultStoreId, defaultMonth));
     }
+    return rows;
   }
 
   List<ProfitImportRow> parseCsvText(String csv, List<StoreResponse> stores, String defaultStoreId, String defaultMonth) {
-    List<List<String>> rows = parseCsv(csv);
-    return parseGrids(List.of(new SheetGrid("CSV", rows)), stores, defaultStoreId, defaultMonth);
+    List<SheetGrid> grids = List.of(new SheetGrid("CSV", parseCsv(csv)));
+    List<ProfitImportRow> rows = parseGrids(grids, stores, defaultStoreId, defaultMonth);
+    if (rows.isEmpty()) {
+      throw new ProfitImportParseException(headerDiagnostic(grids, defaultStoreId, defaultMonth));
+    }
+    return rows;
   }
 
-  private List<ProfitImportRow> parseWorkbook(Workbook workbook, List<StoreResponse> stores, String defaultStoreId, String defaultMonth) {
+  private List<SheetGrid> workbookGrids(Workbook workbook) {
+    if (workbook.getNumberOfSheets() > MAX_SHEETS) {
+      throw new ProfitImportParseException("Excel 工作表不能超过 " + MAX_SHEETS + " 个");
+    }
     DataFormatter formatter = new DataFormatter(Locale.CHINA);
+    FormulaEvaluator evaluator = workbook.getCreationHelper().createFormulaEvaluator();
     List<SheetGrid> grids = new ArrayList<>();
+    int totalRows = 0;
     for (int s = 0; s < workbook.getNumberOfSheets(); s++) {
       Sheet sheet = workbook.getSheetAt(s);
       List<List<String>> rows = new ArrayList<>();
-      int last = Math.min(sheet.getLastRowNum(), 1000);
+      if (sheet.getLastRowNum() + 1 > MAX_ROWS_PER_SHEET) {
+        throw new ProfitImportParseException("工作表“" + sheet.getSheetName() + "”超过 " + MAX_ROWS_PER_SHEET + " 行");
+      }
+      int last = sheet.getLastRowNum();
+      totalRows += last + 1;
+      if (totalRows > MAX_TOTAL_ROWS) {
+        throw new ProfitImportParseException("Excel 总行数不能超过 " + MAX_TOTAL_ROWS + " 行");
+      }
       for (int r = 0; r <= last; r++) {
         Row row = sheet.getRow(r);
         if (row == null) {
           rows.add(List.of());
           continue;
         }
-        int lastCell = Math.min(Math.max(row.getLastCellNum(), 0), 120);
+        int lastCell = Math.max(row.getLastCellNum(), 0);
+        if (lastCell > MAX_COLUMNS) {
+          throw new ProfitImportParseException("工作表“" + sheet.getSheetName() + "”第 " + (r + 1) + " 行超过 " + MAX_COLUMNS + " 列");
+        }
         List<String> cells = new ArrayList<>();
         for (int c = 0; c < lastCell; c++) {
           Cell cell = row.getCell(c);
-          cells.add(cell == null ? "" : formatter.formatCellValue(cell).trim());
+          cells.add(cell == null ? "" : formattedCell(formatter, evaluator, cell));
         }
         rows.add(cells);
       }
       grids.add(new SheetGrid(sheet.getSheetName(), rows));
     }
-    return parseGrids(grids, stores, defaultStoreId, defaultMonth);
+    return grids;
   }
 
   private List<ProfitImportRow> parseGrids(List<SheetGrid> grids, List<StoreResponse> stores, String defaultStoreId, String defaultMonth) {
     List<ProfitImportRow> out = new ArrayList<>();
+    for (SheetGrid grid : grids) {
+      out.addAll(parseDailySales(grid, stores, defaultStoreId));
+    }
+    if (!out.isEmpty()) {
+      return out;
+    }
     for (SheetGrid grid : grids) {
       out.addAll(parseWideTables(grid, stores, defaultStoreId, defaultMonth));
     }
@@ -105,11 +151,73 @@ public class SpreadsheetProfitParser {
     return out;
   }
 
+  private List<ProfitImportRow> parseDailySales(SheetGrid grid, List<StoreResponse> stores, String defaultStoreId) {
+    if (grid.rows.isEmpty() || grid.rows.getFirst().isEmpty()) {
+      return List.of();
+    }
+    List<String> header = grid.rows.getFirst();
+    int totalColumn = lastColumn(header, "总合计");
+    if (totalColumn < 0 || !header.stream().map(this::normalize).anyMatch("微信"::equals)) {
+      return List.of();
+    }
+    String storeText = cell(header, 0) + " " + grid.name;
+    StoreResponse store = matchStore(storeText, stores, defaultStoreId).orElse(null);
+    Map<String, BigDecimal> totals = new LinkedHashMap<>();
+    Map<String, Integer> dayCounts = new LinkedHashMap<>();
+    for (int r = 1; r < grid.rows.size(); r++) {
+      List<String> cells = grid.rows.get(r);
+      String month = normalizeMonth(cell(cells, 0), "");
+      if (month.isBlank()) {
+        continue;
+      }
+      Optional<BigDecimal> amount = parseMoney(cell(cells, totalColumn));
+      if (amount.isEmpty()) {
+        continue;
+      }
+      totals.merge(month, amount.get(), BigDecimal::add);
+      dayCounts.merge(month, 1, Integer::sum);
+    }
+    return totals.entrySet().stream()
+        .filter(entry -> dayCounts.getOrDefault(entry.getKey(), 0) >= 3)
+        .map(entry -> {
+          Map<String, BigDecimal> values = Map.of("sales", entry.getValue().setScale(2, RoundingMode.HALF_UP));
+          ProfitImportRow parsed = row(
+              "daily_" + grid.name + "_" + entry.getKey(), store, entry.getKey(), values,
+              grid.name + " 日营业额汇总");
+          List<String> warnings = new ArrayList<>(parsed.warnings());
+          warnings.add("已汇总 " + dayCounts.get(entry.getKey()) + " 天日营业额");
+          return new ProfitImportRow(
+              parsed.rowId(), parsed.storeId(), parsed.storeName(), parsed.month(), parsed.confidence(),
+              parsed.values(), warnings, parsed.errors(), parsed.existing(), parsed.status());
+        })
+        .toList();
+  }
+
+  private int lastColumn(List<String> row, String expected) {
+    for (int i = row.size() - 1; i >= 0; i--) {
+      if (normalize(expected).equals(normalize(row.get(i)))) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  private String formattedCell(DataFormatter formatter, FormulaEvaluator evaluator, Cell cell) {
+    if (cell.getCellType() == CellType.NUMERIC && DateUtil.isCellDateFormatted(cell)) {
+      return cell.getLocalDateTimeCellValue().toLocalDate().toString();
+    }
+    try {
+      return formatter.formatCellValue(cell, evaluator).trim();
+    } catch (RuntimeException ignored) {
+      return formatter.formatCellValue(cell).trim();
+    }
+  }
+
   private List<ProfitImportRow> parseWideTables(SheetGrid grid, List<StoreResponse> stores, String defaultStoreId, String defaultMonth) {
     List<ProfitImportRow> rows = new ArrayList<>();
     for (int r = 0; r < grid.rows.size(); r++) {
       Header header = detectHeader(grid.rows.get(r));
-      if (header.fields.size() < 2) {
+      if (header.fields.isEmpty()) {
         continue;
       }
       for (int i = r + 1; i < grid.rows.size(); i++) {
@@ -175,11 +283,13 @@ public class SpreadsheetProfitParser {
       }
     }
     if (!values.containsKey("sales")) {
-      warnings.add("未识别到营业总收入");
+      errors.add("缺少营业额（支持表头：营业额、营业收入、销售额）");
     }
     BigDecimal confidence = errors.isEmpty() ? (warnings.isEmpty() ? new BigDecimal("0.92") : new BigDecimal("0.78")) : new BigDecimal("0.45");
+    String safeRowId = rowId.replaceAll("[^A-Za-z0-9_\\-]", "_")
+        + "_" + Integer.toUnsignedString(rowId.hashCode(), 36);
     return new ProfitImportRow(
-        rowId.replaceAll("[^A-Za-z0-9_\\-]", "_"),
+        safeRowId,
         store == null ? "" : store.id(),
         store == null ? "" : store.name(),
         month == null ? "" : month,
@@ -229,15 +339,19 @@ public class SpreadsheetProfitParser {
   }
 
   private Optional<StoreResponse> matchStore(String text, List<StoreResponse> stores, String defaultStoreId) {
-    if (defaultStoreId != null && !defaultStoreId.isBlank()) {
-      return stores.stream().filter(s -> defaultStoreId.equals(s.id())).findFirst();
-    }
     String haystack = normalize(text);
-    return stores.stream()
+    Optional<StoreResponse> sourceMatch = stores.stream()
         .filter(store -> haystack.contains(normalize(store.id()))
             || haystack.contains(normalize(store.code()))
             || haystack.contains(normalize(store.name())))
         .findFirst();
+    if (sourceMatch.isPresent()) {
+      return sourceMatch;
+    }
+    if (defaultStoreId != null && !defaultStoreId.isBlank()) {
+      return stores.stream().filter(s -> defaultStoreId.equals(s.id())).findFirst();
+    }
+    return Optional.empty();
   }
 
   private String normalizeMonth(String text, String defaultMonth) {
@@ -322,11 +436,19 @@ public class SpreadsheetProfitParser {
 
   private String readText(MultipartFile file) throws IOException {
     byte[] bytes = file.getBytes();
-    String utf8 = new String(bytes, StandardCharsets.UTF_8);
-    if (utf8.indexOf('\uFFFD') >= 0) {
-      return new String(bytes, Charset.forName("GBK"));
+    try {
+      return StandardCharsets.UTF_8.newDecoder()
+          .onMalformedInput(CodingErrorAction.REPORT)
+          .onUnmappableCharacter(CodingErrorAction.REPORT)
+          .decode(ByteBuffer.wrap(bytes))
+          .toString();
+    } catch (CharacterCodingException ignored) {
+      return Charset.forName("GB18030").newDecoder()
+          .onMalformedInput(CodingErrorAction.REPORT)
+          .onUnmappableCharacter(CodingErrorAction.REPORT)
+          .decode(ByteBuffer.wrap(bytes))
+          .toString();
     }
-    return utf8;
   }
 
   private boolean isCsv(String name) {
@@ -334,37 +456,66 @@ public class SpreadsheetProfitParser {
   }
 
   private List<List<String>> parseCsv(String csv) {
-    List<List<String>> rows = new ArrayList<>();
-    List<String> row = new ArrayList<>();
-    StringBuilder cell = new StringBuilder();
-    boolean quote = false;
-    for (int i = 0; i < csv.length(); i++) {
-      char ch = csv.charAt(i);
-      if (ch == '"') {
-        if (quote && i + 1 < csv.length() && csv.charAt(i + 1) == '"') {
-          cell.append('"');
-          i++;
-        } else {
-          quote = !quote;
+    RuntimeException lastError = null;
+    List<List<String>> best = List.of();
+    int bestWidth = 0;
+    for (char delimiter : new char[] {',', '\t', ';'}) {
+      try {
+        CSVFormat format = CSVFormat.DEFAULT.builder()
+            .setDelimiter(delimiter)
+            .setIgnoreEmptyLines(false)
+            .setIgnoreSurroundingSpaces(true)
+            .get();
+        try (CSVParser parser = new CSVParser(new StringReader(csv), format)) {
+          List<List<String>> candidate = new ArrayList<>();
+          int width = 0;
+          for (CSVRecord record : parser) {
+            List<String> cells = new ArrayList<>();
+            for (String value : record) {
+              cells.add(value == null ? "" : value.trim());
+            }
+            if (!isBlankRow(cells)) {
+              width = Math.max(width, cells.size());
+            }
+            candidate.add(cells);
+          }
+          if (width > bestWidth) {
+            bestWidth = width;
+            best = candidate;
+          }
         }
-      } else if (ch == ',' && !quote) {
-        row.add(cell.toString().trim());
-        cell.setLength(0);
-      } else if ((ch == '\n' || ch == '\r') && !quote) {
-        if (ch == '\r' && i + 1 < csv.length() && csv.charAt(i + 1) == '\n') {
-          i++;
-        }
-        row.add(cell.toString().trim());
-        rows.add(row);
-        row = new ArrayList<>();
-        cell.setLength(0);
-      } else {
-        cell.append(ch);
+      } catch (IOException | RuntimeException ex) {
+        lastError = new IllegalArgumentException(ex);
       }
     }
-    row.add(cell.toString().trim());
-    rows.add(row);
-    return rows;
+    if (bestWidth > 0) {
+      return best;
+    }
+    throw new ProfitImportParseException("CSV 内容无法解析" + (lastError == null ? "" : "，请检查引号和分隔符"));
+  }
+
+  private String headerDiagnostic(List<SheetGrid> grids, String defaultStoreId, String defaultMonth) {
+    List<String> actualHeaders = grids.stream()
+        .flatMap(grid -> grid.rows.stream())
+        .filter(row -> !isBlankRow(row))
+        .findFirst()
+        .orElse(List.of())
+        .stream()
+        .map(value -> value == null ? "" : value.replace("\uFEFF", "").trim())
+        .filter(value -> !value.isBlank())
+        .toList();
+    Header header = detectHeader(actualHeaders);
+    List<String> missing = new ArrayList<>();
+    if (defaultStoreId == null || defaultStoreId.isBlank()) {
+      if (header.storeColumn < 0) missing.add("门店");
+    }
+    if (defaultMonth == null || defaultMonth.isBlank()) {
+      if (header.monthColumn < 0) missing.add("月份");
+    }
+    if (!header.fields.containsValue("sales")) missing.add("营业额");
+    if (missing.isEmpty()) missing.add("有效数据行");
+    return "已读取表头：" + (actualHeaders.isEmpty() ? "（空）" : String.join("、", actualHeaders))
+        + "；缺少字段：" + String.join("、", missing);
   }
 
   private boolean isBlankRow(List<String> row) {
@@ -380,6 +531,10 @@ public class SpreadsheetProfitParser {
       return "";
     }
     return value.toLowerCase(Locale.ROOT)
+        .replace("\uFEFF", "")
+        .replace("一", "1")
+        .replace("二", "2")
+        .replace("三", "3")
         .replaceAll("[\\s　:：;；,，.。()（）\\[\\]【】_\\-—/\\\\]", "");
   }
 

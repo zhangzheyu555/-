@@ -11,6 +11,7 @@ import {
   type InspectionWorkbench,
 } from '../api/inspection'
 import type { RoleTodoItem } from '../api/todos'
+import { inspectionScoreView, INSPECTION_MAX_SCORE } from '../utils/inspectionScore'
 
 export type InspectionTab = 'overview' | 'tasks' | 'records' | 'issues' | 'reviews' | 'escalated' | 'done'
 
@@ -157,7 +158,10 @@ async function aggregateInspectionWorkbench(): Promise<InspectionWorkbench> {
   const reviews = open.filter(isReviewTodo)
   const issues = [
     ...open.filter(isIssueTodo),
-    ...records.filter((record) => !record.passed).map(recordIssueTodo),
+    ...records.filter((record) => {
+      const score = inspectionScoreView(record)
+      return score.valid && score.passed === false
+    }).map(recordIssueTodo),
   ]
   const escalatedItems = open.filter((item) => item.escalatedToBoss || includesAny(item, ['上报老板', 'boss-escalation', 'escalation']))
   const summary = {
@@ -198,15 +202,14 @@ function emptyDraft(): InspectionRecordPayload {
     inspectionDate: new Date().toISOString().slice(0, 10),
     inspector: '',
     brand: '',
-    fullScore: 100,
-    score: 100,
+    fullScore: INSPECTION_MAX_SCORE,
+    score: INSPECTION_MAX_SCORE,
     hygieneScore: undefined,
     serviceScore: undefined,
     productScore: undefined,
     displayScore: undefined,
     issueDescription: '',
     rectificationRequirement: '',
-    passed: true,
     deductionsJson: '[]',
     redlinesJson: '[]',
     photosJson: '[]',
@@ -217,7 +220,7 @@ function emptyDraft(): InspectionRecordPayload {
 function normalizeRecordPayload(draft: InspectionRecordPayload): InspectionRecordPayload {
   if (!draft.storeId?.trim()) throw new Error('请填写巡店门店')
   if (!draft.inspectionDate?.trim()) throw new Error('请选择巡店日期')
-  const fullScore = Number(draft.fullScore ?? 100)
+  const fullScore = Number(draft.fullScore ?? INSPECTION_MAX_SCORE)
   const score = Number(draft.score ?? fullScore)
   if (fullScore <= 0) throw new Error('满分必须大于 0')
   if (score < 0 || score > fullScore) throw new Error('巡店得分必须在 0 到满分之间')
@@ -230,7 +233,6 @@ function normalizeRecordPayload(draft: InspectionRecordPayload): InspectionRecor
     brand: blankToUndefined(draft.brand),
     fullScore,
     score,
-    passed: Boolean(draft.passed),
     deductionsJson,
     redlinesJson,
     photosJson: normalizeJsonArray(draft.photosJson),
@@ -279,10 +281,11 @@ function isIssueTodo(item: RoleTodoItem) {
 }
 
 function recordIssueTodo(record: InspectionRecord): RoleTodoItem {
+  const score = inspectionScoreView(record)
   return {
     id: `inspection-record-${record.id}`,
     title: `巡店异常：${record.storeName || record.storeCode || record.storeId}`,
-    summary: record.note || `巡店得分 ${record.score ?? '-'} / ${record.fullScore ?? '-'}，需要跟进整改。`,
+    summary: record.note || `巡店得分 ${score.scoreText}，需要跟进整改。`,
     status: 'RISK',
     priority: 2,
     brandName: record.brandName || record.brand,

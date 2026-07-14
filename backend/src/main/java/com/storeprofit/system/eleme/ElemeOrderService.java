@@ -9,6 +9,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,15 +42,22 @@ public class ElemeOrderService {
     this.properties = properties;
   }
 
-  public ElemeSummaryResponse summary(int requestedDays) {
+  /**
+   * 按数据范围拉取订单。allowedStoreIds 为 null 仅用于已验证的 ALL；
+   * 空集合表示不可访问任何门店。
+   */
+  public ElemeSummaryResponse summary(int requestedDays, Collection<String> allowedStoreIds) {
     int days = Math.max(1, Math.min(requestedDays, MAX_DAYS));
     LocalDate today = LocalDate.now(ZONE);
     return summaryForDates(datesBack(today, days), days,
-        "最近 " + days + " 天", null);
+        "最近 " + days + " 天", null, allowedStoreIds);
   }
 
   /** 按自然月聚合；文档只支持最近 30 天订单。 */
-  public ElemeSummaryResponse summaryForMonth(String month) {
+  public ElemeSummaryResponse summaryForMonth(
+      String month,
+      Collection<String> allowedStoreIds
+  ) {
     java.time.YearMonth ym;
     try {
       ym = java.time.YearMonth.parse(month);
@@ -65,17 +73,19 @@ public class ElemeOrderService {
     }
     boolean beyondWindow = first.isBefore(today.minusDays(MAX_DAYS));
     String label = ym.getYear() + "年" + ym.getMonthValue() + "月";
-    return summaryForDates(dates, dates.size(), label, beyondWindow ? label : null);
+    return summaryForDates(
+        dates, dates.size(), label, beyondWindow ? label : null, allowedStoreIds);
   }
 
   private ElemeSummaryResponse summaryForDates(List<LocalDate> dates, int days,
-      String rangeLabel, String beyondWindowMonth) {
+      String rangeLabel, String beyondWindowMonth, Collection<String> allowedStoreIds) {
+    List<ElemeProperties.ShopMapping> shops = resolveShops(allowedStoreIds);
     if (properties.isConfigured() && beyondWindowMonth == null) {
-      if (resolveShops().isEmpty()) {
+      if (shops.isEmpty()) {
         return unavailable(days, "UNCONFIGURED", "未配置已授权门店，暂时无法拉取订单数据。");
       }
       try {
-        return live(days);
+        return live(days, shops);
       } catch (Exception ex) {
         log.error("饿了么真实接口调用失败，未返回模拟营业数据", ex);
         return unavailable(days, "ERROR", "饿了么订单接口暂时不可用，请检查平台配置后重试。");
@@ -97,7 +107,7 @@ public class ElemeOrderService {
 
   /* ---------------- 真实接口：拉单 + 聚合 ---------------- */
 
-  private ElemeSummaryResponse live(int days) {
+  private ElemeSummaryResponse live(int days, List<ElemeProperties.ShopMapping> shops) {
     LocalDate today = LocalDate.now(ZONE);
     String startTime = today.minusDays(days).atStartOfDay(ZONE).toOffsetDateTime()
         .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
@@ -108,10 +118,9 @@ public class ElemeOrderService {
     Map<String, BigDecimal[]> money = new TreeMap<>();
     Map<String, String> shopNames = new LinkedHashMap<>();
 
-    for (String shopEntry : resolveShops()) {
-      String[] pair = shopEntry.split(":", 2);
-      String shopId = pair[0].trim();
-      shopNames.put(shopId, pair.length > 1 ? pair[1].trim() : shopId);
+    for (ElemeProperties.ShopMapping shop : shops) {
+      String shopId = shop.shopId();
+      shopNames.put(shopId, shop.shopName());
 
       // 步骤 3：订单列表接口按门店 + 时间范围拉取（分页游标略，示范单页）
       Map<String, Object> params = new LinkedHashMap<>();
@@ -247,8 +256,8 @@ public class ElemeOrderService {
         OffsetDateTime.now(ZONE).format(STAMP), totalPrice, income, orderTotal, rows);
   }
 
-  private List<String> resolveShops() {
-    return properties.getShops();
+  private List<ElemeProperties.ShopMapping> resolveShops(Collection<String> allowedStoreIds) {
+    return properties.resolveShops(allowedStoreIds);
   }
 
   /* ---------------- 工具 ---------------- */

@@ -1,9 +1,10 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed } from 'vue'
 import { RefreshCcw, Save } from 'lucide-vue-next'
 import InspectionAttachmentUploader from './InspectionAttachmentUploader.vue'
 import StatusBadge from '../common/StatusBadge.vue'
 import type { InspectionRecord, InspectionRecordPayload } from '../../api/inspection'
+import { inspectionScoreView, INSPECTION_MAX_SCORE } from '../../utils/inspectionScore'
 
 const props = defineProps<{
   records: InspectionRecord[]
@@ -29,12 +30,12 @@ function updateNumber(field: keyof InspectionRecordPayload, event: Event) {
   emit('updateDraft', { [field]: value === '' ? undefined : Number(value) })
 }
 
-function updatePassed(event: Event) {
-  emit('updateDraft', { passed: (event.target as HTMLSelectElement).value === 'true' })
-}
-
 function attachmentCount(record: InspectionRecord) {
   return countJsonArray(record.photosJson)
+}
+
+function recordScore(record: InspectionRecord) {
+  return inspectionScoreView(record)
 }
 
 function issueCount(record: InspectionRecord) {
@@ -79,7 +80,7 @@ function countJsonArray(value?: string) {
       </label>
       <label>
         满分
-        <input type="number" min="1" step="0.01" :value="draft.fullScore" @input="updateNumber('fullScore', $event)" />
+        <input type="number" :value="INSPECTION_MAX_SCORE" readonly aria-readonly="true" />
       </label>
       <label>
         总评分
@@ -100,13 +101,6 @@ function countJsonArray(value?: string) {
       <label>
         陈列评分
         <input type="number" min="0" step="0.01" :value="draft.displayScore" placeholder="例如 25" @input="updateNumber('displayScore', $event)" />
-      </label>
-      <label>
-        整改状态
-        <select :value="String(draft.passed)" @change="updatePassed">
-          <option value="true">现场通过</option>
-          <option value="false">需要整改</option>
-        </select>
       </label>
       <label class="wide">
         问题说明
@@ -199,13 +193,13 @@ function countJsonArray(value?: string) {
             </td>
             <td>{{ record.inspectionDate }}</td>
             <td>{{ record.inspector || '督导' }}</td>
-            <td>{{ record.score ?? '-' }} / {{ record.fullScore ?? '-' }}</td>
+            <td :title="recordScore(record).error">{{ recordScore(record).scoreText }}</td>
             <td>
               <b>{{ issueCount(record) }} 个问题</b>
               <small>{{ attachmentCount(record) }} 张图片/附件</small>
             </td>
             <td>
-              <StatusBadge :label="record.passed ? '已完成' : '待整改'" :tone="record.passed ? 'ok' : 'warn'" />
+              <StatusBadge :label="recordScore(record).resultText" :tone="recordScore(record).tone === 'ok' ? 'ok' : 'warn'" />
             </td>
           </tr>
         </tbody>
@@ -264,7 +258,7 @@ function countJsonArray(value?: string) {
 .record-form select:focus,
 .record-form textarea:focus {
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(238, 126, 62, 0.14);
+  box-shadow: 0 0 0 3px rgba(118, 189, 184, 0.14);
 }
 
 .wide,

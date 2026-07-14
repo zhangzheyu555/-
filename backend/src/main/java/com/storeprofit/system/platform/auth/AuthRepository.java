@@ -21,7 +21,7 @@ public class AuthRepository {
     try {
       return Optional.ofNullable(jdbcTemplate.queryForObject("""
           select u.id, u.tenant_id, t.name as tenant_name, u.username, u.password_hash,
-                 u.display_name, u.role, u.store_id, u.enabled
+                 u.display_name, u.role, u.store_id, u.enabled, u.permission_version
           from auth_user u
           join tenant t on t.id = u.tenant_id
           where u.tenant_id = ? and u.username = ? and t.status = 'ACTIVE'
@@ -35,12 +35,13 @@ public class AuthRepository {
     try {
       return Optional.ofNullable(jdbcTemplate.queryForObject("""
           select u.id, u.tenant_id, ten.name as tenant_name, u.username, u.password_hash,
-                 u.display_name, u.role, u.store_id, u.enabled
+                 u.display_name, u.role, u.store_id, u.enabled, u.permission_version
           from auth_token t
           join auth_user u on u.id = t.user_id
           join tenant ten on ten.id = u.tenant_id
           where t.token = ?
             and t.tenant_id = u.tenant_id
+            and t.permission_version = u.permission_version
             and t.expires_at > current_timestamp
             and u.enabled = 1
             and ten.status = 'ACTIVE'
@@ -53,21 +54,35 @@ public class AuthRepository {
   public List<AuthUser> users(long tenantId) {
     return jdbcTemplate.query("""
         select u.id, u.tenant_id, t.name as tenant_name, u.username, u.password_hash,
-               u.display_name, u.role, u.store_id, u.enabled
+               u.display_name, u.role, u.store_id, u.enabled, u.permission_version
         from auth_user u
         join tenant t on t.id = u.tenant_id
         where u.tenant_id = ?
-          and not (u.username = 'admin' and u.role = 'BOSS' and u.enabled = 0)
         order by u.id
         """, this::mapUser, tenantId);
   }
 
   public void createToken(String token, long tenantId, long userId, OffsetDateTime expiresAt) {
+    Long permissionVersion = jdbcTemplate.queryForObject("""
+        select permission_version
+        from auth_user
+        where tenant_id = ? and id = ?
+        """, Long.class, tenantId, userId);
+    createToken(token, tenantId, userId, permissionVersion == null ? 1L : permissionVersion, expiresAt);
+  }
+
+  public void createToken(
+      String token,
+      long tenantId,
+      long userId,
+      long permissionVersion,
+      OffsetDateTime expiresAt
+  ) {
     jdbcTemplate.update("delete from auth_token where expires_at <= current_timestamp");
     jdbcTemplate.update("""
-        insert into auth_token(token, tenant_id, user_id, expires_at, created_at)
-        values (?, ?, ?, ?, current_timestamp)
-        """, token, tenantId, userId, java.sql.Timestamp.from(expiresAt.toInstant()));
+        insert into auth_token(token, tenant_id, user_id, permission_version, expires_at, created_at)
+        values (?, ?, ?, ?, ?, current_timestamp)
+        """, token, tenantId, userId, permissionVersion, java.sql.Timestamp.from(expiresAt.toInstant()));
   }
 
   public void deleteToken(String token) {
@@ -75,7 +90,7 @@ public class AuthRepository {
   }
 
   public List<String> storeScope(long tenantId, long userId, String role, String directStoreId) {
-    if ("ADMIN".equals(role) || "BOSS".equals(role) || "FINANCE".equals(role) || "OWNER".equals(role)) {
+    if (AccessControlService.isBossRole(role)) {
       return List.of("all");
     }
     List<String> scoped = assignedStoreScope(tenantId, userId);
@@ -89,7 +104,7 @@ public class AuthRepository {
     try {
       return Optional.ofNullable(jdbcTemplate.queryForObject("""
           select u.id, u.tenant_id, t.name as tenant_name, u.username, u.password_hash,
-                 u.display_name, u.role, u.store_id, u.enabled
+                 u.display_name, u.role, u.store_id, u.enabled, u.permission_version
           from auth_user u
           join tenant t on t.id = u.tenant_id
           where u.tenant_id = ? and u.id = ?
@@ -131,13 +146,13 @@ public class AuthRepository {
     return count != null && count > 0;
   }
 
-  public void migrateAdminAccountToBoss(long tenantId) {
+  public void migrateLegacyOwnerRolesToBoss(long tenantId) {
     // 拆成先查再改：MySQL 的 update...join 语法 H2 不认，而 MySQL 又不允许
     // 在 update 的子查询里引用目标表。启动引导单线程执行，无并发风险。
     if (userExists(tenantId, "boss")) {
       jdbcTemplate.update("""
           update auth_user
-          set enabled = 0, role = 'BOSS', display_name = '老板'
+          set role = 'BOSS'
           where tenant_id = ? and username = 'admin'
           """, tenantId);
     } else {
@@ -154,7 +169,7 @@ public class AuthRepository {
               when display_name is null or display_name = '' or display_name in ('管理员', '系统管理员') then '老板'
               else display_name
             end
-        where tenant_id = ? and role = 'ADMIN'
+        where tenant_id = ? and role in ('ADMIN', 'OWNER')
         """, tenantId);
   }
 
@@ -207,11 +222,11 @@ public class AuthRepository {
         """, displayName, role, storeId, enabled, tenantId, userId) > 0;
   }
 
-  public int activeAdminCount(long tenantId) {
+  public int activeBossCount(long tenantId) {
     Integer count = jdbcTemplate.queryForObject("""
         select count(*)
         from auth_user
-        where tenant_id = ? and role = 'ADMIN' and enabled = 1
+        where tenant_id = ? and role = 'BOSS' and enabled = 1
         """, Integer.class, tenantId);
     return count == null ? 0 : count;
   }
@@ -236,9 +251,10 @@ public class AuthRepository {
         rs.getString("username"),
         rs.getString("password_hash"),
         rs.getString("display_name"),
-        rs.getString("role"),
+        AccessControlService.canonicalRole(rs.getString("role")),
         rs.getString("store_id"),
-        rs.getBoolean("enabled")
+        rs.getBoolean("enabled"),
+        rs.getLong("permission_version")
     );
   }
 }

@@ -5,6 +5,8 @@ import com.storeprofit.system.employee.EmployeeRepository;
 import com.storeprofit.system.employee.EmployeeResponse;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
+import com.storeprofit.system.platform.authorization.DataScope;
+import com.storeprofit.system.platform.authorization.DataScopeDomains;
 import com.storeprofit.system.todo.BusinessTodoService;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -63,11 +65,10 @@ public class SalaryService {
     if (accessControl != null) {
       String targetStoreId = blankToNull(storeId);
       if (targetStoreId != null) {
-        accessControl.requireStoreAccess(user, targetStoreId, "查看工资数据");
+        accessControl.requireStoreAccess(user, DataScopeDomains.SALARY, targetStoreId, "查看工资数据");
       }
-      return salaryRepository.records(user.tenantId(), targetMonth, brandId, targetStoreId).stream()
-          .filter(row -> accessControl.canAccessStore(user, row.storeId()))
-          .toList();
+      DataScope dataScope = accessControl.dataScope(user, DataScopeDomains.SALARY);
+      return salaryRepository.records(user.tenantId(), targetMonth, brandId, targetStoreId, dataScope);
     }
     if (isStoreManager(user)) {
       String scopedStoreId = requireManagerStore(user);
@@ -248,14 +249,14 @@ public class SalaryService {
     if (accessControl != null) {
       String targetStoreId = blankToNull(storeId);
       if (targetStoreId != null) {
-        accessControl.requireStoreAccess(user, targetStoreId, "查看工资数据");
+        accessControl.requireStoreAccess(user, DataScopeDomains.SALARY, targetStoreId, "查看工资数据");
       }
-      SalaryRepository.SalaryPageResult result = salaryRepository.page(user.tenantId(), targetMonth, brandId, targetStoreId, page, size);
-      List<SalaryRecordResponse> filtered = result.rows().stream()
-          .filter(row -> accessControl.canAccessStore(user, row.storeId()))
-          .toList();
-      SalarySummaryResponse summary = summaryFromRows(filtered, targetMonth);
-      return new SalaryPageResponse(filtered, result.total(), result.page(), result.size(), result.totalPages(), summary);
+      DataScope dataScope = accessControl.dataScope(user, DataScopeDomains.SALARY);
+      SalaryRepository.SalaryPageResult result = salaryRepository.page(
+          user.tenantId(), targetMonth, brandId, targetStoreId, page, size, dataScope);
+      SalarySummaryResponse summary = summaryFromRows(result.rows(), targetMonth);
+      return new SalaryPageResponse(
+          result.rows(), result.total(), result.page(), result.size(), result.totalPages(), summary);
     }
     if (isStoreManager(user)) {
       String scopedStoreId = requireManagerStore(user);
@@ -285,7 +286,7 @@ public class SalaryService {
 
   @Transactional
   public SalaryRecordResponse markPaid(AuthUser user, String id) {
-    requireEditRole(user);
+    requirePayRole(user);
     SalaryRecordResponse record = requireRecord(user, id);
     if (!STATUS_APPROVED.equals(record.status())) {
       throw new BusinessException("SALARY_STATUS_INVALID", "只有已审核的工资记录可以标记发放", HttpStatus.CONFLICT);
@@ -521,7 +522,7 @@ public class SalaryService {
       accessControl.requireSalaryRead(user);
       return;
     }
-    if (!List.of("ADMIN", "BOSS", "FINANCE", "STORE_MANAGER").contains(user.role())) {
+    if (!AccessControlService.hasAnyRole(user, "FINANCE", "STORE_MANAGER")) {
       throw new BusinessException("FORBIDDEN", "No permission to read salary records", HttpStatus.FORBIDDEN);
     }
   }
@@ -531,7 +532,7 @@ public class SalaryService {
       accessControl.requireSalaryEdit(user);
       return;
     }
-    if (!List.of("ADMIN", "BOSS", "FINANCE").contains(user.role())) {
+    if (!AccessControlService.hasAnyRole(user, "FINANCE")) {
       throw new BusinessException("FORBIDDEN", "No permission to edit salary records", HttpStatus.FORBIDDEN);
     }
   }
@@ -541,7 +542,7 @@ public class SalaryService {
       accessControl.requireSalaryReview(user);
       return;
     }
-    if (!List.of("ADMIN", "BOSS").contains(user.role())) {
+    if (!AccessControlService.isBoss(user)) {
       throw new BusinessException("FORBIDDEN", "当前账号没有审核工资的权限", HttpStatus.FORBIDDEN);
     }
   }
@@ -555,9 +556,17 @@ public class SalaryService {
   }
 
   private void requireEditableStatus(SalaryRecordResponse record) {
-    if (STATUS_APPROVED.equals(record.status()) || STATUS_SUBMITTED.equals(record.status())) {
+    if (!STATUS_DRAFT.equals(record.status()) && !STATUS_REJECTED.equals(record.status())) {
       throw new BusinessException("SALARY_STATUS_LOCKED", "已提交审核或已完成的工资记录不能直接修改", HttpStatus.CONFLICT);
     }
+  }
+
+  private void requirePayRole(AuthUser user) {
+    if (accessControl != null) {
+      accessControl.requireSalaryPay(user);
+      return;
+    }
+    requireEditRole(user);
   }
 
   private void requirePendingReview(SalaryRecordResponse record) {
@@ -596,7 +605,7 @@ public class SalaryService {
 
   private void requireStoreScope(AuthUser user, String storeId) {
     if (accessControl != null) {
-      accessControl.requireStoreAccess(user, storeId, "处理工资数据");
+      accessControl.requireStoreAccess(user, DataScopeDomains.SALARY, storeId, "处理工资数据");
       return;
     }
     if (isStoreManager(user) && !requireManagerStore(user).equals(storeId)) {

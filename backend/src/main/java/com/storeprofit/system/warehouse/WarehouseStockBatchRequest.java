@@ -14,8 +14,22 @@ public record WarehouseStockBatchRequest(
     @NotNull @Positive BigDecimal quantity,
     @NotNull @PositiveOrZero BigDecimal unitCost,
     String note,
-    String clientRequestId
+    String clientRequestId,
+    Long warehouseId
 ) {
+  public WarehouseStockBatchRequest(
+      Long itemId,
+      String batchNo,
+      String receivedDate,
+      String expiryDate,
+      BigDecimal quantity,
+      BigDecimal unitCost,
+      String note,
+      String clientRequestId
+  ) {
+    this(itemId, batchNo, receivedDate, expiryDate, quantity, unitCost, note, clientRequestId, null);
+  }
+
   public WarehouseStockBatchRequest(
       Long itemId,
       String batchNo,
@@ -25,6 +39,6 @@ public record WarehouseStockBatchRequest(
       BigDecimal unitCost,
       String note
   ) {
-    this(itemId, batchNo, receivedDate, expiryDate, quantity, unitCost, note, null);
+    this(itemId, batchNo, receivedDate, expiryDate, quantity, unitCost, note, null, null);
   }
 }

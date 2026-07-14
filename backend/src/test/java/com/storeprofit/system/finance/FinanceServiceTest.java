@@ -12,6 +12,10 @@ import com.storeprofit.system.common.BusinessException;
 import com.storeprofit.system.organization.OrganizationRepository;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
+import com.storeprofit.system.platform.authorization.DataScope;
+import com.storeprofit.system.platform.authorization.DataScopeDomains;
+import com.storeprofit.system.platform.authorization.DataScopeModes;
+import com.storeprofit.system.platform.authorization.DataScopeService;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -64,5 +68,20 @@ class FinanceServiceTest {
         .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
 
     verify(financeRepository, never()).entries(1L, "2026-07", null, "bw1");
+  }
+
+  @Test
+  void configuredFinanceStoreListRejectsForgedStoreBeforeRepositoryQuery() {
+    DataScopeService dataScopeService = mock(DataScopeService.class);
+    DataScope scope = new DataScope(DataScopeModes.STORE_LIST, List.of("rg1"));
+    when(dataScopeService.scope(finance, DataScopeDomains.FINANCE)).thenReturn(scope);
+    FinanceService scopedService = new FinanceService(
+        financeRepository, organizationRepository, accessControl, null, dataScopeService);
+
+    assertThatThrownBy(() -> scopedService.entries(finance, "2026-07", null, "bw1"))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
+
+    verify(financeRepository, never()).entries(1L, "2026-07", null, "bw1", scope);
   }
 }

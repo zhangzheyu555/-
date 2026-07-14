@@ -16,7 +16,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.beans.factory.annotation.Autowired;
 
 @RestController
 @RequestMapping("/api/warehouse")
@@ -24,22 +26,116 @@ public class WarehouseController {
   private final AuthService authService;
   private final WarehouseService warehouseService;
   private final WarehousePrintService warehousePrintService;
+  private final WarehouseNetworkService warehouseNetworkService;
 
+  @Autowired
+  public WarehouseController(
+      AuthService authService,
+      WarehouseService warehouseService,
+      WarehousePrintService warehousePrintService,
+      WarehouseNetworkService warehouseNetworkService
+  ) {
+    this.authService = authService;
+    this.warehouseService = warehouseService;
+    this.warehousePrintService = warehousePrintService;
+    this.warehouseNetworkService = warehouseNetworkService;
+  }
+
+  /** Compatibility constructor for isolated controller tests. */
   public WarehouseController(
       AuthService authService,
       WarehouseService warehouseService,
       WarehousePrintService warehousePrintService
   ) {
-    this.authService = authService;
-    this.warehouseService = warehouseService;
-    this.warehousePrintService = warehousePrintService;
+    this(authService, warehouseService, warehousePrintService, null);
+  }
+
+  @GetMapping("/warehouses")
+  public ApiResponse<List<WarehouseFacilityResponse>> warehouses(
+      @RequestHeader(value = "Authorization", required = false) String authorization
+  ) {
+    return ApiResponse.ok(warehouseNetworkService.facilities(authService.requireUser(authorization)));
   }
 
   @GetMapping("/overview")
   public ApiResponse<WarehouseOverviewResponse> overview(
-      @RequestHeader(value = "Authorization", required = false) String authorization
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @RequestParam(value = "warehouseId", required = false) Long warehouseId
   ) {
-    return ApiResponse.ok(warehouseService.overview(authService.requireUser(authorization)));
+    return ApiResponse.ok(warehouseService.overview(authService.requireUser(authorization), warehouseId));
+  }
+
+  @GetMapping("/transfers")
+  public ApiResponse<List<WarehouseTransferResponse>> transfers(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @RequestParam(value = "warehouseId", required = false) Long warehouseId
+  ) {
+    return ApiResponse.ok(warehouseNetworkService.transfers(authService.requireUser(authorization), warehouseId));
+  }
+
+  @GetMapping("/transfers/{id}")
+  public ApiResponse<WarehouseTransferResponse> transfer(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id
+  ) {
+    return ApiResponse.ok(warehouseNetworkService.transfer(authService.requireUser(authorization), id));
+  }
+
+  @PostMapping("/transfers")
+  public ApiResponse<WarehouseTransferResponse> createTransfer(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @Valid @RequestBody WarehouseTransferCreateRequest request
+  ) {
+    return ApiResponse.ok(warehouseNetworkService.create(authService.requireUser(authorization), request));
+  }
+
+  @PostMapping("/transfers/{id}/submit")
+  public ApiResponse<WarehouseTransferResponse> submitTransfer(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id,
+      @RequestBody(required = false) WarehouseTransferActionRequest request
+  ) {
+    return ApiResponse.ok(warehouseNetworkService.submit(authService.requireUser(authorization), id,
+        request == null ? WarehouseTransferActionRequest.empty() : request));
+  }
+
+  @PostMapping("/transfers/{id}/review")
+  public ApiResponse<WarehouseTransferResponse> reviewTransfer(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id,
+      @Valid @RequestBody WarehouseTransferReviewRequest request
+  ) {
+    return ApiResponse.ok(warehouseNetworkService.review(authService.requireUser(authorization), id, request));
+  }
+
+  @PostMapping("/transfers/{id}/ship")
+  public ApiResponse<WarehouseTransferResponse> shipTransfer(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id,
+      @RequestBody(required = false) WarehouseTransferActionRequest request
+  ) {
+    return ApiResponse.ok(warehouseNetworkService.ship(authService.requireUser(authorization), id,
+        request == null ? WarehouseTransferActionRequest.empty() : request));
+  }
+
+  @PostMapping("/transfers/{id}/receive")
+  public ApiResponse<WarehouseTransferResponse> receiveTransfer(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id,
+      @RequestBody(required = false) WarehouseTransferReceiveRequest request
+  ) {
+    return ApiResponse.ok(warehouseNetworkService.receive(authService.requireUser(authorization), id,
+        request == null ? WarehouseTransferReceiveRequest.empty() : request));
+  }
+
+  @PostMapping("/transfers/{id}/cancel")
+  public ApiResponse<WarehouseTransferResponse> cancelTransfer(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id,
+      @RequestBody(required = false) WarehouseTransferActionRequest request
+  ) {
+    return ApiResponse.ok(warehouseNetworkService.cancel(authService.requireUser(authorization), id,
+        request == null ? WarehouseTransferActionRequest.empty() : request));
   }
 
   @GetMapping("/items")
@@ -191,6 +287,23 @@ public class WarehouseController {
       @Valid @RequestBody WarehousePurchaseOrderRequest request
   ) {
     return ApiResponse.ok(warehouseService.createPurchaseOrder(authService.requireUser(authorization), request));
+  }
+
+  @PostMapping("/purchase-orders/{id}/approve")
+  public ApiResponse<WarehousePurchaseOrderResponse> approvePurchaseOrder(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id
+  ) {
+    return ApiResponse.ok(warehouseService.approvePurchaseOrder(authService.requireUser(authorization), id));
+  }
+
+  @PostMapping("/purchase-orders/{id}/receive")
+  public ApiResponse<WarehousePurchaseOrderResponse> receivePurchaseOrder(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id,
+      @Valid @RequestBody WarehousePurchaseReceiveRequest request
+  ) {
+    return ApiResponse.ok(warehouseService.receivePurchaseOrder(authService.requireUser(authorization), id, request));
   }
 
   @GetMapping("/requisitions")

@@ -1,8 +1,13 @@
 package com.storeprofit.system.health;
 
 import com.storeprofit.system.common.ApiResponse;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
@@ -23,6 +28,9 @@ public class HealthController {
   @Value("${app.inspection.detect-url:http://127.0.0.1:8000/detect}")
   private String inspectionDetectUrl;
 
+  @Value("${app.environment}")
+  private String applicationEnvironment;
+
   public HealthController(
       @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")
       org.springframework.beans.factory.ObjectProvider<BuildProperties> buildPropertiesProvider,
@@ -39,6 +47,7 @@ public class HealthController {
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("status", "UP");
     result.put("time", OffsetDateTime.now().toString());
+    result.put("environment", applicationEnvironment);
 
     // Build info
     if (buildProperties != null) {
@@ -54,8 +63,27 @@ public class HealthController {
       MigrationInfo current = flyway.info().current();
       result.put("databaseMigrationVersion",
           current != null ? current.getVersion().getVersion() : "none");
-    } catch (Exception e) {
-      result.put("databaseMigrationVersion", "error: " + e.getMessage());
+    } catch (Exception ignored) {
+      result.put("databaseMigrationVersion", "error");
+    }
+
+    try (Connection connection = dataSource.getConnection();
+         Statement statement = connection.createStatement();
+         ResultSet identity = statement.executeQuery(
+             "select version(), @@port, database(), current_user()")) {
+      if (!identity.next()) {
+        throw new SQLException("Database identity query returned no row");
+      }
+      String currentUser = identity.getString(4);
+      String normalizedUser = currentUser == null ? "" : currentUser.toLowerCase(Locale.ROOT);
+      boolean localScopedAccount = !normalizedUser.startsWith("root@")
+          && (normalizedUser.endsWith("@127.0.0.1") || normalizedUser.endsWith("@localhost"));
+      result.put("databaseVersion", identity.getString(1));
+      result.put("databasePort", identity.getInt(2));
+      result.put("databaseName", identity.getString(3));
+      result.put("databaseAccountScope", localScopedAccount ? "LOCAL_SCOPED" : "UNRESTRICTED_OR_TEST");
+    } catch (SQLException exception) {
+      throw new IllegalStateException("Database health identity check failed", exception);
     }
 
     // Inspection service status (non-blocking check)

@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthService;
 import com.storeprofit.system.platform.auth.AuthUser;
 import org.junit.jupiter.api.Test;
@@ -49,6 +50,28 @@ class AssistantControllerAccessTest {
     controller.chat("Bearer finance-token", null);
 
     verify(assistantService).chat(finance, null);
+  }
+
+  @Test
+  void productionControllerDelegatesChatAndStatusToPermissionWrappers() {
+    AuthService authService = mock(AuthService.class);
+    AssistantService assistantService = mock(AssistantService.class);
+    DeepSeekProperties properties = mock(DeepSeekProperties.class);
+    AccessControlService accessControl = mock(AccessControlService.class);
+    AuthUser user = user("EMPLOYEE");
+    when(authService.requireUser("Bearer token")).thenReturn(user);
+    AssistantController controller = new AssistantController(
+        authService,
+        assistantService,
+        properties,
+        accessControl
+    );
+
+    controller.chat("Bearer token", null);
+    controller.status("Bearer token");
+
+    verify(accessControl, org.mockito.Mockito.times(2)).requireAssistantUse(user);
+    verify(assistantService).chat(user, null);
   }
 
   private AuthUser user(String role) {

@@ -2,6 +2,8 @@ package com.storeprofit.system.todo;
 
 import com.storeprofit.system.common.ApiResponse;
 import com.storeprofit.system.platform.auth.AuthService;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -33,7 +35,8 @@ public class RoleTodoController {
   }
 
   @GetMapping("/api/boss/todo-dashboard")
-  public ApiResponse<BossTodoDashboardResponse> bossTodoDashboard(
+  @Deprecated(since = "0.2.0", forRemoval = false)
+  public ResponseEntity<ApiResponse<BossTodoDashboardResponse>> bossTodoDashboard(
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @RequestParam(required = false) Boolean includeDone,
       @RequestParam(required = false) String status,
@@ -42,7 +45,12 @@ public class RoleTodoController {
       @RequestParam(required = false) String storeId
   ) {
     RoleTodoQuery query = new RoleTodoQuery(Boolean.TRUE.equals(includeDone), status, limit == null ? 50 : limit, brandId, storeId);
-    return ApiResponse.ok(roleTodoService.bossDashboard(authService.requireUser(authorization), query));
+    ApiResponse<BossTodoDashboardResponse> body =
+        ApiResponse.ok(roleTodoService.bossDashboard(authService.requireUser(authorization), query));
+    return ResponseEntity.ok()
+        .header("Deprecation", "true")
+        .header(HttpHeaders.LINK, "</api/todos>; rel=\"successor-version\"")
+        .body(body);
   }
 
   @GetMapping("/api/finance/todos")

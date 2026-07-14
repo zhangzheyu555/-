@@ -6,6 +6,8 @@ import com.storeprofit.system.platform.auth.AuthUser;
 import java.io.IOException;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
+import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -41,23 +43,23 @@ public class StorageService {
       "tokens",
       "passwords"
   );
-  private static final Set<String> OWNER_ROLES = Set.of("BOSS", "ADMIN");
+  private static final Set<String> OWNER_ROLES = Set.of();
   private static final Set<String> ALL_INTERNAL_ROLES =
-      Set.of("BOSS", "ADMIN", "FINANCE", "SUPERVISOR", "STORE_MANAGER", "WAREHOUSE", "OPERATIONS");
+      Set.of("FINANCE", "SUPERVISOR", "STORE_MANAGER", "WAREHOUSE", "OPERATIONS");
   private static final Map<String, Set<String>> KEY_WRITE_ROLES = Map.ofEntries(
       Map.entry("stores", OWNER_ROLES),
-      Map.entry("entries", Set.of("BOSS", "ADMIN", "FINANCE")),
-      Map.entry("salary", Set.of("BOSS", "ADMIN", "FINANCE")),
-      Map.entry("expenses", Set.of("BOSS", "ADMIN", "FINANCE", "STORE_MANAGER")),
-      Map.entry("inspections", Set.of("BOSS", "ADMIN", "SUPERVISOR")),
+      Map.entry("entries", Set.of("FINANCE")),
+      Map.entry("salary", Set.of("FINANCE")),
+      Map.entry("expenses", Set.of("FINANCE", "STORE_MANAGER")),
+      Map.entry("inspections", Set.of("SUPERVISOR")),
       Map.entry("logs", ALL_INTERNAL_ROLES),
       Map.entry("schema_v", OWNER_ROLES),
-      Map.entry("ana_uploads", Set.of("BOSS", "ADMIN", "OPERATIONS")),
+      Map.entry("ana_uploads", Set.of("OPERATIONS")),
       // 考试是各角色（含店长带新员工）都会提交的
       Map.entry("exam_records", ALL_INTERNAL_ROLES),
-      Map.entry("inv_overrides", Set.of("BOSS", "ADMIN", "OPERATIONS", "STORE_MANAGER")),
-      Map.entry("train_ov", Set.of("BOSS", "ADMIN", "OPERATIONS")),
-      Map.entry("train_fruit_ov", Set.of("BOSS", "ADMIN", "OPERATIONS"))
+      Map.entry("inv_overrides", Set.of("OPERATIONS", "STORE_MANAGER")),
+      Map.entry("train_ov", Set.of("OPERATIONS")),
+      Map.entry("train_fruit_ov", Set.of("OPERATIONS"))
   );
 
   private final JdbcTemplate jdbcTemplate;
@@ -83,7 +85,9 @@ public class StorageService {
 
   public Optional<String> get(AuthUser user, String key) {
     accessControl.requireLegacyStorageAccess(user);
-    return get(key);
+    String normalizedKey = normalizeKey(key);
+    requireAllowedReadKey(normalizedKey);
+    return get(normalizedKey);
   }
 
   @Transactional
@@ -186,6 +190,8 @@ public class StorageService {
         return Optional.empty();
       }
       accessControl.requireAttachmentRead(user, attachment.storeId(), attachment.uploadedBy());
+      requireInspectionDraftOwner(
+          user, attachment.storeId(), attachment.businessType(), attachment.businessId(), attachment.uploadedBy());
       requireBusinessReference(user.tenantId(), attachment.storeId(), attachment.businessType(), attachment.businessId());
       return Optional.of(new AttachmentContent(
           attachment.fileName(), attachment.contentType(), attachment.fileSize(), attachment.content()));
@@ -194,7 +200,105 @@ public class StorageService {
     }
   }
 
+  @Transactional
+  public void rebindInspectionAttachments(
+      AuthUser user,
+      String storeId,
+      String inspectionRecordId,
+      Collection<Long> attachmentIds
+  ) {
+    if (attachmentIds == null || attachmentIds.isEmpty()) {
+      return;
+    }
+    String normalizedStoreId = normalizeStoreId(storeId);
+    String normalizedRecordId = normalizeBusinessId(inspectionRecordId);
+    String draftBusinessId = inspectionDraftBusinessId(normalizedStoreId);
+    accessControl.requireAttachmentWrite(user, normalizedStoreId);
+    for (Long attachmentId : attachmentIds.stream().filter(java.util.Objects::nonNull).distinct().toList()) {
+      if (attachmentId <= 0) {
+        throw new BusinessException("BAD_ATTACHMENT_ID", "巡检照片编号不正确", HttpStatus.BAD_REQUEST);
+      }
+      int updated = jdbcTemplate.update("""
+          update warehouse_attachment
+          set business_type = 'INSPECTION_RECORD', business_id = ?
+          where tenant_id = ? and store_id = ? and id = ?
+            and business_type = 'INSPECTION_RECORD'
+            and (business_id = ? or (business_id = ? and uploaded_by = ?))
+          """, normalizedRecordId, user.tenantId(), normalizedStoreId, attachmentId,
+          normalizedRecordId, draftBusinessId, user.id());
+      if (updated == 0) {
+        throw new BusinessException(
+            "ATTACHMENT_SCOPE_MISMATCH",
+            "巡检照片不存在或不属于当前门店",
+            HttpStatus.FORBIDDEN
+        );
+      }
+    }
+  }
+
+  public Optional<InspectionAttachmentContent> inspectionAttachment(AuthUser user, long id) {
+    return inspectionAttachment(user, id, null);
+  }
+
+  public Optional<InspectionAttachmentContent> inspectionAttachment(
+      AuthUser user,
+      long id,
+      String expectedInspectionRecordId
+  ) {
+    try {
+      InspectionAttachmentContent attachment = jdbcTemplate.queryForObject("""
+          select id, store_id, business_type, business_id, file_name, content_type,
+                 file_size, content, uploaded_by, uploaded_at
+          from warehouse_attachment
+          where tenant_id = ? and id = ?
+          """,
+          (rs, rowNum) -> new InspectionAttachmentContent(
+              rs.getLong("id"),
+              rs.getString("store_id"),
+              rs.getString("business_type"),
+              rs.getString("business_id"),
+              rs.getString("file_name"),
+              rs.getString("content_type"),
+              rs.getLong("file_size"),
+              rs.getBytes("content"),
+              rs.getObject("uploaded_by", Long.class),
+              rs.getTimestamp("uploaded_at") == null ? null : rs.getTimestamp("uploaded_at").toLocalDateTime()
+          ),
+          user.tenantId(),
+          id
+      );
+      if (attachment == null || !"INSPECTION_RECORD".equals(attachment.businessType())) {
+        return Optional.empty();
+      }
+      accessControl.requireAttachmentRead(user, attachment.storeId(), attachment.uploadedBy());
+      requireInspectionDraftOwner(
+          user, attachment.storeId(), attachment.businessType(), attachment.businessId(), attachment.uploadedBy());
+      if (expectedInspectionRecordId != null
+          && !expectedInspectionRecordId.trim().equals(attachment.businessId())) {
+        return Optional.empty();
+      }
+      requireBusinessReference(
+          user.tenantId(), attachment.storeId(), attachment.businessType(), attachment.businessId());
+      return Optional.of(attachment);
+    } catch (EmptyResultDataAccessException ex) {
+      return Optional.empty();
+    }
+  }
+
   public record AttachmentContent(String fileName, String contentType, long fileSize, byte[] content) {}
+
+  public record InspectionAttachmentContent(
+      long id,
+      String storeId,
+      String businessType,
+      String businessId,
+      String fileName,
+      String contentType,
+      long fileSize,
+      byte[] content,
+      Long uploadedBy,
+      LocalDateTime uploadedAt
+  ) {}
 
   private record AttachmentMetadata(
       String storeId,
@@ -209,7 +313,7 @@ public class StorageService {
 
   private void requireRoleCanWrite(AuthUser user, String key) {
     Set<String> roles = KEY_WRITE_ROLES.getOrDefault(key, Set.of());
-    if (!roles.contains(user.role())) {
+    if (!AccessControlService.hasAnyRole(user, roles)) {
       throw new BusinessException("FORBIDDEN", "当前角色不能写入该 legacy KV 数据", HttpStatus.FORBIDDEN);
     }
   }
@@ -227,7 +331,7 @@ public class StorageService {
   }
 
   private void requireBusinessReference(long tenantId, String storeId, String businessType, String businessId) {
-    if (isDraftBusiness(businessId)) {
+    if (isInspectionDraftBusiness(storeId, businessType, businessId)) {
       return;
     }
     String sql = switch (businessType) {
@@ -255,6 +359,23 @@ public class StorageService {
     }
     if (!ALLOWED_WRITE_KEYS.contains(key)) {
       throw new BusinessException("LEGACY_STORAGE_KEY_NOT_ALLOWED", "该 legacy KV key 不在允许写入列表中", HttpStatus.BAD_REQUEST);
+    }
+  }
+
+  private void requireAllowedReadKey(String key) {
+    if (BLOCKED_WRITE_KEYS.contains(key)) {
+      throw new BusinessException(
+          "LEGACY_STORAGE_SENSITIVE_KEY_BLOCKED",
+          "认证账号、密码和 Token 数据禁止通过 legacy KV 接口读取",
+          HttpStatus.FORBIDDEN
+      );
+    }
+    if (!ALLOWED_WRITE_KEYS.contains(key)) {
+      throw new BusinessException(
+          "LEGACY_STORAGE_KEY_NOT_ALLOWED",
+          "该 legacy KV key 不在允许读取列表中",
+          HttpStatus.BAD_REQUEST
+      );
     }
   }
 
@@ -293,9 +414,28 @@ public class StorageService {
     return normalized;
   }
 
-  private boolean isDraftBusiness(String businessId) {
-    String value = businessId == null ? "" : businessId.trim().toLowerCase();
-    return "draft".equals(value) || value.startsWith("draft-") || value.endsWith("-draft");
+  private boolean isInspectionDraftBusiness(String storeId, String businessType, String businessId) {
+    return "INSPECTION_RECORD".equals(businessType)
+        && inspectionDraftBusinessId(storeId).equals(businessId);
+  }
+
+  private String inspectionDraftBusinessId(String storeId) {
+    return "inspection-" + storeId + "-draft";
+  }
+
+  private void requireInspectionDraftOwner(
+      AuthUser user,
+      String storeId,
+      String businessType,
+      String businessId,
+      Long uploadedBy
+  ) {
+    if (isInspectionDraftBusiness(storeId, businessType, businessId)
+        && !AccessControlService.isBoss(user)
+        && !java.util.Objects.equals(uploadedBy, user.id())) {
+      throw new BusinessException(
+          "FORBIDDEN", "不能读取其他用户尚未保存的巡检照片", HttpStatus.FORBIDDEN);
+    }
   }
 
   private String normalizeFileName(String value) {

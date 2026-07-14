@@ -10,6 +10,9 @@ import com.storeprofit.system.finance.ProfitEntryResponse;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthService;
 import com.storeprofit.system.platform.auth.AuthUser;
+import com.storeprofit.system.platform.authorization.BusinessScope;
+import com.storeprofit.system.platform.authorization.BusinessScopeResolver;
+import com.storeprofit.system.platform.authorization.DataScopeDomains;
 import com.storeprofit.system.salary.SalaryRecordResponse;
 import com.storeprofit.system.salary.SalaryService;
 import java.nio.charset.StandardCharsets;
@@ -25,6 +28,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.beans.factory.annotation.Autowired;
 
 @RestController
 @RequestMapping("/api/export")
@@ -36,6 +40,26 @@ public class ExportController {
   private final ExpenseService expenseService;
   private final SalaryService salaryService;
   private final AuditRepository auditRepository;
+  private final BusinessScopeResolver businessScopeResolver;
+
+  @Autowired
+  public ExportController(
+      AuthService authService,
+      AccessControlService accessControl,
+      FinanceService financeService,
+      ExpenseService expenseService,
+      SalaryService salaryService,
+      AuditRepository auditRepository,
+      BusinessScopeResolver businessScopeResolver
+  ) {
+    this.authService = authService;
+    this.accessControl = accessControl;
+    this.financeService = financeService;
+    this.expenseService = expenseService;
+    this.salaryService = salaryService;
+    this.auditRepository = auditRepository;
+    this.businessScopeResolver = businessScopeResolver;
+  }
 
   public ExportController(
       AuthService authService,
@@ -45,36 +69,33 @@ public class ExportController {
       SalaryService salaryService,
       AuditRepository auditRepository
   ) {
-    this.authService = authService;
-    this.accessControl = accessControl;
-    this.financeService = financeService;
-    this.expenseService = expenseService;
-    this.salaryService = salaryService;
-    this.auditRepository = auditRepository;
+    this(authService, accessControl, financeService, expenseService, salaryService, auditRepository, null);
   }
 
   @GetMapping("/profit-ranking.csv")
   public ResponseEntity<byte[]> profitRankingCsv(
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @RequestParam(required = false) String month,
-      @RequestParam(required = false) Long brandId
+      @RequestParam(required = false) Long brandId,
+      @RequestParam(required = false) String storeId
   ) {
     AuthUser user = requireExport(authorization);
     String targetMonth = normalizeMonth(month);
-    List<ProfitEntryResponse> rows = financeService.entries(user, targetMonth, brandId, null);
+    List<ProfitEntryResponse> rows = financeService.entries(user, targetMonth, brandId, storeId);
     writeExportLog(user, "导出利润排行", "profit-ranking", targetMonth);
-    return csv("利润排行-" + targetMonth + ".csv", toProfitCsv(targetMonth, rows));
+    return csv("门店利润_" + targetMonth + ".csv", toProfitCsv(targetMonth, rows));
   }
 
   @GetMapping("/expenses.csv")
   public ResponseEntity<byte[]> expensesCsv(
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @RequestParam(required = false) String month,
-      @RequestParam(required = false) Long brandId
+      @RequestParam(required = false) Long brandId,
+      @RequestParam(required = false) String storeId
   ) {
     AuthUser user = requireExport(authorization);
     String targetMonth = normalizeMonth(month);
-    List<ExpenseClaimResponse> rows = expenseService.claims(user, targetMonth, brandId, null, null);
+    List<ExpenseClaimResponse> rows = expenseService.claims(user, targetMonth, brandId, storeId, null);
     writeExportLog(user, "导出报销记录", "expense-claims", targetMonth);
     return csv("报销记录-" + targetMonth + ".csv", toExpenseCsv(rows));
   }
@@ -83,11 +104,17 @@ public class ExportController {
   public ResponseEntity<byte[]> salariesCsv(
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @RequestParam(required = false) String month,
-      @RequestParam(required = false) Long brandId
+      @RequestParam(required = false) Long brandId,
+      @RequestParam(required = false) String storeId
   ) {
     AuthUser user = requireExport(authorization);
     String targetMonth = normalizeMonth(month);
-    List<SalaryRecordResponse> rows = salaryService.records(user, targetMonth, brandId, null);
+    BusinessScope businessScope = businessScopeResolver == null
+        ? new BusinessScope(storeId, null, brandId, null, null)
+        : businessScopeResolver.resolve(
+            user, DataScopeDomains.SALARY, storeId, brandId, "导出工资记录");
+    List<SalaryRecordResponse> rows = salaryService.records(
+        user, targetMonth, businessScope.brandId(), businessScope.storeId());
     writeExportLog(user, "导出工资记录", "salary-records", targetMonth);
     return csv("员工工资-" + targetMonth + ".csv", toSalaryCsv(rows));
   }
@@ -130,8 +157,11 @@ public class ExportController {
     }
   }
 
-  private String toProfitCsv(String month, List<ProfitEntryResponse> rows) {
-    StringBuilder csv = new StringBuilder("月份,排名,门店编码,门店,品牌,区域,营业总额,实收收入,成本合计,费用合计,净利润,净利率,状态\n");
+  static String toProfitCsv(String month, List<ProfitEntryResponse> rows) {
+    StringBuilder csv = new StringBuilder(
+        "月份,排名,门店编码,门店名称,品牌,区域,营业额,退款金额,优惠金额,原材料成本,包材成本,损耗成本,其他成本,"
+            + "房租,人工工资,水电费,物业费,平台佣金,推广费,维修费,设备费,其他费用,备注,"
+            + "实收收入,成本合计,费用合计,净利润,净利率,状态\r\n");
     for (int i = 0; i < rows.size(); i++) {
       ProfitEntryResponse row = rows.get(i);
       csv.append(escape(month)).append(',')
@@ -141,13 +171,29 @@ public class ExportController {
           .append(escape(row.brandName())).append(',')
           .append(escape(row.area())).append(',')
           .append(row.sales()).append(',')
+          .append(row.refund()).append(',')
+          .append(row.discount()).append(',')
+          .append(row.material()).append(',')
+          .append(row.packaging()).append(',')
+          .append(row.loss()).append(',')
+          .append(row.costOther()).append(',')
+          .append(row.rent()).append(',')
+          .append(row.labor()).append(',')
+          .append(row.utility()).append(',')
+          .append(row.property()).append(',')
+          .append(row.commission()).append(',')
+          .append(row.promo()).append(',')
+          .append(row.repair()).append(',')
+          .append(row.equip()).append(',')
+          .append(row.expOther()).append(',')
+          .append(escape(row.note())).append(',')
           .append(row.income()).append(',')
           .append(row.costSum()).append(',')
           .append(row.expenseSum()).append(',')
           .append(row.net()).append(',')
           .append(row.margin().multiply(new java.math.BigDecimal("100")).setScale(1, java.math.RoundingMode.HALF_UP)).append("%,")
           .append(escape(row.risk()))
-          .append('\n');
+          .append("\r\n");
     }
     return csv.toString();
   }
@@ -202,7 +248,7 @@ public class ExportController {
     };
   }
 
-  private String escape(String value) {
+  private static String escape(String value) {
     String safe = value == null ? "" : value;
     return "\"" + safe.replace("\"", "\"\"") + "\"";
   }

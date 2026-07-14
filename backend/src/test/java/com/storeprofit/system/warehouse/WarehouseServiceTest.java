@@ -2,8 +2,11 @@ package com.storeprofit.system.warehouse;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.mock;
 
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
 import java.math.BigDecimal;
 import java.sql.Date;
@@ -43,7 +46,7 @@ class WarehouseServiceTest {
     WarehouseRequisitionResponse created = service.createRequisition(
         storeManager(),
         new WarehouseRequisitionRequest(
-            "other-store",
+            "rg1",
             List.of(new WarehouseRequisitionLineRequest(1L, new BigDecimal("5"), "门店补货")),
             "店长叫货"
         )
@@ -108,6 +111,34 @@ class WarehouseServiceTest {
         .findFirst()
         .orElseThrow();
     assertThat(received.statusLabel()).isEqualTo("门店已收货");
+  }
+
+  @Test
+  void storeManagerCannotUseCentralWarehouseActionsEvenWhenPermissionsAreExplicitlyAllowed() {
+    AccessControlService permissiveAccessControl = mock(AccessControlService.class);
+    AuthUser manager = storeManager();
+    doNothing().when(permissiveAccessControl).requireWarehouseCentralManage(manager);
+    doNothing().when(permissiveAccessControl).requireWarehouseRequisitionReview(manager);
+    WarehouseService permissionOverrideService = new WarehouseService(
+        new WarehouseRepository(jdbcTemplate), permissiveAccessControl);
+
+    assertForbidden(() -> permissionOverrideService.saveItem(manager, itemRequest("FORBIDDEN", "越权物料")));
+    assertForbidden(() -> permissionOverrideService.receiveStock(manager, new WarehouseStockBatchRequest(
+        1L, "FORBIDDEN-BATCH", "2026-07-13", null,
+        BigDecimal.ONE, BigDecimal.ONE, "越权采购入库")));
+    assertForbidden(() -> permissionOverrideService.createPurchaseOrder(manager, new WarehousePurchaseOrderRequest(
+        1L,
+        "越权采购单",
+        List.of(new WarehousePurchaseOrderLineRequest(
+            1L, BigDecimal.ONE, BigDecimal.ONE, "越权采购")))));
+    assertForbidden(() -> permissionOverrideService.review(
+        manager, "REQ-NOT-NEEDED",
+        new WarehouseRequisitionReviewRequest(true, List.of(), "越权审核")));
+    assertForbidden(() -> permissionOverrideService.ship(manager, "REQ-NOT-NEEDED"));
+    assertForbidden(() -> permissionOverrideService.reviewReturn(
+        manager, "RETURN-NOT-NEEDED", new WarehouseReturnReviewRequest(true, "越权退货审核")));
+    assertForbidden(() -> permissionOverrideService.receiveReturn(
+        manager, "RETURN-NOT-NEEDED", new WarehouseReturnReceiveRequest("越权退货入库")));
   }
 
   @Test
@@ -199,19 +230,28 @@ class WarehouseServiceTest {
   }
 
   @Test
-  void bossIsReadonlyAndStoreRequestsAreIdempotent() {
-    assertThatThrownBy(() -> service.saveItem(boss(), itemRequest("BOSS-WRITE", "老板不能维护")))
-        .isInstanceOf(BusinessException.class)
-        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
-    assertThatThrownBy(() -> service.createRequisition(
+  void bossCanManageWarehouseAndStoreRequestsAreIdempotent() {
+    service.saveItem(boss(), itemRequest("BOSS-WRITE", "老板维护物料"));
+    WarehouseItemResponse savedItem = service.overview(boss()).items().stream()
+        .filter(item -> "BOSS-WRITE".equals(item.code()))
+        .findFirst()
+        .orElseThrow();
+    WarehouseRequisitionResponse bossRequest = service.createRequisition(
         boss(),
         new WarehouseRequisitionRequest(
             "rg1",
-            List.of(new WarehouseRequisitionLineRequest(1L, BigDecimal.ONE, "越权叫货")),
-            "老板不能代门店叫货",
+            List.of(new WarehouseRequisitionLineRequest(1L, BigDecimal.ONE, "老板代门店叫货")),
+            "老板处理叫货",
             "boss-request"
         )
-    )).isInstanceOf(BusinessException.class);
+    );
+
+    assertThat(savedItem.code()).isEqualTo("BOSS-WRITE");
+    assertThat(bossRequest.storeId()).isEqualTo("rg1");
+    int requisitionCountAfterBoss = jdbcTemplate.queryForObject(
+        "select count(*) from store_requisition where tenant_id = 1",
+        Integer.class
+    );
 
     WarehouseRequisitionRequest request = new WarehouseRequisitionRequest(
         "rg1",
@@ -226,7 +266,8 @@ class WarehouseServiceTest {
     assertThat(jdbcTemplate.queryForObject(
         "select count(*) from store_requisition where tenant_id = 1",
         Integer.class
-    )).isEqualTo(1);
+    )).isEqualTo(requisitionCountAfterBoss + 1);
+    assertThat(operationLogCount("提交叫货", first.id())).isEqualTo(1);
   }
 
   @Test
@@ -249,6 +290,7 @@ class WarehouseServiceTest {
         "select count(*) from warehouse_stock_movement where source_id = 'IDEMPOTENT-BATCH'",
         Integer.class
     )).isEqualTo(1);
+    assertThat(operationLogCount("仓库入库", "IDEMPOTENT-BATCH")).isEqualTo(1);
 
     WarehouseItemCategoryResponse category = service.saveItemCategory(
         warehouseManager(),
@@ -262,6 +304,25 @@ class WarehouseServiceTest {
     assertThatThrownBy(() -> service.deleteItemCategory(warehouseManager(), 1L))
         .isInstanceOf(BusinessException.class)
         .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("CATEGORY_IN_USE"));
+  }
+
+  @Test
+  void categoryCannotBeMovedBelowItsOwnChild() {
+    WarehouseItemCategoryResponse parent = service.saveItemCategory(
+        warehouseManager(),
+        new WarehouseItemCategoryRequest(null, "原料", null, 100, true)
+    );
+    WarehouseItemCategoryResponse child = service.saveItemCategory(
+        warehouseManager(),
+        new WarehouseItemCategoryRequest(null, "冷藏原料", parent.id(), 110, true)
+    );
+
+    assertThatThrownBy(() -> service.saveItemCategory(
+        warehouseManager(),
+        new WarehouseItemCategoryRequest(parent.id(), "原料", child.id(), 100, true)
+    ))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("BAD_CATEGORY_PARENT"));
   }
 
   @Test
@@ -476,7 +537,12 @@ class WarehouseServiceTest {
     assertThat(ownStoreReturn.returnNo()).startsWith("PSTH");
     assertThat(ownStoreReturn.sourceRequisitionId()).isEqualTo(ownSource.id());
     assertThat(ownStoreReturn.statusLabel()).isEqualTo("已提交");
-    assertThat(ownStoreReturn.totalAmount()).isEqualByComparingTo("176.00");
+    assertThat(ownStoreReturn.totalAmount()).isEqualByComparingTo("0.00");
+    assertThat(jdbcTemplate.queryForObject(
+        "select total_amount from warehouse_return_order where id = ?",
+        BigDecimal.class,
+        ownStoreReturn.id()
+    )).isEqualByComparingTo("176.00");
     assertThat(ownStoreReturn.lines()).hasSize(1);
     assertThat(ownStoreReturn.lines().get(0).batchNo()).isEqualTo("B001");
     assertThat(ownStoreReturn.attachmentCount()).isEqualTo(1);
@@ -488,6 +554,7 @@ class WarehouseServiceTest {
         new WarehouseReturnReviewRequest(true, "同意退货")
     );
     assertThat(approved.statusLabel()).isEqualTo("仓库已通过");
+    assertThat(approved.totalAmount()).isEqualByComparingTo("176.00");
 
     WarehouseReturnResponse received = service.receiveReturn(
         warehouseManager(),
@@ -770,6 +837,14 @@ class WarehouseServiceTest {
         targetId
     );
     return count == null ? 0 : count;
+  }
+
+  private void assertForbidden(org.assertj.core.api.ThrowableAssert.ThrowingCallable action) {
+    assertThatThrownBy(action)
+        .isInstanceOfSatisfying(BusinessException.class, error -> {
+          assertThat(error.getCode()).isEqualTo("FORBIDDEN");
+          assertThat(error.getStatus()).isEqualTo(org.springframework.http.HttpStatus.FORBIDDEN);
+        });
   }
 
   private WarehouseItemRequest itemRequest(String code, String name) {

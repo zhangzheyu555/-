@@ -18,12 +18,17 @@ import com.storeprofit.system.operations.OperationsBusinessModels.ExamAttemptRes
 import com.storeprofit.system.operations.OperationsBusinessModels.ExamPaperResponse;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
+import com.storeprofit.system.platform.authorization.DataScope;
+import com.storeprofit.system.platform.authorization.DataScopeDomains;
+import com.storeprofit.system.platform.authorization.DataScopeModes;
+import com.storeprofit.system.platform.authorization.PermissionCodes;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -37,8 +42,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class ExamCenterService {
-  private static final Set<String> COMPANY_ROLES = Set.of("ADMIN", "BOSS", "OWNER", "OPERATIONS", "OPS");
-  private static final Set<String> MANAGE_ROLES = Set.of("ADMIN", "OPERATIONS", "OPS");
   private static final Set<String> TARGET_ROLES = Set.of(
       "EMPLOYEE", "STORE_MANAGER", "SUPERVISOR", "WAREHOUSE", "FINANCE");
 
@@ -46,39 +49,54 @@ public class ExamCenterService {
   private final OperationsBusinessRepository operationsRepository;
   private final AccessControlService accessControl;
   private final AuditRepository auditRepository;
+  private final ExamLearningRepository learningRepository;
 
   public ExamCenterService(
       ExamCenterRepository repository,
       OperationsBusinessRepository operationsRepository,
       AccessControlService accessControl,
-      AuditRepository auditRepository
+      AuditRepository auditRepository,
+      ExamLearningRepository learningRepository
   ) {
     this.repository = repository;
     this.operationsRepository = operationsRepository;
     this.accessControl = accessControl;
     this.auditRepository = auditRepository;
+    this.learningRepository = learningRepository;
   }
 
   public ExamCenterOverviewResponse overview(AuthUser user) {
     accessControl.requireExamRead(user);
     Scope scope = scope(user);
-    boolean canManage = MANAGE_ROLES.contains(normalizeRole(user.role()));
-    boolean companyView = COMPANY_ROLES.contains(normalizeRole(user.role()));
+    boolean canManage = accessControl.hasPermission(user, PermissionCodes.EXAM_MANAGE)
+        && (scope.companyWide() || !scope.storeIds().isEmpty());
+    boolean companyView = scope.companyWide()
+        && accessControl.hasPermission(user, PermissionCodes.EXAM_REPORT);
     ExamCenterOverviewResponse response = new ExamCenterOverviewResponse(
         scope.mode(),
         canManage,
         companyView,
-        companyView ? repository.paperSummaries(user.tenantId(), canManage) : List.of(),
-        repository.campaigns(user.tenantId(), scope.storeId(), scope.userId()),
-        repository.assignments(user.tenantId(), scope.storeId(), scope.userId()),
-        canManage ? repository.candidates(user.tenantId()) : List.of()
+        canManage ? repository.paperSummaries(user.tenantId(), true) : List.of(),
+        repository.campaigns(user.tenantId(), scope.repositoryStoreIds(), scope.userId()),
+        repository.assignments(user.tenantId(), scope.repositoryStoreIds(), scope.userId()),
+        canManage
+            ? repository.candidates(user.tenantId(), scope.candidateStoreIds())
+            : List.of()
     );
-    writeAudit(user, "查看考试中心", "training_exam_campaign", null, scope.storeId(), "按当前角色数据范围查询考试");
+    writeAudit(
+        user,
+        "查看考试中心",
+        "training_exam_campaign",
+        null,
+        scope.auditStoreId(),
+        "按账号考试权限和数据范围查询"
+    );
     return response;
   }
 
   public ExamPaperEditorResponse paperForEdit(AuthUser user, long paperId) {
     accessControl.requireExamManage(user);
+    requireManageScope(user, "编辑考试试卷");
     return repository.paperForEdit(user.tenantId(), paperId)
         .orElseThrow(() -> new BusinessException("PAPER_NOT_FOUND", "试卷不存在", HttpStatus.NOT_FOUND));
   }
@@ -86,6 +104,7 @@ public class ExamCenterService {
   @Transactional
   public ExamPaperEditorResponse savePaper(AuthUser user, ExamPaperSaveRequest request) {
     accessControl.requireExamManage(user);
+    requireManageScope(user, "保存考试试卷");
     ValidatedPaper paper = validatePaper(request);
     long paperId;
     if (request.id() == null) {
@@ -121,6 +140,7 @@ public class ExamCenterService {
   @Transactional
   public ExamCampaignDetailResponse publish(AuthUser user, ExamPublishRequest request) {
     accessControl.requireExamManage(user);
+    Scope scope = requireManageScope(user, "发布考试");
     if (request == null || request.paperId() == null) {
       throw new BusinessException("PAPER_REQUIRED", "请选择试卷", HttpStatus.BAD_REQUEST);
     }
@@ -138,6 +158,10 @@ public class ExamCenterService {
 
     Set<Long> requestedUsers = normalizeIds(request.userIds());
     Set<String> requestedStores = normalizeStrings(request.storeIds());
+    if (!scope.companyWide() && !scope.storeIds().containsAll(requestedStores)) {
+      throw new BusinessException(
+          "EXAM_TARGET_SCOPE_INVALID", "应考门店超出当前账号的数据范围", HttpStatus.FORBIDDEN);
+    }
     Set<String> requestedRoles = normalizeRoles(request.targetRoles());
     if (requestedUsers.isEmpty() && requestedStores.isEmpty()) {
       throw new BusinessException("TARGET_REQUIRED", "请选择应考门店或应考人员", HttpStatus.BAD_REQUEST);
@@ -147,7 +171,8 @@ public class ExamCenterService {
     }
     Set<String> targetRoles = requestedRoles;
 
-    List<ExamCandidateResponse> selected = repository.candidates(user.tenantId()).stream()
+    List<ExamCandidateResponse> selected = repository
+        .candidates(user.tenantId(), scope.candidateStoreIds()).stream()
         .filter(candidate -> requestedUsers.isEmpty() || requestedUsers.contains(candidate.userId()))
         .filter(candidate -> !requestedUsers.isEmpty() || requestedStores.contains(candidate.storeId()))
         .filter(candidate -> !requestedUsers.isEmpty() || targetRoles.contains(candidate.role()))
@@ -187,18 +212,28 @@ public class ExamCenterService {
   private ExamCampaignDetailResponse campaignDetail(AuthUser user, long campaignId, boolean audit) {
     accessControl.requireExamRead(user);
     Scope scope = scope(user);
-    ExamCampaignResponse companyCampaign = repository.campaign(user.tenantId(), campaignId, null, null)
-        .orElseThrow(() -> new BusinessException("EXAM_NOT_FOUND", "考试不存在", HttpStatus.NOT_FOUND));
-    ExamCampaignResponse campaign = companyCampaign;
-    if (!"COMPANY".equals(scope.mode())) {
-      var scopedCampaign = repository.campaign(user.tenantId(), campaignId, scope.storeId(), scope.userId());
-      accessControl.requireExamCampaignScope(user, scopedCampaign.isPresent(), campaignId);
-      campaign = scopedCampaign.orElseThrow();
+    var scopedCampaign = repository.campaign(
+        user.tenantId(), campaignId, scope.repositoryStoreIds(), scope.userId());
+    if (scopedCampaign.isEmpty()) {
+      boolean exists = repository.campaign(
+          user.tenantId(), campaignId, (Collection<String>) null, null).isPresent();
+      if (!exists) {
+        throw new BusinessException("EXAM_NOT_FOUND", "考试不存在", HttpStatus.NOT_FOUND);
+      }
+      accessControl.requireExamCampaignScope(user, false, campaignId);
     }
+    ExamCampaignResponse campaign = scopedCampaign.orElseThrow();
     List<ExamAssignmentResponse> assignments = repository.assignmentsForCampaign(
-        user.tenantId(), campaignId, scope.storeId(), scope.userId());
+        user.tenantId(), campaignId, scope.repositoryStoreIds(), scope.userId());
     if (audit) {
-      writeAudit(user, "查看考试成绩", "training_exam_campaign", Long.toString(campaignId), scope.storeId(), campaign.title());
+      writeAudit(
+          user,
+          "查看考试成绩",
+          "training_exam_campaign",
+          Long.toString(campaignId),
+          scope.auditStoreId(),
+          campaign.title()
+      );
     }
     return new ExamCampaignDetailResponse(campaign, assignments);
   }
@@ -238,8 +273,12 @@ public class ExamCenterService {
     }
     Map<Long, String> answers = answerMap(request == null ? null : request.answers());
     BigDecimal score = BigDecimal.ZERO;
+    boolean requiresReview = false;
     Map<Long, Boolean> correctMap = new HashMap<>();
     for (OperationsBusinessRepository.QuestionForGrade question : questions) {
+      if ("ESSAY".equals(question.questionType())) {
+        requiresReview = true;
+      }
       boolean correct = isCorrect(question, answers.get(question.id()));
       correctMap.put(question.id(), correct);
       if (correct) {
@@ -248,7 +287,7 @@ public class ExamCenterService {
     }
     score = score.setScale(2, RoundingMode.HALF_UP);
     boolean violated = request != null && Boolean.TRUE.equals(request.violated());
-    boolean passed = !violated && score.compareTo(amount(paper.passScore())) >= 0;
+    boolean passed = !requiresReview && !violated && score.compareTo(amount(paper.passScore())) >= 0;
     long attemptId = operationsRepository.insertExamAttempt(
         user.tenantId(),
         paper.id(),
@@ -275,8 +314,15 @@ public class ExamCenterService {
           correct ? amount(question.score()) : BigDecimal.ZERO
       );
     }
-    if (!repository.completeAssignment(user.tenantId(), assignmentId, attemptId, score, passed)) {
+    learningRepository.createAttemptReview(user.tenantId(), attemptId, requiresReview ? "PENDING" : "AUTO_GRADED");
+    boolean assignmentUpdated = requiresReview
+        ? repository.submitAssignmentForReview(user.tenantId(), assignmentId, attemptId, score)
+        : repository.completeAssignment(user.tenantId(), assignmentId, attemptId, score, passed);
+    if (!assignmentUpdated) {
       throw new BusinessException("EXAM_ALREADY_SUBMITTED", "考试已被提交，请刷新后查看成绩", HttpStatus.CONFLICT);
+    }
+    if (!requiresReview) {
+      learningRepository.syncWrongQuestions(user.tenantId(), user.id(), attemptId);
     }
     writeAudit(
         user,
@@ -284,7 +330,7 @@ public class ExamCenterService {
         "training_exam_attempt",
         Long.toString(attemptId),
         assignment.storeId(),
-        passed ? "考试通过" : violated ? "考试违规，未通过" : "考试未通过"
+        requiresReview ? "考试已提交，等待阅卷" : passed ? "考试通过" : violated ? "考试违规，未通过" : "考试未通过"
     );
     return operationsRepository.examAttempt(user.tenantId(), attemptId)
         .orElseThrow(() -> new BusinessException("ATTEMPT_NOT_FOUND", "考试成绩保存失败", HttpStatus.INTERNAL_SERVER_ERROR));
@@ -313,30 +359,47 @@ public class ExamCenterService {
   private ExamAssignmentResponse requireVisibleAssignment(AuthUser user, long assignmentId, boolean forUpdate) {
     ExamAssignmentResponse assignment = repository.assignment(user.tenantId(), assignmentId, forUpdate)
         .orElseThrow(() -> new BusinessException("ASSIGNMENT_NOT_FOUND", "考试任务不存在", HttpStatus.NOT_FOUND));
-    String role = normalizeRole(user.role());
-    if (COMPANY_ROLES.contains(role)) {
+    Scope scope = scope(user);
+    if (scope.companyWide()) {
       return assignment;
     }
-    if ("STORE_MANAGER".equals(role)) {
-      accessControl.requireStoreAccess(user, assignment.storeId(), "查看考试任务");
-      return assignment;
-    }
-    if ("EMPLOYEE".equals(role)) {
+    if (scope.selfOnly()) {
       accessControl.requireOwnExamAssignment(user, assignment.userId(), assignmentId);
       return assignment;
     }
-    throw new BusinessException("FORBIDDEN", "当前账号无权查看该考试任务", HttpStatus.FORBIDDEN);
+    if (scope.storeIds().contains(assignment.storeId())) {
+      return assignment;
+    }
+    accessControl.requireStoreAccess(
+        user, DataScopeDomains.EXAM, assignment.storeId(), "查看考试任务");
+    return assignment;
   }
 
   private Scope scope(AuthUser user) {
-    String role = normalizeRole(user.role());
-    if (COMPANY_ROLES.contains(role)) {
-      return new Scope("COMPANY", null, null);
+    DataScope dataScope = accessControl.dataScope(user, DataScopeDomains.EXAM);
+    if (dataScope.allowsAllStores()) {
+      return new Scope("COMPANY", List.of(), null);
     }
-    if ("STORE_MANAGER".equals(role)) {
-      return new Scope("STORE", requiredStore(user), null);
+    if (DataScopeModes.SELF.equals(dataScope.mode())) {
+      return new Scope("SELF", List.of(), user.id());
     }
-    return new Scope("SELF", null, user.id());
+    if (!dataScope.storeIds().isEmpty()) {
+      return new Scope(
+          DataScopeModes.OWN_STORE.equals(dataScope.mode()) ? "STORE" : "STORE_LIST",
+          dataScope.storeIds(),
+          null
+      );
+    }
+    return new Scope("NONE", List.of(), null);
+  }
+
+  private Scope requireManageScope(AuthUser user, String action) {
+    Scope scope = scope(user);
+    if (scope.companyWide() || !scope.storeIds().isEmpty()) {
+      return scope;
+    }
+    throw new BusinessException(
+        "FORBIDDEN", "当前账号没有可用于" + action + "的数据范围", HttpStatus.FORBIDDEN);
   }
 
   private ValidatedPaper validatePaper(ExamPaperSaveRequest request) {
@@ -382,7 +445,7 @@ public class ExamCenterService {
       if ("SINGLE_CHOICE".equals(type) && (options.size() < 2 || !options.contains(answer))) {
         throw new BusinessException("QUESTION_OPTION_INVALID", "单选题至少需要两个选项，且标准答案必须在选项中", HttpStatus.BAD_REQUEST);
       }
-      questions.add(new ExamQuestionSaveRequest(type, text, options, answer, blankToNull(item.acceptKeywords()), score));
+      questions.add(new ExamQuestionSaveRequest(item.bankQuestionId(), type, text, options, answer, blankToNull(item.acceptKeywords()), score));
       totalScore = totalScore.add(score);
     }
     if (passScore.compareTo(totalScore) > 0) {
@@ -409,6 +472,9 @@ public class ExamCenterService {
   }
 
   private boolean isCorrect(OperationsBusinessRepository.QuestionForGrade question, String userAnswer) {
+    if ("ESSAY".equals(question.questionType())) {
+      return false;
+    }
     String normalized = blankToNull(userAnswer);
     if (normalized == null) {
       return false;
@@ -478,7 +544,7 @@ public class ExamCenterService {
 
   private String normalizeQuestionType(String value) {
     String type = normalizeRole(value);
-    if (!Set.of("SINGLE_CHOICE", "TEXT", "NUMBER").contains(type)) {
+    if (!Set.of("SINGLE_CHOICE", "TEXT", "NUMBER", "ESSAY").contains(type)) {
       throw new BusinessException("QUESTION_TYPE_INVALID", "题型不正确", HttpStatus.BAD_REQUEST);
     }
     return type;
@@ -540,7 +606,35 @@ public class ExamCenterService {
     return value == null || value.isBlank() ? null : value.trim();
   }
 
-  private record Scope(String mode, String storeId, Long userId) {
+  private record Scope(String mode, List<String> storeIds, Long userId) {
+    private Scope {
+      storeIds = storeIds == null ? List.of() : storeIds.stream()
+          .filter(value -> value != null && !value.isBlank())
+          .map(String::trim)
+          .distinct()
+          .sorted()
+          .toList();
+    }
+
+    boolean companyWide() {
+      return "COMPANY".equals(mode);
+    }
+
+    boolean selfOnly() {
+      return "SELF".equals(mode);
+    }
+
+    Collection<String> repositoryStoreIds() {
+      return companyWide() || selfOnly() ? null : storeIds;
+    }
+
+    Collection<String> candidateStoreIds() {
+      return companyWide() ? null : storeIds;
+    }
+
+    String auditStoreId() {
+      return storeIds.size() == 1 ? storeIds.getFirst() : null;
+    }
   }
 
   private record ValidatedPaper(

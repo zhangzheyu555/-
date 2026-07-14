@@ -18,6 +18,7 @@ import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -87,13 +88,16 @@ public class ExamCenterRepository {
 
   public List<ExamQuestionEditorResponse> questionsForEdit(long tenantId, long paperId) {
     return jdbcTemplate.query("""
-        select id, question_type, question_text, options_json, standard_answer,
-               accept_keywords, score, sort_order
-        from training_exam_question
-        where tenant_id = ? and paper_id = ? and enabled = 1
+        select q.id, l.bank_question_id, q.question_type, q.question_text, q.options_json, q.standard_answer,
+               q.accept_keywords, q.score, q.sort_order
+        from training_exam_question q
+        left join training_exam_paper_question_link l
+          on l.tenant_id = q.tenant_id and l.paper_question_id = q.id
+        where q.tenant_id = ? and q.paper_id = ? and q.enabled = 1
         order by sort_order, id
         """, (rs, rowNum) -> new ExamQuestionEditorResponse(
         rs.getLong("id"),
+        boxedLong(rs.getLong("bank_question_id"), rs.wasNull()),
         rs.getString("question_type"),
         rs.getString("question_text"),
         parseList(rs.getString("options_json")),
@@ -179,10 +183,38 @@ public class ExamCenterRepository {
           amount(question.score()),
           sortOrder++
       );
+      if (question.bankQuestionId() != null) {
+        Long paperQuestionId = jdbcTemplate.queryForObject("""
+            select id from training_exam_question
+            where tenant_id = ? and paper_id = ? and sort_order = ?
+            """, Long.class, tenantId, paperId, sortOrder - 1);
+        if (paperQuestionId != null) {
+          jdbcTemplate.update("""
+              insert into training_exam_paper_question_link(
+                tenant_id, paper_question_id, bank_question_id, created_at
+              ) values (?, ?, ?, current_timestamp)
+              """, tenantId, paperQuestionId, question.bankQuestionId());
+        }
+      }
     }
   }
 
   public List<ExamCandidateResponse> candidates(long tenantId) {
+    return candidates(tenantId, null);
+  }
+
+  public List<ExamCandidateResponse> candidates(long tenantId, Collection<String> allowedStoreIds) {
+    List<String> normalizedStoreIds = normalizedStoreIds(allowedStoreIds);
+    String storeFilter = allowedStoreIds == null
+        ? ""
+        : normalizedStoreIds.isEmpty()
+            ? " and 1 = 0"
+            : " and coalesce(u.store_id, (select min(scope.store_id) from user_store_scope scope"
+                + " where scope.tenant_id = u.tenant_id and scope.user_id = u.id)) in ("
+                + placeholders(normalizedStoreIds.size()) + ")";
+    List<Object> args = new ArrayList<>();
+    args.add(tenantId);
+    args.addAll(normalizedStoreIds);
     return jdbcTemplate.query("""
         select u.id, u.display_name, u.role,
                coalesce(u.store_id, (
@@ -190,7 +222,7 @@ public class ExamCenterRepository {
                  from user_store_scope scope
                  where scope.tenant_id = u.tenant_id and scope.user_id = u.id
                )) as assignment_store_id,
-               s.name as store_name
+               s.name as store_name, coalesce(e.position, e.role, u.role) as department_name
         from auth_user u
         left join store_branch s
           on s.tenant_id = u.tenant_id
@@ -199,6 +231,14 @@ public class ExamCenterRepository {
            from user_store_scope scope
            where scope.tenant_id = u.tenant_id and scope.user_id = u.id
          ))
+        left join employee e
+          on e.tenant_id = u.tenant_id
+         and e.store_id = coalesce(u.store_id, (
+           select min(scope.store_id)
+           from user_store_scope scope
+           where scope.tenant_id = u.tenant_id and scope.user_id = u.id
+         ))
+         and e.name = u.display_name
         where u.tenant_id = ?
           and u.enabled = 1
           and u.role in ('EMPLOYEE', 'STORE_MANAGER', 'SUPERVISOR', 'WAREHOUSE', 'FINANCE')
@@ -207,15 +247,17 @@ public class ExamCenterRepository {
             from user_store_scope scope
             where scope.tenant_id = u.tenant_id and scope.user_id = u.id
           )) is not null
+        """ + storeFilter + """
         order by s.name, u.display_name, u.id
         """, (rs, rowNum) -> new ExamCandidateResponse(
         rs.getLong("id"),
         rs.getString("display_name"),
         rs.getString("role"),
         roleLabel(rs.getString("role")),
+        rs.getString("department_name"),
         rs.getString("assignment_store_id"),
         rs.getString("store_name")
-    ), tenantId);
+    ), args.toArray());
   }
 
   public long insertCampaign(
@@ -275,23 +317,44 @@ public class ExamCenterRepository {
   }
 
   public List<ExamCampaignResponse> campaigns(long tenantId, String storeId, Long userId) {
+    return campaigns(
+        tenantId,
+        storeId == null || storeId.isBlank() ? null : List.of(storeId.trim()),
+        userId
+    );
+  }
+
+  public List<ExamCampaignResponse> campaigns(
+      long tenantId,
+      Collection<String> allowedStoreIds,
+      Long userId
+  ) {
     String assignmentJoin = "";
     String scopeFilter = "";
     List<Object> args = new ArrayList<>();
+    List<String> normalizedStoreIds = normalizedStoreIds(allowedStoreIds);
     if (userId != null) {
       assignmentJoin = " and a.user_id = ?";
       args.add(userId);
       scopeFilter = " and exists (select 1 from training_exam_assignment own where own.tenant_id = c.tenant_id and own.campaign_id = c.id and own.user_id = ?)";
-    } else if (storeId != null) {
-      assignmentJoin = " and a.store_id = ?";
-      args.add(storeId);
-      scopeFilter = " and exists (select 1 from training_exam_assignment scoped where scoped.tenant_id = c.tenant_id and scoped.campaign_id = c.id and scoped.store_id = ?)";
+    } else if (allowedStoreIds != null) {
+      if (normalizedStoreIds.isEmpty()) {
+        assignmentJoin = " and 1 = 0";
+        scopeFilter = " and 1 = 0";
+      } else {
+        String placeholders = placeholders(normalizedStoreIds.size());
+        assignmentJoin = " and a.store_id in (" + placeholders + ")";
+        args.addAll(normalizedStoreIds);
+        scopeFilter = " and exists (select 1 from training_exam_assignment scoped"
+            + " where scoped.tenant_id = c.tenant_id and scoped.campaign_id = c.id"
+            + " and scoped.store_id in (" + placeholders + "))";
+      }
     }
     args.add(tenantId);
     if (userId != null) {
       args.add(userId);
-    } else if (storeId != null) {
-      args.add(storeId);
+    } else if (allowedStoreIds != null && !normalizedStoreIds.isEmpty()) {
+      args.addAll(normalizedStoreIds);
     }
     String sql = """
         select c.id, c.paper_id, p.paper_name, c.title, c.status,
@@ -348,13 +411,40 @@ public class ExamCenterRepository {
         .findFirst();
   }
 
+  public Optional<ExamCampaignResponse> campaign(
+      long tenantId,
+      long campaignId,
+      Collection<String> allowedStoreIds,
+      Long userId
+  ) {
+    return campaigns(tenantId, allowedStoreIds, userId).stream()
+        .filter(campaign -> campaign.id() == campaignId)
+        .findFirst();
+  }
+
   public List<ExamAssignmentResponse> assignments(long tenantId, String storeId, Long userId) {
+    return assignments(
+        tenantId,
+        storeId == null || storeId.isBlank() ? null : List.of(storeId.trim()),
+        userId
+    );
+  }
+
+  public List<ExamAssignmentResponse> assignments(
+      long tenantId,
+      Collection<String> allowedStoreIds,
+      Long userId
+  ) {
     StringBuilder where = new StringBuilder(" where a.tenant_id = ?");
     List<Object> args = new ArrayList<>();
     args.add(tenantId);
-    if (storeId != null) {
-      where.append(" and a.store_id = ?");
-      args.add(storeId);
+    appendAllowedStoreScope(where, args, "a.store_id", allowedStoreIds);
+    if (allowedStoreIds != null && userId != null) {
+      // SELF scope is expressed by userId and must not be denied by an empty store list.
+      int marker = where.indexOf(" and 1 = 0");
+      if (marker >= 0) {
+        where.delete(marker, marker + " and 1 = 0".length());
+      }
     }
     if (userId != null) {
       where.append(" and a.user_id = ?");
@@ -370,13 +460,30 @@ public class ExamCenterRepository {
       String storeId,
       Long userId
   ) {
+    return assignmentsForCampaign(
+        tenantId,
+        campaignId,
+        storeId == null || storeId.isBlank() ? null : List.of(storeId.trim()),
+        userId
+    );
+  }
+
+  public List<ExamAssignmentResponse> assignmentsForCampaign(
+      long tenantId,
+      long campaignId,
+      Collection<String> allowedStoreIds,
+      Long userId
+  ) {
     StringBuilder where = new StringBuilder(" where a.tenant_id = ? and a.campaign_id = ?");
     List<Object> args = new ArrayList<>();
     args.add(tenantId);
     args.add(campaignId);
-    if (storeId != null) {
-      where.append(" and a.store_id = ?");
-      args.add(storeId);
+    appendAllowedStoreScope(where, args, "a.store_id", allowedStoreIds);
+    if (allowedStoreIds != null && userId != null) {
+      int marker = where.indexOf(" and 1 = 0");
+      if (marker >= 0) {
+        where.delete(marker, marker + " and 1 = 0".length());
+      }
     }
     if (userId != null) {
       where.append(" and a.user_id = ?");
@@ -411,6 +518,20 @@ public class ExamCenterRepository {
             passed = ?, updated_at = current_timestamp
         where tenant_id = ? and id = ? and completed_at is null
         """, attemptId, amount(score), passed, tenantId, assignmentId) > 0;
+  }
+
+  public boolean submitAssignmentForReview(
+      long tenantId,
+      long assignmentId,
+      long attemptId,
+      BigDecimal autoScore
+  ) {
+    return jdbcTemplate.update("""
+        update training_exam_assignment
+        set status = 'REVIEW_PENDING', attempt_id = ?, score = ?, passed = null,
+            updated_at = current_timestamp
+        where tenant_id = ? and id = ? and completed_at is null and status <> 'REVIEW_PENDING'
+        """, attemptId, amount(autoScore), tenantId, assignmentId) > 0;
   }
 
   public ExamAggregate aggregate(long tenantId) {
@@ -466,7 +587,8 @@ public class ExamCenterRepository {
         select a.id, a.campaign_id, c.paper_id, c.title as exam_title, p.paper_name,
                a.user_id, a.examinee_name, a.examinee_role, a.store_id, a.store_name,
                case
-                 when a.completed_at is not null then 'COMPLETED'
+                  when a.completed_at is not null then 'COMPLETED'
+                  when a.status = 'REVIEW_PENDING' then 'REVIEW_PENDING'
                  when c.due_at < current_timestamp then 'OVERDUE'
                  when c.start_at > current_timestamp then 'NOT_STARTED'
                  else 'ASSIGNED'
@@ -552,6 +674,7 @@ public class ExamCenterRepository {
       case "ASSIGNED" -> "待参加";
       case "NOT_STARTED" -> "未开始";
       case "COMPLETED" -> "已完成";
+      case "REVIEW_PENDING" -> "待阅卷";
       case "OVERDUE" -> "已逾期";
       default -> status;
     };
@@ -579,6 +702,45 @@ public class ExamCenterRepository {
 
   private BigDecimal amount(BigDecimal value) {
     return value == null ? ZERO : value.setScale(2, RoundingMode.HALF_UP);
+  }
+
+  private void appendAllowedStoreScope(
+      StringBuilder sql,
+      List<Object> args,
+      String column,
+      Collection<String> allowedStoreIds
+  ) {
+    if (allowedStoreIds == null) {
+      return;
+    }
+    List<String> normalized = normalizedStoreIds(allowedStoreIds);
+    if (normalized.isEmpty()) {
+      sql.append(" and 1 = 0");
+      return;
+    }
+    sql.append(" and ").append(column).append(" in (")
+        .append(placeholders(normalized.size()))
+        .append(")");
+    args.addAll(normalized);
+  }
+
+  private List<String> normalizedStoreIds(Collection<String> storeIds) {
+    if (storeIds == null) {
+      return List.of();
+    }
+    return storeIds.stream()
+        .filter(value -> value != null && !value.isBlank() && !"all".equalsIgnoreCase(value))
+        .map(String::trim)
+        .distinct()
+        .toList();
+  }
+
+  private String placeholders(int count) {
+    return String.join(",", Collections.nCopies(count, "?"));
+  }
+
+  private Long boxedLong(long value, boolean wasNull) {
+    return wasNull ? null : value;
   }
 
   private String blankToNull(String value) {

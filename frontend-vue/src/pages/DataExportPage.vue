@@ -3,11 +3,15 @@ import { computed, onMounted, ref } from 'vue'
 import { Download, ReceiptText, RefreshCw, WalletCards } from 'lucide-vue-next'
 import { downloadExpenseCsv, downloadProfitRankingCsv, downloadSalaryCsv } from '../api/reports'
 import BrandSelect from '../components/common/BrandSelect.vue'
+import BusinessScopeBar from '../components/common/BusinessScopeBar.vue'
+import PageHeader from '../components/common/PageHeader.vue'
+import { useBusinessScope } from '../composables/useBusinessScope'
 import { useProfitStore } from '../stores/profit'
 
 const profit = useProfitStore()
+const scope = useBusinessScope()
 const selectedMonth = ref('')
-const selectedBrandId = ref('')
+const selectedBrandId = ref(scope.scopedBrandId())
 const downloading = ref('')
 const message = ref('')
 const error = ref('')
@@ -19,6 +23,14 @@ const exportMonth = computed(() => selectedMonth.value || profit.summary.month |
 async function loadOptions() {
   error.value = ''
   try {
+    if (scope.isStoreManager.value) {
+      selectedBrandId.value = scope.scopedBrandId()
+      profit.setFilters({
+        month: selectedMonth.value || profit.month,
+        brandId: selectedBrandId.value,
+        storeId: scope.boundStoreId.value,
+      })
+    }
     await profit.load()
     selectedMonth.value = profit.month || profit.months[0] || ''
   } catch (loadError) {
@@ -33,10 +45,10 @@ async function exportProfitRanking() {
   try {
     const month = exportMonth.value
     await downloadProfitRankingCsv(
-      { month, brandId: selectedBrandId.value || undefined },
-      `利润排行-${month || '当前月份'}.csv`,
+      { month, brandId: selectedBrandId.value || undefined, storeId: scope.scopedStoreId() || undefined },
+      `${scope.isStoreManager.value ? scope.boundStoreName.value : '门店利润'}_${month || '当前月份'}.csv`,
     )
-    message.value = '利润排行 CSV 已开始下载。'
+    message.value = '门店利润 CSV 已开始下载，可直接在数据录入页重新导入。'
   } catch (downloadError) {
     error.value = downloadError instanceof Error ? downloadError.message : '利润排行导出失败'
   } finally {
@@ -50,7 +62,7 @@ async function exportExpenses() {
   error.value = ''
   try {
     const month = exportMonth.value
-    await downloadExpenseCsv({ month, brandId: selectedBrandId.value || undefined }, `报销记录-${month || '当前月份'}.csv`)
+    await downloadExpenseCsv({ month, brandId: selectedBrandId.value || undefined, storeId: scope.scopedStoreId() || undefined }, `报销记录-${month || '当前月份'}.csv`)
     message.value = '报销记录 CSV 已开始下载。'
   } catch (downloadError) {
     error.value = downloadError instanceof Error ? downloadError.message : '报销记录导出失败'
@@ -65,7 +77,7 @@ async function exportSalaries() {
   error.value = ''
   try {
     const month = exportMonth.value
-    await downloadSalaryCsv({ month, brandId: selectedBrandId.value || undefined }, `员工工资-${month || '当前月份'}.csv`)
+    await downloadSalaryCsv({ month, brandId: selectedBrandId.value || undefined, storeId: scope.scopedStoreId() || undefined }, `员工工资-${month || '当前月份'}.csv`)
     message.value = '员工工资 CSV 已开始下载。'
   } catch (downloadError) {
     error.value = downloadError instanceof Error ? downloadError.message : '员工工资导出失败'
@@ -81,15 +93,13 @@ onMounted(() => {
 
 <template>
   <section class="page-panel export-page">
-    <div class="page-head">
-      <div>
-        <h2>数据导出</h2>
-      </div>
-      <button class="ghost-button" type="button" :disabled="profit.loading" @click="loadOptions">
-        <RefreshCw :size="16" />
-        刷新
-      </button>
-    </div>
+    <PageHeader :title="scope.isStoreManager.value ? '本店数据导出' : undefined">
+      <template #actions>
+        <button class="ghost-button" type="button" :disabled="profit.loading" @click="loadOptions">
+          <RefreshCw :size="16" />刷新
+        </button>
+      </template>
+    </PageHeader>
 
     <div v-if="message" class="success-box">{{ message }}</div>
     <div v-if="error" class="error-box">{{ error }}</div>
@@ -99,13 +109,14 @@ onMounted(() => {
         <h3>导出筛选</h3>
       </div>
       <div class="export-filters">
+        <BusinessScopeBar v-if="scope.isStoreManager.value" />
         <label>
           月份
           <select v-model="selectedMonth" :disabled="profit.loading">
             <option v-for="month in monthOptions" :key="month" :value="month">{{ month }}</option>
           </select>
         </label>
-        <label>
+        <label v-if="!scope.isStoreManager.value">
           品牌
           <BrandSelect v-model="selectedBrandId" :brands="brandOptions" :disabled="profit.loading" />
         </label>
@@ -117,9 +128,9 @@ onMounted(() => {
         <div class="export-card-head">
           <Download :size="22" />
         </div>
-        <h3>全部门店月度利润汇总</h3>
+        <h3>{{ scope.isStoreManager.value ? '本店月度利润明细' : '全部门店月度利润汇总' }}</h3>
         <button class="primary-button submit-inline" type="button" :disabled="downloading === 'profit'" @click="exportProfitRanking">
-          {{ downloading === 'profit' ? '正在导出...' : '下载利润排行 CSV' }}
+          {{ downloading === 'profit' ? '正在导出...' : scope.isStoreManager.value ? '下载本店利润 CSV' : '下载利润排行 CSV' }}
         </button>
       </article>
 

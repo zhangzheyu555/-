@@ -52,7 +52,7 @@ class StoreManagerAccountSeedServiceTest {
   }
 
   @Test
-  void migratesExistingLegacyCodePasswordToConfiguredBootstrapPassword() {
+  void existingAccountIsNeverChangedEvenWhenItsUsernameMatchesAStoreLoginCode() {
     OrganizationRepository organizationRepository = Mockito.mock(OrganizationRepository.class);
     AuthRepository authRepository = Mockito.mock(AuthRepository.class);
     PasswordService passwordService = Mockito.mock(PasswordService.class);
@@ -63,26 +63,27 @@ class StoreManagerAccountSeedServiceTest {
             88L,
             TENANT_ID,
             "默认企业",
-            "rg1",
+            "boss",
             "LEGACY_HASH",
             "店长·旧名称",
-            "STORE_MANAGER",
-            "rg1",
+            "BOSS",
+            null,
             true);
 
     when(organizationRepository.stores(TENANT_ID)).thenReturn(List.of(store));
-    when(authRepository.userExists(TENANT_ID, "rg1")).thenReturn(true);
-    when(authRepository.findByUsername(TENANT_ID, "rg1")).thenReturn(Optional.of(existing));
-    when(passwordService.matches("audit-secret", "LEGACY_HASH")).thenReturn(false);
-    when(passwordService.matches("RG001", "LEGACY_HASH")).thenReturn(true);
-    when(passwordService.hash("audit-secret")).thenReturn("HASH_audit_secret");
+    StoreResponse conflictingStore =
+        new StoreResponse("boss", "RG001", "冲突门店", 1L, "轻量云", "湖北", "店长", "2026-01-01", "ACTIVE", "");
+    when(organizationRepository.stores(TENANT_ID)).thenReturn(List.of(conflictingStore));
+    when(authRepository.userExists(TENANT_ID, "boss")).thenReturn(true);
 
     new StoreManagerAccountSeedService(
             authRepository, passwordService, organizationRepository, false, "audit-secret")
         .seedStoreManagers();
 
-    verify(authRepository).ensureUserProfile(TENANT_ID, "rg1", "店长·荆州之星店", "STORE_MANAGER", "rg1");
-    verify(authRepository).updatePassword(TENANT_ID, "rg1", "HASH_audit_secret");
-    verify(organizationRepository).addUserStoreScope(TENANT_ID, 88L, "rg1");
+    verify(authRepository, never()).ensureUserProfile(TENANT_ID, "boss", "店长·冲突门店", "STORE_MANAGER", "boss");
+    verify(authRepository, never()).updatePassword(TENANT_ID, "boss", "HASH_audit_secret");
+    verify(authRepository, never()).createUser(TENANT_ID, "boss", "HASH_audit_secret", "店长·冲突门店", "STORE_MANAGER", "boss");
+    verify(organizationRepository, never()).addUserStoreScope(TENANT_ID, 88L, "boss");
+    verify(passwordService, never()).hash("audit-secret");
   }
 }

@@ -34,18 +34,21 @@ class SystemControllerTest {
   @Test
   void versionReportsBuildDatabaseAndEnvironmentIdentity() {
     AuthService authService = mock(AuthService.class);
+    AuthUser user = new AuthUser(1L, 1L, "default", "boss", "", "老板", "BOSS", null, true);
+    when(authService.requireUser("Bearer token")).thenReturn(user);
     JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
     when(jdbcTemplate.queryForObject(anyString(), eq(String.class))).thenReturn("26");
     MockEnvironment environment = new MockEnvironment();
     environment.setActiveProfiles("test");
     SystemController controller = new SystemController(authService, environment, "test-version", jdbcTemplate);
 
-    ApiResponse<SystemController.VersionInfo> response = controller.version();
+    ApiResponse<SystemController.VersionInfo> response = controller.version("Bearer token");
 
     assertThat(response.success()).isTrue();
     assertThat(response.data().applicationVersion()).isEqualTo("test-version");
     assertThat(response.data().databaseMigrationVersion()).isEqualTo("26");
     assertThat(response.data().environment()).isEqualTo("test");
     assertThat(response.data().sourceVersion()).isNotBlank();
+    verify(authService).requireUser("Bearer token");
   }
 }

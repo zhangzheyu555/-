@@ -4,6 +4,11 @@ import com.storeprofit.system.common.BusinessException;
 import com.storeprofit.system.organization.OrganizationRepository;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
+import com.storeprofit.system.platform.authorization.DataScope;
+import com.storeprofit.system.platform.authorization.BusinessScope;
+import com.storeprofit.system.platform.authorization.BusinessScopeResolver;
+import com.storeprofit.system.platform.authorization.DataScopeDomains;
+import com.storeprofit.system.platform.authorization.DataScopeService;
 import com.storeprofit.system.todo.BusinessTodoService;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -24,18 +29,43 @@ public class FinanceService {
   private final OrganizationRepository organizationRepository;
   private final AccessControlService accessControl;
   private final BusinessTodoService businessTodoService;
+  private final DataScopeService dataScopeService;
+  private final BusinessScopeResolver businessScopeResolver;
 
   @Autowired
   public FinanceService(
       FinanceRepository financeRepository,
       OrganizationRepository organizationRepository,
       AccessControlService accessControl,
-      BusinessTodoService businessTodoService
+      BusinessTodoService businessTodoService,
+      DataScopeService dataScopeService,
+      BusinessScopeResolver businessScopeResolver
   ) {
     this.financeRepository = financeRepository;
     this.organizationRepository = organizationRepository;
     this.accessControl = accessControl;
     this.businessTodoService = businessTodoService;
+    this.dataScopeService = dataScopeService;
+    this.businessScopeResolver = businessScopeResolver;
+  }
+
+  public FinanceService(
+      FinanceRepository financeRepository,
+      OrganizationRepository organizationRepository,
+      AccessControlService accessControl,
+      BusinessTodoService businessTodoService,
+      DataScopeService dataScopeService
+  ) {
+    this(financeRepository, organizationRepository, accessControl, businessTodoService, dataScopeService, null);
+  }
+
+  public FinanceService(
+      FinanceRepository financeRepository,
+      OrganizationRepository organizationRepository,
+      AccessControlService accessControl,
+      BusinessTodoService businessTodoService
+  ) {
+    this(financeRepository, organizationRepository, accessControl, businessTodoService, null, null);
   }
 
   public FinanceService(
@@ -43,50 +73,68 @@ public class FinanceService {
       OrganizationRepository organizationRepository,
       AccessControlService accessControl
   ) {
-    this(financeRepository, organizationRepository, accessControl, null);
+    this(financeRepository, organizationRepository, accessControl, null, null, null);
   }
 
   public ProfitDashboardResponse dashboard(AuthUser user, String month, Long brandId) {
+    return dashboard(user, month, brandId, null);
+  }
+
+  public ProfitDashboardResponse dashboard(
+      AuthUser user,
+      String month,
+      Long brandId,
+      String storeId
+  ) {
     accessControl.requireFinanceRead(user);
+    BusinessScope businessScope = resolveBusinessScope(user, storeId, brandId, "查看利润概览");
     String targetMonth = normalizeMonth(month);
+    DataScope dataScope = financeScope(user);
     List<String> months = months(user);
-    List<ProfitEntryResponse> entries = scoped(user, financeRepository.entries(user.tenantId(), targetMonth, brandId, null));
+    List<ProfitEntryResponse> entries = profitEntries(
+        user.tenantId(), targetMonth, businessScope.brandId(), businessScope.storeId(), dataScope);
     return new ProfitDashboardResponse(
         months,
-        organizationRepository.brands(user.tenantId()),
+        scopedBrands(user.tenantId(), dataScope),
         summary(targetMonth, entries),
         entries,
-        trend(user, brandId, months)
+        trend(user, businessScope.brandId(), businessScope.storeId(), months)
     );
   }
 
   public List<ProfitEntryResponse> entries(AuthUser user, String month, Long brandId, String storeId) {
     accessControl.requireFinanceRead(user);
-    String targetStoreId = requestedStoreIdForRead(user, storeId);
-    return scoped(user, financeRepository.entries(user.tenantId(), normalizeMonth(month), brandId, targetStoreId));
+    DataScope dataScope = financeScope(user);
+    BusinessScope businessScope = resolveBusinessScope(user, storeId, brandId, "查看利润数据");
+    String targetStoreId = requestedStoreIdForRead(user, businessScope.storeId(), dataScope);
+    return profitEntries(user.tenantId(), normalizeMonth(month), businessScope.brandId(), targetStoreId, dataScope);
   }
 
   public ProfitEntryResponse entry(AuthUser user, String storeId, String month) {
     accessControl.requireFinanceRead(user);
-    String targetStoreId = requestedStoreIdForRead(user, storeId);
-    ProfitEntryResponse entry = financeRepository.entry(user.tenantId(), targetStoreId, normalizeMonth(month))
+    DataScope dataScope = financeScope(user);
+    BusinessScope businessScope = resolveBusinessScope(user, storeId, null, "查看利润明细");
+    String targetStoreId = requestedStoreIdForRead(user, businessScope.storeId(), dataScope);
+    if (targetStoreId == null || targetStoreId.isBlank()) {
+      throw new BusinessException("BAD_STORE", "请选择门店", HttpStatus.BAD_REQUEST);
+    }
+    ProfitEntryResponse entry = profitEntry(user.tenantId(), targetStoreId, normalizeMonth(month), dataScope)
         .orElseThrow(() -> new BusinessException("NOT_FOUND", "该门店本月还没有利润数据", HttpStatus.NOT_FOUND));
-    return scoped(user, List.of(entry)).stream()
-        .findFirst()
-        .orElseThrow(() -> new BusinessException("FORBIDDEN", "无权查看该门店数据", HttpStatus.FORBIDDEN));
+    return entry;
   }
 
   @Transactional
   public void save(AuthUser user, ProfitEntryRequest request) {
     accessControl.requireFinanceWrite(user);
-    if ("STORE_MANAGER".equals(user.role())) {
-      requestedStoreIdForRead(user, request.storeId());
-    }
-    if (!financeRepository.storeExists(user.tenantId(), request.storeId())) {
+    BusinessScope businessScope = resolveBusinessScope(
+        user, request == null ? null : request.storeId(), null, "保存利润数据");
+    String targetStoreId = businessScope.storeId();
+    requireStoreInScope(user, targetStoreId, financeScope(user), "保存利润数据");
+    if (!financeRepository.storeExists(user.tenantId(), targetStoreId)) {
       throw new BusinessException("STORE_NOT_FOUND", "门店不存在或不属于当前企业，不能保存利润数据", HttpStatus.BAD_REQUEST);
     }
     ProfitEntryRequest normalized = new ProfitEntryRequest(
-        request.storeId(),
+        targetStoreId,
         normalizeMonth(request.month()),
         request.sales(),
         request.refund(),
@@ -116,10 +164,12 @@ public class FinanceService {
   @Transactional
   public void delete(AuthUser user, String storeId, String month) {
     accessControl.requireFinanceDelete(user);
-    String targetStoreId = storeId == null ? "" : storeId.trim();
+    BusinessScope businessScope = resolveBusinessScope(user, storeId, null, "删除利润数据");
+    String targetStoreId = businessScope.storeId() == null ? "" : businessScope.storeId();
     if (targetStoreId.isBlank()) {
       throw new BusinessException("BAD_STORE", "请选择门店", HttpStatus.BAD_REQUEST);
     }
+    requireStoreInScope(user, targetStoreId, financeScope(user), "删除利润数据");
     String targetMonth = normalizeMonth(month);
     if (!financeRepository.storeExists(user.tenantId(), targetStoreId)) {
       throw new BusinessException("STORE_NOT_FOUND", "门店不存在或不属于当前企业", HttpStatus.BAD_REQUEST);
@@ -138,17 +188,26 @@ public class FinanceService {
     for (int i = 0; i < 8; i++) {
       values.add(current.minusMonths(i).toString());
     }
-    values.addAll(financeRepository.availableMonths(user.tenantId()));
+    values.addAll(availableMonths(user.tenantId(), financeScope(user)));
     return new ArrayList<>(values);
   }
 
-  private List<ProfitTrendPoint> trend(AuthUser user, Long brandId, List<String> months) {
+  private List<ProfitTrendPoint> trend(
+      AuthUser user,
+      Long brandId,
+      String storeId,
+      List<String> months
+  ) {
     List<String> targetMonths = months.stream().limit(6).toList();
+    DataScope dataScope = financeScope(user);
     ArrayList<ProfitTrendPoint> points = new ArrayList<>();
     for (int i = targetMonths.size() - 1; i >= 0; i--) {
       String month = targetMonths.get(i);
-      ProfitSummaryResponse summary = summary(month, scoped(user, financeRepository.entries(user.tenantId(), month, brandId, null)));
-      points.add(new ProfitTrendPoint(month, summary.income(), summary.net(), summary.margin()));
+      ProfitSummaryResponse summary = summary(
+          month,
+          profitEntries(user.tenantId(), month, brandId, storeId, dataScope));
+      points.add(new ProfitTrendPoint(
+          month, summary.sales(), summary.income(), summary.net(), summary.margin()));
     }
     return points;
   }
@@ -164,18 +223,18 @@ public class FinanceService {
     return new ProfitSummaryResponse(month, storeCount, entries.size(), sales, income, costSum, expenseSum, net, ratio(net, income), risk);
   }
 
-  private List<ProfitEntryResponse> scoped(AuthUser user, List<ProfitEntryResponse> entries) {
-    if ("STORE_MANAGER".equals(user.role()) && user.storeId() != null && !user.storeId().isBlank()) {
-      return entries.stream().filter(entry -> user.storeId().equals(entry.storeId())).toList();
-    }
-    return entries;
-  }
-
-  private String requestedStoreIdForRead(AuthUser user, String storeId) {
-    if (!"STORE_MANAGER".equals(user.role()) || user.storeId() == null || user.storeId().isBlank()) {
-      return storeId;
-    }
+  private String requestedStoreIdForRead(AuthUser user, String storeId, DataScope dataScope) {
     String requested = storeId == null ? "" : storeId.trim();
+    if (dataScope != null) {
+      if (requested.isBlank()) {
+        return null;
+      }
+      requireStoreInScope(user, requested, dataScope, "查看利润数据");
+      return requested;
+    }
+    if (!"STORE_MANAGER".equals(user.role()) || user.storeId() == null || user.storeId().isBlank()) {
+      return requested.isBlank() ? null : requested;
+    }
     if (requested.isBlank()) {
       return user.storeId();
     }
@@ -184,6 +243,88 @@ public class FinanceService {
       throw new BusinessException("FORBIDDEN", "店长只能查看自己门店利润表", HttpStatus.FORBIDDEN);
     }
     return user.storeId();
+  }
+
+  private DataScope financeScope(AuthUser user) {
+    return dataScopeService == null ? null : dataScopeService.scope(user, DataScopeDomains.FINANCE);
+  }
+
+  private BusinessScope resolveBusinessScope(
+      AuthUser user,
+      String storeId,
+      Long brandId,
+      String action
+  ) {
+    if (businessScopeResolver != null) {
+      return businessScopeResolver.resolve(
+          user, DataScopeDomains.FINANCE, storeId, brandId, action);
+    }
+    String requestedStoreId = storeId == null || storeId.isBlank() ? null : storeId.trim();
+    if (requestedStoreId == null
+        && "STORE_MANAGER".equals(AccessControlService.canonicalRole(user.role()))) {
+      requestedStoreId = user.storeId();
+    }
+    return new BusinessScope(requestedStoreId, null, brandId, null, financeScope(user));
+  }
+
+  private void requireStoreInScope(
+      AuthUser user,
+      String storeId,
+      DataScope dataScope,
+      String action
+  ) {
+    String normalizedStoreId = storeId == null ? "" : storeId.trim();
+    if (normalizedStoreId.isBlank()) {
+      throw new BusinessException("BAD_STORE", "请选择门店", HttpStatus.BAD_REQUEST);
+    }
+    if (dataScope != null && !dataScope.allowsStore(normalizedStoreId)) {
+      throw new BusinessException("FORBIDDEN", "当前账号无权" + action + "：门店不在数据范围内", HttpStatus.FORBIDDEN);
+    }
+    if (dataScope == null && "STORE_MANAGER".equals(user.role())) {
+      if (user.storeId() == null || user.storeId().isBlank()
+          || !user.storeId().trim().equals(normalizedStoreId)) {
+        accessControl.requireStoreAccess(user, normalizedStoreId, action);
+        throw new BusinessException("FORBIDDEN", "店长只能处理所属门店的数据", HttpStatus.FORBIDDEN);
+      }
+    }
+  }
+
+  private List<ProfitEntryResponse> profitEntries(
+      long tenantId,
+      String month,
+      Long brandId,
+      String storeId,
+      DataScope dataScope
+  ) {
+    return dataScope == null
+        ? financeRepository.entries(tenantId, month, brandId, storeId)
+        : financeRepository.entries(tenantId, month, brandId, storeId, dataScope);
+  }
+
+  private java.util.Optional<ProfitEntryResponse> profitEntry(
+      long tenantId,
+      String storeId,
+      String month,
+      DataScope dataScope
+  ) {
+    return dataScope == null
+        ? financeRepository.entry(tenantId, storeId, month)
+        : financeRepository.entry(tenantId, storeId, month, dataScope);
+  }
+
+  private List<String> availableMonths(long tenantId, DataScope dataScope) {
+    return dataScope == null
+        ? financeRepository.availableMonths(tenantId)
+        : financeRepository.availableMonths(tenantId, dataScope);
+  }
+
+  private List<com.storeprofit.system.organization.BrandResponse> scopedBrands(
+      long tenantId,
+      DataScope dataScope
+  ) {
+    return dataScope == null
+        ? organizationRepository.brands(tenantId)
+        : organizationRepository.brands(tenantId, dataScope);
   }
 
   private String normalizeMonth(String value) {

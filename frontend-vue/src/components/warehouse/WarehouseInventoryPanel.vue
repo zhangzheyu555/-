@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Package, PackagePlus, Pencil, Search, ToggleLeft, ToggleRight } from 'lucide-vue-next'
+import { Package, PackagePlus, Pencil, ToggleLeft, ToggleRight } from 'lucide-vue-next'
+import SearchInput from '../common/SearchInput.vue'
 import StatusBadge from '../common/StatusBadge.vue'
 import WarehouseBatchDrawer from './WarehouseBatchDrawer.vue'
 import WarehouseCategoryTree from './WarehouseCategoryTree.vue'
@@ -16,9 +17,11 @@ const props = withDefaults(defineProps<{
   downloadingId: string
   actioningId?: string
   canManage?: boolean
+  warehouseName?: string
 }>(), {
   actioningId: '',
   canManage: false,
+  warehouseName: '当前仓库',
 })
 
 const emit = defineEmits<{
@@ -126,10 +129,12 @@ function statusTone(status?: string) {
       </div>
 
       <div class="inventory-filters">
-        <label class="search-field">
-          <Search :size="17" />
-          <input v-model="searchText" placeholder="搜索物料名称、编码、规格或库位" />
-        </label>
+        <SearchInput
+          v-model="searchText"
+          class="inventory-search"
+          placeholder="搜索物料名称、编码、规格或库位"
+          aria-label="搜索库存物料"
+        />
         <label class="filter-check">
           <input v-model="lowStockOnly" type="checkbox" />
           低库存
@@ -147,7 +152,7 @@ function statusTone(status?: string) {
             <tr>
               <th>物料</th>
               <th>分类</th>
-              <th>总仓库存</th>
+              <th>{{ warehouseName }}库存</th>
               <th>安全库存</th>
               <th>临近到期</th>
               <th>库存状态</th>
@@ -248,7 +253,6 @@ function statusTone(status?: string) {
 .inventory-filters,
 .row-actions,
 .item-cell,
-.search-field,
 .filter-check {
   display: flex;
   align-items: center;
@@ -259,23 +263,9 @@ function statusTone(status?: string) {
   margin: 0 0 14px;
 }
 
-.search-field {
+.inventory-filters > .inventory-search {
   width: min(380px, 100%);
-  gap: 8px;
-  min-height: 36px;
-  padding: 0 10px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: #fff;
-  color: var(--muted);
-}
-
-.search-field input {
-  min-width: 0;
-  flex: 1;
-  border: 0;
-  outline: 0;
-  color: var(--ink);
+  flex: none;
 }
 
 .filter-check {

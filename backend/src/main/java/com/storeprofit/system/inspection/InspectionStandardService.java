@@ -13,13 +13,30 @@ public class InspectionStandardService {
 
   public InspectionStandardResponse activeStandard(AuthUser user) {
     return repository.activeVersion(user.tenantId())
-        .map(version -> new InspectionStandardResponse(
-            version.title(),
-            version.fullScore(),
-            version.version(),
-            version.effectiveDate(),
-            repository.items(user.tenantId(), version.id())
-        ))
+        .map(version -> response(user, version))
         .orElseGet(InspectionStandardResponse::empty);
+  }
+
+  private InspectionStandardResponse response(
+      AuthUser user,
+      InspectionStandardRepository.VersionRow version
+  ) {
+    var items = repository.items(user.tenantId(), version.id());
+    InspectionStandardValidation validation = InspectionStandardValidator.validate(version, items);
+    return new InspectionStandardResponse(
+        version.title(),
+        version.fullScore(),
+        version.version(),
+        version.effectiveDate(),
+        items,
+        version.id(),
+        version.passScore(),
+        validation.valid(),
+        validation.valid(),
+        validation.validationError(),
+        validation.diagnostics(),
+        validation.categoryStats(),
+        validation.riskStats()
+    );
   }
 }

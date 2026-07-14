@@ -1,7 +1,9 @@
 package com.storeprofit.system.todo;
 
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
+import com.storeprofit.system.platform.authorization.DataScopeDomains;
 import com.storeprofit.system.todo.RoleTodoActionRepository.RoleTodoActionRecord;
 import com.storeprofit.system.todo.RoleTodoActionRepository.RoleTodoActionSummary;
 import com.storeprofit.system.todo.RoleTodoActionRepository.RoleTodoAttachmentRecord;
@@ -33,6 +35,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -45,6 +48,7 @@ public class RoleTodoService {
   private static final Set<RoleTodoAudience> ESCALATION_AUDIENCES = Set.of(
       RoleTodoAudience.FINANCE,
       RoleTodoAudience.SUPERVISOR,
+      RoleTodoAudience.OPERATIONS,
       RoleTodoAudience.STORE_MANAGER,
       RoleTodoAudience.WAREHOUSE
   );
@@ -53,22 +57,35 @@ public class RoleTodoService {
   private final RoleTodoRepository roleTodoRepository;
   private final RoleTodoEscalationRepository escalationRepository;
   private final RoleTodoActionRepository actionRepository;
+  private final AccessControlService accessControl;
 
+  @Autowired
+  public RoleTodoService(
+      RoleTodoRepository roleTodoRepository,
+      RoleTodoEscalationRepository escalationRepository,
+      RoleTodoActionRepository actionRepository,
+      AccessControlService accessControl
+  ) {
+    this.roleTodoRepository = roleTodoRepository;
+    this.escalationRepository = escalationRepository;
+    this.actionRepository = actionRepository;
+    this.accessControl = accessControl;
+  }
+
+  /** Compatibility constructor retained for isolated legacy todo tests. */
   public RoleTodoService(
       RoleTodoRepository roleTodoRepository,
       RoleTodoEscalationRepository escalationRepository,
       RoleTodoActionRepository actionRepository
   ) {
-    this.roleTodoRepository = roleTodoRepository;
-    this.escalationRepository = escalationRepository;
-    this.actionRepository = actionRepository;
+    this(roleTodoRepository, escalationRepository, actionRepository, null);
   }
 
   public RoleTodoResponse todos(AuthUser user, RoleTodoAudience audience, RoleTodoQuery query) {
+    requireTodoRead(user);
     requireAudienceAccess(user, audience);
     RoleTodoQuery normalized = query == null ? RoleTodoQuery.defaults() : query;
     requireValidStatus(normalized.status());
-    String effectiveStoreId = effectiveStoreId(user, normalized.storeId());
     Long effectiveBrandId = isStoreManager(user) ? null : normalized.brandId();
     String updatedAt = now();
     Map<String, RoleTodoActionSummary> completedActions = actionRepository.completedActions(user.tenantId());
@@ -76,40 +93,31 @@ public class RoleTodoService {
 
     List<RoleTodoItemResponse> scopedItems = new ArrayList<>();
     if (includesInspection(audience)) {
+      StoreQueryScope inspectionScope = effectiveStoreScope(
+          user, normalized.storeId(), DataScopeDomains.INSPECTION);
       Set<String> escalatedTodoIds = openSourceTodoIds(user.tenantId(), RoleTodoAudience.SUPERVISOR);
-      scopedItems.addAll(roleTodoRepository.failedInspections(
-          user.tenantId(),
-          effectiveBrandId,
-          effectiveStoreId,
-          normalized.limit()
-      ).stream()
+      scopedItems.addAll(queryStoreRows(inspectionScope, storeId -> roleTodoRepository.failedInspections(
+          user.tenantId(), effectiveBrandId, storeId, normalized.limit())).stream()
           .map(row -> applyCompletion(inspectionItem(row, updatedAt, escalatedTodoIds), completedActions, bossResolvedSourceTodoIds))
           .toList());
     }
     if (includesWarehouse(audience)) {
+      StoreQueryScope warehouseScope = effectiveStoreScope(
+          user, normalized.storeId(), DataScopeDomains.WAREHOUSE);
       Set<String> escalatedTodoIds = openSourceTodoIds(user.tenantId(), RoleTodoAudience.WAREHOUSE);
       List<String> warehouseStatuses = RoleTodoAudience.STORE_MANAGER.equals(audience)
           ? List.of("SHIPPED")
           : List.of("SUBMITTED", "APPROVED");
-      scopedItems.addAll(roleTodoRepository.pendingWarehouseRequisitions(
-          user.tenantId(),
-          effectiveBrandId,
-          effectiveStoreId,
-          warehouseStatuses,
-          normalized.limit()
-      ).stream()
+      scopedItems.addAll(queryStoreRows(warehouseScope, storeId -> roleTodoRepository.pendingWarehouseRequisitions(
+          user.tenantId(), effectiveBrandId, storeId, warehouseStatuses, normalized.limit())).stream()
           .map(row -> applyCompletion(warehouseItem(row, updatedAt, escalatedTodoIds, audience), completedActions, bossResolvedSourceTodoIds))
           .toList());
       if (!RoleTodoAudience.STORE_MANAGER.equals(audience)) {
         scopedItems.addAll(roleTodoRepository.warehouseStockAlerts(user.tenantId(), normalized.limit()).stream()
             .map(row -> applyCompletion(warehouseStockAlertItem(row, updatedAt, escalatedTodoIds), completedActions, bossResolvedSourceTodoIds))
             .toList());
-        scopedItems.addAll(roleTodoRepository.pendingWarehouseReturns(
-            user.tenantId(),
-            effectiveBrandId,
-            effectiveStoreId,
-            normalized.limit()
-        ).stream()
+        scopedItems.addAll(queryStoreRows(warehouseScope, storeId -> roleTodoRepository.pendingWarehouseReturns(
+            user.tenantId(), effectiveBrandId, storeId, normalized.limit())).stream()
             .map(row -> applyCompletion(warehouseReturnItem(row, updatedAt, escalatedTodoIds), completedActions, bossResolvedSourceTodoIds))
             .toList());
         scopedItems.addAll(roleTodoRepository.pendingWarehousePurchases(user.tenantId(), normalized.limit()).stream()
@@ -121,26 +129,20 @@ public class RoleTodoService {
       }
     }
     if (includesFinance(audience)) {
+      StoreQueryScope financeScope = effectiveStoreScope(
+          user, normalized.storeId(), DataScopeDomains.FINANCE);
       Set<String> escalatedTodoIds = openSourceTodoIds(user.tenantId(), RoleTodoAudience.FINANCE);
-      scopedItems.addAll(roleTodoRepository.profitRiskEntries(
-          user.tenantId(),
-          effectiveBrandId,
-          effectiveStoreId,
-          normalized.limit()
-      ).stream()
+      scopedItems.addAll(queryStoreRows(financeScope, storeId -> roleTodoRepository.profitRiskEntries(
+          user.tenantId(), effectiveBrandId, storeId, normalized.limit())).stream()
           .map(row -> applyCompletion(profitRiskItem(row, updatedAt, escalatedTodoIds), completedActions, bossResolvedSourceTodoIds))
           .toList());
-      scopedItems.addAll(roleTodoRepository.pendingExpenseClaims(
-          user.tenantId(),
-          effectiveBrandId,
-          effectiveStoreId,
-          normalized.limit()
-      ).stream()
+      scopedItems.addAll(queryStoreRows(financeScope, storeId -> roleTodoRepository.pendingExpenseClaims(
+          user.tenantId(), effectiveBrandId, storeId, normalized.limit())).stream()
           .map(row -> applyCompletion(expenseItem(row, updatedAt, escalatedTodoIds), completedActions, bossResolvedSourceTodoIds))
           .toList());
     }
     if (includesDataImport(audience)) {
-      scopedItems.addAll(roleTodoRepository.dataImportIssues(normalized.limit())
+      scopedItems.addAll(roleTodoRepository.dataImportIssues(user.tenantId(), normalized.limit())
           .stream()
           .map(row -> applyCompletion(dataImportIssueItem(row, updatedAt), completedActions, bossResolvedSourceTodoIds))
           .toList());
@@ -178,20 +180,19 @@ public class RoleTodoService {
       String todoId,
       RoleTodoEscalationRequest request
   ) {
+    requireTodoTransition(user);
     requireEscalationAudience(sourceAudience);
     requireEscalationActor(user, sourceAudience);
     String normalizedTodoId = requireText(todoId, "BAD_TODO", "Todo id is required");
     String reason = requireText(request == null ? null : request.reason(), "BAD_REASON", "Escalation reason is required");
     String severity = normalizeEscalationSeverity(request == null ? null : request.severity());
-    // 设计上（见 RoleTodoServiceTest.financeCanEscalateTodoWithReasonAndBossCanSeeIt）上报是
-    // 实名+必填原因的自由动作，todoId 允许是任意业务源引用，不强制对应当前可见待办；
-    // 代价是已登录角色可以用不存在的 id 制造老板待办（垃圾数据风险，接受该取舍）。
+    requireVisibleTodo(user, sourceAudience, normalizedTodoId);
     String escalationId = "esc-" + UUID.randomUUID();
     String bossTodoId = "boss-escalation-" + escalationId;
     escalationRepository.save(new RoleTodoEscalationRecord(
         escalationId,
         user.tenantId(),
-        sourceAudience.roleCode(),
+        persistedRoleCode(sourceAudience),
         escalationModule(sourceAudience),
         normalizedTodoId,
         normalizedTodoId,
@@ -212,6 +213,7 @@ public class RoleTodoService {
       String todoId,
       RoleTodoCompletionRequest request
   ) {
+    requireTodoTransition(user);
     requireCompletionActor(user, audience);
     String normalizedTodoId = requireText(todoId, "BAD_TODO", "Todo id is required");
     RoleTodoItemResponse visibleTodo = requireVisibleTodo(user, audience, normalizedTodoId);
@@ -247,6 +249,7 @@ public class RoleTodoService {
       String actionType,
       String defaultNote
   ) {
+    requireTodoTransition(user);
     requireBoss(user);
     String normalizedTodoId = requireText(todoId, "BAD_TODO", "Todo id is required");
     RoleTodoEscalationRow escalation = escalationRepository
@@ -404,7 +407,8 @@ public class RoleTodoService {
         .stream()
         .filter(item -> todoId.equals(item.id()))
         .findFirst()
-        .orElseThrow(() -> new BusinessException("TODO_NOT_FOUND", "Todo is not visible to current role", HttpStatus.NOT_FOUND));
+        .orElseThrow(() -> new BusinessException(
+            "FORBIDDEN", "当前账号无权访问该待办或待办不在数据范围内", HttpStatus.FORBIDDEN));
   }
 
   private void validateSourceReadyForManualCompletion(AuthUser user, RoleTodoAudience audience, String todoId) {
@@ -454,10 +458,14 @@ public class RoleTodoService {
     BigDecimal score = amount(row.score());
     BigDecimal fullScore = amount(row.fullScore());
     String scoreText = score.stripTrailingZeros().toPlainString() + "/" + fullScore.stripTrailingZeros().toPlainString();
+    boolean manualReview = "MANUAL_REVIEW".equalsIgnoreCase(row.resultCode());
     return new RoleTodoItemResponse(
         todoId,
-        "\u5de1\u5e97\u672a\u901a\u8fc7\uff1a" + display(row.storeName(), row.storeId()),
-        "\u5de1\u5e97\u8bc4\u5206 " + scoreText + "\uff0c\u9700\u8981\u5e97\u957f\u6574\u6539\u5e76\u7531\u7763\u5bfc\u590d\u67e5\u3002",
+        (manualReview ? "巡店待人工复核：" : "\u5de1\u5e97\u672a\u901a\u8fc7\uff1a")
+            + display(row.storeName(), row.storeId()),
+        manualReview
+            ? "历史巡店评分 " + scoreText + "，快照不足，需由督导人工复核；原始成绩不会被覆盖。"
+            : "\u5de1\u5e97\u8bc4\u5206 " + scoreText + "\uff0c\u9700\u8981\u5e97\u957f\u6574\u6539\u5e76\u7531\u7763\u5bfc\u590d\u67e5\u3002",
         "RISK",
         inspectionPriority(score, fullScore),
         row.brandName(),
@@ -468,7 +476,7 @@ public class RoleTodoService {
         dueAt(row.inspectionDate()),
         "\u7763\u5bfc\u5de1\u5e97",
         row.id(),
-        "\u5e97\u957f\u6574\u6539\u4e2d",
+        manualReview ? "待人工复核" : "\u5e97\u957f\u6574\u6539\u4e2d",
         escalatedTodoIds.contains(todoId),
         "inspection_record",
         updatedAt,
@@ -732,6 +740,7 @@ public class RoleTodoService {
   }
 
   public BossTodoDashboardResponse bossDashboard(AuthUser user, RoleTodoQuery query) {
+    requireTodoRead(user);
     requireAudienceAccess(user, RoleTodoAudience.BOSS);
     RoleTodoQuery normalized = query == null ? RoleTodoQuery.defaults() : query;
     requireValidStatus(normalized.status());
@@ -1135,7 +1144,11 @@ public class RoleTodoService {
   }
 
   private Set<String> openSourceTodoIds(long tenantId, RoleTodoAudience audience) {
-    return escalationRepository.openSourceTodoIds(tenantId, audience.roleCode());
+    return escalationRepository.openSourceTodoIds(tenantId, persistedRoleCode(audience));
+  }
+
+  private String persistedRoleCode(RoleTodoAudience audience) {
+    return AccessControlService.canonicalRole(audience == null ? null : audience.roleCode());
   }
 
   private int statusRank(String status) {
@@ -1149,7 +1162,12 @@ public class RoleTodoService {
   }
 
   private boolean includesInspection(RoleTodoAudience audience) {
-    return List.of(RoleTodoAudience.BOSS, RoleTodoAudience.SUPERVISOR, RoleTodoAudience.STORE_MANAGER).contains(audience);
+    return List.of(
+        RoleTodoAudience.BOSS,
+        RoleTodoAudience.SUPERVISOR,
+        RoleTodoAudience.OPERATIONS,
+        RoleTodoAudience.STORE_MANAGER
+    ).contains(audience);
   }
 
   private boolean includesWarehouse(RoleTodoAudience audience) {
@@ -1165,27 +1183,67 @@ public class RoleTodoService {
   }
 
   private void requireAudienceAccess(AuthUser user, RoleTodoAudience audience) {
-    if (List.of("ADMIN", "BOSS").contains(user.role())) {
+    if (AccessControlService.isBoss(user)) {
       return;
     }
-    if (audience.roleCode().equals(user.role())) {
+    if (sameRole(audience.roleCode(), user == null ? null : user.role())) {
       return;
     }
     throw new BusinessException("FORBIDDEN", "No permission to read this role todo list", HttpStatus.FORBIDDEN);
   }
 
-  private String effectiveStoreId(AuthUser user, String requestedStoreId) {
-    if (!isStoreManager(user)) {
-      return requestedStoreId;
+  private StoreQueryScope effectiveStoreScope(
+      AuthUser user,
+      String requestedStoreId,
+      String domainCode
+  ) {
+    String requested = requestedStoreId == null || requestedStoreId.isBlank()
+        ? null
+        : requestedStoreId.trim();
+    if (accessControl == null) {
+      if (isStoreManager(user)) {
+        if (user.storeId() == null || user.storeId().isBlank()) {
+          throw new BusinessException("NO_STORE_SCOPE", "Store manager is not bound to a store", HttpStatus.FORBIDDEN);
+        }
+        return new StoreQueryScope(false, List.of(user.storeId().trim()));
+      }
+      return requested == null
+          ? new StoreQueryScope(true, List.of())
+          : new StoreQueryScope(false, List.of(requested));
     }
-    if (user.storeId() == null || user.storeId().isBlank()) {
-      throw new BusinessException("NO_STORE_SCOPE", "Store manager is not bound to a store", HttpStatus.FORBIDDEN);
+    boolean unrestricted = AccessControlService.isBoss(user)
+        || accessControl.hasAllDataScope(user, domainCode);
+    if (requested != null) {
+      if (!unrestricted && !accessControl.canAccessStore(user, domainCode, requested)) {
+        throw new BusinessException(
+            "FORBIDDEN", "请求门店不在当前账号的数据范围内", HttpStatus.FORBIDDEN);
+      }
+      return new StoreQueryScope(false, List.of(requested));
     }
-    return user.storeId().trim();
+    if (unrestricted) {
+      return new StoreQueryScope(true, List.of());
+    }
+    List<String> storeIds = accessControl.allowedStoreIds(user, domainCode).stream()
+        .filter(value -> !"all".equalsIgnoreCase(value))
+        .sorted()
+        .toList();
+    return new StoreQueryScope(false, storeIds);
+  }
+
+  private <T> List<T> queryStoreRows(StoreQueryScope scope, Function<String, List<T>> query) {
+    if (scope.unrestricted()) {
+      return query.apply(null);
+    }
+    if (scope.storeIds().isEmpty()) {
+      return List.of();
+    }
+    return scope.storeIds().stream()
+        .flatMap(storeId -> query.apply(storeId).stream())
+        .toList();
   }
 
   private boolean isStoreManager(AuthUser user) {
-    return "STORE_MANAGER".equals(user.role());
+    return user != null && "STORE_MANAGER".equals(AccessControlService.canonicalRole(user.role()));
   }
 
   private void requireValidStatus(String status) {
@@ -1196,29 +1254,45 @@ public class RoleTodoService {
 
   private void requireEscalationAudience(RoleTodoAudience audience) {
     if (!ESCALATION_AUDIENCES.contains(audience)) {
-      throw new BusinessException("BAD_ROLE", "Only finance, supervisor and warehouse todos can be escalated", HttpStatus.BAD_REQUEST);
+      throw new BusinessException("BAD_ROLE", "当前待办类型不支持上报", HttpStatus.BAD_REQUEST);
     }
   }
 
   private void requireEscalationActor(AuthUser user, RoleTodoAudience audience) {
-    if (user != null && audience.roleCode().equals(user.role())) {
+    if (user != null && sameRole(audience.roleCode(), user.role())) {
       return;
     }
     throw new BusinessException("FORBIDDEN", "No permission to escalate this role todo", HttpStatus.FORBIDDEN);
   }
 
   private void requireCompletionActor(AuthUser user, RoleTodoAudience audience) {
-    if (user != null && audience.roleCode().equals(user.role())) {
+    if (user != null && sameRole(audience.roleCode(), user.role())) {
       return;
     }
     throw new BusinessException("FORBIDDEN", "No permission to complete this role todo", HttpStatus.FORBIDDEN);
   }
 
   private void requireBoss(AuthUser user) {
-    if (user != null && List.of("ADMIN", "BOSS").contains(user.role())) {
+    if (AccessControlService.isBoss(user)) {
       return;
     }
     throw new BusinessException("FORBIDDEN", "Only boss can complete boss escalations", HttpStatus.FORBIDDEN);
+  }
+
+  private void requireTodoRead(AuthUser user) {
+    if (accessControl != null) {
+      accessControl.requireTodoRead(user);
+    }
+  }
+
+  private void requireTodoTransition(AuthUser user) {
+    if (accessControl != null) {
+      accessControl.requireTodoTransition(user);
+    }
+  }
+
+  private boolean sameRole(String left, String right) {
+    return AccessControlService.canonicalRole(left).equals(AccessControlService.canonicalRole(right));
   }
 
   private String requireText(String value, String code, String message) {
@@ -1240,7 +1314,7 @@ public class RoleTodoService {
   }
 
   private String escalationModule(RoleTodoAudience audience) {
-    return escalationRoleName(audience.roleCode()) + "\u4e0a\u62a5";
+    return escalationRoleName(persistedRoleCode(audience)) + "\u4e0a\u62a5";
   }
 
   private String escalationRoleName(String role) {
@@ -1347,5 +1421,8 @@ public class RoleTodoService {
       }
     }
     return params;
+  }
+
+  private record StoreQueryScope(boolean unrestricted, List<String> storeIds) {
   }
 }

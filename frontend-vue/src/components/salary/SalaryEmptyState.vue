@@ -7,6 +7,8 @@ defineProps<{
   canGenerate: boolean
   previewLoading: boolean
   selectedStoreId: string
+  selectedMonth: string
+  latestDataMonth: string
 }>()
 
 const emit = defineEmits<{
@@ -20,14 +22,17 @@ const emit = defineEmits<{
     <h3>当前范围尚未导入员工</h3>
     <p>请先导入员工，再生成工资记录。</p>
     <div class="empty-actions">
-      <RouterLink class="primary-button" to="/operations/imports">前往员工导入</RouterLink>
+      <RouterLink class="primary-button" to="/data-entry">前往数据录入</RouterLink>
     </div>
   </section>
   <section v-else-if="type === 'no-salary'" class="content-card empty-block">
-    <h3>当前月份尚未生成工资记录</h3>
+    <h3>{{ selectedMonth }} 工资尚未生成</h3>
+    <p v-if="latestDataMonth">{{ latestDataMonth }} 有工资数据。</p>
+    <p v-else>数据库尚无任何月份的工资记录。</p>
     <p v-if="selectedStoreId === 'all'">请先选择具体门店，再预览并生成工资记录。</p>
     <p v-else>请先预览可生成名单，确认后生成本月工资记录。</p>
     <div class="empty-actions">
+      <RouterLink v-if="latestDataMonth" class="ghost-button" :to="{ path: '/salary', query: { month: latestDataMonth } }">查看 {{ latestDataMonth }}</RouterLink>
       <button v-if="canEdit && selectedStoreId !== 'all'" class="primary-button" :disabled="previewLoading || !canGenerate" @click="emit('preview')"><Eye :size="16" /> 预览生成名单</button>
       <button v-if="canEdit && selectedStoreId !== 'all'" class="primary-button submit-inline" :disabled="!canGenerate" @click="emit('generate')"><RefreshCw :size="16" /> 生成本月工资记录</button>
     </div>

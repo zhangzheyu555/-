@@ -143,8 +143,24 @@ export function getRoleTodos(endpoint: 'finance' | 'supervisor' | 'warehouse' | 
   return apiGet<RoleTodoResponse>(`/api/${endpoint}/todos?includeDone=true&limit=120`)
 }
 
-export function getBossTodoDashboard() {
-  return apiGet<BossTodoDashboard>('/api/boss/todo-dashboard?includeDone=true&limit=120')
+export function getBossTodoDashboard(params: { includeDone?: boolean; limit?: number } = {}) {
+  const includeDone = params.includeDone ?? true
+  const limit = params.limit ?? 120
+  return apiGet<BossTodoDashboard>(`/api/boss/todo-dashboard?includeDone=${includeDone}&limit=${limit}`)
+}
+
+export interface ManualBusinessTodoPayload {
+  title: string
+  summary: string
+  storeId: string
+  month: string
+  assigneeRole: string
+  dueAt: string
+  sourceModule: 'ASSISTANT'
+  sourceRecordId: string
+  expectedImpact: string
+  verificationMetric: string
+  confirmed: true
 }
 
 export function getBusinessTodos(status?: BusinessTodo['status']) {
@@ -154,6 +170,10 @@ export function getBusinessTodos(status?: BusinessTodo['status']) {
 
 export function getBusinessTodo(id: string) {
   return apiGet<BusinessTodo>(`/api/todos/${encodeURIComponent(id)}`)
+}
+
+export function createManualBusinessTodo(payload: ManualBusinessTodoPayload) {
+  return apiPost<BusinessTodo, ManualBusinessTodoPayload>('/api/todos/manual', payload)
 }
 
 export function transitionBusinessTodo(id: string, payload: BusinessTodoTransitionPayload) {

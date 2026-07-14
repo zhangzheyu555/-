@@ -66,11 +66,42 @@ class MigrationStatusServiceTest {
         )
         """);
     jdbcTemplate.execute("""
+        create table brand (
+          id bigint not null primary key,
+          tenant_id bigint not null,
+          name varchar(120) not null
+        )
+        """);
+    jdbcTemplate.execute("""
+        create table store_branch (
+          id varchar(64) not null primary key,
+          tenant_id bigint not null,
+          brand_id bigint null,
+          name varchar(160) not null
+        )
+        """);
+    jdbcTemplate.execute("""
+        create table employee (
+          id varchar(120) not null primary key,
+          tenant_id bigint not null,
+          store_id varchar(64) not null,
+          store_name varchar(160) null,
+          brand_name varchar(120) null,
+          name varchar(120) not null,
+          position varchar(80) null,
+          base_salary decimal(14,2) not null default 0,
+          status varchar(40) not null default '在职',
+          updated_at timestamp null default null,
+          unique (tenant_id, store_id, name)
+        )
+        """);
+    jdbcTemplate.execute("""
         create table salary_record (
           id varchar(120) not null primary key,
           tenant_id bigint not null,
           store_id varchar(64) not null,
           month char(7) not null,
+          employee_id varchar(120) null,
           employee_name varchar(120) not null,
           position varchar(80) null,
           attendance varchar(80) null,
@@ -94,6 +125,22 @@ class MigrationStatusServiceTest {
           deduct_uniform decimal(14,2) not null default 0,
           return_uniform decimal(14,2) not null default 0,
           updated_at timestamp null default null
+        )
+        """);
+    jdbcTemplate.execute("""
+        create table warehouse_attachment (
+          id bigint auto_increment primary key,
+          tenant_id bigint not null,
+          store_id varchar(64) null,
+          business_type varchar(60) not null,
+          business_id varchar(120) not null,
+          file_name varchar(255) not null,
+          content_type varchar(120) null,
+          file_size bigint null,
+          storage_path varchar(500) null,
+          content blob null,
+          uploaded_by bigint null,
+          uploaded_at timestamp not null default current_timestamp
         )
         """);
     jdbcTemplate.execute("""
@@ -295,8 +342,8 @@ class MigrationStatusServiceTest {
         "stores",
         """
         [
-          {"id":"s1","brand":"霸王茶姬","name":"保利店","code":"4401040005","area":"广州","manager":"张三","note":"真实门店"},
-          {"id":"s2","brand":"霸王茶姬","name":"万泰汇店"}
+          {"id":"s1","brand":"霸王茶姬","name":"保利店","code":"4401040005","area":"广州","manager":"张三","note":"真实门店","regionCode":"JINGZHOU"},
+          {"id":"s2","brand":"霸王茶姬","name":"万泰汇店","regionCode":"JINGZHOU"}
         ]
         """
     );
@@ -335,6 +382,8 @@ class MigrationStatusServiceTest {
     assertThat(requests.getFirst().name()).isEqualTo("保利店");
     assertThat(requests.getFirst().area()).isEqualTo("广州");
     assertThat(requests.getFirst().manager()).isEqualTo("张三");
+    assertThat(requests).extracting(StoreUpsertRequest::regionCode)
+        .containsExactly("JINGZHOU", "JINGZHOU");
 
     Integer auditCount = jdbcTemplate.queryForObject(
         "select count(*) from operation_log where action = 'legacy_kv_structured_migration' and target_type = 'store_branch'",
@@ -411,6 +460,14 @@ class MigrationStatusServiceTest {
   @Test
   void runsLegacyKvSalaryMigrationIntoStructuredSalaryTable() {
     AuthUser boss = user("BOSS");
+    jdbcTemplate.update("insert into brand(id, tenant_id, name) values (?, ?, ?)", 99L, boss.tenantId(), "茹果奶茶");
+    jdbcTemplate.update(
+        "insert into store_branch(id, tenant_id, brand_id, name) values (?, ?, ?, ?)",
+        "rg1",
+        boss.tenantId(),
+        99L,
+        "荆州之星店"
+    );
     jdbcTemplate.update(
         "insert into kv_storage(storage_key, storage_value) values (?, ?)",
         "salary",
@@ -472,6 +529,7 @@ class MigrationStatusServiceTest {
     assertThat(row.get("STORE_ID")).isEqualTo("rg1");
     assertThat(row.get("MONTH")).isEqualTo("2026-05");
     assertThat(row.get("EMPLOYEE_NAME")).isEqualTo("李瑜");
+    assertThat(row.get("EMPLOYEE_ID")).isNotNull();
     assertThat(row.get("POSITION")).isEqualTo("店长");
     assertThat(row.get("ATTENDANCE")).isEqualTo("27");
     assertThat(row.get("GROSS")).isEqualTo(new BigDecimal("5755.00"));
@@ -484,6 +542,18 @@ class MigrationStatusServiceTest {
     assertThat(row.get("LATE_NIGHT")).isEqualTo(new BigDecimal("30.00"));
     assertThat(row.get("DEDUCT_UNIFORM")).isEqualTo(new BigDecimal("20.00"));
     assertThat(row.get("RETURN_UNIFORM")).isEqualTo(new BigDecimal("10.00"));
+
+    Map<String, Object> employee = jdbcTemplate.queryForMap(
+        "select * from employee where id = ?",
+        row.get("EMPLOYEE_ID")
+    );
+    assertThat(employee.get("TENANT_ID")).isEqualTo(1L);
+    assertThat(employee.get("STORE_ID")).isEqualTo("rg1");
+    assertThat(employee.get("STORE_NAME")).isEqualTo("荆州之星店");
+    assertThat(employee.get("BRAND_NAME")).isEqualTo("茹果奶茶");
+    assertThat(employee.get("NAME")).isEqualTo("李瑜");
+    assertThat(employee.get("POSITION")).isEqualTo("店长");
+    assertThat(employee.get("BASE_SALARY")).isEqualTo(new BigDecimal("1900.00"));
 
     Integer auditCount = jdbcTemplate.queryForObject(
         "select count(*) from operation_log where action = 'legacy_kv_structured_migration' and target_type = 'salary_record'",
@@ -542,8 +612,22 @@ class MigrationStatusServiceTest {
     assertThat(row.get("CATEGORY")).isEqualTo("物料采购");
     assertThat(row.get("REASON")).isEqualTo("牛奶采购");
     assertThat(row.get("STATUS")).isEqualTo("待审核");
-    assertThat(row.get("IMAGE_URL")).isEqualTo("data:image/jpeg;base64,abc");
+    assertThat(row.get("IMAGE_URL")).isNull();
     assertThat(row.get("SUBMITTED_BY")).isEqualTo(1L);
+
+    Map<String, Object> attachment = jdbcTemplate.queryForMap(
+        "select * from warehouse_attachment where business_type = ? and business_id = ?",
+        "EXPENSE_CLAIM",
+        "exp1"
+    );
+    assertThat(attachment.get("TENANT_ID")).isEqualTo(1L);
+    assertThat(attachment.get("STORE_ID")).isEqualTo("rg1");
+    assertThat(attachment.get("FILE_NAME")).isEqualTo("exp1.jpg");
+    assertThat(attachment.get("CONTENT_TYPE")).isEqualTo("image/jpeg");
+    assertThat(((Number) attachment.get("FILE_SIZE")).longValue()).isGreaterThan(0L);
+    assertThat(attachment.get("STORAGE_PATH")).isNull();
+    assertThat(attachment.get("CONTENT")).isNotNull();
+    assertThat(attachment.get("UPLOADED_BY")).isEqualTo(1L);
 
     Integer auditCount = jdbcTemplate.queryForObject(
         "select count(*) from operation_log where action = 'legacy_kv_structured_migration' and target_type = 'expense_claim'",
@@ -602,8 +686,8 @@ class MigrationStatusServiceTest {
     assertThat(row.get("INSPECTION_DATE").toString()).isEqualTo("2026-05-21");
     assertThat(row.get("INSPECTOR")).isEqualTo("督导A");
     assertThat(row.get("BRAND")).isEqualTo("茹果奶茶");
-    assertThat(row.get("FULL_SCORE")).isEqualTo(new BigDecimal("100.00"));
-    assertThat(row.get("SCORE")).isEqualTo(new BigDecimal("92.00"));
+    assertThat(row.get("FULL_SCORE")).isEqualTo(new BigDecimal("200.00"));
+    assertThat(row.get("SCORE")).isEqualTo(new BigDecimal("184.00"));
     assertThat(((Number) row.get("PASSED")).intValue()).isZero();
     assertThat(row.get("DEDUCTIONS_JSON").toString()).contains("台面污渍");
     assertThat(row.get("REDLINES_JSON").toString()).contains("食品安全红线");

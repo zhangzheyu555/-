@@ -2,9 +2,16 @@ package com.storeprofit.system.expense;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
+import com.storeprofit.system.platform.authorization.DataScope;
+import com.storeprofit.system.platform.authorization.DataScopeDomains;
+import com.storeprofit.system.platform.authorization.DataScopeModes;
+import com.storeprofit.system.platform.authorization.DataScopeService;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
@@ -17,6 +24,7 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 class ExpenseServiceTest {
   private JdbcTemplate jdbcTemplate;
   private ExpenseService service;
+  private ExpenseRepository repository;
 
   @BeforeEach
   void setUp() {
@@ -83,7 +91,7 @@ class ExpenseServiceTest {
           ('s2', 1, 1, '002', 'Two'),
           ('other', 2, 2, '099', 'Other')
         """);
-    ExpenseRepository repository = new ExpenseRepository(
+    repository = new ExpenseRepository(
         jdbcTemplate,
         new NamedParameterJdbcTemplate(dataSource)
     );
@@ -125,6 +133,38 @@ class ExpenseServiceTest {
     assertThatThrownBy(() -> service.save(storeManager(), "exp-s2", request("s1", "2026-05", "200")))
         .isInstanceOf(BusinessException.class)
         .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
+  }
+
+  @Test
+  void configuredFinanceStoreListFiltersExpenseRowsAndRejectsForgedStore() {
+    service.save(boss(), "exp-s1", request("s1", "2026-05", "100"));
+    service.save(boss(), "exp-s2", request("s2", "2026-05", "200"));
+    AccessControlService accessControl = mock(AccessControlService.class);
+    DataScopeService dataScopeService = mock(DataScopeService.class);
+    DataScope scope = new DataScope(DataScopeModes.STORE_LIST, List.of("s1"));
+    when(dataScopeService.scope(finance(), DataScopeDomains.FINANCE)).thenReturn(scope);
+    ExpenseService scopedService = new ExpenseService(repository, null, accessControl, null, dataScopeService);
+
+    List<ExpenseClaimResponse> records = scopedService.claims(finance(), "2026-05", null, null, null);
+
+    assertThat(records).extracting(ExpenseClaimResponse::id).containsExactly("exp-s1");
+    assertThatThrownBy(() -> scopedService.claims(finance(), "2026-05", null, "s2", null))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
+    assertThatThrownBy(() -> scopedService.approve(finance(), "exp-s2", new ExpenseReviewRequest("OK")))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
+  }
+
+  @Test
+  void expenseNoneScopeReturnsNoRows() {
+    service.save(boss(), "exp-s1", request("s1", "2026-05", "100"));
+    AccessControlService accessControl = mock(AccessControlService.class);
+    DataScopeService dataScopeService = mock(DataScopeService.class);
+    when(dataScopeService.scope(finance(), DataScopeDomains.FINANCE)).thenReturn(DataScope.none());
+    ExpenseService scopedService = new ExpenseService(repository, null, accessControl, null, dataScopeService);
+
+    assertThat(scopedService.claims(finance(), "2026-05", null, null, null)).isEmpty();
   }
 
   @Test

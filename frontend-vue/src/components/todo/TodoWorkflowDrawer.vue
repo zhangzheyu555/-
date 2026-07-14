@@ -10,7 +10,10 @@ import {
   type BusinessTodoTransitionPayload,
 } from '../../api/todos'
 import { useAuthStore } from '../../stores/auth'
+import { isBossRole } from '../../permissions/roles'
 import StatusBadge from '../common/StatusBadge.vue'
+import UiButton from '../ui/UiButton.vue'
+import UnsavedChangesDialog from '../ui/UnsavedChangesDialog.vue'
 
 const props = defineProps<{
   todoId: string
@@ -38,10 +41,13 @@ const error = ref('')
 const note = ref('')
 const files = ref<File[]>([])
 const fileInput = ref<HTMLInputElement | null>(null)
+const showCloseConfirmation = ref(false)
+const pendingSourceRoute = ref('')
 
-const isGlobalRole = computed(() => ['ADMIN', 'BOSS', 'OWNER'].includes(auth.role))
+const isGlobalRole = computed(() => isBossRole(auth.role))
 const isAssignee = computed(() => Boolean(todo.value?.assigneeRole && todo.value.assigneeRole === auth.roleLabel))
 const isReviewer = computed(() => Boolean(todo.value?.reviewRole && todo.value.reviewRole === auth.roleLabel))
+const dirty = computed(() => Boolean(note.value.trim() || files.value.length))
 
 const availableActions = computed<WorkflowAction[]>(() => {
   const current = todo.value
@@ -85,7 +91,31 @@ onBeforeUnmount(() => {
 })
 
 function handleEscape(event: KeyboardEvent) {
-  if (event.key === 'Escape' && !submitting.value) emit('close')
+  if (event.key === 'Escape' && !showCloseConfirmation.value) requestClose()
+}
+
+function requestClose() {
+  if (submitting.value) return
+  if (dirty.value) showCloseConfirmation.value = true
+  else emit('close')
+}
+
+function requestOpenSource(route: string) {
+  if (submitting.value) return
+  if (dirty.value) {
+    pendingSourceRoute.value = route
+    showCloseConfirmation.value = true
+    return
+  }
+  emit('openSource', route)
+}
+
+function discardAndClose() {
+  const route = pendingSourceRoute.value
+  pendingSourceRoute.value = ''
+  showCloseConfirmation.value = false
+  if (route) emit('openSource', route)
+  else emit('close')
 }
 
 async function loadTodo() {
@@ -192,16 +222,16 @@ function formatSize(bytes: number) {
 
 <template>
   <Teleport to="body">
-    <div class="todo-drawer-mask" @click.self="emit('close')">
+    <div class="todo-drawer-mask" @click.self="requestClose">
       <aside class="todo-drawer" role="dialog" aria-modal="true" aria-labelledby="todo-workflow-title">
         <header class="todo-drawer-head">
           <div>
             <span>待办处理</span>
             <h2 id="todo-workflow-title">{{ todo?.title || '待办详情' }}</h2>
           </div>
-          <button class="drawer-icon-button" type="button" title="关闭" :disabled="submitting" @click="emit('close')">
-            <X :size="20" />
-          </button>
+          <UiButton variant="ghost" icon-only title="关闭" aria-label="关闭待办处理" :disabled="submitting" @click="requestClose">
+            <template #icon><X :size="20" /></template>
+          </UiButton>
         </header>
 
         <div v-if="loading" class="drawer-loading">
@@ -229,7 +259,7 @@ function formatSize(bytes: number) {
             </div>
           </dl>
 
-          <button class="ghost-button source-button" type="button" @click="emit('openSource', todo.targetRoute)">
+          <button class="ghost-button source-button" type="button" @click="requestOpenSource(todo.targetRoute)">
             <ExternalLink :size="16" />
             去业务页面
           </button>
@@ -266,7 +296,7 @@ function formatSize(bytes: number) {
                 <FileText :size="15" />
                 <span>{{ file.name }}</span>
                 <small>{{ formatSize(file.size) }}</small>
-                <button type="button" title="移除附件" :disabled="submitting" @click="removeFile(index)">
+                <button type="button" title="移除附件" aria-label="移除附件" :disabled="submitting" @click="removeFile(index)">
                   <X :size="14" />
                 </button>
               </li>
@@ -275,17 +305,15 @@ function formatSize(bytes: number) {
             <div v-if="error" class="error-box compact-error">{{ error }}</div>
 
             <div class="workflow-actions">
-              <button
+              <UiButton
                 v-for="action in availableActions"
                 :key="action.status"
-                :class="action.tone === 'danger' ? 'danger-button' : 'primary-button'"
-                type="button"
-                :disabled="submitting"
+                :variant="action.tone === 'danger' ? 'danger' : 'primary'"
+                :loading="submitting"
                 @click="submit(action.status)"
               >
-                <LoaderCircle v-if="submitting" class="spin" :size="16" />
                 {{ action.label }}
-              </button>
+              </UiButton>
             </div>
           </section>
 
@@ -327,13 +355,20 @@ function formatSize(bytes: number) {
         </div>
       </aside>
     </div>
+    <UnsavedChangesDialog
+      :open="showCloseConfirmation"
+      :title="pendingSourceRoute ? '先放弃当前待办修改吗？' : '待办处理内容尚未保存'"
+      :message="pendingSourceRoute ? '前往业务页面后，处理备注和已选择的附件将不会保留。' : '关闭后，处理备注和已选择的附件将不会保留。'"
+      @keep-editing="showCloseConfirmation = false; pendingSourceRoute = ''"
+      @discard="discardAndClose"
+    />
   </Teleport>
 </template>
 
 <style scoped>
 .todo-drawer-mask {
   position: fixed;
-  z-index: 1200;
+  z-index: var(--ds-z-modal, 1400);
   inset: 0;
   display: flex;
   justify-content: flex-end;

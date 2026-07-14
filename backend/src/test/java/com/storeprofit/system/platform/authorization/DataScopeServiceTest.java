@@ -1,0 +1,72 @@
+package com.storeprofit.system.platform.authorization;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.storeprofit.system.platform.auth.AuthRepository;
+import com.storeprofit.system.platform.auth.AuthUser;
+import com.storeprofit.system.platform.authorization.DataScopeRepository.DataScopeAssignmentRow;
+import java.util.List;
+import java.util.Map;
+import org.junit.jupiter.api.Test;
+
+class DataScopeServiceTest {
+  private final DataScopeRepository repository = mock(DataScopeRepository.class);
+  private final AuthRepository authRepository = mock(AuthRepository.class);
+  private final DataScopeService service = new DataScopeService(repository, authRepository, new ObjectMapper());
+
+  @Test
+  void bossReceivesAllDomainsWithoutDependingOnAssignments() {
+    Map<String, DataScope> scopes = service.dataScopes(user(1L, "BOSS", null));
+
+    assertThat(scopes).hasSize(DataScopeDomains.ALL.size());
+    assertThat(scopes.values()).allMatch(DataScope::allowsAllStores);
+  }
+
+  @Test
+  void ownStoreIsMaterializedAndLegacyBroaderManagerScopeIsDenied() {
+    AuthUser manager = user(2L, "STORE_MANAGER", "s1");
+    when(repository.assignmentsForUser(1L, 2L)).thenReturn(List.of(
+        new DataScopeAssignmentRow(DataScopeDomains.FINANCE, DataScopeModes.OWN_STORE, null),
+        new DataScopeAssignmentRow(DataScopeDomains.EXAM, DataScopeModes.STORE_LIST, "[\"s2\",\"s3\"]"),
+        new DataScopeAssignmentRow(DataScopeDomains.STORE, DataScopeModes.ALL, null)
+    ));
+
+    assertThat(service.allowedStoreIds(manager, DataScopeDomains.FINANCE)).containsExactly("s1");
+    assertThat(service.allowedStoreIds(manager, DataScopeDomains.EXAM)).isEmpty();
+    assertThat(service.canAccessStore(manager, DataScopeDomains.EXAM, "s1")).isFalse();
+    assertThat(service.hasAllDataScope(manager, DataScopeDomains.STORE)).isFalse();
+    assertThat(service.allowedStoreIds(manager, DataScopeDomains.STORE)).isEmpty();
+  }
+
+  @Test
+  void missingAssignmentsUseConservativeLegacyScopeInsteadOfTenantWideAccess() {
+    AuthUser operations = user(3L, "OPERATIONS", null);
+    when(repository.assignmentsForUser(1L, 3L)).thenReturn(List.of());
+    when(authRepository.assignedStoreScope(1L, 3L)).thenReturn(List.of("s2"));
+
+    assertThat(service.hasAllDataScope(operations, DataScopeDomains.INSPECTION)).isFalse();
+    assertThat(service.allowedStoreIds(operations, DataScopeDomains.INSPECTION)).containsExactly("s2");
+    assertThat(service.allowedStoreIds(operations, DataScopeDomains.FINANCE)).isEmpty();
+  }
+
+  @Test
+  void warehouseListKeepsWarehouseAndStoreIdentifiersDisjoint() {
+    DataScope scope = new DataScope(
+        DataScopeModes.WAREHOUSE_LIST,
+        List.of("store-must-not-survive"),
+        List.of("2", "1", "2")
+    );
+
+    assertThat(scope.storeIds()).isEmpty();
+    assertThat(scope.warehouseIds()).containsExactly("1", "2");
+    assertThat(scope.allowsWarehouse("2")).isTrue();
+    assertThat(scope.allowsStore("2")).isFalse();
+  }
+
+  private AuthUser user(long id, String role, String storeId) {
+    return new AuthUser(id, 1L, "测试租户", "user-" + id, "hash", "测试账号", role, storeId, true, 2L);
+  }
+}

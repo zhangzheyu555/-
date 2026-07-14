@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Package, PackagePlus, Pencil, Search, ToggleLeft, ToggleRight } from 'lucide-vue-next'
+import { Package, PackagePlus, Pencil, ToggleLeft, ToggleRight } from 'lucide-vue-next'
+import SearchInput from '../common/SearchInput.vue'
 import StatusBadge from '../common/StatusBadge.vue'
 import WarehouseCategoryTree from './WarehouseCategoryTree.vue'
 import type { WarehouseItem, WarehouseItemCategory } from '../../api/warehouse'
@@ -74,8 +75,8 @@ function units(item: WarehouseItem) {
 
     <section class="content-card catalog-main">
       <div class="table-heading catalog-heading">
-        <div>
-          <h3>物料档案</h3>
+        <div class="catalog-heading__title">
+          <h2>物料清单</h2>
         </div>
         <button v-if="canManage" class="primary-button compact-button" type="button" @click="emit('createItem')">
           <PackagePlus :size="17" />
@@ -83,10 +84,12 @@ function units(item: WarehouseItem) {
         </button>
       </div>
 
-      <label class="search-field">
-        <Search :size="17" />
-        <input v-model="searchText" placeholder="搜索名称、编码、规格、库位或属性" />
-      </label>
+      <SearchInput
+        v-model="searchText"
+        class="catalog-search"
+        placeholder="搜索名称、编码、规格、库位或属性"
+        aria-label="搜索物料档案"
+      />
 
       <div class="table-wrap">
         <table>
@@ -159,10 +162,26 @@ function units(item: WarehouseItem) {
 
 .catalog-heading,
 .item-cell,
-.row-actions,
-.search-field {
+.row-actions {
   display: flex;
   align-items: center;
+}
+
+.catalog-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+}
+
+.catalog-heading__title {
+  min-width: 0;
+}
+
+.catalog-heading h2 {
+  margin: 0;
+  font-size: 18px;
+  white-space: nowrap;
 }
 
 .compact-button {
@@ -171,25 +190,14 @@ function units(item: WarehouseItem) {
   align-items: center;
   gap: 7px;
   padding: 7px 12px;
+  width: auto;
+  flex: none;
+  margin-top: 0;
 }
 
-.search-field {
+.catalog-main > .catalog-search {
   width: min(400px, 100%);
-  gap: 8px;
-  min-height: 36px;
   margin: 0 0 14px;
-  padding: 0 10px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  color: var(--muted);
-}
-
-.search-field input {
-  min-width: 0;
-  flex: 1;
-  border: 0;
-  outline: 0;
-  color: var(--ink);
 }
 
 .item-cell {
@@ -244,5 +252,19 @@ td small {
 tr.disabled td {
   color: #98a3af;
   background: #fbfcfd;
+}
+
+@media (max-width: 600px) {
+  .catalog-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .catalog-heading {
+    grid-template-columns: 1fr;
+  }
+
+  .compact-button {
+    justify-self: start;
+  }
 }
 </style>

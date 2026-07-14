@@ -8,6 +8,11 @@ import com.storeprofit.system.organization.OrganizationRepository;
 import com.storeprofit.system.organization.StoreResponse;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
+import com.storeprofit.system.platform.authorization.DataScope;
+import com.storeprofit.system.platform.authorization.BusinessScope;
+import com.storeprofit.system.platform.authorization.BusinessScopeResolver;
+import com.storeprofit.system.platform.authorization.DataScopeDomains;
+import com.storeprofit.system.platform.authorization.DataScopeModes;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -19,12 +24,16 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 @Service
 public class ProfitImportService {
+  private static final Logger log = LoggerFactory.getLogger(ProfitImportService.class);
   private static final long MAX_FILE_BYTES = 10L * 1024L * 1024L;
 
   private final SpreadsheetProfitParser spreadsheetProfitParser;
@@ -32,6 +41,24 @@ public class ProfitImportService {
   private final FinanceRepository financeRepository;
   private final FinanceService financeService;
   private final AccessControlService accessControl;
+  private final BusinessScopeResolver businessScopeResolver;
+
+  @Autowired
+  public ProfitImportService(
+      SpreadsheetProfitParser spreadsheetProfitParser,
+      OrganizationRepository organizationRepository,
+      FinanceRepository financeRepository,
+      FinanceService financeService,
+      AccessControlService accessControl,
+      BusinessScopeResolver businessScopeResolver
+  ) {
+    this.spreadsheetProfitParser = spreadsheetProfitParser;
+    this.organizationRepository = organizationRepository;
+    this.financeRepository = financeRepository;
+    this.financeService = financeService;
+    this.accessControl = accessControl;
+    this.businessScopeResolver = businessScopeResolver;
+  }
 
   public ProfitImportService(
       SpreadsheetProfitParser spreadsheetProfitParser,
@@ -40,11 +67,8 @@ public class ProfitImportService {
       FinanceService financeService,
       AccessControlService accessControl
   ) {
-    this.spreadsheetProfitParser = spreadsheetProfitParser;
-    this.organizationRepository = organizationRepository;
-    this.financeRepository = financeRepository;
-    this.financeService = financeService;
-    this.accessControl = accessControl;
+    this(spreadsheetProfitParser, organizationRepository, financeRepository, financeService,
+        accessControl, null);
   }
 
   public ProfitImportRecognizeResponse recognize(
@@ -55,9 +79,8 @@ public class ProfitImportService {
       String month
   ) {
     accessControl.requireFinanceWrite(user);
-    if (storeId != null && !storeId.isBlank()) {
-      accessControl.requireStoreAccess(user, storeId, "预览经营数据导入");
-    }
+    BusinessScope businessScope = resolveBusinessScope(user, storeId, "预览经营数据导入");
+    String targetStoreId = businessScope.storeId();
     validateFile(file);
     ProfitImportSourceType sourceType = detectSourceType(file, requestedSourceType);
     if (sourceType == ProfitImportSourceType.SCREENSHOT) {
@@ -72,10 +95,20 @@ public class ProfitImportService {
 
     List<StoreResponse> stores = scopedStores(user);
     try {
-      List<ProfitImportRow> rows = spreadsheetProfitParser.parse(file, sourceType, stores, storeId, month)
+      long parseStarted = System.nanoTime();
+      List<ProfitImportRow> parsedRows = spreadsheetProfitParser.parse(
+          file, sourceType, stores, targetStoreId, month);
+      long parseMs = (System.nanoTime() - parseStarted) / 1_000_000L;
+      long validationStarted = System.nanoTime();
+      List<ProfitImportRow> rows = parsedRows
           .stream()
+          .map(row -> lockParsedRow(user, row, businessScope))
           .map(row -> enrich(user, row))
           .toList();
+      long validationMs = (System.nanoTime() - validationStarted) / 1_000_000L;
+      log.info(
+          "Profit import preview parsed: sourceType={} fileBytes={} parsedRows={} parseMs={} databaseValidationMs={}",
+          sourceType, file.getSize(), rows.size(), parseMs, validationMs);
       if (rows.isEmpty()) {
         return new ProfitImportRecognizeResponse(
             importId(),
@@ -87,6 +120,14 @@ public class ProfitImportService {
       }
       String status = rows.stream().anyMatch(row -> "ERROR".equals(row.status())) ? "PARTIAL" : "READY";
       return new ProfitImportRecognizeResponse(importId(), sourceType, status, rows, List.of());
+    } catch (ProfitImportParseException ex) {
+      return new ProfitImportRecognizeResponse(
+          importId(),
+          sourceType,
+          "ERROR",
+          List.of(),
+          List.of(ex.getMessage())
+      );
     } catch (IOException ex) {
       throw new BusinessException("IMPORT_READ_FAILED", "导入文件读取失败：" + ex.getMessage(), HttpStatus.BAD_REQUEST);
     } catch (RuntimeException ex) {
@@ -117,14 +158,18 @@ public class ProfitImportService {
 
   private ProfitImportRow commitRow(AuthUser user, ProfitImportCommitRequest.Row row) {
     List<String> errors = new ArrayList<>();
-    String storeId = row == null ? "" : trim(row.storeId());
+    BusinessScope businessScope = resolveBusinessScope(
+        user, row == null ? null : row.storeId(), "导入经营数据");
+    String storeId = businessScope.storeId() == null ? "" : businessScope.storeId();
     String month = row == null ? "" : trim(row.month());
     Map<String, BigDecimal> values = row == null || row.values() == null ? Map.of() : row.values();
 
     if (storeId.isBlank()) {
       errors.add("门店不能为空");
-    } else if (!financeRepository.storeExists(user.tenantId(), storeId)) {
-      errors.add("门店不存在或不属于当前企业");
+    } else {
+      if (!financeRepository.storeExists(user.tenantId(), storeId)) {
+        errors.add("门店不存在或不属于当前企业");
+      }
     }
 
     String normalizedMonth = "";
@@ -227,22 +272,78 @@ public class ProfitImportService {
   }
 
   private List<StoreResponse> scopedStores(AuthUser user) {
-    List<StoreResponse> stores = organizationRepository.stores(user.tenantId());
-    if ("STORE_MANAGER".equals(user.role()) && user.storeId() != null && !user.storeId().isBlank()) {
-      return stores.stream().filter(store -> user.storeId().equals(store.id())).toList();
+    return organizationRepository.stores(user.tenantId(), financeScope(user));
+  }
+
+  private ProfitImportRow lockParsedRow(
+      AuthUser user,
+      ProfitImportRow row,
+      BusinessScope businessScope
+  ) {
+    if (row == null || businessScope.storeId() == null
+        || !"STORE_MANAGER".equals(AccessControlService.canonicalRole(user.role()))) {
+      return row;
     }
-    return stores;
+    return new ProfitImportRow(
+        row.rowId(),
+        businessScope.storeId(),
+        businessScope.storeName() == null ? businessScope.storeId() : businessScope.storeName(),
+        row.month(),
+        row.confidence(),
+        row.values(),
+        row.warnings(),
+        row.errors(),
+        row.existing(),
+        row.status()
+    );
+  }
+
+  private BusinessScope resolveBusinessScope(AuthUser user, String storeId, String action) {
+    if (businessScopeResolver != null) {
+      return businessScopeResolver.resolve(
+          user, DataScopeDomains.FINANCE, storeId, null, action);
+    }
+    String targetStoreId = trim(storeId);
+    if (targetStoreId.isBlank()
+        && "STORE_MANAGER".equals(AccessControlService.canonicalRole(user.role()))) {
+      targetStoreId = trim(user.storeId());
+    }
+    if (!targetStoreId.isBlank()) {
+      accessControl.requireStoreAccess(
+          user, DataScopeDomains.FINANCE, targetStoreId, action);
+    }
+    return new BusinessScope(
+        targetStoreId.isBlank() ? null : targetStoreId,
+        null,
+        null,
+        null,
+        financeScope(user));
   }
 
   private String storeName(AuthUser user, String storeId) {
     if (storeId == null || storeId.isBlank()) {
       return "";
     }
-    return organizationRepository.stores(user.tenantId()).stream()
+    return scopedStores(user).stream()
         .filter(store -> storeId.equals(store.id()))
         .map(StoreResponse::name)
         .findFirst()
         .orElse(storeId);
+  }
+
+  private DataScope financeScope(AuthUser user) {
+    if (accessControl.hasAllDataScope(user, DataScopeDomains.FINANCE)) {
+      return DataScope.all();
+    }
+    List<String> storeIds = accessControl.allowedStoreIds(user, DataScopeDomains.FINANCE).stream()
+        .filter(value -> value != null && !value.isBlank() && !"all".equalsIgnoreCase(value))
+        .map(String::trim)
+        .distinct()
+        .sorted()
+        .toList();
+    return storeIds.isEmpty()
+        ? DataScope.none()
+        : new DataScope(DataScopeModes.STORE_LIST, storeIds);
   }
 
   private void validateFile(MultipartFile file) {

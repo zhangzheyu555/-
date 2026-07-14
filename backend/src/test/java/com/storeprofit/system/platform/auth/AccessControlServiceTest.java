@@ -9,7 +9,11 @@ import static org.mockito.Mockito.when;
 
 import com.storeprofit.system.audit.AuditRepository;
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.platform.authorization.AuthorizationService;
+import com.storeprofit.system.platform.authorization.DataScopeService;
+import com.storeprofit.system.platform.authorization.PermissionCodes;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class AccessControlServiceTest {
@@ -53,6 +57,68 @@ class AccessControlServiceTest {
     service.requireStoreAccess(boss, "rg2", "查看利润数据");
 
     assertThat(service.canAccessStore(boss, "rg2")).isTrue();
+  }
+
+  @Test
+  void warehouseAndSupervisorCannotSubmitExpenseSupplements() {
+    assertThatThrownBy(() -> service.requireExpenseWrite(user("WAREHOUSE", "rg1")))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
+    assertThatThrownBy(() -> service.requireExpenseWrite(user("SUPERVISOR", "rg1")))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
+  }
+
+  @Test
+  void bossHasWildcardPermissionAcrossBusinessModules() {
+    AuthUser boss = user("BOSS", null);
+
+    service.requireFinanceWrite(boss);
+    service.requireExpenseReview(boss);
+    service.requireSalaryReview(boss);
+    service.requireInspectionManage(boss);
+    service.requirePlatformAccess(boss);
+    service.requireExamManage(boss);
+    service.requireDataExport(boss);
+    service.requireUserManagementWrite(boss);
+
+    assertThat(AccessControlService.hasAnyRole(boss, Set.of())).isTrue();
+    assertThat(service.allowedStoreIds(boss)).containsExactly("all");
+  }
+
+  @Test
+  void legacyHighestRoleCodesAreCanonicalizedToBoss() {
+    assertThat(AccessControlService.canonicalRole("ADMIN")).isEqualTo("BOSS");
+    assertThat(AccessControlService.canonicalRole("OWNER")).isEqualTo("BOSS");
+    assertThat(AccessControlService.isBoss(user("ADMIN", null))).isTrue();
+    assertThat(AccessControlService.isBoss(user("OWNER", null))).isTrue();
+  }
+
+  @Test
+  void ordinaryRoleCannotManageUserPermissions() {
+    AuthUser finance = user("FINANCE", null);
+
+    assertThatThrownBy(() -> service.requireUserManagementWrite(finance))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
+  }
+
+  @Test
+  void personalPermissionOverrideCannotBypassBossOnlyAccountManagementBoundary() {
+    AuthorizationService authorizationService = mock(AuthorizationService.class);
+    AccessControlService bossOnlyService = new AccessControlService(
+        authService,
+        authRepository,
+        auditRepository,
+        authorizationService,
+        mock(DataScopeService.class)
+    );
+    AuthUser finance = user("FINANCE", null);
+    when(authorizationService.hasPermission(finance, PermissionCodes.SYSTEM_USER_MANAGE)).thenReturn(true);
+
+    assertThatThrownBy(() -> bossOnlyService.requireUserManagementWrite(finance))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
   }
 
   private AuthUser user(String role, String storeId) {

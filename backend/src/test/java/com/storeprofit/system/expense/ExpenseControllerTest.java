@@ -1,17 +1,25 @@
 package com.storeprofit.system.expense;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.storeprofit.system.common.ApiResponse;
+import com.storeprofit.system.common.BusinessException;
 import com.storeprofit.system.platform.auth.AuthService;
 import com.storeprofit.system.platform.auth.AuthUser;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.mock.web.MockMultipartFile;
 
 class ExpenseControllerTest {
   private final AuthService authService = mock(AuthService.class);
@@ -71,6 +79,83 @@ class ExpenseControllerTest {
     verify(expenseService).submit(boss, "exp-1");
     verify(expenseService).approve(boss, "exp-1", review);
     verify(expenseService).reject(boss, "exp-1", review);
+  }
+
+  @Test
+  void multipartSupplementAndAuthenticatedDownloadUseDedicatedService() throws Exception {
+    ExpenseSupplementService supplementService = mock(ExpenseSupplementService.class);
+    ExpenseController supplementController = new ExpenseController(authService, expenseService, supplementService);
+    MockMultipartFile file = new MockMultipartFile(
+        "files", "invoice.pdf", "application/pdf", "%PDF-1.7\n%%EOF".getBytes());
+    ExpenseClaimResponse row = response("exp-1", "待审核");
+    when(authService.requireUser("Bearer token")).thenReturn(boss);
+    when(supplementService.submit(boss, "exp-1", "付款凭证", List.of(file))).thenReturn(row);
+    when(supplementService.attachment(boss, "exp-1", 9L, true)).thenReturn(
+        new ExpenseSupplementService.AttachmentContent("付款凭证.pdf", "application/pdf", file.getBytes()));
+
+    ApiResponse<ExpenseClaimResponse> submitted = supplementController.supplement(
+        "Bearer token", "exp-1", "付款凭证", List.of(file));
+    ResponseEntity<byte[]> downloaded = supplementController.downloadSupplementAttachment(
+        "Bearer token", "exp-1", 9L);
+
+    assertThat(submitted.data()).isSameAs(row);
+    assertThat(downloaded.getHeaders().getFirst(HttpHeaders.CONTENT_DISPOSITION)).startsWith("attachment;");
+    assertThat(downloaded.getHeaders().getFirst(HttpHeaders.CACHE_CONTROL)).isEqualTo("private, no-store, max-age=0");
+    assertThat(downloaded.getHeaders().getFirst("X-Content-Type-Options")).isEqualTo("nosniff");
+    assertThat(downloaded.getHeaders().getFirst("Content-Security-Policy")).contains("sandbox");
+    verify(supplementService).submit(boss, "exp-1", "付款凭证", List.of(file));
+    verify(supplementService).attachment(boss, "exp-1", 9L, true);
+  }
+
+  @Test
+  void authenticatedContentEndpointReturnsImagesInlineAndPdfAsAttachment() {
+    ExpenseSupplementService supplementService = mock(ExpenseSupplementService.class);
+    ExpenseController supplementController = new ExpenseController(authService, expenseService, supplementService);
+    byte[] image = new byte[]{(byte) 0x89, 0x50, 0x4e, 0x47};
+    byte[] pdf = "%PDF-1.7\n%%EOF".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+    when(authService.requireUser("Bearer token")).thenReturn(boss);
+    when(supplementService.attachment(boss, "exp-1", 10L, false)).thenReturn(
+        new ExpenseSupplementService.AttachmentContent("付款截图.png", "image/png", image));
+    when(supplementService.attachment(boss, "exp-1", 11L, false)).thenReturn(
+        new ExpenseSupplementService.AttachmentContent("付款凭证.pdf", "application/pdf", pdf));
+    when(supplementService.attachment(boss, "exp-1", 10L, true)).thenReturn(
+        new ExpenseSupplementService.AttachmentContent("付款截图.png", "image/png", image));
+
+    ResponseEntity<byte[]> imageResponse = supplementController.attachmentContent(
+        "Bearer token", "exp-1", 10L, false);
+    ResponseEntity<byte[]> pdfResponse = supplementController.attachmentContent(
+        "Bearer token", "exp-1", 11L, false);
+    ResponseEntity<byte[]> imageDownloadResponse = supplementController.attachmentContent(
+        "Bearer token", "exp-1", 10L, true);
+
+    assertThat(imageResponse.getHeaders().getContentType()).isEqualTo(MediaType.IMAGE_PNG);
+    assertThat(imageResponse.getBody()).isEqualTo(image);
+    ContentDisposition imageDisposition = ContentDisposition.parse(
+        imageResponse.getHeaders().getFirst(HttpHeaders.CONTENT_DISPOSITION));
+    assertThat(imageDisposition.getType()).isEqualTo("inline");
+    assertThat(imageDisposition.getFilename()).isEqualTo("付款截图.png");
+    assertThat(pdfResponse.getHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_PDF);
+    ContentDisposition pdfDisposition = ContentDisposition.parse(
+        pdfResponse.getHeaders().getFirst(HttpHeaders.CONTENT_DISPOSITION));
+    assertThat(pdfDisposition.getType()).isEqualTo("attachment");
+    assertThat(pdfDisposition.getFilename()).isEqualTo("付款凭证.pdf");
+    assertThat(ContentDisposition.parse(imageDownloadResponse.getHeaders()
+        .getFirst(HttpHeaders.CONTENT_DISPOSITION)).getType()).isEqualTo("attachment");
+    verify(supplementService).attachment(boss, "exp-1", 10L, false);
+    verify(supplementService).attachment(boss, "exp-1", 11L, false);
+    verify(supplementService).attachment(boss, "exp-1", 10L, true);
+  }
+
+  @Test
+  void contentEndpointRejectsUnauthenticatedRequestBeforeReadingAttachment() {
+    ExpenseSupplementService supplementService = mock(ExpenseSupplementService.class);
+    ExpenseController supplementController = new ExpenseController(authService, expenseService, supplementService);
+    BusinessException unauthorized = new BusinessException(
+        "UNAUTHORIZED", "请先登录", HttpStatus.UNAUTHORIZED);
+    when(authService.requireUser(null)).thenThrow(unauthorized);
+
+    assertThatThrownBy(() -> supplementController.attachmentContent(null, "exp-1", 10L, false))
+        .isSameAs(unauthorized);
   }
 
   private ExpenseClaimRequest request() {

@@ -46,7 +46,7 @@ public class SalaryWorkflowService {
   @Transactional
   public SalaryRecordResponse save(AuthUser user, String id, SalaryRecordRequest request) {
     requireEditRole(user);
-    SalaryRecordRequest normalized = normalizeRequest(user, request);
+    SalaryRecordRequest normalized = normalizeRequest(user, request, false);
     salaryQueryService.requireStoreScope(user, normalized.storeId());
     if (!salaryRepository.storeExists(user.tenantId(), normalized.storeId())) {
       throw new BusinessException("STORE_NOT_FOUND", "门店不存在或不属于当前企业", HttpStatus.BAD_REQUEST);
@@ -70,6 +70,53 @@ public class SalaryWorkflowService {
     reconcileTodos(user, normalized.month());
     return salaryRepository.record(user.tenantId(), targetId)
         .orElseThrow(() -> new BusinessException("SAVE_FAILED", "工资记录保存失败", HttpStatus.INTERNAL_SERVER_ERROR));
+  }
+
+  @Transactional
+  public SalaryRecordResponse importHistorical(AuthUser user, String id, SalaryRecordRequest request) {
+    requireBoss(user);
+    String targetId = normalizeId(id);
+    if (!targetId.startsWith("LEGACY-")) {
+      throw new BusinessException(
+          "HISTORY_IMPORT_ID_REQUIRED",
+          "历史工资导入编号必须以 LEGACY- 开头",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+    SalaryRecordRequest normalized = normalizeRequest(user, request, true);
+    salaryQueryService.requireStoreScope(user, normalized.storeId());
+    if (!salaryRepository.storeExists(user.tenantId(), normalized.storeId())) {
+      throw new BusinessException("STORE_NOT_FOUND", "门店不存在或不属于当前企业", HttpStatus.BAD_REQUEST);
+    }
+    salaryRepository.record(user.tenantId(), targetId).ifPresent(existing -> {
+      salaryQueryService.requireStoreScope(user, existing.storeId());
+      requireEditableStatus(existing);
+      if (!normalized.storeId().equals(existing.storeId())
+          || !normalized.month().equals(existing.month())
+          || !normalized.employeeId().equals(existing.employeeId())) {
+        throw new BusinessException(
+            "HISTORY_IMPORT_IDENTITY_CONFLICT",
+            "历史工资编号与已有员工、门店或月份不一致",
+            HttpStatus.CONFLICT
+        );
+      }
+    });
+    salaryRepository.recordIdForEmployeeId(
+        user.tenantId(), normalized.storeId(), normalized.month(), normalized.employeeId()
+    ).filter(existingId -> !targetId.equals(existingId)).ifPresent(existingId -> {
+      throw new BusinessException(
+          "SALARY_ALREADY_EXISTS",
+          "该员工当月已有工资记录，历史导入不会覆盖现有工资",
+          HttpStatus.CONFLICT
+      );
+    });
+    salaryRepository.upsert(user.tenantId(), targetId, normalized);
+    salaryRepository.logAction(
+        user.tenantId(), user.id(), user.displayName(), "salary_history_import", targetId,
+        normalized.storeId(), normalized.month(), "已导入已核验的历史工资记录"
+    );
+    return salaryRepository.record(user.tenantId(), targetId)
+        .orElseThrow(() -> new BusinessException("SAVE_FAILED", "工资记录导入失败", HttpStatus.INTERNAL_SERVER_ERROR));
   }
 
   @Transactional
@@ -150,7 +197,7 @@ public class SalaryWorkflowService {
 
   @Transactional
   public SalaryRecordResponse markPaid(AuthUser user, String id) {
-    requireEditRole(user);
+    requirePayRole(user);
     SalaryRecordResponse record = salaryQueryService.requireRecord(user, id);
     if (!STATUS_APPROVED.equals(record.status())) {
       throw new BusinessException("SALARY_STATUS_INVALID", "只有已审核的工资记录可以标记发放", HttpStatus.CONFLICT);
@@ -186,12 +233,19 @@ public class SalaryWorkflowService {
 
   // === helpers ===
 
-  private SalaryRecordRequest normalizeRequest(AuthUser user, SalaryRecordRequest request) {
+  private SalaryRecordRequest normalizeRequest(AuthUser user, SalaryRecordRequest request, boolean allowInactiveEmployee) {
     if (request == null) {
       throw new BusinessException("BAD_REQUEST", "工资记录不能为空", HttpStatus.BAD_REQUEST);
     }
-    String storeId = SalaryQueryService.requireText(request.storeId(), "STORE_REQUIRED", "请选择门店");
-    EmployeeResponse employee = resolveEmployee(user, storeId, request.employeeId(), request.employeeName());
+    String storeId = salaryQueryService.resolveStoreForWrite(user, request.storeId(), "保存工资记录");
+    if (storeId == null || storeId.isBlank()) {
+      // Compatibility for focused tests that mock the query service. Production resolves manager
+      // scope through BusinessScopeResolver before this fallback.
+      storeId = SalaryQueryService.requireText(request.storeId(), "STORE_REQUIRED", "请选择门店");
+    }
+    EmployeeResponse employee = resolveEmployee(
+        user, storeId, request.employeeId(), request.employeeName(), allowInactiveEmployee
+    );
     return new SalaryRecordRequest(
         storeId,
         SalaryQueryService.normalizeMonth(request.month()),
@@ -221,7 +275,9 @@ public class SalaryWorkflowService {
     );
   }
 
-  private EmployeeResponse resolveEmployee(AuthUser user, String storeId, String employeeId, String employeeName) {
+  private EmployeeResponse resolveEmployee(
+      AuthUser user, String storeId, String employeeId, String employeeName, boolean allowInactiveEmployee
+  ) {
     if (employeeRepository == null) {
       return null;
     }
@@ -243,14 +299,14 @@ public class SalaryWorkflowService {
     if (!storeId.equals(employee.storeId())) {
       throw new BusinessException("EMPLOYEE_STORE_MISMATCH", "员工不属于当前门店", HttpStatus.BAD_REQUEST);
     }
-    if ("离职".equals(employee.status())) {
+    if (!allowInactiveEmployee && "离职".equals(employee.status())) {
       throw new BusinessException("EMPLOYEE_INACTIVE", "离职员工不能新增工资记录", HttpStatus.BAD_REQUEST);
     }
     return employee;
   }
 
   private void requireEditableStatus(SalaryRecordResponse record) {
-    if (STATUS_APPROVED.equals(record.status()) || STATUS_SUBMITTED.equals(record.status())) {
+    if (!STATUS_DRAFT.equals(record.status()) && !STATUS_REJECTED.equals(record.status())) {
       throw new BusinessException("SALARY_STATUS_LOCKED", "已提交审核或已完成的工资记录不能直接修改", HttpStatus.CONFLICT);
     }
   }
@@ -266,8 +322,18 @@ public class SalaryWorkflowService {
       accessControl.requireSalaryEdit(user);
       return;
     }
-    if (!List.of("ADMIN", "BOSS", "FINANCE").contains(user.role())) {
+    if (!AccessControlService.hasAnyRole(user, "FINANCE")) {
       throw new BusinessException("FORBIDDEN", "No permission to edit salary records", HttpStatus.FORBIDDEN);
+    }
+  }
+
+  private void requireBoss(AuthUser user) {
+    if (accessControl != null) {
+      accessControl.requireBoss(user, "导入历史工资数据");
+      return;
+    }
+    if (!AccessControlService.isBoss(user)) {
+      throw new BusinessException("FORBIDDEN", "仅老板可以导入历史工资数据", HttpStatus.FORBIDDEN);
     }
   }
 
@@ -276,9 +342,17 @@ public class SalaryWorkflowService {
       accessControl.requireSalaryReview(user);
       return;
     }
-    if (!List.of("ADMIN", "BOSS").contains(user.role())) {
+    if (!AccessControlService.isBoss(user)) {
       throw new BusinessException("FORBIDDEN", "当前账号没有审核工资的权限", HttpStatus.FORBIDDEN);
     }
+  }
+
+  private void requirePayRole(AuthUser user) {
+    if (accessControl != null) {
+      accessControl.requireSalaryPay(user);
+      return;
+    }
+    requireEditRole(user);
   }
 
   private void reconcileTodos(AuthUser user, String month) {

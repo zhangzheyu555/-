@@ -9,7 +9,13 @@ test.describe('role menu permission', () => {
       await page.goto('/')
       await page.waitForLoadState('networkidle')
 
-      const navText = await page.locator('.sidebar-desktop').innerText()
+      if (role.layout === 'learner') {
+        await expect(page.locator('.app-sidebar--desktop')).toHaveCount(0)
+        await expect(page.locator('.learner-header')).toBeVisible()
+        for (const label of role.forbiddenMenus) await expect(page.locator('body')).not.toContainText(label)
+        return
+      }
+      const navText = await page.locator('.app-sidebar--desktop').innerText()
       for (const label of role.expectedMenus) {
         expect(navText, `${role.key} should show ${label}`).toContain(label)
       }
@@ -19,19 +25,20 @@ test.describe('role menu permission', () => {
     })
   }
 
-  test('boss menu follows the legacy HTML top-role navigation', async ({ page }) => {
+  test('boss menu has no decision-support group or removed entries', async ({ page }) => {
     await page.setViewportSize({ width: 1365, height: 900 })
     await loginAs(page, 'boss')
     await page.goto('/boss')
     await page.waitForLoadState('networkidle')
 
-    const nav = page.locator('.sidebar-desktop .nav-list')
-    await expect(nav.locator('.utility-navigation .nav-group-title')).toHaveText('辅助工具')
-    await expect(nav).toContainText('今日待办')
+    const nav = page.locator('.app-sidebar--desktop .sidebar-navigation')
+    await expect(nav.locator('.sidebar-navigation-utility .sidebar-navigation-title')).toHaveText('辅助工具')
     await expect(nav).toContainText('数据录入')
     await expect(nav).toContainText('报销栏')
-    await expect(nav).toContainText('平台登录')
-    await expect(nav).not.toContainText('老板驾驶舱')
+    await expect(nav).toContainText('平台配置')
+    for (const removed of ['决策支持', '今日待办', '财务工作台', '数据核对', '运营中心']) {
+      await expect(nav).not.toContainText(removed)
+    }
   })
 })
 
@@ -40,13 +47,11 @@ test.describe('page and API permission guardrails', () => {
     { role: 'finance', path: '/boss' },
     { role: 'warehouse', path: '/boss' },
     { role: 'warehouse', path: '/profit' },
-    { role: 'store', path: '/finance' },
     { role: 'store', path: '/boss' },
-    { role: 'store', path: '/profit' },
-    { role: 'supervisor', path: '/finance' },
-    { role: 'supervisor', path: '/profit' },
     { role: 'operations', path: '/boss' },
     { role: 'operations', path: '/profit' },
+    { role: 'learner', path: '/finance' },
+    { role: 'learner', path: '/operations' },
   ]
 
   for (const check of pageChecks) {
@@ -68,7 +73,7 @@ test.describe('page and API permission guardrails', () => {
     { path: '/export', text: '数据导出' },
     { path: '/stores', text: '门店管理' },
     { path: '/logs', text: '操作日志' },
-    { path: '/platform-login', text: '平台登录' },
+    { path: '/platform-login', text: '平台配置' },
     { path: '/warehouse', text: '仓库中心' },
     { path: '/warehouse/items', text: '商品档案' },
     { path: '/warehouse/purchase', text: '采购入库' },
@@ -82,15 +87,6 @@ test.describe('page and API permission guardrails', () => {
     { path: '/inspection/reviews', text: '督导巡店' },
     { path: '/inspection/rules', text: '稽核标准' },
     { path: '/inspection/standards', text: '稽核标准' },
-    { path: '/operations', text: '运营中心' },
-    { path: '/operations/analysis', text: '数据分析' },
-    { path: '/operations/training', text: '新人培训' },
-    { path: '/operations/exam', text: '考试系统' },
-    { path: '/operations/inventory-check', text: '店铺盘存' },
-    { path: '/operations/eleme', text: '饿了么订单' },
-    { path: '/operations/platform', text: '平台账号' },
-    { path: '/operations/imports', text: '数据导入' },
-    { path: '/operations/logs', text: '操作日志' },
     { path: '/assistant', text: '门店经营助手' },
   ]
 
@@ -139,7 +135,7 @@ test.describe('page and API permission guardrails', () => {
     { role: 'store', path: '/api/warehouse/requisitions/TEST-NO-SUCH/ship', method: 'POST', data: { note: 'permission smoke' } },
     { role: 'finance', path: '/api/warehouse/requisitions/TEST-NO-SUCH/ship', method: 'POST', data: { note: 'permission smoke' } },
     { role: 'warehouse', path: '/api/finance/todos/TEST-NO-SUCH/complete', method: 'POST', data: { note: 'permission smoke' } },
-    { role: 'supervisor', path: '/api/boss/todos/TEST-NO-SUCH/resolve', method: 'POST', data: { note: 'permission smoke' } },
+    { role: 'learner', path: '/api/boss/todos/TEST-NO-SUCH/resolve', method: 'POST', data: { note: 'permission smoke' } },
     { role: 'operations', path: '/api/boss/todos/TEST-NO-SUCH/resolve', method: 'POST', data: { note: 'permission smoke' } },
   ]
 

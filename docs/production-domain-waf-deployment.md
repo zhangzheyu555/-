@@ -58,9 +58,9 @@
 
 ```bash
 MYSQL_HOST=127.0.0.1
-MYSQL_PORT=3306
-MYSQL_DATABASE=store_profit
-MYSQL_USERNAME=store_profit
+MYSQL_PORT=3307
+MYSQL_DATABASE=store_profit_mysql8_final
+MYSQL_USERNAME=<3307最终库独立非root账号>
 MYSQL_PASSWORD=请在服务器本机填写真实密码
 APP_SEED_DEMO_ENABLED=false
 APP_MIGRATION_AUTO_RUN=false

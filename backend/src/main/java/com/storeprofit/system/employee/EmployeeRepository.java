@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.dao.EmptyResultDataAccessException;
@@ -24,6 +25,16 @@ public class EmployeeRepository {
   }
 
   public List<EmployeeResponse> records(long tenantId, Long brandId, String storeId, String status) {
+    return records(tenantId, brandId, storeId, status, null);
+  }
+
+  public List<EmployeeResponse> records(
+      long tenantId,
+      Long brandId,
+      String storeId,
+      String status,
+      Collection<String> allowedStoreIds
+  ) {
     StringBuilder sql = new StringBuilder("""
         select e.id, e.store_id, s.code as store_code,
                coalesce(e.store_name, s.name) as store_name,
@@ -44,6 +55,18 @@ public class EmployeeRepository {
     if (storeId != null && !storeId.isBlank()) {
       sql.append(" and e.store_id = :storeId");
       params.addValue("storeId", storeId.trim());
+    } else if (allowedStoreIds != null) {
+      List<String> normalizedStoreIds = allowedStoreIds.stream()
+          .filter(value -> value != null && !value.isBlank() && !"all".equalsIgnoreCase(value))
+          .map(String::trim)
+          .distinct()
+          .toList();
+      if (normalizedStoreIds.isEmpty()) {
+        sql.append(" and 1 = 0");
+      } else {
+        sql.append(" and e.store_id in (:allowedStoreIds)");
+        params.addValue("allowedStoreIds", normalizedStoreIds);
+      }
     }
     if (status != null && !status.isBlank()) {
       sql.append(" and e.status = :status");

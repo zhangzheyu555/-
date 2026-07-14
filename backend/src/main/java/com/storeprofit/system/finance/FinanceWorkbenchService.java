@@ -5,6 +5,11 @@ import com.storeprofit.system.expense.ExpenseClaimResponse;
 import com.storeprofit.system.expense.ExpenseReviewRequest;
 import com.storeprofit.system.expense.ExpenseService;
 import com.storeprofit.system.platform.auth.AuthUser;
+import com.storeprofit.system.platform.auth.AccessControlService;
+import com.storeprofit.system.platform.authorization.PermissionCodes;
+import com.storeprofit.system.platform.authorization.BusinessScope;
+import com.storeprofit.system.platform.authorization.BusinessScopeResolver;
+import com.storeprofit.system.platform.authorization.DataScopeDomains;
 import com.storeprofit.system.salary.SalaryRecordResponse;
 import com.storeprofit.system.salary.SalaryService;
 import com.storeprofit.system.todo.RoleTodoActionRepository;
@@ -29,6 +34,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -42,7 +48,41 @@ public class FinanceWorkbenchService {
   private final SalaryService salaryService;
   private final RoleTodoService roleTodoService;
   private final RoleTodoActionRepository actionRepository;
+  private final AccessControlService accessControl;
+  private final BusinessScopeResolver businessScopeResolver;
 
+  @Autowired
+  public FinanceWorkbenchService(
+      FinanceService financeService,
+      ExpenseService expenseService,
+      SalaryService salaryService,
+      RoleTodoService roleTodoService,
+      RoleTodoActionRepository actionRepository,
+      AccessControlService accessControl,
+      BusinessScopeResolver businessScopeResolver
+  ) {
+    this.financeService = financeService;
+    this.expenseService = expenseService;
+    this.salaryService = salaryService;
+    this.roleTodoService = roleTodoService;
+    this.actionRepository = actionRepository;
+    this.accessControl = accessControl;
+    this.businessScopeResolver = businessScopeResolver;
+  }
+
+  public FinanceWorkbenchService(
+      FinanceService financeService,
+      ExpenseService expenseService,
+      SalaryService salaryService,
+      RoleTodoService roleTodoService,
+      RoleTodoActionRepository actionRepository,
+      AccessControlService accessControl
+  ) {
+    this(financeService, expenseService, salaryService, roleTodoService, actionRepository,
+        accessControl, null);
+  }
+
+  /** Compatibility constructor retained for isolated service tests. */
   public FinanceWorkbenchService(
       FinanceService financeService,
       ExpenseService expenseService,
@@ -50,20 +90,23 @@ public class FinanceWorkbenchService {
       RoleTodoService roleTodoService,
       RoleTodoActionRepository actionRepository
   ) {
-    this.financeService = financeService;
-    this.expenseService = expenseService;
-    this.salaryService = salaryService;
-    this.roleTodoService = roleTodoService;
-    this.actionRepository = actionRepository;
+    this(financeService, expenseService, salaryService, roleTodoService, actionRepository, null, null);
   }
 
   public FinanceWorkbenchResponse workbench(AuthUser user, String month, Long brandId, String storeId) {
     requireFinanceAccess(user);
+    BusinessScope businessScope = resolveBusinessScope(user, storeId, brandId);
+    brandId = businessScope.brandId();
+    storeId = businessScope.storeId();
     String targetMonth = normalizeMonth(month);
     String updatedAt = now();
     RoleTodoQuery todoQuery = new RoleTodoQuery(true, null, 200, brandId, storeId);
-    List<RoleTodoItemResponse> financeTodos = roleTodoService.todos(user, RoleTodoAudience.FINANCE, todoQuery).items();
-    Map<String, RoleTodoActionSummary> completedActions = actionRepository.completedActions(user.tenantId());
+    List<RoleTodoItemResponse> financeTodos = hasPermission(user, PermissionCodes.TODO_READ)
+        ? roleTodoService.todos(user, RoleTodoAudience.FINANCE, todoQuery).items()
+        : List.of();
+    Map<String, RoleTodoActionSummary> completedActions = financeTodos.isEmpty()
+        ? Map.of()
+        : actionRepository.completedActions(user.tenantId());
     Set<String> completedTodoIds = completedActions.keySet();
 
     List<ProfitEntryResponse> profitRisks = financeService.entries(user, targetMonth, brandId, storeId)
@@ -73,13 +116,17 @@ public class FinanceWorkbenchService {
         .sorted(Comparator.comparing(ProfitEntryResponse::margin))
         .limit(12)
         .toList();
-    List<ExpenseClaimResponse> expenses = expenseService.claims(user, targetMonth, brandId, storeId, null);
-    List<FinanceSalaryCheckResponse> salaryChecks = salaryService.records(user, targetMonth, brandId, storeId)
-        .stream()
-        .map(this::salaryCheck)
-        .filter(check -> check != null && !completedTodoIds.contains("salary-check-" + check.id()))
-        .limit(10)
-        .toList();
+    List<ExpenseClaimResponse> expenses = hasPermission(user, PermissionCodes.EXPENSE_READ)
+        ? expenseService.claims(user, targetMonth, brandId, storeId, null)
+        : List.of();
+    List<FinanceSalaryCheckResponse> salaryChecks = hasPermission(user, PermissionCodes.SALARY_READ)
+        ? salaryService.records(user, targetMonth, brandId, storeId)
+            .stream()
+            .map(this::salaryCheck)
+            .filter(check -> check != null && !completedTodoIds.contains("salary-check-" + check.id()))
+            .limit(10)
+            .toList()
+        : List.of();
     List<FinanceDataCheckResponse> dataChecks = dataChecks(profitRisks, completedTodoIds);
     List<RoleTodoItemResponse> generatedChecks = new ArrayList<>();
     salaryChecks.forEach(check -> generatedChecks.add(salaryTodo(check, updatedAt)));
@@ -336,10 +383,30 @@ public class FinanceWorkbenchService {
   }
 
   private void requireFinanceAccess(AuthUser user) {
-    if (user != null && List.of("ADMIN", "BOSS", "FINANCE").contains(user.role())) {
+    if (accessControl != null) {
+      accessControl.requireFinanceRead(user);
+      return;
+    }
+    if (AccessControlService.hasAnyRole(user, "FINANCE")) {
       return;
     }
     throw new BusinessException("FORBIDDEN", "无权访问财务工作台", HttpStatus.FORBIDDEN);
+  }
+
+  private BusinessScope resolveBusinessScope(AuthUser user, String storeId, Long brandId) {
+    if (businessScopeResolver != null) {
+      return businessScopeResolver.resolve(
+          user, DataScopeDomains.FINANCE, storeId, brandId, "查看财务工作台");
+    }
+    if ((storeId == null || storeId.isBlank())
+        && "STORE_MANAGER".equals(AccessControlService.canonicalRole(user.role()))) {
+      storeId = user.storeId();
+    }
+    return new BusinessScope(storeId, null, brandId, null, null);
+  }
+
+  private boolean hasPermission(AuthUser user, String permissionCode) {
+    return accessControl == null || accessControl.hasPermission(user, permissionCode);
   }
 
   private String normalizeMonth(String value) {

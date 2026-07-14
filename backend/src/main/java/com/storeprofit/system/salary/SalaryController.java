@@ -61,6 +61,29 @@ public class SalaryController {
     return ApiResponse.ok(salaryQueryService.recordsPaged(authService.requireUser(authorization), month, brandId, storeId, page, size));
   }
 
+  @GetMapping("/employee-page")
+  public ApiResponse<SalaryEmployeePageResponse> employeePage(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @RequestParam(required = false) String month,
+      @RequestParam(required = false) Long brandId,
+      @RequestParam(required = false) String storeId,
+      @RequestParam(required = false) String status,
+      @RequestParam(required = false) String keyword,
+      @RequestParam(defaultValue = "1") int page,
+      @RequestParam(defaultValue = "20") int size
+  ) {
+    return ApiResponse.ok(salaryQueryService.employeePage(
+        authService.requireUser(authorization), month, brandId, storeId, status, keyword, page, size));
+  }
+
+  @GetMapping("/available-months")
+  public ApiResponse<List<SalaryAvailableMonth>> availableMonths(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @RequestParam(required = false) String storeId
+  ) {
+    return ApiResponse.ok(salaryQueryService.availableMonths(authService.requireUser(authorization), storeId));
+  }
+
   @GetMapping("/summary")
   public ApiResponse<SalarySummaryResponse> summary(
       @RequestHeader(value = "Authorization", required = false) String authorization,
@@ -74,7 +97,7 @@ public class SalaryController {
   @GetMapping("/preview")
   public ApiResponse<SalaryGenerateReport> previewGeneration(
       @RequestHeader(value = "Authorization", required = false) String authorization,
-      @RequestParam String storeId,
+      @RequestParam(required = false) String storeId,
       @RequestParam String month
   ) {
     return ApiResponse.ok(salaryGenerationService.previewGeneration(authService.requireUser(authorization), storeId, month));
@@ -134,6 +157,15 @@ public class SalaryController {
       @Valid @RequestBody SalaryRecordRequest request
   ) {
     return ApiResponse.ok(salaryWorkflowService.save(authService.requireUser(authorization), id, request));
+  }
+
+  @PutMapping("/history-import/{id}")
+  public ApiResponse<SalaryRecordResponse> importHistorical(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id,
+      @Valid @RequestBody SalaryRecordRequest request
+  ) {
+    return ApiResponse.ok(salaryWorkflowService.importHistorical(authService.requireUser(authorization), id, request));
   }
 
   @PostMapping("/{id}/submit")

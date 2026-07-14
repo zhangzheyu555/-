@@ -1,0 +1,409 @@
+import { expect, test, type Page, type Route } from '@playwright/test'
+
+const ok = (data: unknown) => ({
+  status: 200,
+  contentType: 'application/json',
+  body: JSON.stringify({ success: true, data }),
+})
+
+const warehouses = [
+  {
+    id: 1,
+    code: 'JZ-CENTRAL',
+    name: '荆州总仓',
+    type: 'CENTRAL',
+    regionCode: 'JINGZHOU',
+    parentWarehouseId: null,
+    parentWarehouseName: null,
+    externalPurchaseAllowed: true,
+    storeSupplyAllowed: true,
+    enabled: true,
+    canRead: true,
+    canPurchase: true,
+    canApproveTransfer: true,
+    canShipTransfer: true,
+    canProcessRequisition: true,
+    canConfigure: true,
+  },
+  {
+    id: 2,
+    code: 'SD-REGIONAL',
+    name: '山东分仓',
+    type: 'REGIONAL',
+    regionCode: 'SHANDONG',
+    parentWarehouseId: 1,
+    parentWarehouseName: '荆州总仓',
+    externalPurchaseAllowed: false,
+    storeSupplyAllowed: true,
+    enabled: true,
+    canRead: true,
+    canRequestTransfer: true,
+    canReceiveTransfer: true,
+    canProcessRequisition: true,
+  },
+]
+
+const permissions = [
+  'warehouse.read',
+  'warehouse.purchase',
+  'warehouse.transfer.request',
+  'warehouse.transfer.approve',
+  'warehouse.transfer.ship',
+  'warehouse.transfer.receive',
+  'warehouse.requisition.process',
+  'warehouse.configure',
+  'warehouse.store.read',
+  'warehouse.requisition.create',
+  'warehouse.requisition.receive',
+  'system.user.manage',
+]
+
+const baseSession = {
+  id: 1,
+  tenantId: 1,
+  tenantName: '测试租户',
+  displayName: '测试老板',
+  role: 'BOSS',
+  roleLabel: '老板（系统管理员）',
+  storeScope: ['all'],
+  permissions,
+  dataScopes: {
+    STORE: { mode: 'ALL', storeIds: [], warehouseIds: [] },
+    WAREHOUSE: { mode: 'ALL', storeIds: [], warehouseIds: [] },
+  },
+  dataScope: { mode: 'ALL', storeIds: [], warehouseIds: [] },
+  boundStoreId: null,
+  boundStoreName: null,
+  brandId: null,
+  brandName: null,
+  defaultWorkspace: '/boss',
+  permissionVersion: 5,
+}
+
+const warehouseAdminSession = {
+  ...baseSession,
+  id: 8,
+  displayName: '两仓管理员',
+  role: 'WAREHOUSE',
+  roleLabel: '仓库管理员',
+  storeScope: [],
+  dataScopes: {
+    STORE: { mode: 'NONE', storeIds: [], warehouseIds: [] },
+    WAREHOUSE: { mode: 'WAREHOUSE_LIST', storeIds: [], warehouseIds: ['1', '2'] },
+  },
+  dataScope: { mode: 'NONE', storeIds: [], warehouseIds: [] },
+  defaultWorkspace: '/warehouse',
+}
+
+const shandongAdminSession = {
+  ...warehouseAdminSession,
+  id: 9,
+  displayName: '山东仓管理员',
+  permissions: ['warehouse.read', 'warehouse.transfer.request', 'warehouse.transfer.receive'],
+  dataScopes: {
+    STORE: { mode: 'NONE', storeIds: [], warehouseIds: [] },
+    WAREHOUSE: { mode: 'WAREHOUSE_LIST', storeIds: [], warehouseIds: ['2'] },
+  },
+}
+
+const storeSession = {
+  ...baseSession,
+  id: 21,
+  displayName: '荆州之星店店长',
+  role: 'STORE_MANAGER',
+  roleLabel: '店长',
+  storeScope: ['rg1'],
+  permissions: ['warehouse.store.read', 'warehouse.requisition.create', 'warehouse.requisition.receive'],
+  dataScopes: {
+    STORE: { mode: 'OWN_STORE', storeIds: ['rg1'], warehouseIds: [] },
+    WAREHOUSE: { mode: 'OWN_STORE', storeIds: ['rg1'], warehouseIds: [] },
+  },
+  dataScope: { mode: 'OWN_STORE', storeIds: ['rg1'], warehouseIds: [] },
+  boundStoreId: 'rg1',
+  boundStoreName: '荆州之星店',
+  brandId: 1,
+  brandName: '茹菓',
+  defaultWorkspace: '/store',
+}
+
+const overview = (warehouseId = 1) => ({
+  warehouse: warehouses.find((row) => row.id === warehouseId),
+  summary: {
+    itemCount: 1,
+    lowStockCount: 0,
+    expiringCount: 0,
+    overstockCount: 0,
+    pendingRequisitionCount: 0,
+    pendingReceiptCount: 0,
+    pendingPurchaseCount: 0,
+    stockValue: warehouseId === 1 ? 1200 : 0,
+    inTransitQuantity: 0,
+  },
+  alerts: [],
+  items: [{
+    id: 11,
+    code: 'MILK-01',
+    name: '鲜牛奶',
+    unit: '箱',
+    stockQuantity: warehouseId === 1 ? 20 : 0,
+    storeStockQuantity: 2,
+    warehouseAvailableQuantity: 18,
+    unitPrice: 50,
+    stockStatus: '正常',
+    alertLevel: 'NORMAL',
+    alertText: '',
+    active: true,
+  }],
+  requisitions: [],
+  stockBatches: [],
+  movements: [],
+})
+
+interface RequestLog {
+  urls: string[]
+  requisitionBody: Record<string, unknown> | null
+  transferBody: Record<string, unknown> | null
+  accessProfileBody: Record<string, unknown> | null
+  consoleErrors: string[]
+}
+
+async function prepare(page: Page, session: typeof baseSession) {
+  const log: RequestLog = { urls: [], requisitionBody: null, transferBody: null, accessProfileBody: null, consoleErrors: [] }
+  page.on('console', (message) => {
+    if (message.type() === 'error') log.consoleErrors.push(message.text())
+  })
+  page.on('pageerror', (error) => log.consoleErrors.push(error.message))
+  await page.addInitScript((user) => {
+    localStorage.setItem('ai_profit_vue_token', 'WAREHOUSE-NETWORK-E2E')
+    localStorage.setItem('ai_profit_vue_user', JSON.stringify(user))
+  }, session)
+  await page.route(/^https?:\/\/[^/]+\/api\//, (route) => fulfillApi(route, session, log))
+  return log
+}
+
+async function fulfillApi(route: Route, session: typeof baseSession, log: RequestLog) {
+  const request = route.request()
+  const url = new URL(request.url())
+  const path = url.pathname
+  log.urls.push(request.url())
+  if (path === '/api/auth/me') return route.fulfill(ok(session))
+  if (path === '/api/warehouse/warehouses') {
+    if (session.role === 'STORE_MANAGER') return route.fulfill(ok([warehouses[0]]))
+    const scopedIds = session.dataScopes.WAREHOUSE.warehouseIds
+    return route.fulfill(ok(
+      session.dataScopes.WAREHOUSE.mode === 'WAREHOUSE_LIST'
+        ? warehouses.filter((warehouse) => scopedIds.includes(String(warehouse.id)))
+        : warehouses,
+    ))
+  }
+  if (path === '/api/warehouse/overview') {
+    const warehouseId = Number(url.searchParams.get('warehouseId') || (session.role === 'STORE_MANAGER' ? 1 : 1))
+    return route.fulfill(ok(overview(warehouseId)))
+  }
+  if (path === '/api/warehouse/transfers' && request.method() === 'POST') {
+    log.transferBody = request.postDataJSON()
+    return route.fulfill(ok({ id: 'TR-1', status: 'DRAFT', lines: [] }))
+  }
+  if (path === '/api/warehouse/transfers') return route.fulfill(ok([]))
+  if (path === '/api/warehouse/item-categories' || path === '/api/warehouse/returns') return route.fulfill(ok([]))
+  if (path === '/api/warehouse/requisitions' && request.method() === 'POST') {
+    log.requisitionBody = request.postDataJSON()
+    return route.fulfill(ok({ id: 'REQ-1', status: 'SUBMITTED', lines: [] }))
+  }
+  if (path === '/api/stores') {
+    return route.fulfill(ok([{ id: 'rg1', name: '荆州之星店', brandName: '茹菓', status: 'ACTIVE' }]))
+  }
+  if (path === '/api/users') {
+    return route.fulfill(ok([{
+      id: 8,
+      tenantId: 1,
+      tenantName: '测试租户',
+      username: 'warehouse_admin',
+      displayName: '仓库管理员',
+      role: 'WAREHOUSE',
+      roleLabel: '仓库管理员',
+      enabled: true,
+      storeScope: [],
+      availableWorkspaces: ['/warehouse'],
+      defaultWorkspace: '/warehouse',
+      effectivePermissionStatus: 'READY',
+      effectivePermissionMessage: '权限可用',
+    }]))
+  }
+  if (path === '/api/users/authorization/catalog') {
+    return route.fulfill(ok({
+      permissions: [{
+        permissionCode: 'warehouse.read',
+        moduleCode: 'WAREHOUSE',
+        permissionName: '仓库查看',
+        description: '查看授权仓库',
+        riskLevel: 'LOW',
+        enabled: true,
+        sortOrder: 1,
+      }],
+      dataScopeDomains: ['WAREHOUSE'],
+      dataScopeModes: ['ALL', 'WAREHOUSE_LIST', 'STORE_LIST', 'OWN_STORE', 'CENTRAL_WAREHOUSE', 'SELF', 'NONE'],
+    }))
+  }
+  if (path === '/api/users/8/authorization') {
+    return route.fulfill(ok({
+      userId: 8,
+      role: 'WAREHOUSE',
+      storeId: null,
+      permissionVersion: 5,
+      roleTemplatePermissions: ['warehouse.read'],
+      dataScopes: [{ domainCode: 'WAREHOUSE', mode: 'WAREHOUSE_LIST', storeIds: [], warehouseIds: ['1'] }],
+      overrides: [],
+      effectivePermissions: ['warehouse.read'],
+      availableWorkspaces: ['/warehouse'],
+      defaultWorkspace: '/warehouse',
+      effectivePermissionStatus: 'READY',
+      effectivePermissionMessage: '权限可用',
+    }))
+  }
+  if (path === '/api/users/8/access-profile' && request.method() === 'PUT') {
+    log.accessProfileBody = request.postDataJSON()
+    const body = log.accessProfileBody as { dataScopes?: unknown[] }
+    return route.fulfill(ok({
+      user: {
+        id: 8,
+        tenantId: 1,
+        tenantName: '测试租户',
+        username: 'warehouse_admin',
+        displayName: '仓库管理员',
+        role: 'WAREHOUSE',
+        roleLabel: '仓库管理员',
+        enabled: true,
+        storeScope: [],
+        availableWorkspaces: ['/warehouse'],
+        defaultWorkspace: '/warehouse',
+        effectivePermissionStatus: 'READY',
+        effectivePermissionMessage: '权限可用',
+      },
+      authorization: {
+        userId: 8,
+        role: 'WAREHOUSE',
+        storeId: null,
+        permissionVersion: 6,
+        roleTemplatePermissions: ['warehouse.read'],
+        dataScopes: body.dataScopes,
+        overrides: [],
+        effectivePermissions: ['warehouse.read'],
+        availableWorkspaces: ['/warehouse'],
+        defaultWorkspace: '/warehouse',
+        effectivePermissionStatus: 'READY',
+        effectivePermissionMessage: '权限可用',
+      },
+    }))
+  }
+  return route.fulfill(ok([]))
+}
+
+test('boss sees complete warehouse navigation and regional context has no purchase action', async ({ page }) => {
+  const log = await prepare(page, baseSession)
+  await page.goto('/warehouse')
+  const pageRoot = page.locator('.warehouse-page')
+  for (const label of ['全部仓库总览', '荆州总仓', '山东分仓', '仓间调拨', '门店叫货', '外部采购', '出入库记录']) {
+    await expect(pageRoot.getByRole('link', { name: label, exact: true })).toBeVisible()
+  }
+  await page.screenshot({ path: '../output/playwright/warehouse-network-overview.png', fullPage: true })
+
+  await page.goto('/warehouse/shandong')
+  await expect(pageRoot.getByText('山东分仓', { exact: true }).first()).toBeVisible()
+  await expect(pageRoot.getByRole('link', { name: '向荆州总仓申请补货', exact: true })).toBeVisible()
+  await expect(pageRoot.getByRole('link', { name: '外部采购', exact: true })).toHaveCount(0)
+  await expect(pageRoot.getByRole('link', { name: '外部采购入库', exact: true })).toHaveCount(0)
+  await page.screenshot({ path: '../output/playwright/warehouse-shandong-context.png', fullPage: true })
+  expect(log.consoleErrors).toEqual([])
+})
+
+test('multi-warehouse admin switches by scoped warehouse id and ignores query tampering', async ({ page }) => {
+  const log = await prepare(page, warehouseAdminSession)
+  await page.goto('/warehouse/central')
+  const selector = page.getByLabel('当前仓库')
+  await expect(selector).toBeVisible()
+  await expect(selector.locator('option')).toHaveCount(2)
+  await selector.selectOption('2')
+  await expect.poll(() => new URL(page.url()).pathname).toBe('/warehouse/shandong')
+
+  await page.goto('/warehouse/shandong?warehouseId=1')
+  await expect(page.getByRole('link', { name: '向荆州总仓申请补货' })).toBeVisible()
+  const overviewRequests = log.urls.map((raw) => new URL(raw)).filter((url) => url.pathname === '/api/warehouse/overview')
+  expect(overviewRequests.at(-1)?.searchParams.get('warehouseId')).toBe('2')
+  expect(log.consoleErrors).toEqual([])
+})
+
+test('Shandong-only admin creates replenishment with the fixed parent route', async ({ page }) => {
+  const log = await prepare(page, shandongAdminSession)
+  await page.goto('/warehouse/transfers')
+  await expect(page.getByLabel('当前仓库')).toHaveCount(0)
+  await page.getByRole('button', { name: '增加物料', exact: true }).click()
+  await page.getByLabel('调拨物料', { exact: true }).selectOption('11')
+  await page.getByLabel('调拨数量', { exact: true }).fill('3')
+  await page.getByRole('button', { name: '保存调拨草稿', exact: true }).click()
+  await expect.poll(() => log.transferBody).not.toBeNull()
+  expect(log.transferBody).toMatchObject({
+    sourceWarehouseId: 1,
+    targetWarehouseId: 2,
+    lines: [{ itemId: 11, quantity: 3 }],
+  })
+  expect(log.transferBody?.clientRequestId).toMatch(/^transfer-/)
+  expect(log.consoleErrors).toEqual([])
+})
+
+test('store manager sees a read-only supply warehouse and requisition does not submit warehouse id', async ({ page }) => {
+  const log = await prepare(page, storeSession)
+  await page.goto('/store/inventory')
+  const pageRoot = page.locator('.warehouse-page')
+  await expect(pageRoot.getByLabel('供货仓')).toContainText('荆州总仓')
+  await expect(pageRoot.getByLabel('当前仓库')).toHaveCount(0)
+  await expect(pageRoot).not.toContainText('外部采购')
+
+  await page.goto('/store/inventory/requisition')
+  await pageRoot.getByLabel('物料').selectOption('11')
+  await pageRoot.getByLabel('叫货数量').fill('2')
+  await pageRoot.getByRole('button', { name: '添加', exact: true }).click()
+  await pageRoot.getByRole('button', { name: '提交叫货', exact: true }).click()
+  await expect.poll(() => log.requisitionBody).not.toBeNull()
+  expect(log.requisitionBody).not.toHaveProperty('warehouseId')
+  expect(log.requisitionBody).not.toHaveProperty('storeId')
+  expect(log.consoleErrors).toEqual([])
+})
+
+test('boss assigns warehouse range with warehouseIds instead of storeIds', async ({ page }) => {
+  const log = await prepare(page, baseSession)
+  await page.goto('/users')
+  await page.getByRole('button', { name: '配置 warehouse_admin 的账号授权' }).click()
+  await expect(page.getByLabel('仓库数据范围')).toHaveValue('WAREHOUSE_LIST')
+  const warehousePicker = page.getByLabel('指定仓库范围')
+  await warehousePicker.getByText('山东分仓 · 区域分仓').click()
+  await page.screenshot({ path: '../output/playwright/warehouse-permission-scope.png', fullPage: true })
+  await page.getByRole('button', { name: '保存账号授权' }).click()
+  await expect.poll(() => log.accessProfileBody).not.toBeNull()
+  const scopes = (log.accessProfileBody?.dataScopes || []) as Array<Record<string, unknown>>
+  const warehouseScope = scopes.find((scope) => scope.domainCode === 'WAREHOUSE')
+  expect(warehouseScope).toMatchObject({
+    mode: 'WAREHOUSE_LIST',
+    storeIds: [],
+    warehouseIds: ['1', '2'],
+  })
+  expect(log.consoleErrors).toEqual([])
+})
+
+test('regional warehouse context remains usable without page overflow on mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  const log = await prepare(page, baseSession)
+  await page.goto('/warehouse/shandong')
+
+  const pageRoot = page.locator('.warehouse-page')
+  await expect(pageRoot.getByText('山东分仓', { exact: true }).first()).toBeVisible()
+  await expect(pageRoot.getByRole('link', { name: '向荆州总仓申请补货', exact: true })).toBeVisible()
+  await expect(pageRoot.getByRole('link', { name: '外部采购', exact: true })).toHaveCount(0)
+  const viewport = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }))
+  expect(viewport.scrollWidth).toBeLessThanOrEqual(viewport.clientWidth + 1)
+  await page.screenshot({ path: '../output/playwright/warehouse-shandong-mobile.png', fullPage: true })
+  expect(log.consoleErrors).toEqual([])
+})

@@ -4,7 +4,6 @@ import com.storeprofit.system.organization.OrganizationRepository;
 import com.storeprofit.system.organization.StoreResponse;
 import com.storeprofit.system.platform.tenant.TenantDefaults;
 import jakarta.annotation.PostConstruct;
-import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -58,16 +57,14 @@ public class StoreManagerAccountSeedService {
       if (username.isBlank()) {
         continue;
       }
-      String password = bootstrapStoreManagerPassword;
-      String legacyPassword = legacyStorePassword(store);
       String displayName = "店长·" + store.name();
-      if (!authRepository.userExists(tenantId, username)) {
-        authRepository.createUser(tenantId, username, passwordService.hash(password), displayName, "STORE_MANAGER", store.id());
-      } else {
-        authRepository.ensureUserProfile(tenantId, username, displayName, "STORE_MANAGER", store.id());
+      if (authRepository.userExists(tenantId, username)) {
+        log.warn("Store manager bootstrap skipped existing account. tenantId={} username={}", tenantId, username);
+        continue;
       }
+      authRepository.createUser(
+          tenantId, username, passwordService.hash(bootstrapStoreManagerPassword), displayName, "STORE_MANAGER", store.id());
       AuthUser user = authRepository.findByUsername(tenantId, username).orElseThrow();
-      migrateLegacyPasswordIfNeeded(tenantId, user, password, legacyPassword);
       organizationRepository.addUserStoreScope(tenantId, user.id(), store.id());
     }
   }
@@ -80,31 +77,7 @@ public class StoreManagerAccountSeedService {
     return normalize(store.code());
   }
 
-  private String legacyStorePassword(StoreResponse store) {
-    String code = normalize(store.code());
-    return code.isBlank() ? storeLoginCode(store) : code;
-  }
-
-  private void migrateLegacyPasswordIfNeeded(
-      long tenantId,
-      AuthUser user,
-      String targetPassword,
-      String legacyPassword
-  ) {
-    String passwordHash = normalize(user.passwordHash());
-    if (passwordHash.isBlank()) {
-      authRepository.updatePassword(tenantId, user.username(), passwordService.hash(targetPassword));
-      return;
-    }
-    if (passwordService.matches(targetPassword, passwordHash)) {
-      return;
-    }
-    if (!targetPassword.equals(legacyPassword) && passwordService.matches(legacyPassword, passwordHash)) {
-      authRepository.updatePassword(tenantId, user.username(), passwordService.hash(targetPassword));
-    }
-  }
-
   private String normalize(String value) {
-    return Optional.ofNullable(value).orElse("").trim();
+    return value == null ? "" : value.trim();
   }
 }

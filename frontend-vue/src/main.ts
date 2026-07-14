@@ -2,8 +2,14 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
+import { useAuthStore } from './stores/auth'
 import './styles/base.css'
-import './styles/legacy.css'
+import './styles/design-system.css'
 import './styles/responsive.css'
 
-createApp(App).use(createPinia()).use(router).mount('#app')
+const app = createApp(App)
+const pinia = createPinia()
+
+app.use(pinia).use(router)
+useAuthStore(pinia).bindSessionInvalidation()
+app.mount('#app')

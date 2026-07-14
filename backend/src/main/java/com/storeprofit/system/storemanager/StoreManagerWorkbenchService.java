@@ -8,6 +8,9 @@ import com.storeprofit.system.finance.ProfitEntryResponse;
 import com.storeprofit.system.inspection.InspectionRecordResponse;
 import com.storeprofit.system.inspection.InspectionService;
 import com.storeprofit.system.platform.auth.AuthUser;
+import com.storeprofit.system.platform.auth.AccessControlService;
+import com.storeprofit.system.platform.authorization.BusinessScopeResolver;
+import com.storeprofit.system.platform.authorization.DataScopeDomains;
 import com.storeprofit.system.storemanager.StoreManagerWorkbenchResponse.StoreManagerBusinessReminder;
 import com.storeprofit.system.storemanager.StoreManagerWorkbenchResponse.StoreManagerFocus;
 import com.storeprofit.system.storemanager.StoreManagerWorkbenchResponse.StoreManagerRecords;
@@ -36,6 +39,7 @@ import java.util.Comparator;
 import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 
 @Service
 public class StoreManagerWorkbenchService {
@@ -48,6 +52,26 @@ public class StoreManagerWorkbenchService {
   private final FinanceService financeService;
   private final InspectionService inspectionService;
   private final ExpenseService expenseService;
+  private final BusinessScopeResolver businessScopeResolver;
+
+  @Autowired
+  public StoreManagerWorkbenchService(
+      RoleTodoService roleTodoService,
+      WarehouseService warehouseService,
+      WarehouseRepository warehouseRepository,
+      FinanceService financeService,
+      InspectionService inspectionService,
+      ExpenseService expenseService,
+      BusinessScopeResolver businessScopeResolver
+  ) {
+    this.roleTodoService = roleTodoService;
+    this.warehouseService = warehouseService;
+    this.warehouseRepository = warehouseRepository;
+    this.financeService = financeService;
+    this.inspectionService = inspectionService;
+    this.expenseService = expenseService;
+    this.businessScopeResolver = businessScopeResolver;
+  }
 
   public StoreManagerWorkbenchService(
       RoleTodoService roleTodoService,
@@ -57,12 +81,8 @@ public class StoreManagerWorkbenchService {
       InspectionService inspectionService,
       ExpenseService expenseService
   ) {
-    this.roleTodoService = roleTodoService;
-    this.warehouseService = warehouseService;
-    this.warehouseRepository = warehouseRepository;
-    this.financeService = financeService;
-    this.inspectionService = inspectionService;
-    this.expenseService = expenseService;
+    this(roleTodoService, warehouseService, warehouseRepository, financeService, inspectionService,
+        expenseService, null);
   }
 
   public StoreManagerWorkbenchResponse workbench(AuthUser user) {
@@ -147,12 +167,13 @@ public class StoreManagerWorkbenchService {
         .filter(record -> text(record.inspectionDate()).startsWith(currentMonth))
         .count();
     int redlineCount = (int) records.stream()
-        .filter(record -> !record.passed())
+        .filter(record -> "RED_LINE_FAILED".equalsIgnoreCase(record.displayResultCode())
+            || record.redLineCount() > 0)
         .count();
     BigDecimal averageScore = totalCount == 0
         ? zero()
         : records.stream()
-            .map(InspectionRecordResponse::score)
+            .map(InspectionRecordResponse::displayScore)
             .map(this::amount)
             .reduce(BigDecimal.ZERO, BigDecimal::add)
             .divide(new BigDecimal(totalCount), 2, RoundingMode.HALF_UP);
@@ -373,8 +394,13 @@ public class StoreManagerWorkbenchService {
   }
 
   private String requireStoreManagerStore(AuthUser user) {
-    if (user == null || !"STORE_MANAGER".equals(user.role())) {
+    if (user == null
+        || !"STORE_MANAGER".equals(AccessControlService.canonicalRole(user.role()))) {
       throw new BusinessException("FORBIDDEN", "仅店长可以访问本店工作台", HttpStatus.FORBIDDEN);
+    }
+    if (businessScopeResolver != null) {
+      return businessScopeResolver.requireStoreManagerScope(
+          user, DataScopeDomains.STORE, "访问店长工作台").storeId();
     }
     if (user.storeId() == null || user.storeId().isBlank()) {
       throw new BusinessException("NO_STORE_SCOPE", "店长账号未绑定门店", HttpStatus.FORBIDDEN);

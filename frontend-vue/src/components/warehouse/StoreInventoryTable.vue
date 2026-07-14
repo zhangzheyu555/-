@@ -2,11 +2,16 @@
 import StatusBadge from '../common/StatusBadge.vue'
 import type { WarehouseItem } from '../../api/warehouse'
 
-defineProps<{
+withDefaults(defineProps<{
   items: WarehouseItem[]
   allCount: number
   categoryLabel: string
-}>()
+  canRequisition?: boolean
+  supplyWarehouseName?: string
+}>(), {
+  canRequisition: false,
+  supplyWarehouseName: '供货仓',
+})
 
 const emit = defineEmits<{
   pick: [item: WarehouseItem]
@@ -22,7 +27,7 @@ function categoryName(item: WarehouseItem) {
 
 function storeStatus(item: WarehouseItem) {
   if (Number(item.storeStockQuantity || 0) <= 0) return '暂无库存'
-  if (item.stockStatus === '低库存') return '需要补货'
+  if (item.stockStatus === '低库存' || item.stockStatus === '需要补货') return '需要补货'
   return '库存充足'
 }
 
@@ -47,9 +52,9 @@ function statusTone(label: string) {
             <th>商品</th>
             <th>分类</th>
             <th>本店库存</th>
-            <th>公司仓库可配送</th>
+            <th>{{ supplyWarehouseName }}可配送</th>
             <th>状态</th>
-            <th>操作</th>
+            <th v-if="canRequisition">操作</th>
           </tr>
         </thead>
         <tbody>
@@ -62,12 +67,12 @@ function statusTone(label: string) {
             <td>{{ qty(item.storeStockQuantity, item.unit) }}</td>
             <td>{{ qty(item.warehouseAvailableQuantity, item.unit) }}</td>
             <td><StatusBadge :label="storeStatus(item)" :tone="statusTone(storeStatus(item))" /></td>
-            <td>
+            <td v-if="canRequisition">
               <button class="mini-button" type="button" @click="emit('pick', item)">加入叫货单</button>
             </td>
           </tr>
           <tr v-if="!items.length">
-            <td colspan="6" class="empty-cell">当前分类下没有可叫货商品。</td>
+            <td :colspan="canRequisition ? 6 : 5" class="empty-cell">当前分类下没有可叫货商品。</td>
           </tr>
         </tbody>
       </table>

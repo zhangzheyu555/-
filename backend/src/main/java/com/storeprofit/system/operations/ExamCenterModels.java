@@ -19,6 +19,7 @@ public final class ExamCenterModels {
   }
 
   public record ExamQuestionSaveRequest(
+      Long bankQuestionId,
       String questionType,
       String questionText,
       List<String> options,
@@ -26,10 +27,21 @@ public final class ExamCenterModels {
       String acceptKeywords,
       BigDecimal score
   ) {
+    public ExamQuestionSaveRequest(
+        String questionType,
+        String questionText,
+        List<String> options,
+        String standardAnswer,
+        String acceptKeywords,
+        BigDecimal score
+    ) {
+      this(null, questionType, questionText, options, standardAnswer, acceptKeywords, score);
+    }
   }
 
   public record ExamQuestionEditorResponse(
       Long id,
+      Long bankQuestionId,
       String questionType,
       String questionText,
       List<String> options,
@@ -78,6 +90,7 @@ public final class ExamCenterModels {
       String displayName,
       String role,
       String roleLabel,
+      String departmentName,
       String storeId,
       String storeName
   ) {

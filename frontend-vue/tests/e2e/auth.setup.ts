@@ -3,7 +3,7 @@ import { expect, type APIRequestContext, type Page } from '@playwright/test'
 export const APP_BASE_URL = process.env.E2E_BASE_URL || 'http://127.0.0.1:5173'
 export const API_BASE_URL = process.env.E2E_API_URL || 'http://127.0.0.1:8080'
 
-export type RoleKey = 'boss' | 'finance' | 'warehouse' | 'supervisor' | 'operations' | 'store'
+export type RoleKey = 'boss' | 'finance' | 'warehouse' | 'store' | 'operations' | 'learner'
 
 export interface RoleConfig {
   key: RoleKey
@@ -12,6 +12,7 @@ export interface RoleConfig {
   expectedPath: string
   expectedMenus: string[]
   forbiddenMenus: string[]
+  layout: 'app' | 'learner'
 }
 
 const env = process.env
@@ -23,7 +24,6 @@ export const roles: RoleConfig[] = [
     password: env.E2E_BOSS_PASSWORD || '',
     expectedPath: '/boss',
     expectedMenus: [
-      '今日待办',
       '利润概览',
       '利润表',
       '门店详情',
@@ -34,51 +34,57 @@ export const roles: RoleConfig[] = [
       '数据导出',
       '门店管理',
       '操作日志',
-      '平台登录',
+      '平台配置',
       '仓库中心',
       '退出登录',
     ],
-    forbiddenMenus: ['老板驾驶舱', '财务工作台', '仓库工作台', '督导工作台'],
+    forbiddenMenus: ['决策支持', '今日待办', '财务工作台', '数据核对', '运营中心'],
+    layout: 'app',
   },
   {
     key: 'finance',
     username: env.E2E_FINANCE_USERNAME || '',
     password: env.E2E_FINANCE_PASSWORD || '',
-    expectedPath: '/expenses',
-    expectedMenus: ['报销栏', '利润表', '员工工资', '数据导出', '门店经营助手'],
-    forbiddenMenus: ['今日待办', '老板驾驶舱', '财务工作台', '仓库工作台', '商品档案', '采购入库', '督导工作台', '用户权限'],
+    expectedPath: '/finance',
+    expectedMenus: ['财务工作台', '报销栏', '利润表', '员工工资', '数据导出', '门店经营助手'],
+    forbiddenMenus: ['今日待办', '老板工作台', '仓库中心', '物料档案', '采购入库', '账号权限'],
+    layout: 'app',
   },
   {
     key: 'warehouse',
     username: env.E2E_WAREHOUSE_USERNAME || '',
     password: env.E2E_WAREHOUSE_PASSWORD || '',
     expectedPath: '/warehouse',
-    expectedMenus: ['仓库中心', '商品档案', '采购入库', '出入库记录', '配送退货单', '库存预警', '入库记录', '门店经营助手'],
-    forbiddenMenus: ['今日待办', '老板驾驶舱', '财务工作台', '员工工资', '督导工作台', '用户权限'],
+    expectedMenus: ['仓库中心', '门店经营助手'],
+    forbiddenMenus: ['今日待办', '老板工作台', '财务工作台', '员工工资', '督导巡店', '账号权限'],
+    layout: 'app',
   },
   {
-    key: 'supervisor',
-    username: env.E2E_SUPERVISOR_USERNAME || '',
-    password: env.E2E_SUPERVISOR_PASSWORD || '',
-    expectedPath: '/inspection',
-    expectedMenus: ['督导巡店', '巡检记录', '发起巡检', '稽核标准', '门店经营助手'],
-    forbiddenMenus: ['今日待办', '老板驾驶舱', '财务工作台', '仓库工作台', '商品档案', '员工工资', '用户权限'],
+    key: 'store',
+    username: env.E2E_STORE_USERNAME || '',
+    password: env.E2E_STORE_PASSWORD || '',
+    expectedPath: '/store',
+    expectedMenus: ['门店工作台', '仓库中心', '本店工资核对', '门店详情', '巡检记录', '培训考试', '门店经营助手'],
+    forbiddenMenus: ['老板工作台', '财务工作台', '仓库工作台', '总仓库存', '物料档案', '采购入库', '账号权限'],
+    layout: 'app',
   },
   {
     key: 'operations',
     username: env.E2E_OPERATIONS_USERNAME || '',
     password: env.E2E_OPERATIONS_PASSWORD || '',
     expectedPath: '/operations',
-    expectedMenus: ['运营中心', '数据分析', '新人培训', '培训考试', '店铺盘存', '饿了么订单', '数据健康', '平台账号', '门店经营助手'],
-    forbiddenMenus: ['今日待办', '老板驾驶舱', '财务工作台', '仓库工作台', '确认收货', '员工工资'],
+    expectedMenus: ['运营工作台', '仓库中心', '督导巡店', '培训考试', '平台配置', '门店经营助手'],
+    forbiddenMenus: ['决策支持', '今日待办', '财务工作台', '员工工资', '账号权限'],
+    layout: 'app',
   },
   {
-    key: 'store',
-    username: env.E2E_STORE_USERNAME || '',
-    password: env.E2E_STORE_PASSWORD || '',
-    expectedPath: '/warehouse',
-    expectedMenus: ['本店库存', '向公司仓库叫货', '我的叫货单', '确认收货', '配送退货', '本店数据', '门店经营助手'],
-    forbiddenMenus: ['今日待办', '老板驾驶舱', '财务工作台', '仓库工作台', '商品档案', '采购入库', '库存预警', '用户权限'],
+    key: 'learner',
+    username: env.E2E_LEARNER_USERNAME || '',
+    password: env.E2E_LEARNER_PASSWORD || '',
+    expectedPath: '/learn/exams',
+    expectedMenus: ['我的学习与考试'],
+    forbiddenMenus: ['老板工作台', '财务工作台', '仓库工作台', '门店工作台', '运营工作台', '账号权限'],
+    layout: 'learner',
   },
 ]
 

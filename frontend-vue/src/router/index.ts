@@ -1,102 +1,154 @@
-import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
-import AppLayout from '../layouts/AppLayout.vue'
-import LoginPage from '../pages/LoginPage.vue'
-import TodayTodoPage from '../pages/TodayTodoPage.vue'
-import WarehousePage from '../pages/WarehousePage.vue'
-import FinanceWorkbenchPage from '../pages/FinanceWorkbenchPage.vue'
-import ExpensePage from '../pages/ExpensePage.vue'
-import FinanceDataCheckPage from '../pages/FinanceDataCheckPage.vue'
-import BossDashboardPage from '../pages/BossDashboardPage.vue'
-import DataExportPage from '../pages/DataExportPage.vue'
-import DataEntryPage from '../pages/DataEntryPage.vue'
-import ProfitOverviewPage from '../pages/ProfitOverviewPage.vue'
-import ProfitTablePage from '../pages/ProfitTablePage.vue'
-import SalaryPage from '../pages/SalaryPage.vue'
-import StoreDetailPage from '../pages/StoreDetailPage.vue'
-import StoreManagementPage from '../pages/StoreManagementPage.vue'
-import SupervisorWorkbenchPage from '../pages/SupervisorWorkbenchPage.vue'
-import OperationsWorkbenchPage from '../pages/OperationsWorkbenchPage.vue'
-import AssistantPage from '../pages/AssistantPage.vue'
-import OperationLogPage from '../pages/OperationLogPage.vue'
-import NoPermissionPage from '../pages/NoPermissionPage.vue'
-import PlaceholderPage from '../pages/PlaceholderPage.vue'
-import PlatformLoginPage from '../pages/PlatformLoginPage.vue'
-import UserPermissionPage from '../pages/UserPermissionPage.vue'
-import ExamCenterPage from '../pages/ExamCenterPage.vue'
+import { createRouter, createWebHistory, type RouteLocationRaw, type RouteRecordRaw } from 'vue-router'
+import { PERMISSIONS, type PermissionCode } from '../permissions/permissions'
+import { resolveAvailableWorkspace } from '../permissions/workspaces'
 import { useAuthStore } from '../stores/auth'
+
+const AppLayout = () => import('../layouts/AppLayout.vue')
+const LearnerLayout = () => import('../layouts/LearnerLayout.vue')
+const LoginPage = () => import('../pages/LoginPage.vue')
+const ExpensePage = () => import('../pages/ExpensePage.vue')
+const DataExportPage = () => import('../pages/DataExportPage.vue')
+const DataEntryPage = () => import('../pages/DataEntryPage.vue')
+const ProfitOverviewPage = () => import('../pages/ProfitOverviewPage.vue')
+const ProfitTablePage = () => import('../pages/ProfitTablePage.vue')
+const StoreDetailPage = () => import('../pages/StoreDetailPage.vue')
+const StoreManagementPage = () => import('../pages/StoreManagementPage.vue')
+const SupervisorWorkbenchPage = () => import('../pages/SupervisorWorkbenchPage.vue')
+const AssistantPage = () => import('../pages/AssistantPage.vue')
+const OperationLogPage = () => import('../pages/OperationLogPage.vue')
+const NoPermissionPage = () => import('../pages/NoPermissionPage.vue')
+const PlaceholderPage = () => import('../pages/PlaceholderPage.vue')
+const PlatformLoginPage = () => import('../pages/PlatformLoginPage.vue')
+const UserPermissionPage = () => import('../pages/UserPermissionPage.vue')
+const BossWorkspace = () => import('../pages/workspaces/BossWorkspace.vue')
+const FinanceWorkspace = () => import('../pages/workspaces/FinanceWorkspace.vue')
+const WarehouseWorkspace = () => import('../pages/workspaces/WarehouseWorkspace.vue')
+const StoreManagerWorkspace = () => import('../pages/workspaces/StoreManagerWorkspace.vue')
+const OperationsWorkspace = () => import('../pages/workspaces/OperationsWorkspace.vue')
+const CentralWarehouseWorkspace = () => import('../pages/workspaces/business/CentralWarehouseWorkspace.vue')
+const StoreInventoryWorkspace = () => import('../pages/workspaces/business/StoreInventoryWorkspace.vue')
+const FinanceSalaryWorkspace = () => import('../pages/workspaces/business/FinanceSalaryWorkspace.vue')
+const StoreSalaryWorkspace = () => import('../pages/workspaces/business/StoreSalaryWorkspace.vue')
+const ExamAdminWorkspace = () => import('../pages/workspaces/business/ExamAdminWorkspace.vue')
+const ExamProgressWorkspace = () => import('../pages/workspaces/business/ExamProgressWorkspace.vue')
+
+const permissionMeta = (permission: PermissionCode, extras: Record<string, unknown> = {}) => ({
+  permission,
+  ...extras,
+})
+
+const appChildren: RouteRecordRaw[] = [
+  { path: '', name: 'home', component: PlaceholderPage, meta: { title: '正在进入工作台', subtitle: '系统会根据当前账号权限进入对应首页。' } },
+  { path: 'boss', name: 'boss-workspace', component: BossWorkspace, meta: permissionMeta(PERMISSIONS.SYSTEM_DASHBOARD_READ, { menuKey: 'boss-workspace', title: '老板工作台' }) },
+  { path: 'finance', name: 'finance-workspace', component: FinanceWorkspace, meta: permissionMeta(PERMISSIONS.FINANCE_PROFIT_READ, { menuKey: 'finance-workspace', title: '财务工作台' }) },
+  { path: 'warehouse', name: 'warehouse-overview', component: WarehouseWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_READ, { moduleKey: 'warehouse', menuKey: 'warehouse-center', warehouseTab: 'overview', title: '仓库中心' }) },
+  { path: 'warehouse/workspace', redirect: '/warehouse' },
+  { path: 'store', name: 'store-workspace', component: StoreManagerWorkspace, meta: permissionMeta(PERMISSIONS.STORE_READ, { menuKey: 'store-workspace', title: '门店工作台' }) },
+  { path: 'operations', name: 'operations-workspace', component: OperationsWorkspace, meta: permissionMeta(PERMISSIONS.OPERATIONS_DASHBOARD_READ, { menuKey: 'operations-workspace', title: '运营工作台' }) },
+
+  { path: 'assistant', name: 'assistant', component: AssistantPage, meta: permissionMeta(PERMISSIONS.ASSISTANT_USE, { menuKey: 'assistant', title: '门店经营助手' }) },
+  { path: 'profit', name: 'profit', component: ProfitOverviewPage, meta: permissionMeta(PERMISSIONS.FINANCE_PROFIT_READ, { menuKey: 'profit-overview', title: '利润概览' }) },
+  { path: 'profit-table', name: 'profit-table', component: ProfitTablePage, meta: permissionMeta(PERMISSIONS.FINANCE_PROFIT_READ, { menuKey: 'profit-table', title: '利润表' }) },
+  { path: 'data-entry', name: 'data-entry', component: DataEntryPage, meta: permissionMeta(PERMISSIONS.FINANCE_PROFIT_WRITE, { menuKey: 'data-entry', title: '数据录入' }) },
+  { path: 'expenses', name: 'expenses', component: ExpensePage, meta: permissionMeta(PERMISSIONS.EXPENSE_READ, { menuKey: 'expenses', title: '报销栏' }) },
+  { path: 'export', name: 'export', component: DataExportPage, meta: permissionMeta(PERMISSIONS.FINANCE_EXPORT, { menuKey: 'data-export', title: '数据导出' }) },
+  { path: 'store-detail', name: 'store-detail', component: StoreDetailPage, meta: permissionMeta(PERMISSIONS.STORE_READ, { menuKey: 'store-detail', title: '门店详情' }) },
+  { path: 'stores', name: 'stores', component: StoreManagementPage, meta: permissionMeta(PERMISSIONS.STORE_MANAGE, { menuKey: 'store-management', title: '门店管理' }) },
+  { path: 'logs', name: 'logs', component: OperationLogPage, meta: permissionMeta(PERMISSIONS.SYSTEM_AUDIT_READ, { menuKey: 'operation-logs', title: '操作日志' }) },
+  { path: 'platform-login', name: 'platform-login', component: PlatformLoginPage, meta: permissionMeta(PERMISSIONS.PLATFORM_READ, { menuKey: 'platform-settings', title: '平台配置' }) },
+  { path: 'users', name: 'users', component: UserPermissionPage, meta: permissionMeta(PERMISSIONS.SYSTEM_USER_MANAGE, { menuKey: 'user-permissions', title: '账号权限' }) },
+
+  { path: 'finance/salary', name: 'finance-salary', component: FinanceSalaryWorkspace, meta: permissionMeta(PERMISSIONS.SALARY_READ, { menuKey: 'finance-salary', title: '员工工资' }) },
+  { path: 'store/salary', name: 'store-salary', component: StoreSalaryWorkspace, meta: permissionMeta(PERMISSIONS.SALARY_READ, { menuKey: 'store-salary', title: '本店工资核对' }) },
+  { path: 'store/inventory', name: 'store-inventory', component: StoreInventoryWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_STORE_READ, { moduleKey: 'warehouse', menuKey: 'warehouse-center', storeWarehouseTab: 'inventory', title: '本店库存' }) },
+  { path: 'store/inventory/requisition', name: 'store-requisition', component: StoreInventoryWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_REQUISITION_CREATE, { moduleKey: 'warehouse', menuKey: 'warehouse-center', storeWarehouseTab: 'requisition', title: '门店叫货' }) },
+  { path: 'store/inventory/receipts', name: 'store-receipts', component: StoreInventoryWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_REQUISITION_RECEIVE, { moduleKey: 'warehouse', menuKey: 'warehouse-center', storeWarehouseTab: 'records', title: '本店记录' }) },
+  { path: 'store/inventory/records', name: 'store-inventory-records', component: StoreInventoryWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_STORE_READ, { moduleKey: 'warehouse', menuKey: 'warehouse-center', storeWarehouseTab: 'records', title: '本店记录' }) },
+
+  { path: 'warehouse/central', name: 'warehouse-central', component: CentralWarehouseWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_READ, { moduleKey: 'warehouse', menuKey: 'warehouse-center', warehouseTab: 'warehouse', warehouseSection: 'inventory', warehouseCode: 'JZ-CENTRAL', title: '荆州总仓' }) },
+  { path: 'warehouse/shandong', name: 'warehouse-shandong', component: CentralWarehouseWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_READ, { moduleKey: 'warehouse', menuKey: 'warehouse-center', warehouseTab: 'warehouse', warehouseSection: 'inventory', warehouseCode: 'SD-REGIONAL', title: '山东分仓' }) },
+  { path: 'warehouse/transfers', name: 'warehouse-transfers', component: CentralWarehouseWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_READ, { moduleKey: 'warehouse', menuKey: 'warehouse-center', warehouseTab: 'transfers', title: '仓间调拨' }) },
+  { path: 'warehouse/items', name: 'warehouse-items', component: CentralWarehouseWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_READ, { moduleKey: 'warehouse', menuKey: 'warehouse-center', warehouseTab: 'warehouse', warehouseSection: 'catalog', warehouseCode: 'JZ-CENTRAL', title: '物料档案' }) },
+  { path: 'warehouse/inventory', name: 'warehouse-inventory', component: CentralWarehouseWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_READ, { moduleKey: 'warehouse', menuKey: 'warehouse-center', warehouseTab: 'warehouse', warehouseSection: 'inventory', warehouseCode: 'JZ-CENTRAL', title: '库存物料' }) },
+  { path: 'warehouse/requests', name: 'warehouse-requests', component: CentralWarehouseWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_READ, { moduleKey: 'warehouse', menuKey: 'warehouse-center', warehouseTab: 'requisitions', title: '门店叫货' }) },
+  { path: 'warehouse/purchase', name: 'warehouse-purchase', component: CentralWarehouseWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_PURCHASE, { moduleKey: 'warehouse', menuKey: 'warehouse-center', warehouseTab: 'purchase', warehouseCode: 'JZ-CENTRAL', title: '外部采购' }) },
+  { path: 'warehouse/movements', name: 'warehouse-movements', component: CentralWarehouseWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_READ, { moduleKey: 'warehouse', menuKey: 'warehouse-center', warehouseTab: 'movements', title: '出入库记录' }) },
+  { path: 'warehouse/returns', name: 'warehouse-returns', component: CentralWarehouseWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_READ, { moduleKey: 'warehouse', menuKey: 'warehouse-center', warehouseTab: 'movements', title: '配送退货单' }) },
+  { path: 'warehouse/alerts', name: 'warehouse-alerts', component: CentralWarehouseWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_READ, { moduleKey: 'warehouse', menuKey: 'warehouse-center', warehouseTab: 'warehouse', warehouseSection: 'inventory', warehouseCode: 'JZ-CENTRAL', title: '库存预警' }) },
+  { path: 'warehouse/receipts', name: 'warehouse-receipts', component: CentralWarehouseWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_PURCHASE, { moduleKey: 'warehouse', menuKey: 'warehouse-center', warehouseTab: 'purchase', warehouseCode: 'JZ-CENTRAL', title: '入库记录' }) },
+
+  { path: 'operations/inspection', name: 'inspection-manage', component: SupervisorWorkbenchPage, meta: permissionMeta(PERMISSIONS.INSPECTION_READ, { menuKey: 'inspection-management', title: '督导巡店' }) },
+  { path: 'operations/inspection/tasks', name: 'inspection-tasks', component: SupervisorWorkbenchPage, meta: permissionMeta(PERMISSIONS.INSPECTION_MANAGE, { menuKey: 'inspection-management', inspectionTab: 'create', title: '发起巡检' }) },
+  { path: 'operations/inspection/records', name: 'inspection-records', component: SupervisorWorkbenchPage, meta: permissionMeta(PERMISSIONS.INSPECTION_READ, { menuKey: 'inspection-records', inspectionTab: 'records', title: '巡检记录' }) },
+  { path: 'operations/inspection/standards', name: 'inspection-standards', component: SupervisorWorkbenchPage, meta: permissionMeta(PERMISSIONS.INSPECTION_MANAGE, { menuKey: 'inspection-management', inspectionTab: 'standards', title: '稽核标准' }) },
+  { path: 'operations/exams', name: 'exam-admin', component: ExamAdminWorkspace, meta: permissionMeta(PERMISSIONS.EXAM_MANAGE, { moduleKey: 'exam', menuKey: 'exam-center', title: '培训考试' }) },
+  { path: 'store/exams', name: 'exam-progress', component: ExamProgressWorkspace, meta: permissionMeta(PERMISSIONS.EXAM_REPORT, { moduleKey: 'exam', menuKey: 'exam-center', title: '培训考试' }) },
+]
 
 const routes: RouteRecordRaw[] = [
   { path: '/login', name: 'login', component: LoginPage },
+  { path: '/no-permission', name: 'no-permission', component: NoPermissionPage, meta: { requiresAuth: true } },
   {
     path: '/',
     component: AppLayout,
     meta: { requiresAuth: true },
+    children: appChildren,
+  },
+  {
+    path: '/learn',
+    component: LearnerLayout,
+    meta: { requiresAuth: true },
     children: [
-      { path: '', name: 'home', component: PlaceholderPage, meta: { title: '正在进入工作台', subtitle: '系统会根据当前角色进入对应首页。' } },
-      { path: 'boss', name: 'boss', component: BossDashboardPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER'] } },
-      { path: 'todos', name: 'todos', component: TodayTodoPage },
-      { path: 'warehouse', name: 'warehouse', component: WarehousePage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'WAREHOUSE', 'STORE_MANAGER'] } },
-      { path: 'warehouse/items', name: 'warehouse-items', component: WarehousePage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'WAREHOUSE'], warehouseTab: 'catalog', title: '物料档案' } },
-      { path: 'warehouse/inventory', name: 'warehouse-inventory', component: WarehousePage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'WAREHOUSE'], warehouseTab: 'inventory', title: '库存物料' } },
-      { path: 'warehouse/purchase', name: 'warehouse-purchase', component: WarehousePage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'WAREHOUSE'], warehouseTab: 'purchase', title: '采购入库' } },
-      { path: 'warehouse/movements', name: 'warehouse-movements', component: WarehousePage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'WAREHOUSE'], warehouseTab: 'movements', title: '出入库记录' } },
-      { path: 'warehouse/returns', name: 'warehouse-returns', component: WarehousePage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'WAREHOUSE', 'STORE_MANAGER'], warehouseTab: 'returns', title: '配送退货单' } },
-      { path: 'warehouse/alerts', name: 'warehouse-alerts', component: WarehousePage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'WAREHOUSE'], warehouseTab: 'inventory', title: '库存预警' } },
-      { path: 'warehouse/receipts', name: 'warehouse-receipts', component: WarehousePage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'WAREHOUSE'], warehouseTab: 'purchase', title: '入库记录' } },
-      { path: 'assistant', name: 'assistant', component: AssistantPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'FINANCE', 'WAREHOUSE', 'STORE_MANAGER', 'SUPERVISOR', 'OPERATIONS', 'OPS'] } },
-      { path: 'no-permission', name: 'no-permission', component: NoPermissionPage },
-      { path: 'profit', name: 'profit', component: ProfitOverviewPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'FINANCE'] } },
-      { path: 'store-detail', name: 'store-detail', component: StoreDetailPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'STORE_MANAGER', 'FINANCE'] } },
-      { path: 'finance', name: 'finance', component: FinanceWorkbenchPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'FINANCE'] } },
-      { path: 'expenses', name: 'expenses', component: ExpensePage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'FINANCE', 'STORE_MANAGER'] } },
-      { path: 'profit-table', name: 'profit-table', component: ProfitTablePage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'FINANCE'] } },
-      { path: 'salary', name: 'salary', component: SalaryPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'FINANCE', 'STORE_MANAGER'] } },
-      { path: 'finance-data-check', name: 'finance-data-check', component: FinanceDataCheckPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'FINANCE'] } },
-      { path: 'export', name: 'export', component: DataExportPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'FINANCE'] } },
-      { path: 'data-entry', name: 'data-entry', component: DataEntryPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'FINANCE', 'STORE_MANAGER'] } },
-      { path: 'stores', name: 'stores', component: StoreManagementPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER'] } },
-      { path: 'logs', name: 'logs', component: OperationLogPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER'] } },
-      { path: 'platform-login', name: 'platform-login', component: PlatformLoginPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'OPERATIONS', 'OPS'] } },
-      { path: 'users', name: 'users', component: UserPermissionPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER'] } },
-      { path: 'inspection', name: 'inspection', component: SupervisorWorkbenchPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'SUPERVISOR'], activeMenu: '/inspection' } },
-      { path: 'inspection/tasks', name: 'inspection-tasks', component: SupervisorWorkbenchPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'SUPERVISOR'], activeMenu: '/inspection', inspectionTab: 'create', title: '发起巡检' } },
-      { path: 'inspection/create', name: 'inspection-create', component: SupervisorWorkbenchPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'SUPERVISOR'], activeMenu: '/inspection', inspectionTab: 'create', title: '发起巡检' } },
-      { path: 'inspection/records', name: 'inspection-records', component: SupervisorWorkbenchPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'SUPERVISOR'], activeMenu: '/inspection', inspectionTab: 'records', title: '巡检记录' } },
-      { path: 'inspection/reviews', name: 'inspection-reviews', component: SupervisorWorkbenchPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'SUPERVISOR'], activeMenu: '/inspection', inspectionTab: 'records', title: '督导巡店' } },
-      { path: 'inspection/rules', name: 'inspection-rules', component: SupervisorWorkbenchPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'SUPERVISOR'], activeMenu: '/inspection', inspectionTab: 'standards', title: '稽核标准' } },
-      { path: 'inspection/standards', name: 'inspection-standards', component: SupervisorWorkbenchPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'SUPERVISOR'], activeMenu: '/inspection', inspectionTab: 'standards', title: '稽核标准' } },
-      { path: 'exam-center', name: 'exam-center', component: ExamCenterPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'OPERATIONS', 'OPS', 'STORE_MANAGER', 'EMPLOYEE'], activeMenu: '/exam-center', title: '培训考试' } },
-      { path: 'operations', name: 'operations', component: OperationsWorkbenchPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'OPERATIONS', 'OPS'] } },
-      { path: 'operations/analysis', name: 'operations-analysis', component: OperationsWorkbenchPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'OPERATIONS', 'OPS'], operationsTab: 'analysis', title: '数据分析' } },
-      { path: 'operations/training', name: 'operations-training', component: OperationsWorkbenchPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'OPERATIONS', 'OPS'], operationsTab: 'training', title: '新人培训' } },
-      { path: 'operations/exam', name: 'operations-exam', component: ExamCenterPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'OPERATIONS', 'OPS', 'STORE_MANAGER', 'EMPLOYEE'], activeMenu: '/exam-center', title: '培训考试' } },
-      { path: 'operations/inventory-check', name: 'operations-inventory-check', component: OperationsWorkbenchPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'OPERATIONS', 'OPS'], operationsTab: 'inventory-check', title: '店铺盘存' } },
-      { path: 'operations/eleme', name: 'operations-eleme', component: OperationsWorkbenchPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'OPERATIONS', 'OPS'], operationsTab: 'eleme', title: '饿了么订单' } },
-      { path: 'operations/platform', name: 'operations-platform', component: OperationsWorkbenchPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'OPERATIONS', 'OPS'], operationsTab: 'platform', title: '平台账号' } },
-      { path: 'operations/imports', name: 'operations-imports', component: OperationsWorkbenchPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'FINANCE', 'STORE_MANAGER'], operationsTab: 'imports', title: '数据导入' } },
-      { path: 'operations/logs', name: 'operations-logs', component: OperationsWorkbenchPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER'], operationsTab: 'logs', title: '操作日志' } },
-      { path: 'operations/data-health', name: 'operations-data-health', component: OperationsWorkbenchPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'OPERATIONS', 'OPS'], operationsTab: 'data-health', title: '数据健康' } },
-      { path: 'operations/migration', name: 'operations-migration', component: OperationsWorkbenchPage, meta: { roles: ['ADMIN', 'BOSS', 'OWNER', 'OPERATIONS', 'OPS'], operationsTab: 'migration', title: '迁移状态' } },
+      { path: '', redirect: '/learn/exams' },
+      { path: 'exams', name: 'learner-exams', component: ExamProgressWorkspace, meta: permissionMeta(PERMISSIONS.EXAM_LEARN, { title: '我的学习与考试' }) },
     ],
   },
+
+  { path: '/todos', redirect: () => defaultRouteForSession() },
+  { path: '/salary', redirect: () => salaryRouteForSession() },
+  { path: '/exam-center', redirect: () => examRouteForSession() },
+  { path: '/inspection', redirect: '/operations/inspection' },
+  { path: '/inspection/tasks', redirect: '/operations/inspection/tasks' },
+  { path: '/inspection/create', redirect: '/operations/inspection/tasks' },
+  { path: '/inspection/records', redirect: '/operations/inspection/records' },
+  { path: '/inspection/reviews', redirect: '/operations/inspection/records' },
+  { path: '/inspection/rules', redirect: '/operations/inspection/standards' },
+  { path: '/inspection/standards', redirect: '/operations/inspection/standards' },
+  { path: '/finance-data-check', redirect: '/finance' },
+  { path: '/supervisor/:pathMatch(.*)*', redirect: '/operations' },
+  { path: '/operations/:pathMatch(.*)*', redirect: '/operations' },
 ]
 
-function defaultRouteForRole(role: string) {
-  if (role === 'ADMIN' || role === 'BOSS' || role === 'OWNER') return { name: 'boss' }
-  if (role === 'EMPLOYEE') return { name: 'exam-center' }
-  return { name: 'todos' }
+function defaultRouteForSession(): RouteLocationRaw {
+  const auth = useAuthStore()
+  if (auth.role === 'STORE_MANAGER' && !auth.storeManagerHasStoreBinding) {
+    return { name: 'no-permission', query: { reason: 'STORE_NOT_BOUND' } }
+  }
+  // The backend has already combined role templates, DENY overrides and data scopes.
+  // Do not turn an explicit no-workspace decision back into a role-based fallback.
+  if (auth.defaultWorkspace === '/no-permission') return { name: 'no-permission' }
+  return resolveAvailableWorkspace(auth) || '/no-permission'
 }
 
-const financeTabRedirects: Record<string, string> = {
-  expenses: '/expenses',
-  'profit-risk': '/profit-table',
-  salary: '/salary',
-  'data-check': '/finance-data-check',
+function salaryRouteForSession(): RouteLocationRaw {
+  const auth = useAuthStore()
+  const mode = auth.dataScope('SALARY')?.mode
+  return mode === 'OWN_STORE' ? '/store/salary' : '/finance/salary'
+}
+
+function examRouteForSession(): RouteLocationRaw {
+  const auth = useAuthStore()
+  if (auth.hasPermission(PERMISSIONS.EXAM_MANAGE)) return '/operations/exams'
+  if (auth.hasPermission(PERMISSIONS.EXAM_REPORT)) return '/store/exams'
+  if (auth.hasPermission(PERMISSIONS.EXAM_LEARN)) return '/learn/exams'
+  return '/no-permission'
 }
 
 const warehouseTabRedirects: Record<string, string> = {
   catalog: '/warehouse/items',
-  inventory: '/warehouse/inventory',
+  inventory: '/warehouse/central',
+  requisitions: '/warehouse/requests',
+  transfers: '/warehouse/transfers',
   purchase: '/warehouse/purchase',
   movements: '/warehouse/movements',
   returns: '/warehouse/returns',
@@ -104,61 +156,68 @@ const warehouseTabRedirects: Record<string, string> = {
   receipts: '/warehouse/receipts',
 }
 
-const operationsTabRedirects: Record<string, string> = {
-  analysis: '/operations/analysis',
-  training: '/operations/training',
-  exam: '/exam-center',
-  'inventory-check': '/operations/inventory-check',
-  eleme: '/operations/eleme',
-  platform: '/operations/platform',
-  imports: '/operations/imports',
-  logs: '/operations/logs',
-  'data-health': '/operations/data-health',
-  migration: '/operations/migration',
-}
-
 const router = createRouter({
   history: createWebHistory(),
   routes,
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const auth = useAuthStore()
-  if (to.meta.requiresAuth && !auth.isLoggedIn) {
+  const requiresAuth = to.matched.some((record) => record.meta.requiresAuth)
+  if (auth.token && !auth.sessionValidated) {
+    await auth.validateStoredSession()
+  }
+  if (requiresAuth && !auth.isLoggedIn) {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
-  if (to.name === 'home' && auth.isLoggedIn) {
-    return defaultRouteForRole(auth.role)
+  if (to.name === 'home' && auth.isLoggedIn) return defaultRouteForSession()
+  if (to.name === 'login' && auth.isLoggedIn) return defaultRouteForSession()
+  if (auth.isLoggedIn
+      && auth.role === 'STORE_MANAGER'
+      && !auth.storeManagerHasStoreBinding
+      && to.name !== 'no-permission'
+      && to.name !== 'login') {
+    return { name: 'no-permission', query: { reason: 'STORE_NOT_BOUND', from: to.fullPath } }
   }
-  if (to.name === 'login' && auth.isLoggedIn) {
-    return defaultRouteForRole(auth.role)
+
+  if (to.name === 'finance-workspace' && to.query.tab === 'expenses') {
+    return { path: '/expenses' }
   }
-  if (to.name === 'finance' && auth.isLoggedIn) {
-    const tab = Array.isArray(to.query.tab) ? to.query.tab[0] : to.query.tab
-    if (tab && financeTabRedirects[tab]) {
+  if (to.name === 'inspection-manage' && auth.isLoggedIn && !auth.hasPermission(PERMISSIONS.INSPECTION_MANAGE)) {
+    return { path: '/operations/inspection/records', query: to.query }
+  }
+  if (to.name === 'warehouse-overview' && auth.isLoggedIn) {
+    if (!auth.hasPermission(PERMISSIONS.WAREHOUSE_READ)
+        && !auth.hasPermission(PERMISSIONS.WAREHOUSE_CENTRAL_READ)
+        && auth.hasPermission(PERMISSIONS.WAREHOUSE_STORE_READ)) {
+      return { path: '/store/inventory', query: to.query }
+    }
+    const rawTab = Array.isArray(to.query.tab) ? to.query.tab[0] : to.query.tab
+    if (rawTab && warehouseTabRedirects[rawTab]) {
       const query = { ...to.query }
       delete query.tab
-      return { path: financeTabRedirects[tab], query }
+      return { path: warehouseTabRedirects[rawTab], query }
     }
   }
-  if (to.name === 'warehouse' && auth.isLoggedIn) {
-    const tab = Array.isArray(to.query.tab) ? to.query.tab[0] : to.query.tab
-    if (tab && warehouseTabRedirects[tab]) {
+
+  if (to.name === 'store-inventory' && auth.isLoggedIn) {
+    const section = Array.isArray(to.query.section) ? to.query.section[0] : to.query.section
+    const sectionPaths: Record<string, string> = {
+      requisition: '/store/inventory/requisition',
+      receipts: '/store/inventory/receipts',
+    }
+    if (section && sectionPaths[section]) {
       const query = { ...to.query }
-      delete query.tab
-      return { path: warehouseTabRedirects[tab], query }
+      delete query.section
+      return { path: sectionPaths[section], query }
     }
   }
-  if (to.name === 'operations' && auth.isLoggedIn) {
-    const tab = Array.isArray(to.query.tab) ? to.query.tab[0] : to.query.tab
-    if (tab && operationsTabRedirects[tab]) {
-      const query = { ...to.query }
-      delete query.tab
-      return { path: operationsTabRedirects[tab], query }
-    }
-  }
-  const roles = to.meta.roles as string[] | undefined
-  if (roles?.length && !roles.includes(auth.role)) {
+
+  const requiredPermission = [...to.matched]
+    .reverse()
+    .map((record) => record.meta.permission)
+    .find((permission): permission is string => typeof permission === 'string' && Boolean(permission))
+  if (requiredPermission && !auth.hasPermission(requiredPermission)) {
     return { name: 'no-permission', query: { from: to.fullPath } }
   }
   return true

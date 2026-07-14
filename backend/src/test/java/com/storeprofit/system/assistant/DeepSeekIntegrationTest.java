@@ -37,7 +37,7 @@ class DeepSeekIntegrationTest {
     properties.setEnabled(true);
     properties.setApiKey("");
     properties.setBaseUrl("https://api.deepseek.com");
-    properties.setModel("deepseek-v4-flash");
+    properties.setModel("deepseek-chat");
     properties.setMaxTokens(1200);
     properties.setTemperature(0.2);
     properties.setConnectTimeout(Duration.ofSeconds(5));
@@ -75,10 +75,11 @@ class DeepSeekIntegrationTest {
       AssistantChatResponse response = assistantService.chat(boss(),
           new AssistantChatRequest("为什么利润下降", List.of(), "", null, null, null));
 
-      assertThat(response.fallback()).isTrue();
-      assertThat(response.source()).contains("backend-finance");
-      assertThat(response.model()).isEmpty();
-      assertThat(response.aiUsed()).isFalse();
+      assertThat(response.fallbackUsed()).isTrue();
+      assertThat(response.localData().source()).isEqualTo("MySQL 8 财务库");
+      assertThat(response.aiAnalysis().model()).isEmpty();
+      assertThat(response.aiAnalysis().available()).isFalse();
+      assertThat(response.error().code()).isEqualTo("DEEPSEEK_NOT_CONFIGURED");
     }
 
     @Test
@@ -89,19 +90,19 @@ class DeepSeekIntegrationTest {
       AssistantChatResponse response = assistantService.chat(boss(),
           new AssistantChatRequest("为什么利润下降", List.of(), "", null, null, null));
 
-      assertThat(response.fallback()).isTrue();
+      assertThat(response.fallbackUsed()).isTrue();
     }
 
     @Test
-    @DisplayName("未配置时 requestId 不为空")
-    void requestIdIsSetWhenNotConfigured() {
+    @DisplayName("未配置时不得伪造模型 requestId")
+    void requestIdIsEmptyWhenNotConfigured() {
       properties.setApiKey("");
 
       AssistantChatResponse response = assistantService.chat(boss(),
-          new AssistantChatRequest("利润排名", List.of(), "", null, null, null));
+          new AssistantChatRequest("为什么利润下降", List.of(), "", null, null, null));
 
-      assertThat(response.requestId()).isNotBlank();
-      assertThat(response.requestId()).hasSize(8);
+      assertThat(response.aiAnalysis().requestId()).isEmpty();
+      assertThat(response.error().code()).isEqualTo("DEEPSEEK_NOT_CONFIGURED");
     }
   }
 
@@ -118,8 +119,9 @@ class DeepSeekIntegrationTest {
       AssistantChatResponse response = assistantService.chat(boss(),
           new AssistantChatRequest("为什么利润下降", List.of(), "", null, null, null));
 
-      assertThat(response.fallback()).isTrue();
-      assertThat(response.source()).contains("backend-finance");
+      assertThat(response.fallbackUsed()).isTrue();
+      assertThat(response.localData().source()).isEqualTo("MySQL 8 财务库");
+      assertThat(response.error().code()).isEqualTo("DEEPSEEK_DISABLED");
     }
   }
 
@@ -135,9 +137,8 @@ class DeepSeekIntegrationTest {
       AssistantChatResponse response = assistantService.chat(storeManager(),
           new AssistantChatRequest("全部门店利润排名", List.of(), "", null, null, null));
 
-      assertThat(response.blocked()).isTrue();
-      assertThat(response.source()).isEqualTo("role-boundary");
-      assertThat(response.dataSource()).isEqualTo("SYSTEM_GUARDRAIL");
+      assertThat(response.error().code()).isEqualTo("FORBIDDEN_SCOPE");
+      assertThat(response.localData().source()).isEqualTo("系统安全规则");
     }
   }
 
@@ -146,17 +147,19 @@ class DeepSeekIntegrationTest {
   class ResponseStructure {
 
     @Test
-    @DisplayName("降级响应包含 model/fallback/requestId/generatedAt")
+    @DisplayName("降级响应不伪造 provider、model、requestId 和耗时")
     void fallbackResponseContainsAllRequiredFields() {
       properties.setApiKey("");
 
       AssistantChatResponse response = assistantService.chat(boss(),
           new AssistantChatRequest("为什么利润下降", List.of(), "", null, null, null));
 
-      assertThat(response.model()).isNotNull();
-      assertThat(response.fallback()).isTrue();
-      assertThat(response.requestId()).isNotBlank();
-      assertThat(response.generatedAt()).isNotNull();
+      assertThat(response.aiAnalysis().available()).isFalse();
+      assertThat(response.aiAnalysis().provider()).isEmpty();
+      assertThat(response.aiAnalysis().model()).isEmpty();
+      assertThat(response.aiAnalysis().requestId()).isEmpty();
+      assertThat(response.aiAnalysis().latencyMs()).isZero();
+      assertThat(response.fallbackUsed()).isTrue();
     }
 
     @Test
@@ -165,9 +168,8 @@ class DeepSeekIntegrationTest {
       AssistantChatResponse response = assistantService.chat(boss(),
           new AssistantChatRequest("赌博网站", List.of(), "", null, null, null));
 
-      assertThat(response.blocked()).isTrue();
-      assertThat(response.source()).isEqualTo("blocked-word");
-      assertThat(response.generatedAt()).isNotNull();
+      assertThat(response.error().code()).isEqualTo("BLOCKED_WORD");
+      assertThat(response.localData().source()).isEqualTo("系统安全规则");
     }
 
     @Test
@@ -176,23 +178,21 @@ class DeepSeekIntegrationTest {
       properties.setApiKey("");
 
       AssistantChatResponse response = assistantService.chat(boss(),
-          new AssistantChatRequest("利润排名", List.of(), "", null, null, null));
+          new AssistantChatRequest("为什么利润下降", List.of(), "", null, null, null));
 
-      assertThat(response.storeScope()).isEmpty();
+      assertThat(response.localData().dataScope()).isNotNull();
     }
 
     @Test
-    @DisplayName("warnings 不可变且中文")
-    void warningsAreImmutableAndChinese() {
+    @DisplayName("错误信息为中文且经营数据仍可用")
+    void errorIsChineseAndLocalDataRemainsAvailable() {
       properties.setApiKey("");
 
       AssistantChatResponse response = assistantService.chat(boss(),
-          new AssistantChatRequest("利润排名", List.of(), "", null, null, null));
+          new AssistantChatRequest("为什么利润下降", List.of(), "", null, null, null));
 
-      assertThat(response.warnings()).isNotEmpty();
-      response.warnings().forEach(warning ->
-          assertThat(warning).containsAnyOf("权限", "后端", "财务", "数据", "页面", "AI", "可用", "本地", "规则")
-      );
+      assertThat(response.error().message()).contains("AI分析");
+      assertThat(response.localData().summary()).isNotBlank();
     }
   }
 
@@ -276,15 +276,15 @@ class DeepSeekIntegrationTest {
   class PropertiesConfiguration {
 
     @Test
-    @DisplayName("默认模型为 deepseek-v4-flash")
-    void defaultModelIsV4Flash() {
+    @DisplayName("默认模型为当前正式的 deepseek-v4-flash")
+    void defaultModelIsDeepSeekChat() {
       DeepSeekProperties props = new DeepSeekProperties();
       assertThat(props.getModel()).isEqualTo("deepseek-v4-flash");
     }
 
     @Test
     @DisplayName("setModel 空值回退到 deepseek-v4-flash")
-    void setModelFallsBackToV4Flash() {
+    void setModelFallsBackToDeepSeekChat() {
       DeepSeekProperties props = new DeepSeekProperties();
       props.setModel("");
       assertThat(props.getModel()).isEqualTo("deepseek-v4-flash");

@@ -20,13 +20,11 @@ const pages: Array<{ role: RoleKey; path: string; text: string }> = [
   { role: 'warehouse', path: '/warehouse/items', text: '商品档案' },
   { role: 'warehouse', path: '/warehouse/purchase', text: '采购入库' },
   { role: 'warehouse', path: '/warehouse/movements', text: '出入库记录' },
-  { role: 'supervisor', path: '/inspection', text: '督导巡店' },
-  { role: 'supervisor', path: '/inspection/records', text: '巡检记录' },
-  { role: 'supervisor', path: '/inspection/tasks', text: '发起巡检' },
-  { role: 'operations', path: '/operations', text: '运营中心' },
-  { role: 'operations', path: '/operations/analysis', text: '数据分析' },
-  { role: 'operations', path: '/operations/exam', text: '考试系统' },
-  { role: 'operations', path: '/operations/inventory-check', text: '店铺盘存' },
+  { role: 'operations', path: '/operations/inspection', text: '督导巡店' },
+  { role: 'operations', path: '/operations/inspection/records', text: '巡检记录' },
+  { role: 'operations', path: '/operations/inspection/tasks', text: '发起巡检' },
+  { role: 'operations', path: '/operations/exams', text: '培训考试' },
+  { role: 'operations', path: '/platform-login', text: '平台配置' },
   { role: 'store', path: '/warehouse', text: '仓库中心' },
 ]
 
@@ -199,20 +197,20 @@ test.describe('core business pages load', () => {
     await expect(body).not.toContainText('已处理复盘')
 
     await page.getByRole('button', { name: '发起巡检' }).click()
-    await expect.poll(() => new URL(page.url()).searchParams.get('tab')).toBe('create')
+    await expect(page).toHaveURL(/\/operations\/inspection\/tasks$/)
     await expect(body).toContainText('保存巡检')
     await expect(body).toContainText('品牌')
     await expect(body).toContainText('门店')
 
     await page.getByRole('button', { name: '稽核标准' }).click()
-    await expect.poll(() => new URL(page.url()).searchParams.get('tab')).toBe('standards')
-    await expect(body).toContainText('全门店通用')
-    await expect(body).toContainText('红线项（一票否决）')
-    await expect(body).toContainText('普通评分条款')
-    await expect(body).toContainText('建议扣分')
+    await expect(page).toHaveURL(/\/operations\/inspection\/standards$/)
+    await expect(body).toContainText('标准版本')
+    await expect(body).toContainText('红线项')
+    await expect(body).toContainText('完整评分条款')
+    await expect(body).toContainText('标准分')
 
     await page.getByRole('button', { name: '巡检记录' }).click()
-    await expect.poll(() => new URL(page.url()).searchParams.get('tab')).toBe('records')
+    await expect(page).toHaveURL(/\/operations\/inspection\/records$/)
     await expect(body).toContainText('日期')
     await expect(body).toContainText('得分')
   })

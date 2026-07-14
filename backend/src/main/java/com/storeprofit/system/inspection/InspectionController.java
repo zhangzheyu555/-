@@ -6,6 +6,10 @@ import com.storeprofit.system.platform.auth.AuthUser;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Map;
+import java.nio.charset.StandardCharsets;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -25,10 +29,22 @@ import org.springframework.web.multipart.MultipartFile;
 public class InspectionController {
   private final AccessControlService accessControl;
   private final InspectionService inspectionService;
+  private final InspectionExportService inspectionExportService;
 
-  public InspectionController(AccessControlService accessControl, InspectionService inspectionService) {
+  @Autowired
+  public InspectionController(
+      AccessControlService accessControl,
+      InspectionService inspectionService,
+      InspectionExportService inspectionExportService
+  ) {
     this.accessControl = accessControl;
     this.inspectionService = inspectionService;
+    this.inspectionExportService = inspectionExportService;
+  }
+
+  /** Compatibility constructor retained for focused controller tests. */
+  public InspectionController(AccessControlService accessControl, InspectionService inspectionService) {
+    this(accessControl, inspectionService, null);
   }
 
   @GetMapping
@@ -64,6 +80,27 @@ public class InspectionController {
     return ApiResponse.ok(inspectionService.record(user, id));
   }
 
+  @GetMapping(value = "/{id}/export.xlsx", produces = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+  public ResponseEntity<byte[]> exportRecord(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id
+  ) {
+    AuthUser user = accessControl.requireUser(authorization);
+    accessControl.requireInspectionRead(user);
+    if (inspectionExportService == null) {
+      throw new IllegalStateException("Inspection export service is unavailable");
+    }
+    InspectionExportFile file = inspectionExportService.export(user, id);
+    return ResponseEntity.ok()
+        .contentType(MediaType.parseMediaType(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+        .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
+            .filename(file.filename(), StandardCharsets.UTF_8)
+            .build().toString())
+        .header("X-Export-Filename", file.filename())
+        .body(file.content());
+  }
+
   @PostMapping
   public ApiResponse<InspectionRecordResponse> create(
       @RequestHeader(value = "Authorization", required = false) String authorization,
@@ -72,6 +109,15 @@ public class InspectionController {
     AuthUser user = accessControl.requireUser(authorization);
     accessControl.requireInspectionManage(user);
     return ApiResponse.ok(inspectionService.save(user, null, request));
+  }
+
+  @PostMapping("/history-repairs")
+  public ApiResponse<InspectionHistoryRepairResponse> repairHistory(
+      @RequestHeader(value = "Authorization", required = false) String authorization
+  ) {
+    AuthUser user = accessControl.requireUser(authorization);
+    accessControl.requireInspectionManage(user);
+    return ApiResponse.ok(inspectionService.repairHistory(user));
   }
 
   @PutMapping("/{id}")
@@ -96,6 +142,42 @@ public class InspectionController {
     return ApiResponse.ok(inspectionService.bindDetectionResults(user, id, request));
   }
 
+  @PostMapping("/{id}/detections/{detectionKey}/confirm")
+  public ApiResponse<InspectionDetectionDecisionResponse> confirmDetection(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id,
+      @PathVariable String detectionKey,
+      @RequestBody(required = false) InspectionDetectionDecisionRequest request
+  ) {
+    AuthUser user = accessControl.requireUser(authorization);
+    accessControl.requireInspectionManage(user);
+    return ApiResponse.ok(inspectionService.confirmDetection(user, id, detectionKey, request));
+  }
+
+  @PostMapping("/{id}/detections/{detectionKey}/revoke")
+  public ApiResponse<InspectionDetectionDecisionResponse> revokeDetection(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id,
+      @PathVariable String detectionKey,
+      @RequestBody(required = false) InspectionDetectionDecisionRequest request
+  ) {
+    AuthUser user = accessControl.requireUser(authorization);
+    accessControl.requireInspectionManage(user);
+    return ApiResponse.ok(inspectionService.revokeDetection(user, id, detectionKey, request));
+  }
+
+  @PostMapping("/{id}/detections/{detectionKey}/manual-adjust")
+  public ApiResponse<InspectionDetectionDecisionResponse> adjustDetection(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id,
+      @PathVariable String detectionKey,
+      @Valid @RequestBody InspectionDetectionAdjustmentRequest request
+  ) {
+    AuthUser user = accessControl.requireUser(authorization);
+    accessControl.requireInspectionManage(user);
+    return ApiResponse.ok(inspectionService.adjustDetection(user, id, detectionKey, request));
+  }
+
   @DeleteMapping("/{id}")
   public ApiResponse<Void> delete(
       @RequestHeader(value = "Authorization", required = false) String authorization,
@@ -114,21 +196,30 @@ public class InspectionController {
   ) {
     AuthUser user = accessControl.requireUser(authorization);
     accessControl.requireInspectionManage(user);
-    return ApiResponse.ok(inspectionService.detect(file));
+    return ApiResponse.ok(inspectionService.detect(user, file));
   }
 
-  @PostMapping("/export")
-  public ResponseEntity<byte[]> export(
+  /** Read-only clause matching for draft inspections; this endpoint never persists a score. */
+  @PostMapping("/detection-suggestions")
+  public ApiResponse<List<Map<String, Object>>> detectionSuggestions(
       @RequestHeader(value = "Authorization", required = false) String authorization,
-      @RequestBody Map<String, Object> payload
+      @RequestBody InspectionDetectionBindingRequest request
   ) {
     AuthUser user = accessControl.requireUser(authorization);
     accessControl.requireInspectionManage(user);
-    InspectionService.ExportFile file = inspectionService.export(payload);
-    return ResponseEntity.ok()
-        .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
-        .header("Content-Disposition", "attachment; filename*=UTF-8''" + file.filename())
-        .header("X-Export-Filename", file.filename())
-        .body(file.content());
+    return ApiResponse.ok(inspectionService.detectionSuggestions(user, request));
   }
+
+  /** Confirms a draft suggestion without creating or updating any business record. */
+  @PostMapping("/detection-suggestions/{detectionKey}/confirm")
+  public ApiResponse<Map<String, Object>> confirmDraftDetection(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String detectionKey,
+      @RequestBody InspectionDraftDetectionConfirmRequest request
+  ) {
+    AuthUser user = accessControl.requireUser(authorization);
+    accessControl.requireInspectionManage(user);
+    return ApiResponse.ok(inspectionService.confirmDraftDetection(user, detectionKey, request));
+  }
+
 }

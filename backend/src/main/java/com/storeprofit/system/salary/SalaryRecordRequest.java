@@ -4,7 +4,7 @@ import jakarta.validation.constraints.NotBlank;
 import java.math.BigDecimal;
 
 public record SalaryRecordRequest(
-    @NotBlank String storeId,
+    String storeId,
     @NotBlank String month,
     String employeeId,
     @NotBlank String employeeName,

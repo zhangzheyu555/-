@@ -1,13 +1,18 @@
-<script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { ChevronLeft, ChevronRight, FileSpreadsheet, History, RefreshCw, Save, X } from 'lucide-vue-next'
-import { useRouter } from 'vue-router'
+﻿<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { ChevronDown, ChevronLeft, ChevronRight, FileSpreadsheet, History, RefreshCw, Save, X } from 'lucide-vue-next'
+import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { getProfitEntries, getProfitMonths, saveProfitEntry, type ProfitEntry } from '../api/finance'
 import { getBrands, getStores, type BrandInfo, type StoreInfo } from '../api/operations'
 import BrandSelect from '../components/common/BrandSelect.vue'
+import PageHeader from '../components/common/PageHeader.vue'
 import ProfitImportDrawer from '../components/finance/ProfitImportDrawer.vue'
+import UiButton from '../components/ui/UiButton.vue'
+import UnsavedChangesDialog from '../components/ui/UnsavedChangesDialog.vue'
+import { useBusinessScope } from '../composables/useBusinessScope'
 import { money, percent, useProfitStore } from '../stores/profit'
 import { useAuthStore } from '../stores/auth'
+import { PERMISSIONS } from '../permissions/permissions'
 import { normalizeBrandName } from '../utils/brand'
 import { filterStoresByBrand } from '../utils/storeFilter'
 
@@ -31,16 +36,64 @@ interface ProfitDraft {
   note: string
 }
 
+type AmountFieldKey = Exclude<keyof ProfitDraft, 'note'>
+
+interface AmountFieldDefinition {
+  key: AmountFieldKey
+  label: string
+}
+
+const INCOME_FIELDS = [
+  { key: 'sales', label: '营业额' },
+  { key: 'refund', label: '退款金额' },
+  { key: 'discount', label: '优惠金额' },
+] satisfies readonly AmountFieldDefinition[]
+
+const COST_FIELDS = [
+  { key: 'material', label: '原材料成本' },
+  { key: 'packaging', label: '包材成本' },
+  { key: 'loss', label: '损耗成本' },
+  { key: 'costOther', label: '其他成本' },
+] satisfies readonly AmountFieldDefinition[]
+
+const PRIMARY_EXPENSE_FIELDS = [
+  { key: 'rent', label: '房租' },
+  { key: 'labor', label: '人工工资' },
+  { key: 'utility', label: '水电费' },
+  { key: 'property', label: '物业费' },
+  { key: 'commission', label: '平台佣金' },
+  { key: 'promo', label: '推广费' },
+] satisfies readonly AmountFieldDefinition[]
+
+const MORE_EXPENSE_FIELDS = [
+  { key: 'repair', label: '维修费' },
+  { key: 'equip', label: '设备费' },
+  { key: 'expOther', label: '其他费用' },
+] satisfies readonly AmountFieldDefinition[]
+
+const ALL_AMOUNT_FIELDS = [
+  ...INCOME_FIELDS,
+  ...COST_FIELDS,
+  ...PRIMARY_EXPENSE_FIELDS,
+  ...MORE_EXPENSE_FIELDS,
+]
+
+const amountFormatter = new Intl.NumberFormat('zh-CN', {
+  maximumFractionDigits: 2,
+  useGrouping: true,
+})
+
 const HISTORY_FETCH_LIMIT = 8
 const HISTORY_PAGE_SIZE = 6
 
 const router = useRouter()
 const auth = useAuthStore()
+const scope = useBusinessScope()
 const profit = useProfitStore()
 const brands = ref<BrandInfo[]>([])
 const stores = ref<StoreInfo[]>([])
-const selectedBrandId = ref('')
-const selectedStoreId = ref('')
+const selectedBrandId = ref(scope.scopedBrandId())
+const selectedStoreId = ref(scope.scopedStoreId())
 const selectedMonth = ref(new Date().toISOString().slice(0, 7))
 const error = ref('')
 const success = ref('')
@@ -53,19 +106,43 @@ const historyDrawerOpen = ref(false)
 const importDrawerOpen = ref(false)
 const historyPage = ref(1)
 const draft = ref<ProfitDraft>(createEmptyDraft())
+const baselineDraft = ref(snapshotDraft(draft.value))
+const moreFeesOpen = ref(false)
+const activeAmountField = ref<AmountFieldKey | null>(null)
+const amountInputText = ref<Partial<Record<AmountFieldKey, string>>>({})
+const fieldErrors = ref<Partial<Record<AmountFieldKey, string>>>({})
+const filterRenderKey = ref(0)
+const unsavedDialogOpen = ref(false)
+const unsavedDialogMessage = ref('')
 
 let entryRequestId = 0
 let historyRequestId = 0
+let pendingUnsavedConfirm: (() => void) | null = null
+let pendingUnsavedCancel: (() => void) | null = null
 
-const filteredStores = computed(() => filterStoresByBrand(stores.value, selectedBrandId.value))
-const selectedStore = computed(() => stores.value.find((store) => store.id === selectedStoreId.value) || null)
-const canSave = computed(() => ['ADMIN', 'BOSS', 'FINANCE', 'STORE_MANAGER'].includes(auth.role))
+const managerStore = computed<StoreInfo | null>(() => scope.isStoreManager.value && scope.boundStoreId.value
+  ? {
+      id: scope.boundStoreId.value,
+      code: scope.boundStoreId.value,
+      name: scope.boundStoreName.value,
+      brandId: scope.brandId.value || 0,
+      brandName: scope.brandName.value,
+    }
+  : null)
+const filteredStores = computed(() => scope.isStoreManager.value
+  ? (managerStore.value ? [managerStore.value] : [])
+  : filterStoresByBrand(stores.value, selectedBrandId.value))
+const selectedStore = computed(() => stores.value.find((store) => store.id === selectedStoreId.value) || managerStore.value)
+const canSave = computed(() => auth.hasPermission(PERMISSIONS.FINANCE_PROFIT_WRITE))
 const historyPreview = computed(() => historyRows.value.slice(0, 5))
 const historyPageCount = computed(() => Math.max(1, Math.ceil(historyRows.value.length / HISTORY_PAGE_SIZE)))
 const pagedHistory = computed(() => {
   const start = (historyPage.value - 1) * HISTORY_PAGE_SIZE
   return historyRows.value.slice(start, start + HISTORY_PAGE_SIZE)
 })
+const isDirty = computed(() => !loadingEntry.value && snapshotDraft(draft.value) !== baselineDraft.value)
+const moreFeesFilledCount = computed(() => MORE_EXPENSE_FIELDS.filter(({ key }) => num(draft.value[key]) !== 0).length)
+const moreFeesHasError = computed(() => MORE_EXPENSE_FIELDS.some(({ key }) => Boolean(fieldErrors.value[key])))
 
 const calcPreview = computed(() => {
   const sales = num(draft.value.sales)
@@ -101,6 +178,10 @@ function createEmptyDraft(): ProfitDraft {
   }
 }
 
+function snapshotDraft(value: ProfitDraft) {
+  return JSON.stringify(value)
+}
+
 function num(value: number | null | undefined) {
   const parsed = Number(value ?? 0)
   return Number.isFinite(parsed) ? parsed : 0
@@ -111,42 +192,125 @@ function inputValue(value: unknown) {
   return Number.isFinite(parsed) && parsed !== 0 ? parsed : null
 }
 
+function amountFieldId(field: AmountFieldKey) {
+  return `profit-${field}`
+}
+
+function amountFieldErrorId(field: AmountFieldKey) {
+  return `${amountFieldId(field)}-error`
+}
+
+function displayAmount(field: AmountFieldKey) {
+  const editingValue = amountInputText.value[field]
+  if ((activeAmountField.value === field || fieldErrors.value[field]) && editingValue !== undefined) return editingValue
+  const value = draft.value[field]
+  return value === null ? '' : amountFormatter.format(value)
+}
+
+function clearFieldError(field: AmountFieldKey) {
+  if (!fieldErrors.value[field]) return
+  const next = { ...fieldErrors.value }
+  delete next[field]
+  fieldErrors.value = next
+}
+
+function startEditingAmount(field: AmountFieldKey, event: FocusEvent) {
+  activeAmountField.value = field
+  amountInputText.value = {
+    ...amountInputText.value,
+    [field]: (event.target as HTMLInputElement).value,
+  }
+}
+
+function updateAmount(field: AmountFieldKey, event: Event) {
+  const rawValue = (event.target as HTMLInputElement).value
+  const normalizedValue = rawValue.replace(/,/g, '').trim()
+  amountInputText.value = { ...amountInputText.value, [field]: rawValue }
+
+  if (!normalizedValue) {
+    draft.value[field] = null
+    clearFieldError(field)
+    return
+  }
+
+  if (!/^(?:\d+|\d*\.\d{0,2})$/.test(normalizedValue)) {
+    fieldErrors.value = { ...fieldErrors.value, [field]: '请输入大于等于 0 的金额，最多保留 2 位小数' }
+    return
+  }
+
+  const parsed = Number(normalizedValue)
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    fieldErrors.value = { ...fieldErrors.value, [field]: '请输入大于等于 0 的有效金额' }
+    return
+  }
+
+  draft.value[field] = parsed
+  clearFieldError(field)
+}
+
+function finishEditingAmount(field: AmountFieldKey) {
+  activeAmountField.value = null
+  if (fieldErrors.value[field]) return
+  const next = { ...amountInputText.value }
+  delete next[field]
+  amountInputText.value = next
+}
+
+function validateAmounts() {
+  const nextErrors = { ...fieldErrors.value }
+  for (const { key } of ALL_AMOUNT_FIELDS) {
+    const value = draft.value[key]
+    if (value !== null && (!Number.isFinite(value) || value < 0)) {
+      nextErrors[key] = '请输入大于等于 0 的有效金额'
+    }
+  }
+  fieldErrors.value = nextErrors
+  if (MORE_EXPENSE_FIELDS.some(({ key }) => Boolean(nextErrors[key]))) moreFeesOpen.value = true
+  return Object.keys(nextErrors).length === 0
+}
+
 function applyEntry(entry?: ProfitEntry) {
   if (!entry) {
     draft.value = createEmptyDraft()
-    return
+  } else {
+    draft.value = {
+      sales: inputValue(entry.sales),
+      refund: inputValue(entry.refund),
+      discount: inputValue(entry.discount),
+      material: inputValue(entry.material),
+      packaging: inputValue(entry.packaging),
+      loss: inputValue(entry.loss),
+      costOther: inputValue(entry.costOther),
+      rent: inputValue(entry.rent),
+      labor: inputValue(entry.labor),
+      utility: inputValue(entry.utility),
+      property: inputValue(entry.property),
+      commission: inputValue(entry.commission),
+      promo: inputValue(entry.promo),
+      repair: inputValue(entry.repair),
+      equip: inputValue(entry.equip),
+      expOther: inputValue(entry.expOther),
+      note: entry.note || '',
+    }
   }
-  draft.value = {
-    sales: inputValue(entry.sales),
-    refund: inputValue(entry.refund),
-    discount: inputValue(entry.discount),
-    material: inputValue(entry.material),
-    packaging: inputValue(entry.packaging),
-    loss: inputValue(entry.loss),
-    costOther: inputValue(entry.costOther),
-    rent: inputValue(entry.rent),
-    labor: inputValue(entry.labor),
-    utility: inputValue(entry.utility),
-    property: inputValue(entry.property),
-    commission: inputValue(entry.commission),
-    promo: inputValue(entry.promo),
-    repair: inputValue(entry.repair),
-    equip: inputValue(entry.equip),
-    expOther: inputValue(entry.expOther),
-    note: entry.note || '',
-  }
+  fieldErrors.value = {}
+  amountInputText.value = {}
+  activeAmountField.value = null
+  moreFeesOpen.value = false
+  baselineDraft.value = snapshotDraft(draft.value)
 }
 
 async function loadCurrentEntry() {
   const requestId = ++entryRequestId
-  if (!selectedStoreId.value || !selectedMonth.value) {
+  const storeId = scope.scopedStoreId(selectedStoreId.value)
+  if (!storeId || !selectedMonth.value) {
     applyEntry()
     return
   }
   loadingEntry.value = true
   try {
-    const rows = await getProfitEntries({ month: selectedMonth.value, storeId: selectedStoreId.value })
-    if (requestId === entryRequestId) applyEntry(rows.find((row) => row.storeId === selectedStoreId.value))
+    const rows = await getProfitEntries({ month: selectedMonth.value, storeId })
+    if (requestId === entryRequestId) applyEntry(rows.find((row) => row.storeId === storeId))
   } catch (loadError) {
     if (requestId === entryRequestId) {
       applyEntry()
@@ -161,7 +325,8 @@ async function loadHistory() {
   const requestId = ++historyRequestId
   historyError.value = ''
   historyPage.value = 1
-  if (!selectedStoreId.value) {
+  const storeId = scope.scopedStoreId(selectedStoreId.value)
+  if (!storeId) {
     historyRows.value = []
     return
   }
@@ -171,11 +336,11 @@ async function loadHistory() {
     const targetMonths = [...new Set(months.filter(Boolean))]
       .sort((left, right) => right.localeCompare(left))
       .slice(0, HISTORY_FETCH_LIMIT)
-    const rows = await Promise.all(targetMonths.map((month) => getProfitEntries({ month, storeId: selectedStoreId.value })))
+    const rows = await Promise.all(targetMonths.map((month) => getProfitEntries({ month, storeId })))
     if (requestId !== historyRequestId) return
     historyRows.value = rows
       .flat()
-      .filter((row) => row.storeId === selectedStoreId.value)
+      .filter((row) => row.storeId === storeId)
       .sort((left, right) => right.month.localeCompare(left.month))
   } catch {
     if (requestId === historyRequestId) {
@@ -191,15 +356,22 @@ async function load() {
   error.value = ''
   success.value = ''
   try {
-    await Promise.all([
-      profit.load(),
-      getBrands().then((rows) => {
-        brands.value = rows
-      }),
-      getStores().then((rows) => {
-        stores.value = rows
-      }),
-    ])
+    if (scope.isStoreManager.value) {
+      selectedBrandId.value = scope.scopedBrandId()
+      selectedStoreId.value = scope.scopedStoreId()
+      stores.value = managerStore.value ? [managerStore.value] : []
+      brands.value = scope.brandId.value && scope.brandName.value
+        ? [{ id: scope.brandId.value, code: String(scope.brandId.value), name: scope.brandName.value }]
+        : []
+      profit.setFilters({ month: selectedMonth.value, brandId: selectedBrandId.value, storeId: selectedStoreId.value })
+      await profit.load()
+    } else {
+      await Promise.all([
+        profit.load(),
+        getBrands().then((rows) => { brands.value = rows }),
+        getStores().then((rows) => { stores.value = rows }),
+      ])
+    }
     selectedMonth.value = profit.summary.month || selectedMonth.value
     if (!selectedStoreId.value) selectedStoreId.value = filteredStores.value[0]?.id || ''
     await Promise.all([loadCurrentEntry(), loadHistory()])
@@ -215,18 +387,20 @@ async function save() {
     error.value = '当前账号没有保存利润数据的权限。'
     return
   }
-  if (!selectedStoreId.value) {
-    error.value = '请选择门店后再保存。'
+  const storeId = scope.scopedStoreId(selectedStoreId.value)
+  if (!storeId) {
+    error.value = scope.configurationError.value || '请选择门店后再保存。'
     return
   }
   if (!selectedMonth.value) {
     error.value = '请选择月份后再保存。'
     return
   }
+  if (!validateAmounts()) return
   saving.value = true
   try {
     await saveProfitEntry({
-      storeId: selectedStoreId.value,
+      storeId,
       month: selectedMonth.value,
       sales: num(draft.value.sales),
       refund: num(draft.value.refund),
@@ -263,9 +437,81 @@ function displayError(reason: unknown, fallback: string) {
   return message || fallback
 }
 
+function openUnsavedDialog(message: string, confirm: () => void, cancel: () => void = () => {}) {
+  if (unsavedDialogOpen.value) pendingUnsavedCancel?.()
+  pendingUnsavedConfirm = confirm
+  pendingUnsavedCancel = cancel
+  unsavedDialogMessage.value = message
+  unsavedDialogOpen.value = true
+}
+
+function cancelUnsavedChange() {
+  const cancel = pendingUnsavedCancel
+  pendingUnsavedConfirm = null
+  pendingUnsavedCancel = null
+  unsavedDialogOpen.value = false
+  cancel?.()
+}
+
+function confirmUnsavedChange() {
+  const confirm = pendingUnsavedConfirm
+  pendingUnsavedConfirm = null
+  pendingUnsavedCancel = null
+  unsavedDialogOpen.value = false
+  baselineDraft.value = snapshotDraft(draft.value)
+  confirm?.()
+}
+
+function runAfterDirtyCheck(message: string, action: () => void) {
+  if (!isDirty.value) {
+    action()
+    return
+  }
+  openUnsavedDialog(message, action)
+}
+
+function requestBrandChange(value: string) {
+  if (value === selectedBrandId.value) return
+  filterRenderKey.value += 1
+  runAfterDirtyCheck('切换品牌将放弃当前尚未保存的录入内容。', () => {
+    const nextStores = filterStoresByBrand(stores.value, value)
+    const nextStoreId = nextStores.some((store) => store.id === selectedStoreId.value)
+      ? selectedStoreId.value
+      : (nextStores[0]?.id || '')
+    selectedBrandId.value = value
+    selectedStoreId.value = nextStoreId
+  })
+}
+
+function requestMonthChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const value = input.value
+  input.value = selectedMonth.value
+  if (!value || value === selectedMonth.value) return
+  runAfterDirtyCheck('切换月份将放弃当前尚未保存的录入内容。', () => {
+    selectedMonth.value = value
+  })
+}
+
+function requestStoreChange(event: Event) {
+  const select = event.target as HTMLSelectElement
+  const value = select.value
+  select.value = selectedStoreId.value
+  if (value === selectedStoreId.value) return
+  runAfterDirtyCheck('切换门店将放弃当前尚未保存的录入内容。', () => {
+    selectedStoreId.value = value
+  })
+}
+
+function refreshEntry() {
+  runAfterDirtyCheck('刷新数据将放弃当前尚未保存的录入内容。', () => {
+    void load()
+  })
+}
+
 function goImportStatus() {
   error.value = ''
-  if (!selectedStoreId.value || !selectedMonth.value) {
+  if (!scope.scopedStoreId(selectedStoreId.value) || !selectedMonth.value) {
     error.value = '请选择门店和月份后再导入。'
     return
   }
@@ -283,15 +529,19 @@ function goProfitTable() {
     path: '/profit-table',
     query: {
       month: selectedMonth.value,
-      brandId: selectedBrandId.value || undefined,
-      storeId: selectedStoreId.value || undefined,
+      brandId: scope.isStoreManager.value ? undefined : selectedBrandId.value || undefined,
+      storeId: scope.isStoreManager.value ? undefined : selectedStoreId.value || undefined,
+      mode: 'single',
     },
   })
 }
 
 function selectHistory(row: ProfitEntry) {
-  selectedMonth.value = row.month
   historyDrawerOpen.value = false
+  if (row.month === selectedMonth.value) return
+  runAfterDirtyCheck('查看历史月份将放弃当前尚未保存的录入内容。', () => {
+    selectedMonth.value = row.month
+  })
 }
 
 function previousHistoryPage() {
@@ -302,14 +552,25 @@ function nextHistoryPage() {
   historyPage.value = Math.min(historyPageCount.value, historyPage.value + 1)
 }
 
+function handleKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape' && historyDrawerOpen.value && !unsavedDialogOpen.value) historyDrawerOpen.value = false
+}
+
 onMounted(() => {
+  document.addEventListener('keydown', handleKeydown)
   void load()
 })
+onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
 
-watch(selectedBrandId, () => {
-  if (selectedStoreId.value && !filteredStores.value.some((store) => store.id === selectedStoreId.value)) {
-    selectedStoreId.value = filteredStores.value[0]?.id || ''
-  }
+onBeforeRouteLeave(() => {
+  if (!isDirty.value) return true
+  return new Promise<boolean>((resolve) => {
+    openUnsavedDialog(
+      '离开数据录入页将放弃当前尚未保存的内容。',
+      () => resolve(true),
+      () => resolve(false),
+    )
+  })
 })
 
 watch([selectedStoreId, selectedMonth], () => {
@@ -317,27 +578,57 @@ watch([selectedStoreId, selectedMonth], () => {
   void loadCurrentEntry()
   void loadHistory()
 })
+
+watch(
+  draft,
+  () => {
+    if (isDirty.value) success.value = ''
+  },
+  { deep: true },
+)
 </script>
 
 <template>
-  <section class="data-entry-page">
-    <header class="entry-toolbar" aria-label="数据录入操作栏">
-      <div class="entry-toolbar__title">
-        <h2>数据录入</h2>
-      </div>
+  <section class="page-panel data-entry-page">
+    <PageHeader title="数据录入">
+      <template #actions>
+        <div class="entry-toolbar__actions">
+          <span v-if="isDirty" class="entry-dirty" role="status"><i aria-hidden="true" />尚未保存</span>
+          <button class="tool-icon-button" type="button" title="刷新数据" aria-label="刷新数据" :disabled="loadingEntry || saving" @click="refreshEntry">
+            <RefreshCw :size="17" />
+          </button>
+          <button class="tool-button" type="button" @click="goImportStatus">
+            <FileSpreadsheet :size="16" />导入数据
+          </button>
+          <button class="save-button" type="button" :disabled="!canSave || saving" :title="canSave ? '保存当前门店和月份的经营数据' : '当前角色没有保存权限'" @click="save">
+            <Save :size="16" />{{ saving ? '保存中' : '保存' }}
+          </button>
+        </div>
+      </template>
+    </PageHeader>
 
+    <div class="entry-toolbar" aria-label="数据录入筛选条件">
       <div class="entry-toolbar__fields">
-        <label class="toolbar-field toolbar-field--brand">
+        <div v-if="scope.isStoreManager.value" class="entry-manager-context" aria-label="当前录入门店">
+          <strong>{{ scope.boundStoreName.value }} · {{ selectedMonth }}</strong>
+          <small>{{ scope.brandName.value }}</small>
+        </div>
+        <label v-if="!scope.isStoreManager.value" class="toolbar-field toolbar-field--brand">
           <span>品牌</span>
-          <BrandSelect v-model="selectedBrandId" :brands="brands" />
+          <BrandSelect
+            :key="`brand-${filterRenderKey}`"
+            :model-value="selectedBrandId"
+            :brands="brands"
+            @update:model-value="requestBrandChange"
+          />
         </label>
         <label class="toolbar-field toolbar-field--month">
           <span>月份</span>
-          <input v-model="selectedMonth" type="month" />
+          <input :value="selectedMonth" type="month" @change="requestMonthChange" />
         </label>
-        <label class="toolbar-field toolbar-field--store">
+        <label v-if="!scope.isStoreManager.value" class="toolbar-field toolbar-field--store">
           <span>门店</span>
-          <select v-model="selectedStoreId" aria-label="门店">
+          <select :value="selectedStoreId" aria-label="门店" @change="requestStoreChange">
             <option value="">请选择门店</option>
             <option v-for="store in filteredStores" :key="store.id" :value="store.id">
               {{ normalizeBrandName(store.brandName) }} · {{ store.name }}
@@ -345,124 +636,148 @@ watch([selectedStoreId, selectedMonth], () => {
           </select>
         </label>
       </div>
-
-      <div class="entry-toolbar__actions">
-        <button class="tool-icon-button" type="button" title="刷新数据" aria-label="刷新数据" @click="load">
-          <RefreshCw :size="17" />
-        </button>
-        <button class="tool-button" type="button" @click="goImportStatus">
-          <FileSpreadsheet :size="16" />
-          导入数据
-        </button>
-        <button class="save-button" type="button" :disabled="!canSave || saving" :title="canSave ? '保存当前门店和月份的经营数据' : '当前角色没有保存权限'" @click="save">
-          <Save :size="16" />
-          {{ saving ? '保存中' : '保存' }}
-        </button>
-      </div>
-    </header>
+    </div>
 
     <div v-if="error" class="entry-notice entry-notice--error" role="alert">{{ error }}</div>
-    <div v-else-if="success" class="entry-notice entry-notice--success">{{ success }}</div>
+    <div v-else-if="success" class="entry-notice entry-notice--success" role="status" aria-live="polite">{{ success }}</div>
 
     <ProfitImportDrawer
       v-if="importDrawerOpen"
       :store-id="selectedStoreId"
       :store-name="selectedStore?.name"
       :month="selectedMonth"
+      :scope-locked="scope.isStoreManager.value"
       @close="importDrawerOpen = false"
       @saved="onImportSaved"
     />
 
     <div class="entry-workspace">
-      <form class="entry-sheet" @submit.prevent="save">
+      <form class="entry-sheet" novalidate @submit.prevent="save">
         <section class="entry-section">
           <div class="entry-section__head">
-            <h3>营业</h3>
+            <h3>营业收入</h3>
+            <p>录入本月营业、退款与优惠金额</p>
           </div>
-          <div class="entry-fields entry-fields--income">
-            <label class="amount-field">
-              <span>营业额</span>
-              <span class="amount-field__control"><input v-model.number="draft.sales" type="number" min="0" inputmode="decimal" placeholder="0" /><em>元</em></span>
-            </label>
-            <label class="amount-field">
-              <span>退款金额</span>
-              <span class="amount-field__control"><input v-model.number="draft.refund" type="number" min="0" inputmode="decimal" placeholder="0" /><em>元</em></span>
-            </label>
-            <label class="amount-field">
-              <span>优惠金额</span>
-              <span class="amount-field__control"><input v-model.number="draft.discount" type="number" min="0" inputmode="decimal" placeholder="0" /><em>元</em></span>
-            </label>
-          </div>
-        </section>
-
-        <section class="entry-section">
-          <div class="entry-section__head"><h3>成本</h3></div>
-          <div class="entry-fields entry-fields--cost">
-            <label class="amount-field">
-              <span>原材料成本</span>
-              <span class="amount-field__control"><input v-model.number="draft.material" type="number" min="0" inputmode="decimal" placeholder="0" /><em>元</em></span>
-            </label>
-            <label class="amount-field">
-              <span>包材成本</span>
-              <span class="amount-field__control"><input v-model.number="draft.packaging" type="number" min="0" inputmode="decimal" placeholder="0" /><em>元</em></span>
-            </label>
-            <label class="amount-field">
-              <span>损耗成本</span>
-              <span class="amount-field__control"><input v-model.number="draft.loss" type="number" min="0" inputmode="decimal" placeholder="0" /><em>元</em></span>
-            </label>
-            <label class="amount-field">
-              <span>其他成本</span>
-              <span class="amount-field__control"><input v-model.number="draft.costOther" type="number" min="0" inputmode="decimal" placeholder="0" /><em>元</em></span>
+          <div class="entry-fields">
+            <label v-for="field in INCOME_FIELDS" :key="field.key" class="amount-field" :for="amountFieldId(field.key)">
+              <span>{{ field.label }}</span>
+              <span class="amount-field__control" :class="{ 'amount-field__control--error': fieldErrors[field.key] }">
+                <input
+                  :id="amountFieldId(field.key)"
+                  :value="displayAmount(field.key)"
+                  type="text"
+                  inputmode="decimal"
+                  autocomplete="off"
+                  placeholder="0"
+                  :aria-invalid="Boolean(fieldErrors[field.key])"
+                  :aria-describedby="fieldErrors[field.key] ? amountFieldErrorId(field.key) : undefined"
+                  @focus="startEditingAmount(field.key, $event)"
+                  @input="updateAmount(field.key, $event)"
+                  @blur="finishEditingAmount(field.key)"
+                />
+                <em>元</em>
+              </span>
+              <small v-if="fieldErrors[field.key]" :id="amountFieldErrorId(field.key)" class="field-error">{{ fieldErrors[field.key] }}</small>
             </label>
           </div>
         </section>
 
         <section class="entry-section">
-          <div class="entry-section__head"><h3>费用</h3></div>
-          <div class="entry-fields entry-fields--expense">
-            <label class="amount-field">
-              <span>房租</span>
-              <span class="amount-field__control"><input v-model.number="draft.rent" type="number" min="0" inputmode="decimal" placeholder="0" /><em>元</em></span>
+          <div class="entry-section__head">
+            <h3>成本</h3>
+            <p>记录直接产生的原料、包材与损耗成本</p>
+          </div>
+          <div class="entry-fields">
+            <label v-for="field in COST_FIELDS" :key="field.key" class="amount-field" :for="amountFieldId(field.key)">
+              <span>{{ field.label }}</span>
+              <span class="amount-field__control" :class="{ 'amount-field__control--error': fieldErrors[field.key] }">
+                <input
+                  :id="amountFieldId(field.key)"
+                  :value="displayAmount(field.key)"
+                  type="text"
+                  inputmode="decimal"
+                  autocomplete="off"
+                  placeholder="0"
+                  :aria-invalid="Boolean(fieldErrors[field.key])"
+                  :aria-describedby="fieldErrors[field.key] ? amountFieldErrorId(field.key) : undefined"
+                  @focus="startEditingAmount(field.key, $event)"
+                  @input="updateAmount(field.key, $event)"
+                  @blur="finishEditingAmount(field.key)"
+                />
+                <em>元</em>
+              </span>
+              <small v-if="fieldErrors[field.key]" :id="amountFieldErrorId(field.key)" class="field-error">{{ fieldErrors[field.key] }}</small>
             </label>
-            <label class="amount-field">
-              <span>人工工资</span>
-              <span class="amount-field__control"><input v-model.number="draft.labor" type="number" min="0" inputmode="decimal" placeholder="0" /><em>元</em></span>
+          </div>
+        </section>
+
+        <section class="entry-section">
+          <div class="entry-section__head">
+            <h3>费用</h3>
+            <p>优先填写日常高频经营费用</p>
+          </div>
+          <div class="entry-fields">
+            <label v-for="field in PRIMARY_EXPENSE_FIELDS" :key="field.key" class="amount-field" :for="amountFieldId(field.key)">
+              <span>{{ field.label }}</span>
+              <span class="amount-field__control" :class="{ 'amount-field__control--error': fieldErrors[field.key] }">
+                <input
+                  :id="amountFieldId(field.key)"
+                  :value="displayAmount(field.key)"
+                  type="text"
+                  inputmode="decimal"
+                  autocomplete="off"
+                  placeholder="0"
+                  :aria-invalid="Boolean(fieldErrors[field.key])"
+                  :aria-describedby="fieldErrors[field.key] ? amountFieldErrorId(field.key) : undefined"
+                  @focus="startEditingAmount(field.key, $event)"
+                  @input="updateAmount(field.key, $event)"
+                  @blur="finishEditingAmount(field.key)"
+                />
+                <em>元</em>
+              </span>
+              <small v-if="fieldErrors[field.key]" :id="amountFieldErrorId(field.key)" class="field-error">{{ fieldErrors[field.key] }}</small>
             </label>
-            <label class="amount-field">
-              <span>水电费</span>
-              <span class="amount-field__control"><input v-model.number="draft.utility" type="number" min="0" inputmode="decimal" placeholder="0" /><em>元</em></span>
-            </label>
-            <label class="amount-field">
-              <span>物业费</span>
-              <span class="amount-field__control"><input v-model.number="draft.property" type="number" min="0" inputmode="decimal" placeholder="0" /><em>元</em></span>
-            </label>
-            <label class="amount-field">
-              <span>平台佣金</span>
-              <span class="amount-field__control"><input v-model.number="draft.commission" type="number" min="0" inputmode="decimal" placeholder="0" /><em>元</em></span>
-            </label>
-            <label class="amount-field">
-              <span>推广费</span>
-              <span class="amount-field__control"><input v-model.number="draft.promo" type="number" min="0" inputmode="decimal" placeholder="0" /><em>元</em></span>
-            </label>
-            <label class="amount-field">
-              <span>维修费</span>
-              <span class="amount-field__control"><input v-model.number="draft.repair" type="number" min="0" inputmode="decimal" placeholder="0" /><em>元</em></span>
-            </label>
-            <label class="amount-field">
-              <span>设备费</span>
-              <span class="amount-field__control"><input v-model.number="draft.equip" type="number" min="0" inputmode="decimal" placeholder="0" /><em>元</em></span>
-            </label>
-            <label class="amount-field">
-              <span>其他费用</span>
-              <span class="amount-field__control"><input v-model.number="draft.expOther" type="number" min="0" inputmode="decimal" placeholder="0" /><em>元</em></span>
-            </label>
+          </div>
+
+          <div class="more-fees">
+            <button class="more-fees__toggle" type="button" :aria-expanded="moreFeesOpen" aria-controls="more-fees-fields" @click="moreFeesOpen = !moreFeesOpen">
+              <span><b>更多费用</b><small>维修费、设备费和其他费用</small></span>
+              <span class="more-fees__status" :class="{ 'more-fees__status--error': moreFeesHasError }">
+                {{ moreFeesHasError ? '请检查' : moreFeesFilledCount ? `已填写 ${moreFeesFilledCount} 项` : '按需填写' }}
+                <ChevronDown :size="18" :class="{ 'is-open': moreFeesOpen }" />
+              </span>
+            </button>
+            <div v-if="moreFeesOpen" id="more-fees-fields" class="more-fees__body">
+              <div class="entry-fields">
+                <label v-for="field in MORE_EXPENSE_FIELDS" :key="field.key" class="amount-field" :for="amountFieldId(field.key)">
+                  <span>{{ field.label }}</span>
+                  <span class="amount-field__control" :class="{ 'amount-field__control--error': fieldErrors[field.key] }">
+                    <input
+                      :id="amountFieldId(field.key)"
+                      :value="displayAmount(field.key)"
+                      type="text"
+                      inputmode="decimal"
+                      autocomplete="off"
+                      placeholder="0"
+                      :aria-invalid="Boolean(fieldErrors[field.key])"
+                      :aria-describedby="fieldErrors[field.key] ? amountFieldErrorId(field.key) : undefined"
+                      @focus="startEditingAmount(field.key, $event)"
+                      @input="updateAmount(field.key, $event)"
+                      @blur="finishEditingAmount(field.key)"
+                    />
+                    <em>元</em>
+                  </span>
+                  <small v-if="fieldErrors[field.key]" :id="amountFieldErrorId(field.key)" class="field-error">{{ fieldErrors[field.key] }}</small>
+                </label>
+              </div>
+            </div>
           </div>
         </section>
 
         <section class="entry-section entry-section--note">
           <label class="note-field">
             <span>备注</span>
-            <input v-model="draft.note" type="text" placeholder="本月数据说明" />
+            <textarea v-model="draft.note" rows="3" maxlength="500" placeholder="补充说明本月数据变化或异常情况（选填）" />
           </label>
         </section>
       </form>
@@ -493,6 +808,7 @@ watch([selectedStoreId, selectedMonth], () => {
             <strong>{{ money(calcPreview.net) }}</strong>
             <div><span>净利率</span><b>{{ calcPreview.income ? percent(calcPreview.margin) : '—' }}</b></div>
           </div>
+          <p class="profit-summary__formula">净利润 = 毛利润 - 费用合计</p>
         </section>
 
         <section class="entry-history">
@@ -505,7 +821,14 @@ watch([selectedStoreId, selectedMonth], () => {
           <div v-else-if="!selectedStoreId" class="history-placeholder">请选择门店</div>
           <div v-else-if="!historyPreview.length" class="history-placeholder">暂无历史记录</div>
           <template v-else>
-            <button v-for="row in historyPreview" :key="`${row.storeId}-${row.month}`" class="history-row" type="button" @click="selectHistory(row)">
+            <button
+              v-for="row in historyPreview"
+              :key="`${row.storeId}-${row.month}`"
+              class="history-row"
+              :class="{ 'history-row--active': row.month === selectedMonth }"
+              type="button"
+              @click="selectHistory(row)"
+            >
               <span>{{ row.month }}</span>
               <span><b>{{ money(row.income ?? row.sales) }}</b><em :class="{ negative: Number(row.net) < 0 }">{{ money(row.net) }} · {{ percent(row.margin) }}</em></span>
             </button>
@@ -522,7 +845,7 @@ watch([selectedStoreId, selectedMonth], () => {
               <span>{{ selectedStore?.name || '当前门店' }}</span>
               <h2 id="history-drawer-title">历史经营记录</h2>
             </div>
-            <button class="tool-icon-button" type="button" aria-label="关闭历史记录" title="关闭" @click="historyDrawerOpen = false"><X :size="18" /></button>
+            <UiButton variant="ghost" icon-only aria-label="关闭历史记录" title="关闭" @click="historyDrawerOpen = false"><template #icon><X :size="18" /></template></UiButton>
           </header>
           <div class="history-drawer__body">
             <button v-for="row in pagedHistory" :key="`${row.storeId}-${row.month}`" class="history-drawer__row" type="button" @click="selectHistory(row)">
@@ -540,90 +863,172 @@ watch([selectedStoreId, selectedMonth], () => {
         </section>
       </div>
     </Teleport>
+
+    <UnsavedChangesDialog
+      :open="unsavedDialogOpen"
+      title="当前修改尚未保存"
+      :message="unsavedDialogMessage"
+      keep-label="返回继续编辑"
+      discard-label="放弃修改并继续"
+      @keep-editing="cancelUnsavedChange"
+      @discard="confirmUnsavedChange"
+    />
   </section>
 </template>
 
 <style scoped>
 .data-entry-page {
+  --entry-primary: #276b65;
+  --entry-primary-hover: #205b56;
+  --entry-primary-soft: #eaf4f2;
+  --entry-bg: #f4f8f7;
+  --entry-surface: #ffffff;
+  --entry-ink: #182424;
+  --entry-muted: #526765;
+  --entry-line: #dbe7e5;
+  --entry-line-strong: #bed3d0;
+  --entry-danger: #c43f4c;
+  --entry-danger-soft: #fff3f4;
+  --entry-success: #187b55;
+  --entry-success-soft: #eef8f3;
+  --entry-radius: 6px;
+  --entry-control-height: 44px;
+  --entry-z-drawer: 80;
   width: 100%;
-  max-width: 1320px;
   display: grid;
-  gap: var(--space-3);
-  padding: var(--space-1) 0 var(--space-5);
+  gap: 16px;
+  padding: 0 0 24px;
+  color: var(--entry-ink);
 }
 
 .entry-toolbar {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: end;
-  gap: var(--space-3);
-  padding: 12px 14px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-}
-
-.entry-toolbar__title h2 {
-  margin: 0;
-  font-size: 20px;
-  line-height: 36px;
-  font-weight: 800;
+  padding: 16px;
+  border: 1px solid var(--entry-line);
+  border-radius: var(--entry-radius);
+  background: var(--entry-surface);
 }
 
 .entry-toolbar__fields {
   display: grid;
-  grid-template-columns: minmax(132px, 0.8fr) 128px minmax(190px, 1.2fr);
-  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
   min-width: 0;
+}
+
+.entry-manager-context {
+  display: grid;
+  grid-column: span 2;
+  align-content: center;
+  min-width: 0;
+  gap: 3px;
+  padding: 4px 0;
+  color: var(--entry-ink);
+}
+
+.entry-manager-context strong {
+  overflow: hidden;
+  font-size: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entry-manager-context small {
+  color: var(--entry-muted);
+  font-size: 13px;
 }
 
 .toolbar-field,
 .amount-field,
 .note-field {
   display: grid;
-  gap: 5px;
+  gap: 8px;
   min-width: 0;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
+  color: var(--entry-muted);
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .toolbar-field > span,
 .amount-field > span,
 .note-field > span {
-  line-height: 1;
+  line-height: 1.4;
 }
 
 .toolbar-field input,
 .toolbar-field select,
 .toolbar-field :deep(select),
 .amount-field input,
-.note-field input {
+.note-field textarea {
   width: 100%;
   min-width: 0;
-  height: var(--control-height);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  height: var(--entry-control-height);
+  border: 1px solid var(--entry-line-strong);
+  border-radius: var(--entry-radius);
   outline: none;
   background: #fff;
-  color: var(--ink);
-  padding: 0 10px;
+  color: var(--entry-ink);
+  padding: 0 12px;
   font-variant-numeric: tabular-nums;
+}
+
+.toolbar-field :deep(.brand-select-wrap) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  width: 100%;
+  gap: 8px;
+}
+
+.toolbar-field :deep(.brand-select-wrap select) {
+  width: 100%;
+  min-width: 0;
+}
+
+.note-field textarea {
+  min-height: 88px;
+  height: auto;
+  resize: vertical;
+  padding: 12px;
+  line-height: 1.6;
+}
+
+.toolbar-field input::placeholder,
+.amount-field input::placeholder,
+.note-field textarea::placeholder {
+  color: #667a78;
+  opacity: 1;
 }
 
 .toolbar-field input:focus,
 .toolbar-field select:focus,
 .toolbar-field :deep(select:focus),
 .amount-field input:focus,
-.note-field input:focus {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(238, 126, 62, 0.12);
+.note-field textarea:focus {
+  border-color: var(--entry-primary);
+  outline: 2px solid rgba(39, 107, 101, 0.14);
+  outline-offset: 0;
 }
 
 .entry-toolbar__actions {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.entry-dirty {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--entry-muted);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.entry-dirty i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #b56713;
 }
 
 .tool-icon-button,
@@ -633,101 +1038,100 @@ watch([selectedStoreId, selectedMonth], () => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  border: 1px solid var(--line-strong);
+  gap: 8px;
+  border: 1px solid var(--entry-line-strong);
   background: #fff;
-  color: var(--ink);
+  color: var(--entry-ink);
   font-size: 13px;
   font-weight: 700;
 }
 
 .tool-icon-button {
-  width: var(--control-height);
-  height: var(--control-height);
+  width: 40px;
+  height: 40px;
   padding: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--entry-radius);
 }
 
 .tool-button,
 .save-button {
-  min-height: var(--control-height);
-  padding: 0 11px;
-  border-radius: var(--radius-sm);
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: var(--entry-radius);
 }
 
 .tool-icon-button:hover,
 .tool-button:hover {
-  border-color: var(--primary);
-  color: var(--primary);
+  border-color: var(--entry-primary);
+  color: var(--entry-primary);
 }
 
 .save-button {
-  border-color: var(--primary);
-  background: var(--primary);
+  border-color: var(--entry-primary);
+  background: var(--entry-primary);
   color: #fff;
 }
 
 .save-button:hover:not(:disabled) {
-  background: #d96e2c;
+  border-color: var(--entry-primary-hover);
+  background: var(--entry-primary-hover);
 }
 
 .text-action {
-  min-height: 28px;
+  min-height: 32px;
   border: 0;
   padding: 0;
-  color: var(--primary);
+  color: var(--entry-primary);
   background: transparent;
   white-space: nowrap;
 }
 
 .text-action:hover:not(:disabled) {
-  color: #c65f25;
+  color: var(--entry-primary-hover);
   text-decoration: underline;
-  text-underline-offset: 3px;
+  text-underline-offset: 4px;
 }
 
 .entry-notice {
-  padding: 9px 12px;
-  border: 1px solid;
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-  font-weight: 700;
+  padding: 8px 12px;
+  border-radius: var(--entry-radius);
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .entry-notice--error {
-  border-color: rgba(217, 79, 61, 0.28);
-  background: #fff6f4;
-  color: var(--bad);
+  background: var(--entry-danger-soft);
+  color: var(--entry-danger);
 }
 
 .entry-notice--success {
-  border-color: rgba(30, 158, 106, 0.28);
-  background: #f1faf5;
-  color: var(--good);
+  background: var(--entry-success-soft);
+  color: var(--entry-success);
 }
 
 .entry-workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 350px);
+  grid-template-columns: minmax(0, 1fr) 360px;
   align-items: start;
-  gap: var(--space-3);
+  gap: 24px;
 }
 
 .entry-sheet,
 .profit-summary,
 .entry-history {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: var(--surface);
+  border: 1px solid var(--entry-line);
+  border-radius: var(--entry-radius) !important;
+  background: var(--entry-surface);
+  box-shadow: none !important;
 }
 
 .entry-sheet {
-  overflow: hidden;
+  overflow: clip;
 }
 
 .entry-section {
-  padding: 16px;
-  border-bottom: 1px solid var(--line);
+  padding: 24px;
+  border-bottom: 1px solid var(--entry-line);
 }
 
 .entry-section:last-child {
@@ -737,32 +1141,30 @@ watch([selectedStoreId, selectedMonth], () => {
 .entry-section__head {
   display: flex;
   align-items: baseline;
-  gap: 9px;
-  margin-bottom: 11px;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
 }
 
 .entry-section__head h3 {
   margin: 0;
-  color: var(--ink);
-  font-size: 14px;
-  font-weight: 800;
+  color: var(--entry-ink);
+  font-size: 16px;
+  font-weight: 700;
 }
 
-.entry-section__head h3::before {
-  display: inline-block;
-  width: 3px;
-  height: 13px;
-  margin-right: 7px;
-  border-radius: 2px;
-  background: var(--primary);
-  content: '';
-  vertical-align: -1px;
+.entry-section__head p {
+  margin: 0;
+  color: var(--entry-muted);
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: right;
 }
 
 .entry-fields {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
-  gap: 11px 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
 }
 
 .amount-field__control {
@@ -771,60 +1173,127 @@ watch([selectedStoreId, selectedMonth], () => {
 }
 
 .amount-field input {
-  padding-right: 30px;
+  padding: 0 40px 0 12px !important;
+  text-align: right;
 }
 
 .amount-field em {
   position: absolute;
   top: 50%;
-  right: 10px;
+  right: 12px;
   transform: translateY(-50%);
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--entry-muted);
+  font-size: 14px;
   font-style: normal;
   pointer-events: none;
 }
 
+.amount-field__control--error input {
+  border-color: var(--entry-danger);
+}
+
+.field-error {
+  color: var(--entry-danger);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.more-fees {
+  margin-top: 24px;
+  border-top: 1px solid var(--entry-line);
+}
+
+.more-fees__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 56px;
+  gap: 16px;
+  padding: 8px 0;
+  border: 0;
+  background: transparent;
+  color: var(--entry-ink);
+  text-align: left;
+}
+
+.more-fees__toggle > span:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.more-fees__toggle b {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.more-fees__toggle small,
+.more-fees__status {
+  color: var(--entry-muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.more-fees__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.more-fees__status--error {
+  color: var(--entry-danger);
+}
+
+.more-fees__status svg {
+  transition: transform 180ms ease-out;
+}
+
+.more-fees__status svg.is-open {
+  transform: rotate(180deg);
+}
+
+.more-fees__body {
+  padding: 8px 0 16px;
+}
+
 .entry-section--note {
-  padding-top: 14px;
+  padding-top: 24px;
 }
 
 .entry-summary-column {
   position: sticky;
-  top: var(--space-3);
+  top: 24px;
   display: grid;
-  gap: var(--space-3);
+  gap: 16px;
 }
 
 .profit-summary {
-  overflow: hidden;
-  border-top: 3px solid var(--good);
-}
-
-.profit-summary--loss {
-  border-top-color: var(--bad);
+  overflow: clip;
 }
 
 .profit-summary__head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
-  padding: 15px 16px 12px;
+  gap: 16px;
+  padding: 16px;
+  border-bottom: 1px solid var(--entry-line);
 }
 
 .profit-summary__eyebrow,
 .summary-loading {
   display: block;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
+  color: var(--entry-muted);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .profit-summary__head h3 {
-  margin: 3px 0 0;
+  margin: 4px 0 0;
   font-size: 16px;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .profit-summary__head-actions {
@@ -834,7 +1303,7 @@ watch([selectedStoreId, selectedMonth], () => {
 }
 
 .summary-loading {
-  padding-top: 2px;
+  padding-top: 4px;
 }
 
 .profit-summary__rows {
@@ -847,54 +1316,55 @@ watch([selectedStoreId, selectedMonth], () => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 0;
-  border-top: 1px solid var(--line);
+  padding: 12px 0;
+  border-bottom: 1px solid var(--entry-line);
 }
 
 .profit-summary dt {
-  color: var(--muted);
+  color: var(--entry-muted);
   font-size: 13px;
 }
 
 .profit-summary dd {
   margin: 0;
-  color: var(--ink);
+  color: var(--entry-ink);
   font-size: 13px;
-  font-weight: 750;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 
 .profit-summary__net {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 2px 12px;
-  margin-top: 5px;
-  padding: 14px 16px;
-  background: #f1faf5;
+  gap: 4px 12px;
+  margin: 8px 16px 0;
+  padding: 16px;
+  border-radius: var(--entry-radius);
+  background: var(--entry-primary-soft);
 }
 
 .profit-summary--loss .profit-summary__net {
-  background: #fff5f3;
+  background: var(--entry-danger-soft);
 }
 
 .profit-summary__net > span,
 .profit-summary__net div span {
-  color: var(--muted);
+  color: var(--entry-muted);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .profit-summary__net strong {
   grid-column: 1 / -1;
-  color: var(--good);
-  font-size: 28px;
-  line-height: 1.1;
-  font-weight: 850;
+  color: var(--entry-primary);
+  font-size: 24px;
+  line-height: 1.2;
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
 
 .profit-summary--loss .profit-summary__net strong {
-  color: var(--bad);
+  color: var(--entry-danger);
 }
 
 .profit-summary__net div {
@@ -906,43 +1376,52 @@ watch([selectedStoreId, selectedMonth], () => {
 }
 
 .profit-summary__net b {
-  color: var(--ink);
+  color: var(--entry-ink);
   font-size: 14px;
   font-variant-numeric: tabular-nums;
 }
 
+.profit-summary__formula {
+  margin: 0;
+  padding: 12px 16px 16px;
+  color: var(--entry-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}
+
 .entry-history {
-  overflow: hidden;
+  overflow: clip;
 }
 
 .entry-history__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--line);
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--entry-line);
 }
 
 .entry-history__head > div {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
 }
 
 .entry-history__head svg {
-  color: var(--muted);
+  color: var(--entry-muted);
 }
 
 .entry-history h3 {
   margin: 0;
   font-size: 14px;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .history-placeholder {
-  padding: 22px 14px;
-  color: var(--muted);
+  padding: 24px 16px;
+  color: var(--entry-muted);
   font-size: 13px;
   text-align: center;
 }
@@ -952,12 +1431,12 @@ watch([selectedStoreId, selectedMonth], () => {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  gap: 10px;
+  gap: 12px;
   border: 0;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--entry-line);
   background: transparent;
-  padding: 10px 14px;
-  color: var(--ink);
+  padding: 12px 16px;
+  color: var(--entry-ink);
   text-align: left;
 }
 
@@ -965,12 +1444,13 @@ watch([selectedStoreId, selectedMonth], () => {
   border-bottom: 0;
 }
 
-.history-row:hover {
-  background: #fff8f3;
+.history-row:hover,
+.history-row--active {
+  background: var(--entry-primary-soft);
 }
 
 .history-row > span:first-child {
-  color: var(--muted);
+  color: var(--entry-muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -978,7 +1458,7 @@ watch([selectedStoreId, selectedMonth], () => {
 .history-row > span:last-child {
   display: grid;
   justify-items: end;
-  gap: 2px;
+  gap: 4px;
 }
 
 .history-row b,
@@ -989,24 +1469,34 @@ watch([selectedStoreId, selectedMonth], () => {
 }
 
 .history-row b {
-  font-weight: 750;
+  font-weight: 700;
 }
 
 .history-row em {
-  color: var(--good);
+  color: var(--entry-success);
 }
 
 .negative {
-  color: var(--bad) !important;
+  color: var(--entry-danger) !important;
 }
 
 .history-drawer-backdrop {
+  --entry-surface: #ffffff;
+  --entry-ink: #182424;
+  --entry-muted: #526765;
+  --entry-line: #dbe7e5;
+  --entry-line-strong: #bed3d0;
+  --entry-primary: #276b65;
+  --entry-primary-soft: #eaf4f2;
+  --entry-success: #187b55;
+  --entry-radius: 6px;
+  --entry-z-drawer: 80;
   position: fixed;
   inset: 0;
-  z-index: 80;
+  z-index: var(--entry-z-drawer);
   display: flex;
   justify-content: flex-end;
-  background: rgba(22, 25, 31, 0.28);
+  background: rgba(24, 36, 36, 0.28);
 }
 
 .history-drawer {
@@ -1014,28 +1504,28 @@ watch([selectedStoreId, selectedMonth], () => {
   flex-direction: column;
   width: min(480px, 100%);
   height: 100%;
-  background: var(--surface);
-  box-shadow: -18px 0 40px rgba(20, 24, 30, 0.16);
+  background: var(--entry-surface);
+  box-shadow: -4px 0 8px rgba(24, 36, 36, 0.12);
 }
 
 .history-drawer__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
-  padding: 18px;
-  border-bottom: 1px solid var(--line);
+  gap: 16px;
+  padding: 24px;
+  border-bottom: 1px solid var(--entry-line);
 }
 
 .history-drawer__head span {
   display: block;
-  color: var(--muted);
+  color: var(--entry-muted);
   font-size: 12px;
 }
 
 .history-drawer__head h2 {
-  margin: 3px 0 0;
-  font-size: 19px;
+  margin: 4px 0 0;
+  font-size: 20px;
 }
 
 .history-drawer__body {
@@ -1047,38 +1537,38 @@ watch([selectedStoreId, selectedMonth], () => {
   display: grid;
   grid-template-columns: 0.9fr 1.2fr 1.2fr 0.8fr;
   width: 100%;
-  gap: 10px;
+  gap: 12px;
   border: 0;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--entry-line);
   background: transparent;
-  padding: 14px 18px;
-  color: var(--ink);
+  padding: 16px 24px;
+  color: var(--entry-ink);
   text-align: right;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
 
 .history-drawer__row span {
-  color: var(--muted);
+  color: var(--entry-muted);
   text-align: left;
 }
 
 .history-drawer__row:hover {
-  background: #fff8f3;
+  background: var(--entry-primary-soft);
 }
 
 .history-drawer__row em {
-  color: var(--good);
+  color: var(--entry-success);
   font-style: normal;
 }
 
 .history-drawer__footer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 34px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 40px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
-  padding: 12px 18px;
-  border-top: 1px solid var(--line);
+  padding: 12px 24px;
+  border-top: 1px solid var(--entry-line);
 }
 
 .history-drawer__footer .tool-button {
@@ -1088,40 +1578,35 @@ watch([selectedStoreId, selectedMonth], () => {
 }
 
 .history-drawer__footer > span {
-  color: var(--muted);
+  color: var(--entry-muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   text-align: center;
   white-space: nowrap;
 }
 
-@media (max-width: 1180px) {
-  .entry-toolbar {
-    grid-template-columns: auto 1fr;
-  }
+:global(.app-main:has(.data-entry-page)) {
+  background: #f4f8f7;
+}
 
-  .entry-toolbar__actions {
-    grid-column: 1 / -1;
-    justify-content: flex-end;
-  }
+:global(#app) .data-entry-page .entry-sheet,
+:global(#app) .data-entry-page .profit-summary,
+:global(#app) .data-entry-page .entry-history,
+:global(#app) .data-entry-page .history-drawer {
+  border-radius: var(--entry-radius) !important;
+}
 
-  .entry-workspace {
-    grid-template-columns: minmax(0, 1fr) 320px;
+@media (prefers-reduced-motion: reduce) {
+  .more-fees__status svg {
+    transition: none;
   }
 }
 
-@media (max-width: 960px) {
-  .entry-toolbar {
-    grid-template-columns: 1fr;
-  }
-
-  .entry-toolbar__fields {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .entry-toolbar__actions {
-    grid-column: auto;
-    justify-content: flex-start;
+@media (max-width: 1040px) {
+  :global(html:has(.data-entry-page)),
+  :global(body:has(.data-entry-page)),
+  :global(#app:has(.data-entry-page)) {
+    min-width: 0;
   }
 
   .entry-workspace {
@@ -1130,60 +1615,64 @@ watch([selectedStoreId, selectedMonth], () => {
 
   .entry-summary-column {
     position: static;
-    order: -1;
-    grid-template-columns: minmax(0, 1fr) minmax(260px, 0.9fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
-@media (max-width: 680px) {
+@media (max-width: 800px) {
+  .entry-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  :global(.app-shell:has(.data-entry-page)) {
+    display: block;
+    width: 100%;
+  }
+
+  :global(.app-shell:has(.data-entry-page) > .app-sidebar--desktop) {
+    display: none !important;
+  }
+
+  :global(#app .app-main > .page-panel.data-entry-page) {
+    margin: 0 16px 24px !important;
+  }
+
   .data-entry-page {
-    gap: 10px;
-    padding-top: 0;
+    gap: 12px;
   }
 
-  .entry-toolbar {
-    gap: 10px;
-    padding: 12px;
-  }
-
-  .entry-toolbar__fields {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .toolbar-field--brand,
-  .toolbar-field--store {
-    grid-column: 1 / -1;
-  }
-
-  .entry-toolbar__actions {
-    display: grid;
-    grid-template-columns: var(--control-height) 1fr 1fr;
-    width: 100%;
-  }
-
-  .entry-toolbar__actions .tool-button,
-  .entry-toolbar__actions .save-button {
-    width: 100%;
-  }
-
+  .entry-toolbar__fields,
   .entry-summary-column {
     grid-template-columns: 1fr;
   }
 
-  .entry-section,
-  .entry-sheet__utility {
-    padding-left: 12px;
-    padding-right: 12px;
+  .entry-manager-context {
+    grid-column: auto;
   }
 
-  .entry-fields {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .entry-toolbar__actions {
+    flex-wrap: wrap;
+  }
+
+  .entry-dirty {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .entry-section {
+    padding: 16px;
   }
 
   .entry-section__head {
     align-items: flex-start;
     flex-direction: column;
-    gap: 4px;
+    gap: 8px;
+  }
+
+  .entry-section__head p {
+    text-align: left;
   }
 
   .history-drawer {
@@ -1199,22 +1688,72 @@ watch([selectedStoreId, selectedMonth], () => {
   }
 }
 
-@media (max-width: 390px) {
+@media (max-width: 520px) {
+  :global(.app-main:has(.data-entry-page) .topbar-primary-row) {
+    justify-content: flex-start;
+    gap: 8px;
+  }
+
+  :global(.app-main:has(.data-entry-page) .topbar-context) {
+    flex: 1;
+    min-width: 0;
+    gap: 8px;
+  }
+
+  :global(.app-main:has(.data-entry-page) .date-display) {
+    display: none;
+  }
+
+  :global(.app-main:has(.data-entry-page) .scope-display) {
+    flex: 1;
+    min-width: 0;
+  }
+
+  :global(.app-main:has(.data-entry-page) .scope-display select) {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .data-entry-page :deep(.business-page-header) {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .data-entry-page :deep(.business-page-actions) {
+    width: 100%;
+  }
+
   .entry-fields {
     grid-template-columns: 1fr;
   }
 
   .entry-toolbar__actions {
-    grid-template-columns: var(--control-height) 1fr;
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr) minmax(0, 1fr);
+    width: 100%;
   }
 
-  .entry-toolbar__actions .save-button {
-    grid-column: 2;
+  .entry-dirty {
+    grid-column: 1 / -1;
   }
 
   .entry-toolbar__actions .tool-button {
-    grid-column: 1 / -1;
-    grid-row: 2;
+    grid-column: auto;
+    width: 100%;
   }
+
+  .entry-toolbar__actions .save-button {
+    width: 100%;
+  }
+
+  .more-fees__toggle {
+    align-items: flex-start;
+  }
+
+  .more-fees__status {
+    padding-top: 4px;
+  }
+
 }
 </style>

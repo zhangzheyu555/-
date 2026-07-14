@@ -62,8 +62,8 @@ defineEmits<{
 
 .boss-risk-card p {
   margin: 0;
-  color: var(--muted);
-  font-size: 13px;
+  color: var(--ds-secondary);
+  font-size: 14px;
   line-height: 1.6;
 }
 
@@ -78,7 +78,7 @@ defineEmits<{
   gap: 12px;
   padding: 15px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 8px;
   background: #fff;
 }
 
@@ -92,13 +92,14 @@ defineEmits<{
 .boss-risk-head b {
   display: block;
   font-size: 16px;
+  font-weight: 700;
 }
 
 .boss-risk-head span {
   display: block;
   margin-top: 2px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .boss-risk-meta {
@@ -106,11 +107,14 @@ defineEmits<{
   gap: 8px;
   flex-wrap: wrap;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
 }
 
 .boss-risk-card .mini-button {
   justify-self: start;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 @media (max-width: 920px) {

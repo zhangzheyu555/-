@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -13,6 +14,8 @@ import com.storeprofit.system.expense.ExpenseClaimResponse;
 import com.storeprofit.system.expense.ExpenseReviewRequest;
 import com.storeprofit.system.expense.ExpenseService;
 import com.storeprofit.system.platform.auth.AuthUser;
+import com.storeprofit.system.platform.auth.AccessControlService;
+import com.storeprofit.system.platform.authorization.PermissionCodes;
 import com.storeprofit.system.salary.SalaryRecordResponse;
 import com.storeprofit.system.salary.SalaryService;
 import com.storeprofit.system.todo.RoleTodoActionRepository;
@@ -77,6 +80,26 @@ class FinanceWorkbenchServiceTest {
     assertThatThrownBy(() -> service.workbench(storeManager, "2026-07", null, null))
         .isInstanceOf(BusinessException.class)
         .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
+  }
+
+  @Test
+  void permissionBasedWorkbenchOmitsPersonallyRevokedModules() {
+    AccessControlService accessControl = mock(AccessControlService.class);
+    FinanceWorkbenchService permissionService = new FinanceWorkbenchService(
+        financeService, expenseService, salaryService, roleTodoService, actionRepository, accessControl);
+    when(financeService.entries(finance, "2026-07", null, null)).thenReturn(List.of());
+    when(accessControl.hasPermission(finance, PermissionCodes.TODO_READ)).thenReturn(false);
+    when(accessControl.hasPermission(finance, PermissionCodes.EXPENSE_READ)).thenReturn(false);
+    when(accessControl.hasPermission(finance, PermissionCodes.SALARY_READ)).thenReturn(false);
+
+    FinanceWorkbenchResponse result = permissionService.workbench(finance, "2026-07", null, null);
+
+    verify(accessControl).requireFinanceRead(finance);
+    verify(roleTodoService, never()).todos(eq(finance), eq(RoleTodoAudience.FINANCE), any(RoleTodoQuery.class));
+    verify(expenseService, never()).claims(eq(finance), eq("2026-07"), any(), any(), any());
+    verify(salaryService, never()).records(eq(finance), eq("2026-07"), any(), any());
+    assertThat(result.expenseReviews()).isEmpty();
+    assertThat(result.salaryChecks()).isEmpty();
   }
 
   @Test
@@ -215,6 +238,7 @@ class FinanceWorkbenchServiceTest {
         "店长",
         "满勤",
         new BigDecimal("6800"),
+        new BigDecimal("6600"),
         new BigDecimal("176"),
         BigDecimal.ZERO,
         new BigDecimal("176"),

@@ -4,11 +4,11 @@ import { forbiddenVisibleTerms, loginAs, type RoleKey } from './auth.setup'
 const pages: Array<{ role: RoleKey; path: string }> = [
   { role: 'boss', path: '/boss' },
   { role: 'boss', path: '/profit' },
-  { role: 'finance', path: '/finance' },
+  { role: 'finance', path: '/profit-table' },
   { role: 'finance', path: '/profit' },
   { role: 'warehouse', path: '/warehouse' },
-  { role: 'supervisor', path: '/inspection' },
-  { role: 'operations', path: '/operations' },
+  { role: 'operations', path: '/operations/inspection' },
+  { role: 'operations', path: '/operations/exams' },
   { role: 'store', path: '/warehouse' },
 ]
 

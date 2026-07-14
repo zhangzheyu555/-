@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 import com.storeprofit.system.common.ApiResponse;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class AuditControllerTest {
@@ -17,24 +18,17 @@ class AuditControllerTest {
   private final AuthUser boss = new AuthUser(1L, 1L, "default", "boss", "", "老板", "BOSS", null, true);
 
   @Test
-  void writeLogUsesAuthenticatedUserAndStoresFrontendAuditEvent() {
-    AuditLogRequest request = new AuditLogRequest(
-        "修改",
-        "门店",
-        "rg1",
-        "rg1",
-        "2026-07",
-        "前端保存门店资料",
-        "{\"status\":\"旧\"}",
-        "{\"status\":\"新\"}"
-    );
+  void logsAreReadOnlyAndRequireBossPermission() {
     when(accessControl.requireUser("Bearer token")).thenReturn(boss);
+    when(auditRepository.logs(1L, 50)).thenReturn(List.of());
 
-    ApiResponse<Void> response = controller.writeLog("Bearer token", request);
+    ApiResponse<List<OperationLogResponse>> response = controller.logs("Bearer token", 50);
 
     assertThat(response.success()).isTrue();
     verify(accessControl).requireUser("Bearer token");
-    verify(accessControl).requireAuditWrite(boss);
-    verify(auditRepository).writeLog(boss, request);
+    verify(accessControl).requireAuditRead(boss);
+    verify(auditRepository).logs(1L, 50);
+    assertThat(List.of(AuditController.class.getDeclaredMethods()).stream().map(method -> method.getName()))
+        .doesNotContain("writeLog");
   }
 }

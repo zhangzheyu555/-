@@ -9,6 +9,30 @@ export interface WarehouseSummary {
   pendingReceiptCount: number
   pendingPurchaseCount: number
   stockValue: number
+  inTransitQuantity?: number
+}
+
+export type WarehouseType = 'CENTRAL' | 'REGIONAL'
+export type WarehouseRegion = 'JINGZHOU' | 'SHANDONG'
+
+/** 权限裁剪后的仓库范围。前端只用它切换上下文，后端仍负责最终鉴权。 */
+export interface WarehouseInfo {
+  id: string | number
+  code: string
+  name: string
+  type: WarehouseType
+  regionCode: WarehouseRegion
+  parentWarehouseId?: string | number | null
+  parentWarehouseName?: string | null
+  externalPurchaseAllowed: boolean
+  storeSupplyAllowed: boolean
+  enabled: boolean
+  canRead?: boolean
+  canPurchase?: boolean
+  canRequestTransfer?: boolean
+  canApproveTransfer?: boolean
+  canShipTransfer?: boolean
+  canReceiveTransfer?: boolean
 }
 
 export interface WarehouseAlert {
@@ -115,6 +139,8 @@ export interface WarehouseRequisition {
   id: string
   storeId: string
   storeName: string
+  warehouseId?: string | number
+  warehouseName?: string
   status: string
   statusLabel: string
   totalAmount: number
@@ -127,6 +153,7 @@ export interface WarehouseRequisition {
 }
 
 export interface WarehouseOverview {
+  warehouse?: WarehouseInfo
   summary: WarehouseSummary
   alerts: WarehouseAlert[]
   items: WarehouseItem[]
@@ -163,6 +190,8 @@ export interface WarehousePurchaseOrder {
   id: string
   supplierId?: number
   supplierName?: string
+  warehouseId?: string | number
+  warehouseName?: string
   status: string
   statusLabel: string
   totalAmount: number
@@ -172,6 +201,32 @@ export interface WarehousePurchaseOrder {
   createdAt?: string
   receivedAt?: string
   lines: WarehousePurchaseOrderLine[]
+}
+
+export interface WarehousePurchaseOrderCreatePayload {
+  warehouseId: string | number
+  supplierId?: number
+  note?: string
+  clientRequestId: string
+  lines: Array<{
+    itemId: number
+    orderedQuantity: number
+    unitCost: number
+    note?: string
+  }>
+}
+
+export interface WarehousePurchaseOrderReceivePayload {
+  clientRequestId: string
+  note?: string
+  lines: Array<{
+    itemId: number
+    batchNo: string
+    receivedDate: string
+    expiryDate?: string
+    quantity: number
+    note?: string
+  }>
 }
 
 export interface WarehouseDeliveryLine {
@@ -211,6 +266,12 @@ export interface WarehouseStockMovement {
   sourceId?: string
   storeId?: string
   storeName?: string
+  warehouseId?: string | number
+  warehouseName?: string
+  sourceWarehouseId?: string | number
+  sourceWarehouseName?: string
+  targetWarehouseId?: string | number
+  targetWarehouseName?: string
   note?: string
   operatorName?: string
   createdAt?: string
@@ -221,6 +282,8 @@ export interface WarehouseStockBatch {
   id: number
   itemId: number
   itemName: string
+  warehouseId?: string | number
+  warehouseName?: string
   unit?: string
   batchNo: string
   receivedDate: string
@@ -299,8 +362,120 @@ export interface WarehouseRequisitionCreatePayload {
   clientRequestId?: string
 }
 
-export function getWarehouseOverview() {
-  return apiGet<WarehouseOverview>('/api/warehouse/overview')
+export type WarehouseTransferStatus =
+  | 'DRAFT'
+  | 'SUBMITTED'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'SHIPPED'
+  | 'PARTIALLY_RECEIVED'
+  | 'RECEIVED'
+  | 'CANCELLED'
+
+export interface WarehouseTransferLine {
+  id: number
+  itemId: number
+  itemName: string
+  unit: string
+  requestedQuantity: number
+  approvedQuantity: number
+  reservedQuantity: number
+  shippedQuantity: number
+  receivedQuantity: number
+  inTransitQuantity: number
+  unitCost: number
+  amount: number
+  note?: string
+}
+
+export interface WarehouseTransfer {
+  id: string
+  transferNo?: string
+  status: WarehouseTransferStatus
+  statusLabel?: string
+  sourceWarehouseId: string | number
+  sourceWarehouseName: string
+  targetWarehouseId: string | number
+  targetWarehouseName: string
+  totalAmount: number
+  requestedBy?: string
+  approvedBy?: string
+  shippedBy?: string
+  receivedBy?: string
+  cancelledBy?: string
+  createdAt?: string
+  submittedAt?: string
+  reviewedAt?: string
+  shippedAt?: string
+  receivedAt?: string
+  cancelledAt?: string
+  note?: string
+  reviewNote?: string
+  version: number
+  lines: WarehouseTransferLine[]
+}
+
+export interface WarehouseTransferCreatePayload {
+  sourceWarehouseId: string | number
+  targetWarehouseId: string | number
+  lines: Array<{ itemId: number; quantity: number; note?: string }>
+  note?: string
+  clientRequestId: string
+}
+
+export function getWarehouses() {
+  return apiGet<WarehouseInfo[]>('/api/warehouse/warehouses')
+}
+
+export function getWarehouseOverview(warehouseId?: string | number) {
+  return apiGet<WarehouseOverview>('/api/warehouse/overview', {
+    params: warehouseId ? { warehouseId } : undefined,
+  })
+}
+
+export function getWarehouseTransfers(warehouseId?: string | number) {
+  return apiGet<WarehouseTransfer[]>('/api/warehouse/transfers', {
+    params: warehouseId ? { warehouseId } : undefined,
+  })
+}
+
+export function createWarehouseTransfer(payload: WarehouseTransferCreatePayload) {
+  return apiPost<WarehouseTransfer, WarehouseTransferCreatePayload>('/api/warehouse/transfers', payload)
+}
+
+export function submitWarehouseTransfer(id: string) {
+  return apiPost<WarehouseTransfer, undefined>(`/api/warehouse/transfers/${encodeURIComponent(id)}/submit`)
+}
+
+export function reviewWarehouseTransfer(id: string, approved: boolean, note?: string) {
+  return apiPost<WarehouseTransfer, { approved: boolean; note?: string }>(
+    `/api/warehouse/transfers/${encodeURIComponent(id)}/review`,
+    { approved, note },
+  )
+}
+
+export function shipWarehouseTransfer(id: string, clientRequestId: string, note?: string) {
+  return apiPost<WarehouseTransfer, { clientRequestId: string; note?: string }>(
+    `/api/warehouse/transfers/${encodeURIComponent(id)}/ship`,
+    { clientRequestId, note },
+  )
+}
+
+export function receiveWarehouseTransfer(
+  id: string,
+  payload: { clientRequestId: string; note?: string; lines?: Array<{ itemId: number; receivedQuantity: number }> },
+) {
+  return apiPost<WarehouseTransfer, typeof payload>(
+    `/api/warehouse/transfers/${encodeURIComponent(id)}/receive`,
+    payload,
+  )
+}
+
+export function cancelWarehouseTransfer(id: string, clientRequestId: string, note?: string) {
+  return apiPost<WarehouseTransfer, { clientRequestId: string; note?: string }>(
+    `/api/warehouse/transfers/${encodeURIComponent(id)}/cancel`,
+    { clientRequestId, note },
+  )
 }
 
 export function getWarehouseItemCategories() {
@@ -349,6 +524,7 @@ export function shipWarehouseRequisition(requisitionId: string) {
 }
 
 export function receiveWarehouseStock(payload: {
+  warehouseId?: string | number
   itemId: number
   batchNo: string
   receivedDate: string
@@ -361,9 +537,29 @@ export function receiveWarehouseStock(payload: {
   return apiPost<void, typeof payload>('/api/warehouse/stock-batches', payload)
 }
 
+export function createWarehousePurchaseOrder(payload: WarehousePurchaseOrderCreatePayload) {
+  return apiPost<WarehousePurchaseOrder, WarehousePurchaseOrderCreatePayload>('/api/warehouse/purchase-orders', payload)
+}
+
+export function approveWarehousePurchaseOrder(purchaseOrderId: string) {
+  return apiPost<WarehousePurchaseOrder, undefined>(
+    `/api/warehouse/purchase-orders/${encodeURIComponent(purchaseOrderId)}/approve`,
+  )
+}
+
+export function receiveWarehousePurchaseOrder(
+  purchaseOrderId: string,
+  payload: WarehousePurchaseOrderReceivePayload,
+) {
+  return apiPost<WarehousePurchaseOrder, WarehousePurchaseOrderReceivePayload>(
+    `/api/warehouse/purchase-orders/${encodeURIComponent(purchaseOrderId)}/receive`,
+    payload,
+  )
+}
+
 export function updateWarehouseAlertSettings(
   itemId: number,
-  payload: { minStockQuantity: number; alertEnabled: boolean; expiryAlertDays?: number },
+  payload: { warehouseId: string | number; minStockQuantity: number; alertEnabled: boolean; expiryAlertDays?: number },
 ) {
   return apiPost<void, typeof payload>(`/api/warehouse/items/${itemId}/alert-settings`, payload)
 }

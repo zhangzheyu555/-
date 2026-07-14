@@ -19,6 +19,7 @@ function qty(value: number | undefined) {
 function sourceLabel(row: WarehouseStockMovement) {
   if (row.sourceType === 'REQUISITION') return '门店叫货发货'
   if (row.sourceType === 'RETURN_RECEIVE') return '配送退货入库'
+  if (row.sourceType?.includes('TRANSFER')) return '仓间调拨'
   if (row.sourceType?.includes('RECEIVE')) return '采购到货入库'
   return row.sourceType || '库存流水'
 }
@@ -38,6 +39,8 @@ function sourceLabel(row: WarehouseStockMovement) {
             <th>时间</th>
             <th>商品</th>
             <th>数量变化</th>
+            <th>来源仓</th>
+            <th>目标仓</th>
             <th>门店</th>
             <th>来源</th>
             <th>批次号</th>
@@ -50,6 +53,8 @@ function sourceLabel(row: WarehouseStockMovement) {
             <td>{{ row.createdAt || '-' }}</td>
             <td>{{ row.itemName }}</td>
             <td :class="Number(row.quantityDelta) < 0 ? 'negative' : 'positive'">{{ qty(row.quantityDelta) }}</td>
+            <td>{{ row.sourceWarehouseName || (Number(row.quantityDelta) < 0 ? row.warehouseName : '') || '-' }}</td>
+            <td>{{ row.targetWarehouseName || (Number(row.quantityDelta) > 0 ? row.warehouseName : '') || '-' }}</td>
             <td>{{ row.storeName || row.storeId || '-' }}</td>
             <td>{{ sourceLabel(row) }}<small v-if="row.sourceId">{{ row.sourceId }}</small></td>
             <td>{{ row.batchNo || '-' }}</td>
@@ -71,7 +76,7 @@ function sourceLabel(row: WarehouseStockMovement) {
             </td>
           </tr>
           <tr v-if="!movements.length">
-            <td colspan="8" class="empty-cell">暂无出入库流水。</td>
+              <td colspan="10" class="empty-cell">暂无出入库流水。</td>
           </tr>
         </tbody>
       </table>

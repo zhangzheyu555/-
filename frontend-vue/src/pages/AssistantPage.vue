@@ -1,661 +1,536 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { Send } from 'lucide-vue-next'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ClipboardPlus,
+  Database,
+  Maximize2,
+  Minimize2,
+  RefreshCcw,
+  Send,
+  Sparkles,
+  X,
+} from 'lucide-vue-next'
 import { useRoute } from 'vue-router'
-import { askAssistant, type AssistantChatRequest } from '../api/assistant'
+import PageHeader from '../components/common/PageHeader.vue'
+import ModalFooter from '../components/ui/ModalFooter.vue'
+import UiButton from '../components/ui/UiButton.vue'
+import {
+  askAssistant,
+  getAssistantStatus,
+  type AssistantAction,
+  type AssistantChatResponse,
+  type AssistantLocalMetric,
+  type AssistantStatus,
+} from '../api/assistant'
 import { getProfitEntries, getProfitMonths, type ProfitEntry } from '../api/finance'
 import { getStores, type StoreInfo } from '../api/operations'
+import { createManualBusinessTodo } from '../api/todos'
+import { useBusinessScope } from '../composables/useBusinessScope'
 import { useAuthStore } from '../stores/auth'
-import { normalizeBrandName } from '../utils/brand'
 
-interface ChatMessage {
+type AssistantMode = 'AUTO' | 'LOCAL' | 'AI'
+type RunStatus = 'loading' | 'success' | 'error'
+
+interface AssistantRun {
   id: number
-  role: 'assistant' | 'user'
-  text: string
-  tone?: 'welcome' | 'local' | 'ai' | 'error'
-  /** When true, this is a LOCAL result that can be analyzed further */
-  canDeepAnalyze?: boolean
-  /** The question text that generated this message, for deep analysis replay */
-  questionText?: string
+  question: string
+  mode: AssistantMode
+  status: RunStatus
+  response?: AssistantChatResponse
+  error?: string
 }
 
-interface StoreMetric {
-  revenue: number
-  sales: number
-  net: number
-  margin: number
-  cost: number
-  expense: number
-  status: '正常' | '异常'
-  hasData: boolean
-}
-
-interface QuestionIntent {
-  key: string
-  label: string
-  field?: keyof Pick<StoreMetric, 'revenue' | 'sales' | 'net' | 'margin' | 'cost' | 'expense'>
-  percent?: boolean
-}
-
-interface ResolvedQuestion {
-  store: StoreInfo | null
-  storeSource: 'question' | 'default'
-  months: string[]
-  resolvedMonth: string
-  monthSource: 'question' | 'relative' | 'current' | 'trend'
-  intent: QuestionIntent
-  trend: boolean
-  entries: ProfitEntry[]
+interface TodoConfirmation {
+  run: AssistantRun
+  action: AssistantAction
+  actionIndex: number
 }
 
 const route = useRoute()
 const auth = useAuthStore()
-
+const businessScope = useBusinessScope()
 const stores = ref<StoreInfo[]>([])
-const monthOptions = ref<string[]>([])
-const selectedStoreId = ref(typeof route.query.storeId === 'string' ? route.query.storeId : '')
-const selectedMonth = ref(validMonth(route.query.month) || currentMonth())
-const currentEntries = ref<ProfitEntry[]>([])
-const trendEntries = ref<ProfitEntry[]>([])
-const messages = ref<ChatMessage[]>([])
-const input = ref(typeof route.query.q === 'string' ? route.query.q : '')
-const assistantMode = ref<'AUTO' | 'LOCAL' | 'AI'>('AUTO')
-const pageLoading = ref(false)
+const months = ref<string[]>([])
+const selectedStoreId = ref('')
+const selectedMonth = ref('')
+const currentEntry = ref<ProfitEntry | null>(null)
+const pageLoading = ref(true)
 const metricLoading = ref(false)
 const sending = ref(false)
+const input = ref('')
+const assistantMode = ref<AssistantMode>('AUTO')
+const runs = ref<AssistantRun[]>([])
 const pageError = ref('')
-const chatScroll = ref<HTMLElement | null>(null)
-let messageId = 0
+const assistantStatus = ref<AssistantStatus | null>(null)
+const todoConfirmation = ref<TodoConfirmation | null>(null)
+const todoSubmitting = ref(false)
+const todoError = ref('')
+const todoDialog = ref<HTMLElement | null>(null)
+const addedTodoActions = ref<Record<string, boolean>>({})
+const resultScroll = ref<HTMLElement | null>(null)
+const assistantWorkspace = ref<HTMLElement | null>(null)
+const workspaceToggle = ref<HTMLButtonElement | null>(null)
+const workspaceFullscreen = ref(false)
+const fullscreenStyle = ref<Record<string, string>>({})
+const followLatest = ref(true)
+let appMainScrollTop = 0
+let bodyOverflow = ''
+let documentOverflow = ''
+let todoDialogTrigger: HTMLElement | null = null
+let runId = 0
 let initialized = false
 
-const monthNameMap: Record<string, number> = {
-  一: 1,
-  二: 2,
-  两: 2,
-  三: 3,
-  四: 4,
-  五: 5,
-  六: 6,
-  七: 7,
-  八: 8,
-  九: 9,
-  十: 10,
-  十一: 11,
-  十二: 12,
-}
-
-const intentDefinitions: QuestionIntent[] = [
-  { key: 'revenue', label: '营业额', field: 'revenue' },
-  { key: 'sales', label: '营业总收入', field: 'sales' },
-  { key: 'net_profit', label: '净利润', field: 'net' },
-  { key: 'net_margin', label: '净利率', field: 'margin', percent: true },
-  { key: 'cost', label: '成本', field: 'cost' },
-  { key: 'expense', label: '费用', field: 'expense' },
-  { key: 'inventory', label: '库存' },
-  { key: 'inspection', label: '巡店' },
-  { key: 'salary', label: '工资' },
-]
-
+const financeScope = computed(() => auth.dataScope('FINANCE') || auth.dataScope('STORE'))
 const accessibleStores = computed(() => {
-  if (auth.role !== 'STORE_MANAGER' || !auth.storeScope.length) return stores.value
-  return stores.value.filter((store) => auth.storeScope.includes(store.id))
+  if (businessScope.isStoreManager.value) {
+    return stores.value.filter((store) => store.id === businessScope.boundStoreId.value)
+  }
+  if (financeScope.value?.mode === 'ALL') return stores.value
+  const ids = financeScope.value?.storeIds || []
+  if (ids.length) return stores.value.filter((store) => ids.includes(store.id))
+  return stores.value
+})
+const effectiveStoreId = computed(() => businessScope.scopedStoreId(selectedStoreId.value))
+const selectedStore = computed(() => accessibleStores.value.find((store) => store.id === effectiveStoreId.value))
+const selectedStoreName = computed(() => selectedStore.value?.name || businessScope.boundStoreName.value || '当前门店')
+const mainMetrics = computed(() => metricCards(currentEntry.value))
+const modeHint = computed(() => {
+  if (assistantMode.value === 'LOCAL') return '只查数据库，不调用AI'
+  if (assistantMode.value === 'AI') return '必须取得真实AI分析，失败会明确提示'
+  return '数字查询走数据库，原因与建议走AI'
 })
 
-const selectedStore = computed(() => (
-  accessibleStores.value.find((store) => store.id === selectedStoreId.value)
-  || accessibleStores.value[0]
-  || null
-))
-
-const currentEntry = computed(() => currentEntries.value.find((entry) => entry.storeId === selectedStore.value?.id))
-
-const selectedStoreName = computed(() => selectedStore.value?.name || '当前门店')
-const selectedBrandName = computed(() => normalizeBrandName(selectedStore.value?.brandName || ''))
-const selectedMonthText = computed(() => monthText(selectedMonth.value))
-const assistantTitle = computed(() => `${selectedStoreName.value} 经营助手`)
-
-const storeMetric = computed<StoreMetric>(() => metricFromEntry(currentEntry.value))
-
-const metricCards = computed(() => [
-  { label: '营业额', value: money(storeMetric.value.revenue), tone: '' },
-  { label: '净利润', value: money(storeMetric.value.net), tone: storeMetric.value.net >= 0 ? 'good' : 'bad' },
-  { label: '净利率', value: percent(storeMetric.value.margin), tone: storeMetric.value.net >= 0 ? 'good' : 'bad' },
-  { label: '状态', value: storeMetric.value.hasData ? storeMetric.value.status : '暂无数据', tone: storeMetric.value.status === '正常' ? 'good' : 'bad' },
+const quickQuestions = computed(() => [
+  `${selectedMonthText()}营业额是多少`,
+  `${selectedMonthText()}净利润为什么变化`,
+  `${selectedStoreName.value}最近三个月有什么风险`,
 ])
 
-const quickQuestions = computed(() => {
-  const name = selectedStoreName.value
-  const month = selectedMonthText.value
-  return [
-    `${name}${month}经营表现怎么样？`,
-    `${name}净利润为什么变化？`,
-    `${name}哪项成本最需要关注？`,
-    `与近三个月相比有什么异常？`,
-    `给出本周最重要的三个行动建议`,
-  ]
+onMounted(() => {
+  document.addEventListener('keydown', handlePageKeydown)
+  void loadPage()
 })
 
-const inputPlaceholder = computed(() => `问 ${selectedStoreName.value}，例如：本月营业额 / 净利润 / 成本异常`)
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', handlePageKeydown)
+  releaseFullscreenLayout(false)
+})
 
-onMounted(async () => {
-  await loadPage()
-  if (input.value.trim()) {
-    await submitQuestion()
+watch([effectiveStoreId, selectedMonth], async ([storeId, month], [oldStoreId, oldMonth]) => {
+  if (!initialized || (!storeId && !month)) return
+  await loadCurrentEntry()
+  if (oldStoreId && oldMonth && (storeId !== oldStoreId || month !== oldMonth)) {
+    runs.value = []
   }
-})
-
-watch(selectedMonth, async () => {
-  if (!initialized) return
-  await loadCurrentEntries()
-  await loadTrendEntries()
-  resetConversation()
-})
-
-watch(selectedStoreId, async () => {
-  if (!initialized) return
-  await loadTrendEntries()
-  resetConversation()
 })
 
 async function loadPage() {
   pageLoading.value = true
   pageError.value = ''
+  if (businessScope.configurationError.value) {
+    pageError.value = businessScope.configurationError.value
+    pageLoading.value = false
+    return
+  }
   try {
-    const [storeRows, months] = await Promise.all([
-      getStores(),
-      getProfitMonths().catch(() => [] as string[]),
-    ])
+    const [storeRows, monthRows] = await Promise.all([getStores(), getProfitMonths()])
     stores.value = storeRows
-    monthOptions.value = normalizeMonths(months)
-    if (!validMonth(selectedMonth.value)) {
-      selectedMonth.value = monthOptions.value[0] || currentMonth()
-    }
-    await loadCurrentEntries()
-    applyDefaultStore()
-    await loadTrendEntries()
-    resetConversation()
+    months.value = normalizeMonths(monthRows)
+    applyDefaults()
+    await loadCurrentEntry()
+    await loadAssistantStatus()
     initialized = true
   } catch (error) {
-    pageError.value = normalizeUserError(error, '门店经营数据加载失败，请刷新后重试。')
-    resetConversation()
-    initialized = true
+    pageError.value = normalizeError(error, '经营助手初始化失败，请刷新后重试。')
   } finally {
     pageLoading.value = false
   }
 }
 
-async function loadCurrentEntries() {
+async function loadAssistantStatus() {
+  try {
+    assistantStatus.value = await getAssistantStatus()
+  } catch {
+    assistantStatus.value = null
+  }
+}
+
+function applyDefaults() {
+  const routeStore = String(route.query.storeId || '')
+  const routeMonth = validMonth(String(route.query.month || ''))
+  selectedStoreId.value = businessScope.isStoreManager.value
+    ? businessScope.boundStoreId.value
+    : accessibleStores.value.some((store) => store.id === routeStore)
+      ? routeStore
+      : accessibleStores.value[0]?.id || ''
+  selectedMonth.value = routeMonth && months.value.includes(routeMonth)
+    ? routeMonth
+    : months.value[0] || currentMonth()
+}
+
+async function loadCurrentEntry() {
+  if (!effectiveStoreId.value || !selectedMonth.value) {
+    currentEntry.value = null
+    return
+  }
   metricLoading.value = true
   try {
-    currentEntries.value = await getProfitEntries({ month: selectedMonth.value })
+    const rows = await getProfitEntries({
+      storeId: effectiveStoreId.value,
+      brandId: businessScope.isStoreManager.value ? businessScope.brandId.value ?? undefined : undefined,
+      month: selectedMonth.value,
+    })
+    currentEntry.value = rows[0] || null
   } catch {
-    currentEntries.value = []
+    currentEntry.value = null
   } finally {
     metricLoading.value = false
   }
 }
 
-async function loadTrendEntries() {
-  const store = selectedStore.value
-  if (!store) {
-    trendEntries.value = []
-    return
-  }
-  const months = (monthOptions.value.length ? monthOptions.value : [selectedMonth.value]).slice(0, 8)
-  const rows = await Promise.all(months.map((month) => (
-    getProfitEntries({ month, storeId: store.id }).catch(() => [] as ProfitEntry[])
-  )))
-  trendEntries.value = rows.flat()
-}
-
-function applyDefaultStore() {
-  const storeIds = new Set(accessibleStores.value.map((store) => store.id))
-  const routeStoreId = typeof route.query.storeId === 'string' ? route.query.storeId : ''
-  if (routeStoreId && storeIds.has(routeStoreId)) {
-    selectedStoreId.value = routeStoreId
-    return
-  }
-  if (auth.role === 'STORE_MANAGER' && auth.storeScope.length) {
-    const scopedStore = accessibleStores.value.find((store) => auth.storeScope.includes(store.id))
-    if (scopedStore) {
-      selectedStoreId.value = scopedStore.id
-      return
-    }
-  }
-  const storeWithData = currentEntries.value.find((entry) => storeIds.has(entry.storeId))
-  selectedStoreId.value = storeWithData?.storeId || accessibleStores.value[0]?.id || ''
-}
-
-function clearConversation() {
-  resetConversation()
-}
-
-function resetConversation() {
-  messages.value = [{
-    id: nextMessageId(),
-    role: 'assistant',
-    tone: 'welcome',
-    text: '你好，我可以帮你分析当前门店的营业额、净利润、成本异常和趋势。',
-  }]
-  void nextTick(scrollToBottom)
-}
-
-async function submitQuickQuestion(question: string) {
-  input.value = question
-  await submitQuestion(question)
-}
-
 async function submitQuestion(preset?: string) {
-  const question = (preset || input.value).trim()
-  if (!question) {
-    pushMessage('assistant', '请输入问题。', 'error')
+  const question = String(preset || input.value).trim()
+  if (!question || sending.value) return
+  if (!effectiveStoreId.value || !selectedMonth.value) {
+    pageError.value = businessScope.configurationError.value || '请先选择门店和月份。'
     return
   }
-  if (!selectedStore.value) {
-    pushMessage('assistant', '请选择门店。', 'error')
+  pageError.value = ''
+  input.value = ''
+  const run: AssistantRun = {
+    id: ++runId,
+    question,
+    mode: assistantMode.value,
+    status: 'loading',
+  }
+  runs.value.push(run)
+  sending.value = true
+  followLatest.value = true
+  await nextTick(() => scrollToBottom(true))
+  try {
+    run.response = await askAssistant({
+      message: question,
+      mode: assistantMode.value,
+      storeId: effectiveStoreId.value,
+      month: selectedMonth.value,
+    })
+    run.status = 'success'
+  } catch (error) {
+    run.status = 'error'
+    run.error = normalizeError(error, '经营助手暂时无法完成请求，请稍后重试。')
+  } finally {
+    sending.value = false
+    await nextTick(() => scrollToBottom())
+  }
+}
+
+async function requestAiAnalysis(run: AssistantRun) {
+  if (sending.value) return
+  run.status = 'loading'
+  run.error = ''
+  sending.value = true
+  try {
+    run.response = await askAssistant({
+      message: run.question,
+      mode: 'AI',
+      storeId: effectiveStoreId.value,
+      month: selectedMonth.value,
+    })
+    run.mode = 'AI'
+    run.status = 'success'
+  } catch (error) {
+    run.status = 'error'
+    run.error = normalizeError(error, 'AI分析请求失败，请稍后重试。')
+  } finally {
+    sending.value = false
+    await nextTick(() => scrollToBottom())
+  }
+}
+
+async function retryRun(run: AssistantRun) {
+  if (run.mode === 'AI' || run.response?.selectedMode === 'AI') {
+    await requestAiAnalysis(run)
     return
   }
   if (sending.value) return
-
-  input.value = ''
-  const store = selectedStore.value
-  const month = selectedMonth.value
-  const history = assistantHistory()
-  pushMessage('user', question)
+  run.status = 'loading'
+  run.error = ''
   sending.value = true
   try {
-    const response = await askAssistant({
-      message: question,
-      history,
-      dataContext: buildDataContext(question, '', await quickResolve(question)),
-      mode: assistantMode.value,
-      storeId: store.id,
-      month,
-    })
-
-    const isAi = response.aiUsed === true || (response.deepSeekAvailable === true && !response.fallback)
-    const isLocal = !isAi || response.fallback === true
-
-    if (isLocal) {
-      // Show local answer with deep analysis option
-      const localText = response.localAnswer || response.answer
-      if (localText && localText.trim()) {
-        const msg = pushMessageRet('assistant', localText, 'local')
-        msg.canDeepAnalyze = response.fallback !== true || response.aiUsed !== true
-        msg.questionText = question
-      }
-      if (response.fallback === true) {
-        const reason = response.fallbackReason || response.deepSeekError
-        console.warn('[Assistant] DeepSeek fallback', {
-          fallbackReason: reason,
-          requestId: response.requestId,
-          source: response.source,
-        })
-        pushMessage('assistant', `AI 分析暂时不可用（${reason || '服务异常'}）。已显示本地数据结果。`, 'error')
-      } else if (!response.aiUsed && !response.fallback) {
-        // LOCAL mode - show "深入分析" button hint
-        // The canDeepAnalyze flag on the message will show the button
-      }
-    } else {
-      // AI mode: show combined analysis
-      const aiText = response.deepSeekAnswer || response.answer
-      if (aiText && aiText.trim()) {
-        pushMessage('assistant', aiText, 'ai')
-      }
-    }
-  } catch (error) {
-    console.error('[Assistant] chat request failed', error)
-    pushMessage('assistant', normalizeUserError(error, '门店经营助手暂时无法完成查询，请稍后重试。'), 'error')
-  } finally {
-    sending.value = false
-  }
-}
-
-/** Deep analysis: re-send the same question in AI mode */
-async function submitDeepAnalysis(message: ChatMessage) {
-  if (!message.questionText || sending.value) return
-  const question = message.questionText
-  if (!selectedStore.value) return
-
-  // Remove the "深入分析" flag from the message
-  message.canDeepAnalyze = false
-
-  const store = selectedStore.value
-  const history = assistantHistory()
-  sending.value = true
-  try {
-    const response = await askAssistant({
-      message: question,
-      history,
-      dataContext: buildDataContext(question, '', await quickResolve(question)),
-      mode: 'AI',
-      storeId: store.id,
+    run.response = await askAssistant({
+      message: run.question,
+      mode: run.mode,
+      storeId: effectiveStoreId.value,
       month: selectedMonth.value,
     })
-
-    const aiText = response.deepSeekAnswer || response.answer
-    if (aiText && aiText.trim()) {
-      pushMessage('assistant', aiText, 'ai')
-    } else if (response.fallback === true) {
-      pushMessage('assistant', `AI 分析暂时不可用（${response.fallbackReason || '服务异常'}）。`, 'error')
-    }
+    run.status = 'success'
   } catch (error) {
-    console.error('[Assistant] deep analysis failed', error)
-    pushMessage('assistant', 'DeepSeek 分析请求失败，请稍后重试。', 'error')
+    run.status = 'error'
+    run.error = normalizeError(error, '经营助手暂时无法完成请求，请稍后重试。')
   } finally {
     sending.value = false
+    await nextTick(() => scrollToBottom())
   }
 }
 
-/** Quick resolve for data context without showing duplicate local answer */
-async function quickResolve(question: string): Promise<ResolvedQuestion> {
-  return resolveQuestion(question)
+function clearConversation() {
+  runs.value = []
+  input.value = ''
+  followLatest.value = true
 }
 
-function pushMessageRet(role: ChatMessage['role'], text: string, tone?: ChatMessage['tone']): ChatMessage {
-  const msg: ChatMessage = {
-    id: nextMessageId(),
-    role,
-    text,
-    tone,
-  }
-  messages.value.push(msg)
-  void nextTick(scrollToBottom)
-  return msg
+function openTodoConfirmation(run: AssistantRun, action: AssistantAction, actionIndex: number) {
+  if (!run.response?.aiAnalysis.available || todoSubmitting.value) return
+  todoDialogTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  todoError.value = ''
+  todoConfirmation.value = { run, action, actionIndex }
+  void nextTick(() => todoDialog.value?.querySelector<HTMLElement>('[data-todo-cancel]')?.focus())
 }
 
-function assistantHistory(): AssistantChatRequest['history'] {
-  return messages.value
-    .filter((message) => message.text && message.tone !== 'welcome' && message.tone !== 'error')
-    .slice(-8)
-    .map((message) => ({
-      role: message.role,
-      content: message.text,
-    }))
+function closeTodoConfirmation() {
+  if (todoSubmitting.value) return
+  dismissTodoConfirmation()
 }
 
-function pushMessage(role: ChatMessage['role'], text: string, tone?: ChatMessage['tone']) {
-  messages.value.push({
-    id: nextMessageId(),
-    role,
-    text,
-    tone,
+function dismissTodoConfirmation() {
+  const trigger = todoDialogTrigger
+  todoConfirmation.value = null
+  todoError.value = ''
+  todoDialogTrigger = null
+  void nextTick(() => {
+    if (trigger?.isConnected) trigger.focus()
   })
-  void nextTick(scrollToBottom)
 }
 
-function scrollToBottom() {
-  if (chatScroll.value) {
-    chatScroll.value.scrollTop = chatScroll.value.scrollHeight
-  }
-}
-
-async function resolveQuestion(question: string): Promise<ResolvedQuestion> {
-  const storeInfo = resolveQuestionStore(question)
-  const monthInfo = resolveQuestionMonths(question)
-  const entries = await loadQuestionEntries(storeInfo.store, monthInfo.months)
-  return {
-    store: storeInfo.store,
-    storeSource: storeInfo.source,
-    months: monthInfo.months,
-    resolvedMonth: monthInfo.months[0] || selectedMonth.value,
-    monthSource: monthInfo.source,
-    intent: resolveIntent(question),
-    trend: monthInfo.months.length > 1 || wantsTrend(question),
-    entries,
-  }
-}
-
-function resolveQuestionStore(question: string): { store: StoreInfo | null; source: 'question' | 'default' } {
-  const normalizedQuestion = normalizeSearchText(question)
-  const matched = accessibleStores.value.find((store) => {
-    const names = [
-      store.name,
-      store.name.replace(/店$/, ''),
-      store.code,
-      store.id,
-    ].filter((value) => value && value.length >= 2)
-    return names.some((name) => normalizedQuestion.includes(normalizeSearchText(name)))
-  })
-  return matched
-    ? { store: matched, source: 'question' }
-    : { store: selectedStore.value, source: 'default' }
-}
-
-function resolveQuestionMonths(question: string): { months: string[]; source: ResolvedQuestion['monthSource'] } {
-  const explicit = parseExplicitMonths(question)
-  if (explicit.length) {
-    return { months: explicit, source: 'question' }
-  }
-  const base = parseMonthValue(selectedMonth.value)
-  if (/最近三个月/.test(question)) {
-    return {
-      months: [shiftMonth(base, -2), shiftMonth(base, -1), selectedMonth.value],
-      source: 'trend',
-    }
-  }
-  if (/上上月|上上个月/.test(question)) {
-    return { months: [shiftMonth(base, -2)], source: 'relative' }
-  }
-  if (/上月|上个月/.test(question)) {
-    return { months: [shiftMonth(base, -1)], source: 'relative' }
-  }
-  if (/本月|这个月|当前月|当月/.test(question)) {
-    return { months: [selectedMonth.value], source: 'current' }
-  }
-  if (wantsTrend(question)) {
-    const months = availableTrendMonths()
-    return { months: months.length ? months : [selectedMonth.value], source: 'trend' }
-  }
-  return { months: [selectedMonth.value], source: 'current' }
-}
-
-function parseExplicitMonths(question: string) {
-  const months = new Set<string>()
-  const defaultYear = Number(selectedMonth.value.split('-')[0]) || new Date().getFullYear()
-  let match: RegExpExecArray | null
-
-  const fullRange = /(20\d{2})[-/.年]\s*(1[0-2]|0?[1-9])\s*(?:-|到|至|~)\s*(20\d{2})[-/.年]\s*(1[0-2]|0?[1-9])/g
-  while ((match = fullRange.exec(question))) {
-    addMonthRange(months, toMonth(Number(match[1]), Number(match[2])), toMonth(Number(match[3]), Number(match[4])))
-  }
-
-  const range = /(?:(20\d{2})\s*年?)?\s*(1[0-2]|0?[1-9]|[一二两三四五六七八九十]{1,3})\s*(?:-|到|至|~)\s*(?:(20\d{2})\s*年?)?\s*(1[0-2]|0?[1-9]|[一二两三四五六七八九十]{1,3})\s*月/g
-  while ((match = range.exec(question))) {
-    const year = Number(match[1] || match[3] || defaultYear)
-    const start = monthNumber(match[2])
-    const end = monthNumber(match[4])
-    if (start && end) addMonthRange(months, toMonth(year, start), toMonth(year, end))
-  }
-
-  const full = /(20\d{2})\s*[-/.年]\s*(1[0-2]|0?[1-9])\s*月?/g
-  while ((match = full.exec(question))) {
-    months.add(toMonth(Number(match[1]), Number(match[2])))
-  }
-
-  const numericMonth = /(^|[^\d])(1[0-2]|0?[1-9])\s*月份?/g
-  while ((match = numericMonth.exec(question))) {
-    months.add(toMonth(defaultYear, Number(match[2])))
-  }
-
-  const chineseMonth = /([一二两三四五六七八九十]{1,3})\s*月份?/g
-  while ((match = chineseMonth.exec(question))) {
-    const month = monthNumber(match[1])
-    if (month) months.add(toMonth(defaultYear, month))
-  }
-
-  return Array.from(months)
-}
-
-function resolveIntent(question: string): QuestionIntent {
-  const rules: Array<[RegExp, QuestionIntent]> = [
-    [/净利率|利润率/, intentDefinitions[3]],
-    [/净利润|净利|利润|盈利/, intentDefinitions[2]],
-    [/营业总收入|总收入|流水/, intentDefinitions[1]],
-    [/营业额|营收|收入|revenue/i, intentDefinitions[0]],
-    [/成本|成本异常|原材料/, intentDefinitions[4]],
-    [/费用|报销/, intentDefinitions[5]],
-    [/库存|叫货|入库|出库/, intentDefinitions[6]],
-    [/巡店|不合格|整改/, intentDefinitions[7]],
-    [/工资|人效|人工/, intentDefinitions[8]],
-  ]
-  return rules.find(([pattern]) => pattern.test(question))?.[1] || intentDefinitions[0]
-}
-
-async function loadQuestionEntries(store: StoreInfo | null, months: string[]) {
-  if (!store) return []
-  const rows = await Promise.all(months.map((month) => (
-    getProfitEntries({ month, storeId: store.id }).catch((error) => {
-      console.error('[Assistant Local Data Error]', { storeId: store.id, month, error })
-      return [] as ProfitEntry[]
-    })
-  )))
-  return rows.flat()
-}
-
-function buildDataContext(question: string, localAnswer: string, resolved: ResolvedQuestion) {
-  const store = resolved.store
-  const rows = resolved.entries
-    .filter((entry) => !store || entry.storeId === store.id)
-    .sort((a, b) => a.month.localeCompare(b.month))
-    .map((entry) => {
-      const rowMetric = metricFromEntry(entry)
-      return [
-        entry.month,
-        entry.brandName || selectedBrandName.value,
-        entry.storeName || store?.name || '',
-        Math.round(rowMetric.revenue),
-        Math.round(rowMetric.sales),
-        Math.round(rowMetric.net),
-        percent(rowMetric.margin),
-        Math.round(rowMetric.cost),
-        Math.round(rowMetric.expense),
-        rowMetric.status,
-      ].join(',')
-    })
-  return [
-    '页面：门店经营助手',
-    `用户问题：${question}`,
-    `defaultMonth：${selectedMonth.value}`,
-    `resolvedMonth：${resolved.resolvedMonth}`,
-    `resolvedMonths：${resolved.months.join(',')}`,
-    `monthSource：${resolved.monthSource}`,
-    `storeId：${store?.id || ''}`,
-    `storeName：${store?.name || ''}`,
-    `resolvedStoreId：${store?.id || ''}`,
-    `resolvedStoreName：${store?.name || ''}`,
-    `brandName：${store ? normalizeBrandName(store.brandName || '') : selectedBrandName.value}`,
-    `intent：${resolved.intent.key}`,
-    `intentLabel：${resolved.intent.label}`,
-    `本地基础回答：\n${localAnswer}`,
-    '查询数据CSV：月份,品牌,门店,营业额,营业总收入,净利润,净利率,成本合计,费用合计,状态',
-    rows.join('\n') || '暂无查询数据',
-  ].join('\n')
-}
-
-function normalizeSearchText(value: string) {
-  return String(value || '').toLowerCase().replace(/\s+/g, '')
-}
-
-function availableTrendMonths() {
-  const months = monthOptions.value.filter((month) => /^\d{4}-\d{2}$/.test(month))
-  return Array.from(new Set(months)).sort()
-}
-
-function parseMonthValue(month: string) {
-  const [year, value] = month.split('-').map((part) => Number(part))
-  return {
-    year: year || new Date().getFullYear(),
-    month: value || 1,
-  }
-}
-
-function shiftMonth(base: { year: number; month: number }, offset: number) {
-  const date = new Date(base.year, base.month - 1 + offset, 1)
-  return toMonth(date.getFullYear(), date.getMonth() + 1)
-}
-
-function addMonthRange(months: Set<string>, start: string, end: string) {
-  const startValue = parseMonthValue(start)
-  const endValue = parseMonthValue(end)
-  let cursor = new Date(startValue.year, startValue.month - 1, 1)
-  const last = new Date(endValue.year, endValue.month - 1, 1)
-  if (cursor > last) {
-    cursor = new Date(endValue.year, endValue.month - 1, 1)
-    const reverseLast = new Date(startValue.year, startValue.month - 1, 1)
-    while (cursor <= reverseLast) {
-      months.add(toMonth(cursor.getFullYear(), cursor.getMonth() + 1))
-      cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)
-    }
+function trapTodoDialogFocus(event: KeyboardEvent) {
+  const dialog = todoDialog.value
+  if (!dialog) return
+  const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+    'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+  ))
+  if (!focusable.length) {
+    event.preventDefault()
     return
   }
-  while (cursor <= last) {
-    months.add(toMonth(cursor.getFullYear(), cursor.getMonth() + 1))
-    cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
   }
 }
 
-function toMonth(year: number, month: number) {
-  return `${year}-${String(month).padStart(2, '0')}`
-}
-
-function monthNumber(value: string) {
-  if (/^\d+$/.test(value)) {
-    const month = Number(value)
-    return month >= 1 && month <= 12 ? month : 0
-  }
-  return monthNameMap[value] || 0
-}
-
-function metricFromEntry(entry?: ProfitEntry): StoreMetric {
-  if (!entry) {
-    return {
-      revenue: 0,
-      sales: 0,
-      net: 0,
-      margin: 0,
-      cost: 0,
-      expense: 0,
-      status: '异常',
-      hasData: false,
-    }
-  }
-  const revenue = numberValue(entry.income ?? entry.sales)
-  const sales = numberValue(entry.sales ?? entry.income)
-  const net = numberValue(entry.net)
-  const margin = entry.margin !== undefined ? numberValue(entry.margin) : (revenue > 0 ? net / revenue : 0)
-  return {
-    revenue,
-    sales,
-    net,
-    margin,
-    cost: numberValue(entry.costSum),
-    expense: numberValue(entry.expenseSum),
-    status: net >= 0 ? '正常' : '异常',
-    hasData: true,
+async function confirmAddTodo() {
+  const draft = todoConfirmation.value
+  const response = draft?.run.response
+  if (!draft || !response || todoSubmitting.value) return
+  todoSubmitting.value = true
+  todoError.value = ''
+  const key = actionKey(draft.run, draft.action, draft.actionIndex)
+  try {
+    await createManualBusinessTodo({
+      title: draft.action.action,
+      summary: draft.action.action,
+      storeId: effectiveStoreId.value,
+      month: selectedMonth.value,
+      assigneeRole: todoOwnerRole(draft.action.ownerRole),
+      dueAt: draft.action.deadline,
+      sourceModule: 'ASSISTANT',
+      sourceRecordId: actionSourceRecordId(response.localData.dataVersion, draft.action),
+      expectedImpact: draft.action.expectedImpact,
+      verificationMetric: draft.action.verificationMetric,
+      confirmed: true,
+    })
+    addedTodoActions.value = { ...addedTodoActions.value, [key]: true }
+    dismissTodoConfirmation()
+  } catch (error) {
+    todoError.value = normalizeError(error, '加入待办失败，已保留当前建议，请稍后重试。')
+  } finally {
+    todoSubmitting.value = false
   }
 }
 
-function wantsTrend(question: string) {
-  return /各月|每月|趋势|月趋势|最近三个月|全部月份|所有月份|收入走势|历史/.test(question)
+function actionKey(run: AssistantRun, action: AssistantAction, actionIndex: number) {
+  return `${run.id}:${actionIndex}:${action.action}`
 }
 
-function numberValue(value?: number) {
-  return Number(value || 0)
+function actionSourceRecordId(dataVersion: string, action: AssistantAction) {
+    const content = [dataVersion, effectiveStoreId.value, selectedMonth.value, action.action,
+    action.ownerRole, action.deadline, action.verificationMetric].join('|')
+  let hash = 2166136261
+  for (let index = 0; index < content.length; index += 1) {
+    hash ^= content.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return `AI_ACTION_${(hash >>> 0).toString(16).padStart(8, '0')}`
 }
 
-function money(value: number) {
-  return `¥${Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}`
+function handleResultScroll() {
+  const element = resultScroll.value
+  if (!element) return
+  followLatest.value = element.scrollHeight - element.scrollTop - element.clientHeight < 96
 }
 
-function percent(value: number) {
-  return `${(Number(value || 0) * 100).toFixed(1)}%`
+function scrollToBottom(force = false) {
+  if (!resultScroll.value || (!force && !followLatest.value)) return
+  resultScroll.value.scrollTop = resultScroll.value.scrollHeight
 }
 
-function monthText(month: string) {
-  const parts = month.split('-')
-  const value = Number(parts[1] || 0)
-  return value ? `${value}月` : month
+async function toggleWorkspaceFullscreen() {
+  if (workspaceFullscreen.value) {
+    releaseFullscreenLayout(true)
+    return
+  }
+
+  const appMain = assistantWorkspace.value?.closest<HTMLElement>('.app-main')
+  appMainScrollTop = appMain?.scrollTop || 0
+  bodyOverflow = document.body.style.overflow
+  documentOverflow = document.documentElement.style.overflow
+  document.body.style.overflow = 'hidden'
+  document.documentElement.style.overflow = 'hidden'
+  workspaceFullscreen.value = true
+  window.addEventListener('resize', updateFullscreenBounds)
+  await nextTick()
+  updateFullscreenBounds()
+}
+
+function updateFullscreenBounds() {
+  if (!workspaceFullscreen.value) return
+  const appMain = assistantWorkspace.value?.closest<HTMLElement>('.app-main')
+  const rect = appMain?.getBoundingClientRect()
+  const inset = 12
+  fullscreenStyle.value = rect
+    ? {
+        top: `${Math.max(inset, rect.top + inset)}px`,
+        right: `${Math.max(inset, window.innerWidth - rect.right + inset)}px`,
+        bottom: `${Math.max(inset, window.innerHeight - rect.bottom + inset)}px`,
+        left: `${Math.max(inset, rect.left + inset)}px`,
+      }
+    : { inset: `${inset}px` }
+}
+
+function releaseFullscreenLayout(restoreFocus: boolean) {
+  if (!workspaceFullscreen.value) return
+  workspaceFullscreen.value = false
+  fullscreenStyle.value = {}
+  window.removeEventListener('resize', updateFullscreenBounds)
+  document.body.style.overflow = bodyOverflow
+  document.documentElement.style.overflow = documentOverflow
+  const appMain = assistantWorkspace.value?.closest<HTMLElement>('.app-main')
+  if (appMain) appMain.scrollTop = appMainScrollTop
+  if (restoreFocus) void nextTick(() => workspaceToggle.value?.focus())
+}
+
+function handlePageKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Escape') return
+  if (todoConfirmation.value) {
+    if (todoSubmitting.value) return
+    event.preventDefault()
+    closeTodoConfirmation()
+    return
+  }
+  if (!workspaceFullscreen.value) return
+  event.preventDefault()
+  releaseFullscreenLayout(true)
+}
+
+function metricCards(entry: ProfitEntry | null) {
+  return [
+    { label: '营业额', value: money(entry?.sales), tone: '' },
+    { label: '成本', value: money(entry?.costSum), tone: '' },
+    { label: '净利润', value: money(entry?.net), tone: numberValue(entry?.net) < 0 ? 'bad' : 'good' },
+    { label: '净利率', value: percent(entry?.margin), tone: numberValue(entry?.margin) < 0.05 ? 'bad' : 'good' },
+  ]
+}
+
+function visibleLocalMetrics(metrics: AssistantLocalMetric[]) {
+  const keys = ['sales', 'income', 'cost', 'gross', 'expense', 'net', 'margin', 'momNetChange', 'yoyNetChange']
+  return [...metrics].sort((left, right) => keys.indexOf(left.key) - keys.indexOf(right.key))
+    .filter((metric) => keys.includes(metric.key))
+}
+
+function confidenceText(value: string) {
+  return ({ HIGH: '高', MEDIUM: '中', LOW: '低' } as Record<string, string>)[value] || '未评估'
+}
+
+function severityText(value: string) {
+  return ({ HIGH: '高风险', MEDIUM: '中风险', LOW: '低风险' } as Record<string, string>)[value] || '待核实'
+}
+
+function roleText(value: string) {
+  return ({
+    BOSS: '老板',
+    FINANCE: '财务',
+    STORE_MANAGER: '店长',
+    WAREHOUSE: '仓库管理员',
+    SUPERVISOR: '督导',
+    OPERATIONS: '运营',
+  } as Record<string, string>)[String(value || '').toUpperCase()] || value || '待确认'
+}
+
+function todoOwnerRole(value: string) {
+  const normalized = String(value || '').trim()
+  const aliases: Record<string, string> = {
+    老板: 'BOSS',
+    系统管理员: 'BOSS',
+    财务: 'FINANCE',
+    店长: 'STORE_MANAGER',
+    督导: 'SUPERVISOR',
+    仓库: 'WAREHOUSE',
+    仓库管理员: 'WAREHOUSE',
+    运营: 'OPERATIONS',
+  }
+  return aliases[normalized] || normalized.toUpperCase()
+}
+
+function formatUpdatedAt(value: string) {
+  if (!value) return '本次查询'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date)
+}
+
+function latencyText(value: number) {
+  return `${(Math.max(0, Number(value || 0)) / 1000).toFixed(1)}秒`
+}
+
+function maskedRequestId(value: string) {
+  const id = String(value || '').trim()
+  if (!id) return ''
+  if (id.length <= 10) return id
+  return `${id.slice(0, 6)}…${id.slice(-4)}`
+}
+
+function aiUnavailableMessage(run: AssistantRun) {
+  if (assistantStatus.value?.configured === false || run.response?.error?.code === 'DEEPSEEK_NOT_CONFIGURED') {
+    return 'AI分析服务尚未配置，本地经营数据仍可正常查询。'
+  }
+  return run.response?.error?.message || 'AI分析暂时不可用，请稍后重新分析。'
+}
+
+function selectedMonthText() {
+  const value = Number(selectedMonth.value.split('-')[1] || 0)
+  return value ? `${value}月` : '本月'
+}
+
+function normalizeMonths(values: string[]) {
+  const normalized = values.filter((value) => /^\d{4}-\d{2}$/.test(value))
+  return Array.from(new Set(normalized)).sort().reverse()
+}
+
+function validMonth(value: string) {
+  return /^\d{4}-\d{2}$/.test(value) ? value : ''
 }
 
 function currentMonth() {
@@ -663,581 +538,623 @@ function currentMonth() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 }
 
-function validMonth(value: unknown) {
-  const text = typeof value === 'string' ? value : ''
-  return /^\d{4}-\d{2}$/.test(text) ? text : ''
+function money(value?: number) {
+  return `¥${numberValue(value).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}`
 }
 
-function normalizeMonths(values: string[]) {
-  const months = values.filter((month) => /^\d{4}-\d{2}$/.test(month))
-  return months.length ? Array.from(new Set(months)) : [currentMonth()]
+function percent(value?: number) {
+  return `${(numberValue(value) * 100).toFixed(1)}%`
 }
 
-function nextMessageId() {
-  messageId += 1
-  return messageId
+function numberValue(value?: number) {
+  return Number(value || 0)
 }
 
-const technicalErrorPatterns = [
-  'handler dispatch failed',
-  'java.lang',
-  'noclassdeffounderror',
-  'org.springframework',
-  'stacktrace',
-  'exception',
-  'errorresponse$builder',
-]
-
-function normalizeUserError(value: unknown, fallback: string) {
+const technicalErrors = ['java.lang', 'exception', 'stacktrace', 'handler dispatch', 'axios']
+function normalizeError(value: unknown, fallback: string) {
   const message = value instanceof Error ? value.message : String(value || '')
-  const lower = message.toLowerCase()
-  if (!message || technicalErrorPatterns.some((pattern) => lower.includes(pattern))) {
-    return fallback
-  }
+  if (!message || technicalErrors.some((item) => message.toLowerCase().includes(item))) return fallback
   return message
 }
 </script>
 
 <template>
   <section class="page-panel store-assistant-page">
-    <div class="assistant-title-row">
-      <h2>门店经营助手</h2>
-      <button class="ghost-button clear-button" type="button" @click="clearConversation">清空对话</button>
+    <div class="assistant-page-header">
+      <PageHeader
+        title="门店经营助手"
+        :subtitle="businessScope.isStoreManager.value
+          ? `${businessScope.managerScopeLabel.value} · 数据库负责事实，AI负责解释和行动建议`
+          : '数据库负责事实，AI负责解释和行动建议'"
+      >
+        <template #actions>
+          <button class="secondary-button" type="button" :disabled="!runs.length" @click="clearConversation">
+            清空记录
+          </button>
+        </template>
+      </PageHeader>
+
+      <div v-if="pageError" class="page-error" role="alert">{{ pageError }}</div>
     </div>
 
-    <div v-if="pageError" class="error-box">{{ pageError }}</div>
-
-    <section class="assistant-storebar">
-      <div class="store-context-card">
-        <div class="context-eyebrow">当前门店</div>
-        <div class="store-pickers">
-          <label class="picker-field">
-            <span>门店</span>
-            <select v-model="selectedStoreId" :disabled="pageLoading || auth.role === 'STORE_MANAGER'">
-              <option v-if="!accessibleStores.length" value="">暂无可选门店</option>
-              <option v-for="store in accessibleStores" :key="store.id" :value="store.id">
-                {{ store.name }}
-              </option>
-            </select>
-          </label>
-          <label class="picker-field">
-            <span>月份</span>
-            <select v-model="selectedMonth" :disabled="pageLoading || !monthOptions.length">
-              <option v-for="month in monthOptions" :key="month" :value="month">{{ month }}</option>
-            </select>
-          </label>
-        </div>
-      </div>
-
-      <div class="metric-card-grid" :class="{ loading: metricLoading }">
-        <article v-for="card in metricCards" :key="card.label" class="metric-mini" :class="card.tone">
+    <section
+      class="context-bar"
+      :class="{ 'context-bar--single-store': businessScope.isStoreManager.value }"
+      aria-label="当前分析范围"
+    >
+      <label v-if="!businessScope.isStoreManager.value" class="context-field">
+        <span>门店</span>
+        <select v-model="selectedStoreId" :disabled="pageLoading || financeScope?.mode === 'OWN_STORE'">
+          <option v-if="!accessibleStores.length" value="">暂无可选门店</option>
+          <option v-for="store in accessibleStores" :key="store.id" :value="store.id">{{ store.name }}</option>
+        </select>
+      </label>
+      <label class="context-field month-field">
+        <span>月份</span>
+        <select v-model="selectedMonth" :disabled="pageLoading || !months.length">
+          <option v-for="month in months" :key="month" :value="month">{{ month }}</option>
+        </select>
+      </label>
+      <div class="metric-strip" :class="{ muted: metricLoading }">
+        <article v-for="card in mainMetrics" :key="card.label" class="metric-item" :class="card.tone">
           <span>{{ card.label }}</span>
-          <b>{{ card.value }}</b>
+          <strong>{{ card.value }}</strong>
         </article>
       </div>
     </section>
 
-    <section class="content-card assistant-chat-card">
-      <div class="chat-card-head">
-        <h3>{{ assistantTitle }}</h3>
-      </div>
+    <section
+      ref="assistantWorkspace"
+      class="assistant-workspace"
+      :class="{ 'is-fullscreen': workspaceFullscreen }"
+      :style="fullscreenStyle"
+    >
+      <button
+        ref="workspaceToggle"
+        class="workspace-toggle"
+        type="button"
+        :title="workspaceFullscreen ? '退出全屏' : '放大对话区域'"
+        :aria-label="workspaceFullscreen ? '退出全屏' : '放大对话区域'"
+        :aria-pressed="workspaceFullscreen"
+        @click="toggleWorkspaceFullscreen"
+      >
+        <Minimize2 v-if="workspaceFullscreen" :size="18" />
+        <Maximize2 v-else :size="18" />
+      </button>
 
-      <div ref="chatScroll" class="assistant-messages" aria-live="polite">
-        <div
-          v-for="message in messages"
-          :key="message.id"
-          class="chat-message"
-          :class="[message.role, message.tone]"
-        >
-          <div class="message-name">
-            {{ message.role === 'user' ? '我' : message.tone === 'ai' ? 'DeepSeek 经营分析' : message.tone === 'local' ? '系统数据' : '经营助手' }}
+      <div ref="resultScroll" class="result-stream" aria-live="polite" @scroll.passive="handleResultScroll">
+        <div v-if="!runs.length" class="assistant-empty">
+          <div class="empty-icon"><Sparkles :size="22" /></div>
+          <h2>先查清经营数据，再让AI解释原因</h2>
+          <p>数字查询不会调用模型；趋势、异常和改善建议会进入AI分析。</p>
+          <div class="empty-questions">
+            <button v-for="question in quickQuestions" :key="question" type="button" @click="submitQuestion(question)">
+              {{ question }}
+            </button>
           </div>
-          <div class="message-body">{{ message.text }}</div>
+        </div>
+
+        <article v-for="run in runs" :key="run.id" class="assistant-run">
+          <div class="question-row">
+            <span>我的问题</span>
+            <p>{{ run.question }}</p>
+          </div>
+
+          <div v-if="run.status === 'loading'" class="analysis-loading" role="status">
+            <span class="loading-line wide"></span>
+            <span class="loading-line"></span>
+            <p>{{ run.mode === 'LOCAL' ? '正在查询经营数据库…' : '正在整理真实数据并请求AI分析…' }}</p>
+          </div>
+
+          <div v-else-if="run.status === 'error'" class="run-error" role="alert">
+            <AlertTriangle :size="18" />
+            <span>{{ run.error }}</span>
+            <button type="button" :disabled="sending" @click="retryRun(run)">重试</button>
+          </div>
+
+          <template v-else-if="run.response">
+            <section class="data-result" aria-label="经营数据">
+              <header class="result-heading">
+                <div>
+                  <Database :size="18" />
+                  <h3>经营数据</h3>
+                </div>
+                <span>{{ run.response.localData.dataPeriod }} · {{ run.response.localData.dataScope }}</span>
+              </header>
+              <div class="data-meta" aria-label="数据口径">
+                <span><strong>来源</strong>{{ run.response.localData.source }}</span>
+                <span><strong>更新时间</strong>{{ formatUpdatedAt(run.response.localData.updatedAt) }}</span>
+                <span><strong>处理方式</strong>{{ run.response.selectedMode === 'AI' ? '数据库计算 + AI分析' : '仅数据库计算' }}</span>
+              </div>
+              <p class="data-summary">{{ run.response.localData.summary }}</p>
+              <div v-if="run.response.localData.metrics.length" class="local-metrics">
+                <article v-for="metric in visibleLocalMetrics(run.response.localData.metrics)" :key="metric.key">
+                  <span>{{ metric.label }}</span>
+                  <strong>{{ metric.displayValue }}</strong>
+                  <small v-if="metric.comparison && metric.changeRate !== null">
+                    {{ metric.comparison }} {{ metric.changeRate >= 0 ? '+' : '' }}{{ (metric.changeRate * 100).toFixed(1) }}%
+                  </small>
+                </article>
+              </div>
+              <footer>
+                {{ run.response.selectionReason }}
+                <span v-if="run.response.localData.calculationVersion"> · 计算版本 {{ run.response.localData.calculationVersion }}</span>
+              </footer>
+            </section>
+
+            <section v-if="run.response.aiAnalysis.available" class="ai-result" aria-label="AI经营分析">
+              <header class="result-heading ai-heading">
+                <div>
+                  <Sparkles :size="18" />
+                  <h3>AI经营分析</h3>
+                </div>
+                <span>
+                  {{ run.response.aiAnalysis.provider }} · {{ run.response.aiAnalysis.model }} · {{ latencyText(run.response.aiAnalysis.latencyMs) }}
+                  <template v-if="maskedRequestId(run.response.aiAnalysis.requestId)"> · 请求 {{ maskedRequestId(run.response.aiAnalysis.requestId) }}</template>
+                </span>
+              </header>
+              <section class="analysis-block conclusion-block">
+                <h4>核心判断</h4>
+                <p>{{ run.response.aiAnalysis.summary }}</p>
+              </section>
+              <div class="analysis-columns">
+                <section v-if="run.response.aiAnalysis.findings.length" class="analysis-block">
+                  <h4>关键发现</h4>
+                  <ul><li v-for="item in run.response.aiAnalysis.findings" :key="item">{{ item }}</li></ul>
+                </section>
+                <section v-if="run.response.aiAnalysis.risks.length" class="analysis-block risk-block">
+                  <h4>风险与异常</h4>
+                  <ul class="risk-list">
+                    <li v-for="item in run.response.aiAnalysis.risks" :key="`${item.title}-${item.evidence}`">
+                      <span class="severity-tag" :class="item.severity.toLowerCase()">{{ severityText(item.severity) }}</span>
+                      <div><strong>{{ item.title }}</strong><p>{{ item.evidence }}</p></div>
+                    </li>
+                  </ul>
+                </section>
+              </div>
+              <section v-if="run.response.aiAnalysis.possibleCauses.length" class="analysis-block">
+                <h4>可能原因 <small>以下为推测，需结合业务核实</small></h4>
+                <ul class="cause-list">
+                  <li v-for="item in run.response.aiAnalysis.possibleCauses" :key="`${item.cause}-${item.basis}`">
+                    <div><strong>{{ item.cause }}</strong><span class="confidence-tag">可信度{{ confidenceText(item.confidence) }}</span></div>
+                    <p>{{ item.basis }}</p>
+                  </li>
+                </ul>
+              </section>
+              <section class="analysis-block action-block">
+                <h4>本周行动建议</h4>
+                <ol class="action-list">
+                  <li v-for="(item, actionIndex) in run.response.aiAnalysis.actions" :key="`${item.action}-${actionIndex}`">
+                    <div class="action-copy">
+                      <strong>{{ item.action }}</strong>
+                      <dl>
+                        <div><dt>负责人</dt><dd>{{ roleText(item.ownerRole) }}</dd></div>
+                        <div><dt>建议期限</dt><dd>{{ item.deadline }}</dd></div>
+                        <div><dt>预期改善</dt><dd>{{ item.expectedImpact }}</dd></div>
+                        <div><dt>验收指标</dt><dd>{{ item.verificationMetric }}</dd></div>
+                      </dl>
+                    </div>
+                    <button
+                      type="button"
+                      class="action-add-button"
+                      :class="{ added: addedTodoActions[actionKey(run, item, actionIndex)] }"
+                      :disabled="sending || !!addedTodoActions[actionKey(run, item, actionIndex)]"
+                      @click="openTodoConfirmation(run, item, actionIndex)"
+                    >
+                      <CheckCircle2 v-if="addedTodoActions[actionKey(run, item, actionIndex)]" :size="15" />
+                      <ClipboardPlus v-else :size="15" />
+                      {{ addedTodoActions[actionKey(run, item, actionIndex)] ? '已加入待办' : '加入待办' }}
+                    </button>
+                  </li>
+                </ol>
+              </section>
+              <section v-if="run.response.aiAnalysis.limitations.length" class="analysis-limitations">
+                <strong>数据限制</strong>
+                <span>{{ run.response.aiAnalysis.limitations.join('；') }}</span>
+              </section>
+              <footer>判断可信度：{{ confidenceText(run.response.aiAnalysis.confidence) }}</footer>
+            </section>
+
+            <section v-else-if="run.response.error" class="ai-unavailable" role="status">
+              <div><AlertTriangle :size="18" /><strong>AI分析暂时不可用</strong></div>
+              <p>{{ aiUnavailableMessage(run) }}</p>
+              <button type="button" :disabled="sending" @click="requestAiAnalysis(run)">
+                <RefreshCcw :size="15" />重新分析
+              </button>
+            </section>
+
+            <div v-else-if="run.mode === 'LOCAL' || run.mode === 'AUTO'" class="local-followup">
+              <span>当前只查询了真实经营数据。</span>
+              <button type="button" :disabled="sending" @click="requestAiAnalysis(run)">
+                <Sparkles :size="15" />让AI分析原因和建议
+              </button>
+            </div>
+          </template>
+        </article>
+      </div>
+
+      <footer class="assistant-composer">
+        <div class="mode-switch" aria-label="回答模式">
           <button
-            v-if="message.canDeepAnalyze && message.role === 'assistant' && message.tone === 'local'"
-            class="deep-analyze-button"
+            v-for="mode in ([['LOCAL', '查数据'], ['AI', 'AI分析'], ['AUTO', '自动']] as const)"
+            :key="mode[0]"
             type="button"
+            :class="{ active: assistantMode === mode[0] }"
+            :aria-pressed="assistantMode === mode[0]"
             :disabled="sending"
-            @click="submitDeepAnalysis(message)"
-          >
-            让 DeepSeek 深入分析
+            @click="assistantMode = mode[0]"
+          >{{ mode[1] }}</button>
+          <span>{{ modeHint }}</span>
+          <span v-if="assistantStatus" class="service-status" :class="{ ready: assistantStatus.configured }">
+            {{ assistantStatus.configured ? `${assistantStatus.provider} 已就绪` : 'AI服务未配置' }}
+          </span>
+        </div>
+        <form class="question-form" @submit.prevent="submitQuestion()">
+          <label class="sr-only" for="assistant-question">经营问题</label>
+          <input
+            id="assistant-question"
+            v-model.trim="input"
+            type="text"
+            :placeholder="`问${selectedStoreName}，例如：7月净利润为什么变化？`"
+            :disabled="sending || pageLoading"
+            autocomplete="off"
+          />
+          <button type="submit" :disabled="sending || pageLoading || !input.trim()">
+            <Send :size="17" />{{ sending ? '处理中' : '发送' }}
           </button>
-        </div>
-        <div v-if="sending" class="chat-message assistant thinking">
-          <div class="message-name">DeepSeek 分析</div>
-          <div class="message-body">正在分析当前门店数据...</div>
-        </div>
-      </div>
-
-      <div class="assistant-chips" aria-label="模式切换">
-        <span class="mode-label">模式：</span>
-        <button
-          v-for="mode in ([['AUTO','自动'],['LOCAL','查数据'],['AI','AI分析']] as const)"
-          :key="mode[0]"
-          class="question-chip mode-chip"
-          :class="{ active: assistantMode === mode[0] }"
-          type="button"
-          :disabled="sending"
-          @click="assistantMode = mode[0]"
-        >
-          {{ mode[1] }}
-        </button>
-      </div>
-
-      <div class="assistant-chips" aria-label="快捷问题">
-        <button
-          v-for="question in quickQuestions"
-          :key="question"
-          class="question-chip"
-          type="button"
-          :disabled="sending || pageLoading"
-          @click="submitQuickQuestion(question)"
-        >
-          {{ question }}
-        </button>
-      </div>
-
-      <form class="assistant-input" @submit.prevent="submitQuestion()">
-        <input
-          v-model.trim="input"
-          type="text"
-          :placeholder="inputPlaceholder"
-          :disabled="sending || pageLoading"
-          autocomplete="off"
-        />
-        <button type="submit" :disabled="sending || pageLoading">
-          <Send :size="16" />
-          {{ sending ? '发送中...' : '发送' }}
-        </button>
-      </form>
+        </form>
+      </footer>
     </section>
+
+    <Teleport to="body">
+      <div
+        v-if="todoConfirmation"
+        class="todo-dialog-backdrop"
+        role="presentation"
+        @click.self="closeTodoConfirmation"
+      >
+        <section
+          ref="todoDialog"
+          class="todo-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="todo-dialog-title"
+          aria-describedby="todo-dialog-description"
+          @keydown.tab="trapTodoDialogFocus"
+        >
+          <header>
+            <div>
+              <h2 id="todo-dialog-title">确认加入待办</h2>
+              <p id="todo-dialog-description">AI只提供建议，确认后才会写入正式待办。</p>
+            </div>
+            <UiButton
+              variant="ghost"
+              type="button"
+              icon-only
+              aria-label="关闭待办确认"
+              title="关闭"
+              :disabled="todoSubmitting"
+              @click="closeTodoConfirmation"
+            >
+              <template #icon><X :size="20" /></template>
+            </UiButton>
+          </header>
+          <div class="todo-dialog-content">
+            <strong>{{ todoConfirmation.action.action }}</strong>
+            <dl>
+              <div><dt>负责人</dt><dd>{{ roleText(todoConfirmation.action.ownerRole) }}</dd></div>
+              <div><dt>建议期限</dt><dd>{{ todoConfirmation.action.deadline }}</dd></div>
+              <div><dt>预期改善</dt><dd>{{ todoConfirmation.action.expectedImpact }}</dd></div>
+              <div><dt>验收指标</dt><dd>{{ todoConfirmation.action.verificationMetric }}</dd></div>
+            </dl>
+            <p v-if="todoError" class="todo-dialog-error" role="alert">{{ todoError }}</p>
+          </div>
+          <ModalFooter>
+            <UiButton data-todo-cancel variant="secondary" type="button" :disabled="todoSubmitting" @click="closeTodoConfirmation">取消</UiButton>
+            <UiButton variant="primary" type="button" :disabled="todoSubmitting" @click="confirmAddTodo">
+              {{ todoSubmitting ? '正在加入…' : '确认加入待办' }}
+            </UiButton>
+          </ModalFooter>
+        </section>
+      </div>
+    </Teleport>
   </section>
 </template>
 
 <style scoped>
 .store-assistant-page {
-  display: flex;
-  width: 100%;
-  height: calc(100vh - 202px);
-  min-height: 410px;
-  flex-direction: column;
-  gap: 9px;
-  overflow: hidden;
-  padding: 0;
-  max-width: 1180px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.assistant-title-row {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 32px;
-}
-
-.assistant-title-row h2 {
-  margin: 0;
-  color: var(--ink);
-  font-size: 20px;
-  line-height: 1.2;
-}
-
-.clear-button {
-  min-height: 32px;
-  padding: 6px 12px;
-}
-
-.assistant-storebar {
-  flex-shrink: 0;
   display: grid;
-  grid-template-columns: minmax(280px, 420px) 1fr;
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 12px;
-  align-items: stretch;
-  height: 82px;
-  min-height: 0;
+  overflow: hidden !important;
+  container-type: inline-size;
 }
 
-.store-context-card,
-.metric-card-grid,
-.assistant-chat-card {
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: #fff;
-  box-shadow: 0 8px 24px rgba(31, 35, 48, 0.05);
-}
-
-.store-context-card {
-  min-height: 0;
-  padding: 9px 12px;
-}
-
-.context-eyebrow {
-  margin-bottom: 3px;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 900;
-}
-
-.store-pickers {
-  display: flex;
-  gap: 8px;
-}
-
-.picker-field {
-  display: flex;
-  flex: 1 1 150px;
-  min-width: 0;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.picker-field span {
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 900;
-}
-
-.store-pickers select {
-  min-height: 30px;
-  width: 100%;
-  max-width: 100%;
-  padding: 5px 9px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: #fff;
-  color: var(--ink);
-  font-size: 13px;
-  font-weight: 800;
-  outline: none;
-}
-
-.store-pickers select:focus,
-.assistant-input input:focus {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px var(--primary-soft);
-}
-
-.metric-card-grid {
+.assistant-page-header {
   display: grid;
-  grid-template-columns: repeat(4, minmax(112px, 1fr));
   gap: 8px;
-  min-height: 0;
-  padding: 9px 12px;
 }
 
-.metric-mini {
-  min-width: 0;
-  padding: 7px 10px;
-  border-radius: 9px;
-  background: var(--bg);
+.secondary-button,
+.context-field select,
+.empty-questions button,
+.mode-switch button,
+.question-form input,
+.question-form button,
+.local-followup button,
+.ai-unavailable button,
+.run-error button {
+  min-height: 44px;
+  border: 1px solid var(--ds-line-strong);
+  border-radius: 6px;
+  background: var(--ds-surface);
+  color: var(--ds-ink);
 }
 
-.metric-mini span {
-  display: block;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 900;
-  white-space: nowrap;
-}
+.secondary-button { padding: 0 16px; }
+.secondary-button:disabled { cursor: not-allowed; opacity: .45; }
 
-.metric-mini b {
-  display: block;
-  margin-top: 3px;
-  overflow: hidden;
-  color: var(--ink);
-  font-size: 17px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 900;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.page-error,
+.run-error {
+  border: 1px solid #efc2c6;
+  border-radius: 6px;
+  background: var(--ds-danger-soft);
+  color: #9d2632;
 }
+.page-error { padding: 10px 14px; }
 
-.metric-mini.good b {
-  color: var(--good);
-}
-
-.metric-mini.bad b {
-  color: var(--bad);
-}
-
-.assistant-chat-card {
-  display: flex;
-  min-height: 0;
-  height: auto;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: 8px;
-  overflow: hidden;
-  padding: 10px 12px;
-}
-
-.chat-card-head {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+.context-bar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.3fr) 160px minmax(480px, 2fr);
   gap: 12px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid var(--ds-line);
+  border-radius: 6px;
+  background: var(--ds-surface);
 }
 
-.chat-card-head h3 {
-  margin: 0;
-  font-size: 16px;
-  line-height: 1.2;
+.context-bar--single-store {
+  grid-template-columns: 160px minmax(480px, 1fr);
 }
 
-.assistant-messages {
-  flex: 1 1 auto;
+.context-field { display: grid; gap: 6px; }
+.context-field span { color: var(--ds-secondary); font-size: 13px; font-weight: 600; }
+.context-field select { width: 100%; padding: 0 12px; outline: none; }
+.context-field select:focus,
+.question-form input:focus { border-color: var(--ds-primary-hover); box-shadow: 0 0 0 3px var(--ds-primary-soft); }
+
+.metric-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.metric-strip.muted { opacity: .55; }
+.metric-item { min-width: 0; padding: 3px 14px; border-left: 1px solid var(--ds-line); }
+.metric-item span { display: block; color: var(--ds-muted); font-size: 12px; }
+.metric-item strong { display: block; margin-top: 5px; overflow: hidden; font-size: 18px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.metric-item.good strong { color: var(--ds-success); }
+.metric-item.bad strong { color: var(--ds-danger); }
+
+.assistant-workspace {
+  position: relative;
+  display: grid;
   min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 9px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: #f7f8fb;
+  grid-template-rows: minmax(0, 1fr) auto;
+  border: 1px solid var(--ds-line);
+  border-radius: 6px;
+  background: var(--ds-surface);
+  overflow: hidden;
 }
 
-.chat-message {
-  max-width: 82%;
-  margin-bottom: 7px;
+.assistant-workspace.is-fullscreen {
+  position: fixed;
+  z-index: 60;
+  min-height: 0;
+  animation: workspace-fade-in 180ms ease-out;
 }
 
-.chat-message.user {
-  margin-left: auto;
-  text-align: right;
-}
-
-.message-name {
-  margin-bottom: 4px;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 900;
-}
-
-.message-body {
-  display: inline-block;
-  padding: 7px 10px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: #fff;
-  color: var(--ink);
-  font-size: 13px;
-  line-height: 1.58;
-  text-align: left;
-  white-space: pre-line;
-}
-
-.chat-message.user .message-body {
-  border-color: var(--primary);
-  background: var(--primary);
-  color: #fff;
-}
-
-.chat-message.local .message-body {
-  border-left: 4px solid var(--primary);
-}
-
-.chat-message.ai .message-body {
-  border-left: 4px solid var(--good);
-}
-
-.chat-message.error .message-body {
-  border-left: 4px solid var(--warn);
-  color: #8a5a00;
-}
-
-.assistant-chips {
-  flex-shrink: 0;
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.question-chip {
-  min-height: 28px;
-  padding: 5px 10px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: #fff;
-  color: var(--ink);
-  font-size: 12px;
-  font-weight: 800;
-  transition: 0.15s;
-}
-
-.question-chip:hover:not(:disabled) {
-  border-color: var(--primary);
-  background: var(--primary-soft);
-  color: var(--primary-dark);
-}
-
-.question-chip:disabled {
-  cursor: not-allowed;
-  opacity: 0.58;
-}
-
-.mode-label {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 900;
-  align-self: center;
-}
-
-.mode-chip.active {
-  border-color: var(--primary);
-  background: var(--primary);
-  color: #fff;
-}
-
-.deep-analyze-button {
-  margin-top: 6px;
+.workspace-toggle {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  right: 8px;
   display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-height: 28px;
-  padding: 4px 12px;
-  border: 1px solid var(--good);
-  border-radius: 999px;
-  background: #e8f5ed;
-  color: var(--good);
-  font-size: 12px;
-  font-weight: 800;
-  cursor: pointer;
-  transition: 0.15s;
-}
-
-.deep-analyze-button:hover:not(:disabled) {
-  background: var(--good);
-  color: #fff;
-}
-
-.deep-analyze-button:disabled {
-  opacity: 0.58;
-  cursor: not-allowed;
-}
-
-.assistant-input {
-  flex-shrink: 0;
-  display: flex;
-  gap: 8px;
-}
-
-.assistant-input input {
-  flex: 1;
-  min-height: 38px;
-  padding: 8px 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: #fff;
-  color: var(--ink);
-  font-size: 14px;
-  outline: none;
-  transition: 0.15s;
-}
-
-.assistant-input button {
-  display: inline-flex;
+  width: 44px;
+  height: 44px;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  min-height: 38px;
-  padding: 0 20px;
-  border: 0;
-  border-radius: 10px;
-  background: var(--primary);
-  color: #fff;
-  font-size: 14px;
-  font-weight: 900;
+  border: 1px solid var(--ds-line-strong);
+  border-radius: 6px;
+  background: var(--ds-surface);
+  color: var(--ds-secondary);
 }
 
-.assistant-input button:disabled {
-  background: #c9cdd6;
+.workspace-toggle:hover {
+  border-color: var(--ds-primary-hover);
+  color: var(--ds-primary-hover);
 }
 
-@media (max-width: 980px) {
-  .store-assistant-page {
-    height: auto;
-    min-height: 0;
-    overflow: visible;
-  }
-
-  .assistant-storebar {
-    grid-template-columns: 1fr;
-    height: auto;
-    max-height: none;
-  }
-
-  .metric-card-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .assistant-chat-card {
-    min-height: 430px;
-  }
+.workspace-toggle:focus-visible {
+  outline: 3px solid var(--ds-primary-soft);
+  outline-offset: 2px;
 }
 
-@media (max-height: 680px) and (min-width: 981px) {
-  .store-assistant-page {
-    height: calc(100vh - 212px);
-    min-height: 360px;
-  }
+.result-stream {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 16px;
+  background: var(--ds-surface-muted);
+}
+.assistant-empty { display: grid; width: 100%; max-width: 680px; min-height: 100%; margin: 0 auto; padding: 48px 16px 24px; place-content: center; justify-items: center; text-align: center; }
+.empty-icon { display: grid; width: 44px; height: 44px; place-items: center; border-radius: 50%; background: var(--ds-primary-soft); color: var(--ds-primary-hover); }
+.assistant-empty h2 { margin: 14px 0 6px; font-size: 20px; }
+.assistant-empty p { margin: 0; color: var(--ds-secondary); }
+.empty-questions { display: flex; margin-top: 20px; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.empty-questions button { min-height: 40px; padding: 0 14px; }
+.empty-questions button:hover { border-color: var(--ds-primary-hover); background: var(--ds-primary-soft); }
 
-  .assistant-title-row {
-    min-height: 30px;
-  }
+.assistant-run { max-width: 1160px; margin: 0 auto 16px; }
+.question-row { display: flex; align-items: flex-start; justify-content: flex-end; gap: 10px; margin-bottom: 10px; }
+.question-row span { padding-top: 10px; color: var(--ds-muted); font-size: 12px; }
+.question-row p { max-width: 70%; margin: 0; padding: 10px 14px; border-radius: 6px; background: var(--ds-primary-hover); color: #fff; line-height: 1.55; }
 
-  .assistant-storebar {
-    height: 70px;
-  }
+.data-result,
+.ai-result,
+.ai-unavailable,
+.analysis-loading,
+.run-error,
+.local-followup {
+  border: 1px solid var(--ds-line);
+  border-radius: 6px;
+  background: var(--ds-surface);
+}
+.data-result,
+.ai-result { padding: 18px; }
+.ai-result { margin-top: 12px; }
+.result-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.result-heading > div { display: flex; align-items: center; gap: 8px; }
+.result-heading h3 { margin: 0; font-size: 16px; }
+.result-heading > span { color: var(--ds-muted); font-size: 12px; }
+.data-summary { margin: 14px 0; color: var(--ds-ink); line-height: 1.65; }
+.data-meta { display: flex; margin-top: 12px; padding: 9px 0; gap: 20px; flex-wrap: wrap; border-block: 1px solid var(--ds-line); color: var(--ds-secondary); font-size: 12px; }
+.data-meta span { display: inline-flex; gap: 5px; }
+.data-meta strong { color: var(--ds-muted); font-weight: 500; }
+.local-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-block: 1px solid var(--ds-line); }
+.local-metrics article { min-width: 0; padding: 12px; border-right: 1px solid var(--ds-line); }
+.local-metrics article:nth-child(5n) { border-right: 0; }
+.local-metrics span,
+.local-metrics small { display: block; color: var(--ds-muted); font-size: 12px; }
+.local-metrics strong { display: block; margin: 5px 0 3px; font-size: 17px; font-variant-numeric: tabular-nums; }
+.data-result footer,
+.ai-result footer { margin-top: 12px; color: var(--ds-muted); font-size: 12px; }
 
-  .assistant-chat-card {
-    padding: 9px 11px;
-  }
+.ai-heading { padding-bottom: 14px; border-bottom: 1px solid var(--ds-line); color: var(--ds-primary-hover); }
+.analysis-block { margin-top: 18px; }
+.analysis-block h4 { margin: 0 0 8px; color: var(--ds-ink); font-size: 14px; }
+.analysis-block h4 small { margin-left: 6px; color: var(--ds-muted); font-weight: 400; }
+.analysis-block p,
+.analysis-block ul,
+.analysis-block ol { margin: 0; color: var(--ds-secondary); line-height: 1.75; }
+.analysis-block ul,
+.analysis-block ol { padding-left: 22px; }
+.conclusion-block { padding: 14px; border: 1px solid var(--ds-line); border-radius: 6px; background: var(--ds-primary-soft); }
+.analysis-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.risk-block { color: var(--ds-warning); }
+.risk-list,
+.cause-list,
+.action-list { padding: 0 !important; list-style: none; }
+.risk-list li { display: flex; gap: 9px; padding: 10px 0; align-items: flex-start; border-top: 1px solid var(--ds-line); }
+.risk-list li:first-child { padding-top: 0; border-top: 0; }
+.risk-list div { min-width: 0; }
+.risk-list strong { display: block; color: var(--ds-ink); font-size: 13px; }
+.risk-list p,
+.cause-list p { margin: 3px 0 0; color: var(--ds-secondary); font-size: 13px; line-height: 1.55; }
+.severity-tag,
+.confidence-tag { display: inline-flex; flex: none; min-height: 22px; padding: 0 7px; align-items: center; border-radius: 999px; background: var(--ds-warning-soft); color: #8a560c; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.severity-tag.low { background: var(--ds-primary-soft); color: var(--ds-primary-hover); }
+.severity-tag.high { background: var(--ds-danger-soft); color: var(--ds-danger); }
+.cause-list li { padding: 10px 0; border-top: 1px solid var(--ds-line); }
+.cause-list li:first-child { padding-top: 0; border-top: 0; }
+.cause-list li > div { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.cause-list strong { color: var(--ds-ink); font-size: 13px; }
+.confidence-tag { background: var(--ds-surface-muted); color: var(--ds-secondary); }
+.action-list { counter-reset: action-counter; }
+.action-list > li { display: flex; padding: 14px 0; align-items: flex-start; gap: 16px; border-top: 1px solid var(--ds-line); counter-increment: action-counter; }
+.action-list > li::before { content: counter(action-counter); display: grid; width: 26px; height: 26px; flex: none; place-items: center; border-radius: 50%; background: var(--ds-primary-soft); color: var(--ds-primary-hover); font-size: 12px; font-weight: 700; }
+.action-list > li:first-child { padding-top: 0; border-top: 0; }
+.action-copy { min-width: 0; flex: 1; }
+.action-copy > strong { display: block; color: var(--ds-ink); font-size: 14px; line-height: 1.5; }
+.action-copy dl,
+.todo-dialog-content dl { display: grid; margin: 8px 0 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 18px; }
+.action-copy dl div,
+.todo-dialog-content dl div { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 6px; font-size: 12px; }
+.action-copy dt,
+.todo-dialog-content dt { color: var(--ds-muted); }
+.action-copy dd,
+.todo-dialog-content dd { margin: 0; color: var(--ds-secondary); }
+.action-add-button { display: inline-flex; min-height: 36px; padding: 0 11px; flex: none; align-items: center; gap: 6px; border: 1px solid var(--ds-primary-hover); border-radius: 6px; background: var(--ds-surface); color: var(--ds-primary-hover); white-space: nowrap; }
+.action-add-button:hover { background: var(--ds-primary-soft); }
+.action-add-button.added { border-color: var(--ds-line); color: var(--ds-success); }
+.action-add-button:disabled { cursor: not-allowed; opacity: .72; }
+.analysis-limitations { display: flex; margin-top: 18px; gap: 8px; padding-top: 12px; border-top: 1px solid var(--ds-line); color: var(--ds-muted); font-size: 12px; }
 
-  .assistant-messages {
-    padding: 8px;
-  }
+.ai-unavailable { margin-top: 12px; padding: 16px; background: var(--ds-warning-soft); }
+.ai-unavailable > div { display: flex; align-items: center; gap: 8px; color: #8a560c; }
+.ai-unavailable p { margin: 7px 0 12px; color: var(--ds-secondary); }
+.ai-unavailable button,
+.local-followup button,
+.run-error button { display: inline-flex; align-items: center; gap: 6px; padding: 0 14px; }
+.local-followup { display: flex; margin-top: 12px; padding: 12px 14px; align-items: center; justify-content: space-between; color: var(--ds-secondary); }
+.local-followup button { color: var(--ds-primary-hover); }
+.run-error { display: flex; padding: 14px; align-items: center; gap: 10px; }
+.run-error span { flex: 1; }
+.analysis-loading { display: grid; gap: 9px; padding: 20px; }
+.analysis-loading p { margin: 2px 0 0; color: var(--ds-muted); }
+.loading-line { width: 52%; height: 12px; border-radius: 4px; background: #e7efed; animation: pulse 1.2s ease-in-out infinite; }
+.loading-line.wide { width: 86%; }
+
+.assistant-composer { flex: none; padding: 12px 16px 16px; border-top: 1px solid var(--ds-line); background: var(--ds-surface); }
+.mode-switch { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
+.mode-switch button { min-height: 34px; padding: 0 12px; }
+.mode-switch button.active { border-color: var(--ds-primary-hover); background: var(--ds-primary-hover); color: #fff; }
+.mode-switch > span { margin-left: 6px; color: var(--ds-muted); font-size: 12px; }
+.mode-switch .service-status { display: inline-flex; margin-left: auto; align-items: center; gap: 6px; white-space: nowrap; }
+.mode-switch .service-status::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--ds-warning); }
+.mode-switch .service-status.ready::before { background: var(--ds-success); }
+.question-form { display: flex; gap: 10px; }
+.question-form input { min-width: 0; flex: 1; padding: 0 14px; outline: none; }
+.question-form button { display: inline-flex; min-width: 108px; padding: 0 18px; align-items: center; justify-content: center; gap: 7px; border-color: var(--ds-primary-hover); background: var(--ds-primary-hover); color: #fff; font-weight: 700; }
+.question-form button:disabled { cursor: not-allowed; border-color: #b8c8c6; background: #b8c8c6; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+.todo-dialog-backdrop { position: fixed; z-index: 1400; inset: 0; display: grid; padding: 20px; place-items: center; background: rgb(18 36 36 / 46%); }
+.todo-dialog { width: min(560px, 100%); border: 1px solid var(--ds-line-strong); border-radius: 8px; background: var(--ds-surface); box-shadow: 0 4px 8px rgb(18 36 36 / 14%); color: var(--ds-ink); }
+.todo-dialog > header { display: flex; padding: 18px 20px; align-items: flex-start; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--ds-line); }
+.todo-dialog h2 { margin: 0; font-size: 18px; }
+.todo-dialog header p { margin: 5px 0 0; color: var(--ds-secondary); font-size: 13px; }
+.todo-dialog-content { padding: 20px; }
+.todo-dialog-content > strong { display: block; font-size: 15px; line-height: 1.55; }
+.todo-dialog-content dl { margin-top: 16px; padding: 14px; border: 1px solid var(--ds-line); border-radius: 6px; background: var(--ds-surface-muted); }
+.todo-dialog-content dl div { grid-template-columns: 72px minmax(0, 1fr); font-size: 13px; }
+.todo-dialog-error { margin: 14px 0 0; padding: 10px 12px; border-radius: 6px; background: var(--ds-danger-soft); color: var(--ds-danger); font-size: 13px; }
+
+@keyframes pulse { 50% { opacity: .45; } }
+@keyframes workspace-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+@media (max-width: 1280px) {
+  .context-bar { grid-template-columns: 1fr 1fr; }
+  .metric-strip { grid-column: 1 / -1; }
+  .local-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .analysis-columns { grid-template-columns: 1fr; gap: 0; }
+  .action-list > li { flex-wrap: wrap; }
+  .action-add-button { margin-left: 42px; }
 }
 
 @media (max-width: 720px) {
-  .store-assistant-page {
-    gap: 9px;
-  }
+  .context-bar { grid-template-columns: 1fr; }
+  .metric-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metric-item:nth-child(odd) { border-left: 0; }
+  .result-stream { padding: 12px; }
+  .question-row p { max-width: 88%; }
+  .local-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .local-metrics article:nth-child(5n) { border-right: 1px solid var(--ds-line); }
+  .local-followup { align-items: stretch; flex-direction: column; }
+  .mode-switch { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+  .mode-switch button { padding: 0 8px; }
+  .mode-switch > span:not(.service-status) { grid-column: 1 / -1; margin-left: 0; }
+  .mode-switch .service-status { grid-column: 1 / -1; margin-left: 0; }
+  .question-form { gap: 8px; }
+  .question-form button { min-width: 88px; padding: 0 12px; }
+  .action-copy dl,
+  .todo-dialog-content dl { grid-template-columns: 1fr; }
+  .action-add-button { width: calc(100% - 42px); justify-content: center; }
+  .assistant-run:first-of-type { padding-top: 44px; }
+}
 
-  .assistant-title-row,
-  .assistant-input {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .store-pickers,
-  .picker-field,
-  .store-pickers select,
-  .metric-card-grid,
-  .assistant-input button {
-    width: 100%;
-  }
-
-  .metric-card-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .assistant-chat-card {
-    min-height: 360px;
-    padding: 10px;
-  }
-
-  .chat-message {
-    max-width: 100%;
-  }
-
-  .assistant-input input,
-  .assistant-input button {
-    min-height: 38px;
-  }
+@media (prefers-reduced-motion: reduce) {
+  .loading-line,
+  .assistant-workspace.is-fullscreen { animation: none; }
 }
 </style>

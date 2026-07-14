@@ -5,7 +5,7 @@ import jakarta.validation.constraints.NotBlank;
 import java.math.BigDecimal;
 
 public record ProfitEntryRequest(
-    @NotBlank String storeId,
+    String storeId,
     @NotBlank String month,
     // 列类型为 DECIMAL(14,2)：整数位超过 12 位会溢出直接落 500，这里在入参层拦成 400。
     @Digits(integer = 12, fraction = 2) BigDecimal sales,

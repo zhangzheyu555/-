@@ -1,18 +1,23 @@
 import { expect, test, type Page } from '@playwright/test'
 
 const roleCases = [
-  { role: 'ADMIN', label: '系统管理员', name: '测试系统管理员', assistant: true },
-  { role: 'BOSS', label: '老板', name: '测试老板', assistant: true },
+  { role: 'BOSS', label: '老板（系统管理员）', name: '测试老板', assistant: true },
   { role: 'FINANCE', label: '财务', name: '测试财务', assistant: true },
   { role: 'STORE_MANAGER', label: '店长', name: '测试店长', assistant: true },
-  { role: 'SUPERVISOR', label: '督导', name: '测试督导', assistant: true },
   { role: 'WAREHOUSE', label: '仓库管理员', name: '测试仓库管理员', assistant: true },
   { role: 'OPERATIONS', label: '运营', name: '测试运营', assistant: true },
-  { role: 'EMPLOYEE', label: '员工', name: '测试员工', assistant: false },
 ] as const
 
+const roleContracts: Record<string, { permissions: string[]; dataScopes: Record<string, { mode: string; storeIds: string[] }>; defaultWorkspace: string }> = {
+  BOSS: { permissions: [], dataScopes: { STORE: { mode: 'ALL', storeIds: [] }, FINANCE: { mode: 'ALL', storeIds: [] }, SALARY: { mode: 'ALL', storeIds: [] }, WAREHOUSE: { mode: 'ALL', storeIds: [] }, INSPECTION: { mode: 'ALL', storeIds: [] }, EXAM: { mode: 'ALL', storeIds: [] } }, defaultWorkspace: '/boss' },
+  FINANCE: { permissions: ['system.dashboard.read', 'store.read', 'finance.profit.read', 'finance.profit.write', 'finance.export', 'expense.read', 'expense.create', 'expense.review', 'salary.read', 'salary.edit', 'assistant.use'], dataScopes: { STORE: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] }, FINANCE: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] }, SALARY: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] } }, defaultWorkspace: '/finance' },
+  STORE_MANAGER: { permissions: ['system.dashboard.read', 'store.read', 'finance.profit.read', 'finance.profit.write', 'expense.read', 'expense.create', 'salary.read', 'warehouse.store.read', 'warehouse.requisition.create', 'warehouse.requisition.receive', 'inspection.read', 'exam.learn', 'exam.report', 'assistant.use'], dataScopes: { STORE: { mode: 'OWN_STORE', storeIds: ['TEST-STORE'] }, FINANCE: { mode: 'OWN_STORE', storeIds: ['TEST-STORE'] }, SALARY: { mode: 'OWN_STORE', storeIds: ['TEST-STORE'] }, WAREHOUSE: { mode: 'OWN_STORE', storeIds: ['TEST-STORE'] }, INSPECTION: { mode: 'OWN_STORE', storeIds: ['TEST-STORE'] }, EXAM: { mode: 'OWN_STORE', storeIds: ['TEST-STORE'] } }, defaultWorkspace: '/store' },
+  WAREHOUSE: { permissions: ['system.dashboard.read', 'warehouse.central.read', 'warehouse.central.manage', 'assistant.use'], dataScopes: { WAREHOUSE: { mode: 'CENTRAL_WAREHOUSE', storeIds: [] } }, defaultWorkspace: '/warehouse' },
+  OPERATIONS: { permissions: ['system.dashboard.read', 'operations.dashboard.read', 'store.read', 'warehouse.store.read', 'inspection.read', 'inspection.manage', 'exam.learn', 'exam.manage', 'exam.report', 'platform.read', 'platform.manage', 'assistant.use'], dataScopes: { STORE: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] }, WAREHOUSE: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] }, INSPECTION: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] }, EXAM: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] } }, defaultWorkspace: '/operations' },
+}
+
 async function seedSession(page: Page, item: typeof roleCases[number]) {
-  await page.addInitScript((session) => {
+  await page.addInitScript(({ session, contract }) => {
     if (sessionStorage.getItem('TEST_AUTH_SEEDED') === '1') return
     sessionStorage.setItem('TEST_AUTH_SEEDED', '1')
     localStorage.setItem('ai_profit_vue_token', `TEST-${session.role}-TOKEN`)
@@ -24,15 +29,24 @@ async function seedSession(page: Page, item: typeof roleCases[number]) {
       role: session.role,
       roleLabel: session.label,
       storeScope: session.role === 'STORE_MANAGER' ? ['TEST-STORE'] : ['all'],
+      permissions: contract.permissions,
+      dataScopes: contract.dataScopes,
+      defaultWorkspace: contract.defaultWorkspace,
+      permissionVersion: 1,
     }))
-  }, item)
+  }, { session: item, contract: roleContracts[item.role] })
 }
 
 async function openProtectedShell(page: Page, item: typeof roleCases[number], width = 1366, height = 768) {
   await page.setViewportSize({ width, height })
   await seedSession(page, item)
-  await page.goto('/no-permission')
-  await expect(page.locator('.sidebar-desktop')).toBeVisible()
+  await page.route('**/api/**', (route) => {
+    const pathname = new URL(route.request().url()).pathname
+    if (pathname === '/api/auth/logout' || pathname === '/api/test-protected') return route.fallback()
+    return route.abort('failed')
+  })
+  await page.goto(roleContracts[item.role].defaultWorkspace)
+  await expect(page.locator('.app-sidebar--desktop')).toBeVisible()
 }
 
 test.describe('sidebar structure and role visibility', () => {
@@ -45,25 +59,25 @@ test.describe('sidebar structure and role visibility', () => {
       })
       await openProtectedShell(page, item)
 
-      const sidebar = page.locator('.sidebar-desktop')
-      const footer = sidebar.locator('.sidebar-footer')
+      const sidebar = page.locator('.app-sidebar--desktop')
+      const footer = sidebar.locator('.sidebar-account')
       await expect(footer).toBeVisible()
       await expect(footer.getByTitle(item.name)).toBeVisible()
       await expect(footer).toContainText(item.label)
       await expect(footer.getByRole('button', { name: '退出登录' })).toBeVisible()
 
       if (item.assistant) {
-        const utility = sidebar.locator('.utility-navigation')
-        await expect(utility.locator('.nav-group-title')).toHaveText('辅助工具')
-        await expect(utility.locator('.nav-link')).toHaveText(/门店经营助手/)
+        const utility = sidebar.locator('.sidebar-navigation-utility')
+        await expect(utility.locator('.sidebar-navigation-title')).toHaveText('辅助工具')
+        await expect(utility.locator('.sidebar-navigation-link')).toHaveText(/门店经营助手/)
         const gap = await sidebar.evaluate((element) => {
-          const primary = element.querySelector('.primary-navigation')?.getBoundingClientRect()
-          const utilityBox = element.querySelector('.utility-navigation')?.getBoundingClientRect()
+          const primary = element.querySelector('.sidebar-navigation-primary')?.getBoundingClientRect()
+          const utilityBox = element.querySelector('.sidebar-navigation-utility')?.getBoundingClientRect()
           return primary && utilityBox ? utilityBox.top - primary.bottom : Number.POSITIVE_INFINITY
         })
         expect(gap).toBeLessThanOrEqual(20)
       } else {
-        await expect(sidebar.locator('.utility-navigation')).toHaveCount(0)
+        await expect(sidebar.locator('.sidebar-navigation-utility')).toHaveCount(0)
         await expect(sidebar).not.toContainText('门店经营助手')
       }
 
@@ -83,10 +97,10 @@ test.describe('sidebar structure and role visibility', () => {
     { width: 1366, height: 768 },
   ]) {
     test(`boss sidebar remains compact at ${viewport.width}x${viewport.height}`, async ({ page }) => {
-      await openProtectedShell(page, roleCases[1], viewport.width, viewport.height)
-      const result = await page.locator('.sidebar-desktop').evaluate((sidebar) => {
-        const scroll = sidebar.querySelector('.sidebar-scroll') as HTMLElement
-        const footer = sidebar.querySelector('.sidebar-footer') as HTMLElement
+      await openProtectedShell(page, roleCases[0], viewport.width, viewport.height)
+      const result = await page.locator('.app-sidebar--desktop').evaluate((sidebar) => {
+        const scroll = sidebar.querySelector('.sidebar-navigation') as HTMLElement
+        const footer = sidebar.querySelector('.sidebar-account') as HTMLElement
         const style = getComputedStyle(scroll)
         return {
           overflowY: style.overflowY,
@@ -117,7 +131,7 @@ test.describe('logout flow', () => {
       contentType: 'application/json',
       body: JSON.stringify({ success: true, data: null }),
     }))
-    await openProtectedShell(page, roleCases[1])
+    await openProtectedShell(page, roleCases[0])
     await page.evaluate(() => {
       const state = window as Window & { __cancelMessage?: string }
       state.__cancelMessage = '等待响应'
@@ -128,7 +142,7 @@ test.describe('logout flow', () => {
     })
 
     await page.waitForTimeout(100)
-    await page.locator('.sidebar-desktop .logout-button').click()
+    await page.locator('.app-sidebar--desktop .sidebar-logout').click()
 
     await expect.poll(() => page.evaluate(() => (window as Window & { __cancelMessage?: string }).__cancelMessage))
       .toBe('请求已取消')
@@ -142,10 +156,10 @@ test.describe('logout flow', () => {
       await new Promise((resolve) => setTimeout(resolve, 120))
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: null }) })
     })
-    await openProtectedShell(page, roleCases[1])
-    await page.goto('/no-permission?step=2')
+    await openProtectedShell(page, roleCases[0])
+    await page.goto('/boss?step=2')
 
-    const button = page.locator('.sidebar-desktop .logout-button')
+    const button = page.locator('.app-sidebar--desktop .sidebar-logout')
     await button.evaluate((element) => {
       ;(element as HTMLButtonElement).click()
       ;(element as HTMLButtonElement).click()
@@ -172,7 +186,7 @@ test.describe('logout flow', () => {
     }))
     await openProtectedShell(page, roleCases[2])
 
-    await page.locator('.sidebar-desktop .logout-button').click()
+    await page.locator('.app-sidebar--desktop .sidebar-logout').click()
 
     await expect(page).toHaveURL(/\/login$/)
     expect(await page.evaluate(() => localStorage.length)).toBe(0)
@@ -185,17 +199,15 @@ test.describe('logout flow', () => {
       contentType: 'application/json',
       body: JSON.stringify({ success: true, data: null }),
     }))
-    await page.setViewportSize({ width: 375, height: 812 })
-    await seedSession(page, roleCases[3])
-    await page.goto('/no-permission')
+    await openProtectedShell(page, roleCases[3], 375, 812)
     await page.getByRole('button', { name: '打开菜单' }).click()
 
     const drawer = page.locator('.mobile-nav-drawer')
     await expect(drawer).toHaveClass(/open/)
-    await expect(drawer.locator('.utility-navigation')).toContainText('门店经营助手')
-    await expect(drawer.locator('.sidebar-footer')).toBeVisible()
+    await expect(drawer.locator('.sidebar-navigation-utility')).toContainText('门店经营助手')
+    await expect(drawer.locator('.sidebar-account')).toBeVisible()
     await expect(drawer.getByRole('button', { name: '退出登录' })).toBeVisible()
-    const overflow = await drawer.locator('.sidebar-scroll').evaluate((element) => getComputedStyle(element).overflowY)
+    const overflow = await drawer.locator('.sidebar-navigation').evaluate((element) => getComputedStyle(element).overflowY)
     expect(overflow).toBe('auto')
 
     await drawer.getByRole('button', { name: '退出登录' }).click()

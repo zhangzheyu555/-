@@ -24,6 +24,17 @@ export const WAGE_FIELDS: Array<{ key: keyof SalaryRecordPayload; label: string;
   { key: 'returnUniform', label: '返工服费', kind: 'minus' },
 ]
 
+export interface SalaryActionConfirmation {
+  kind: 'reject' | 'delete' | 'mark-paid' | 'lock'
+  record: SalaryRecord
+  title: string
+  message: string
+  confirmLabel: string
+  confirmVariant: 'primary' | 'danger'
+  noteLabel?: string
+  notePlaceholder?: string
+}
+
 export function emptyForm(): SalaryRecordPayload {
   return {
     storeId: '', month: currentMonth(), employeeId: '', employeeName: '',
@@ -46,6 +57,7 @@ export function recalcGross(form: SalaryRecordPayload) {
 export function useSalaryWorkflow(opts: {
   selectedMonth: Ref<string>,
   selectedStoreId: Ref<string>,
+  selectedBrandId?: Ref<number | undefined>,
   hasValidMonth: Ref<boolean>,
   canGenerate: Ref<boolean>,
   canEdit: Ref<boolean>,
@@ -65,6 +77,9 @@ export function useSalaryWorkflow(opts: {
   const drawerMode = ref<'view' | 'edit'>('view')
   const drawerRecord = ref<SalaryRecord | null>(null)
   const form = reactive<SalaryRecordPayload>(emptyForm())
+  const actionConfirmation = ref<SalaryActionConfirmation | null>(null)
+  const actionConfirmationBusy = ref(false)
+  const actionNote = ref('')
 
   function openDrawer(record: SalaryRecord, mode: 'view' | 'edit' = 'view') {
     drawerRecord.value = record
@@ -158,6 +173,7 @@ export function useSalaryWorkflow(opts: {
     try {
       await exportSalaryCsv({
         month: opts.selectedMonth.value || undefined,
+        brandId: opts.selectedBrandId?.value,
         storeId: opts.selectedStoreId.value === 'all' ? undefined : opts.selectedStoreId.value,
       })
       opts.successMessage.value = '工资 CSV 已导出'
@@ -180,38 +196,101 @@ export function useSalaryWorkflow(opts: {
     finally { actioningId.value = '' }
   }
 
-  async function doReject(r: SalaryRecord) {
-    const note = window.prompt('请输入驳回原因', '请调整工资明细后重新提交')
-    if (note === null) return
-    actioningId.value = r.id; opts.pageError.value = ''
-    try { await rejectSalaryRecord(r.id, note || '请调整后重新提交'); opts.successMessage.value = '已驳回'; await opts.loadPage() }
-    catch (e) { opts.pageError.value = userError(e, '驳回失败。') }
-    finally { actioningId.value = '' }
+  function doReject(r: SalaryRecord) {
+    actionNote.value = '请调整工资明细后重新提交'
+    actionConfirmation.value = {
+      kind: 'reject',
+      record: r,
+      title: '驳回工资记录',
+      message: `将驳回 ${r.employeeName} ${r.month} 的工资记录。`,
+      confirmLabel: '确认驳回',
+      confirmVariant: 'danger',
+      noteLabel: '驳回原因',
+      notePlaceholder: '请输入驳回原因',
+    }
   }
 
-  async function doDelete(r: SalaryRecord) {
+  function doDelete(r: SalaryRecord) {
     if (!opts.canEdit.value || !isEditable(r.status)) return
-    if (!window.confirm(`确定删除 ${r.employeeName} ${r.month} 的工资记录？`)) return
-    deletingId.value = r.id; opts.pageError.value = ''
-    try { await deleteSalaryRecord(r.id); opts.successMessage.value = '工资记录已删除'; await opts.loadPage() }
-    catch (e) { opts.pageError.value = userError(e, '删除失败。') }
-    finally { deletingId.value = '' }
+    actionNote.value = ''
+    actionConfirmation.value = {
+      kind: 'delete',
+      record: r,
+      title: '删除工资记录',
+      message: `确定删除 ${r.employeeName} ${r.month} 的工资记录？`,
+      confirmLabel: '确认删除',
+      confirmVariant: 'danger',
+    }
   }
 
-  async function doMarkPaid(r: SalaryRecord) {
-    if (!window.confirm(`确定将 ${r.employeeName} 的工资标记为已发放？`)) return
-    actioningId.value = r.id; opts.pageError.value = ''
-    try { await markSalaryPaid(r.id); opts.successMessage.value = '已标记发放'; await opts.loadPage() }
-    catch (e) { opts.pageError.value = userError(e, '操作失败。') }
-    finally { actioningId.value = '' }
+  function doMarkPaid(r: SalaryRecord) {
+    actionNote.value = ''
+    actionConfirmation.value = {
+      kind: 'mark-paid',
+      record: r,
+      title: '确认工资发放',
+      message: `确定将 ${r.employeeName} 的工资标记为已发放？`,
+      confirmLabel: '确认标记',
+      confirmVariant: 'primary',
+    }
   }
 
-  async function doLock(r: SalaryRecord) {
-    if (!window.confirm('锁定后该记录将不能修改，确定继续？')) return
-    actioningId.value = r.id; opts.pageError.value = ''
-    try { await lockSalaryRecord(r.id); opts.successMessage.value = '工资记录已锁定'; await opts.loadPage() }
-    catch (e) { opts.pageError.value = userError(e, '操作失败。') }
-    finally { actioningId.value = '' }
+  function doLock(r: SalaryRecord) {
+    actionNote.value = ''
+    actionConfirmation.value = {
+      kind: 'lock',
+      record: r,
+      title: '锁定工资记录',
+      message: '锁定后该记录将不能修改，确定继续？',
+      confirmLabel: '确认锁定',
+      confirmVariant: 'primary',
+    }
+  }
+
+  function cancelActionConfirmation() {
+    if (actionConfirmationBusy.value) return
+    actionConfirmation.value = null
+    actionNote.value = ''
+  }
+
+  async function confirmAction() {
+    const confirmation = actionConfirmation.value
+    if (!confirmation || actionConfirmationBusy.value) return
+
+    actionConfirmationBusy.value = true
+    opts.pageError.value = ''
+    if (confirmation.kind === 'delete') deletingId.value = confirmation.record.id
+    else actioningId.value = confirmation.record.id
+
+    try {
+      if (confirmation.kind === 'reject') {
+        await rejectSalaryRecord(confirmation.record.id, actionNote.value || '请调整后重新提交')
+        opts.successMessage.value = '已驳回'
+      } else if (confirmation.kind === 'delete') {
+        await deleteSalaryRecord(confirmation.record.id)
+        opts.successMessage.value = '工资记录已删除'
+      } else if (confirmation.kind === 'mark-paid') {
+        await markSalaryPaid(confirmation.record.id)
+        opts.successMessage.value = '已标记发放'
+      } else {
+        await lockSalaryRecord(confirmation.record.id)
+        opts.successMessage.value = '工资记录已锁定'
+      }
+      await opts.loadPage()
+    } catch (e) {
+      const fallback = confirmation.kind === 'reject'
+        ? '驳回失败。'
+        : confirmation.kind === 'delete'
+          ? '删除失败。'
+          : '操作失败。'
+      opts.pageError.value = userError(e, fallback)
+    } finally {
+      actioningId.value = ''
+      deletingId.value = ''
+      actionConfirmationBusy.value = false
+      actionConfirmation.value = null
+      actionNote.value = ''
+    }
   }
 
   return {
@@ -220,9 +299,10 @@ export function useSalaryWorkflow(opts: {
     // drawer state
     showDrawer, drawerMode, drawerRecord, form, formError, saving,
     // action state
-    actioningId, deletingId,
+    actioningId, deletingId, actionConfirmation, actionConfirmationBusy, actionNote,
     // methods
     openDrawer, closeDrawer, doSave, doPreview, doGenerate, doExport,
     doSubmit, doApprove, doReject, doDelete, doMarkPaid, doLock,
+    cancelActionConfirmation, confirmAction,
   }
 }

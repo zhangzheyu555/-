@@ -1,9 +1,7 @@
 package com.storeprofit.system.operations;
 
 import com.storeprofit.system.common.BusinessException;
-import com.storeprofit.system.operations.OperationsBusinessModels.ExamAnswerRequest;
 import com.storeprofit.system.operations.OperationsBusinessModels.ExamAnswerResponse;
-import com.storeprofit.system.operations.OperationsBusinessModels.ExamAttemptRequest;
 import com.storeprofit.system.operations.OperationsBusinessModels.ExamAttemptResponse;
 import com.storeprofit.system.operations.OperationsBusinessModels.ExamPaperResponse;
 import com.storeprofit.system.operations.OperationsBusinessModels.InventoryCheckLineRequest;
@@ -12,13 +10,19 @@ import com.storeprofit.system.operations.OperationsBusinessModels.InventoryCheck
 import com.storeprofit.system.operations.OperationsBusinessModels.TrainingLearningRecordResponse;
 import com.storeprofit.system.operations.OperationsBusinessModels.TrainingMaterialResponse;
 import com.storeprofit.system.platform.auth.AuthUser;
+import com.storeprofit.system.platform.auth.AccessControlService;
+import com.storeprofit.system.platform.authorization.AuthorizationService;
+import com.storeprofit.system.platform.authorization.DataScope;
+import com.storeprofit.system.platform.authorization.DataScopeDomains;
+import com.storeprofit.system.platform.authorization.DataScopeModes;
+import com.storeprofit.system.platform.authorization.PermissionCodes;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,20 +30,38 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class OperationsBusinessService {
   private final OperationsBusinessRepository repository;
+  private final AccessControlService accessControl;
 
-  public OperationsBusinessService(OperationsBusinessRepository repository) {
+  @Autowired
+  public OperationsBusinessService(
+      OperationsBusinessRepository repository,
+      AccessControlService accessControl
+  ) {
     this.repository = repository;
+    this.accessControl = accessControl;
+  }
+
+  /** Compatibility constructor retained for isolated service tests. */
+  public OperationsBusinessService(OperationsBusinessRepository repository) {
+    this(repository, null);
   }
 
   public List<InventoryCheckResponse> inventoryChecks(AuthUser user) {
     requireInventoryRead(user);
+    if (accessControl != null) {
+      DataScope scope = accessControl.dataScope(user, DataScopeDomains.WAREHOUSE);
+      return scope.allowsAllStores()
+          ? repository.inventoryChecks(user.tenantId(), null)
+          : repository.inventoryChecks(user.tenantId(), null, Set.copyOf(scope.storeIds()));
+    }
     return repository.inventoryChecks(user.tenantId(), scopedStoreId(user));
   }
 
   public InventoryCheckResponse inventoryCheck(AuthUser user, long id) {
     requireInventoryRead(user);
     InventoryCheckResponse check = requireInventoryCheck(user.tenantId(), id);
-    requireStoreScope(user, check.storeId(), "店长只能查看本门店盘存单");
+    requireDomainStoreScope(
+        user, DataScopeDomains.WAREHOUSE, check.storeId(), "查看盘存单");
     return check;
   }
 
@@ -67,7 +89,8 @@ public class OperationsBusinessService {
     }
     if (request.id() != null) {
       InventoryCheckResponse existing = requireInventoryCheck(user.tenantId(), request.id());
-      requireStoreScope(user, existing.storeId(), "店长只能修改本门店盘存单");
+      requireDomainStoreScope(
+          user, DataScopeDomains.WAREHOUSE, existing.storeId(), "修改盘存单");
       if (!"DRAFT".equals(existing.status())) {
         throw new BusinessException("BAD_STATUS", "只有草稿盘存单可以修改", HttpStatus.CONFLICT);
       }
@@ -96,7 +119,8 @@ public class OperationsBusinessService {
   public InventoryCheckResponse submitInventoryCheck(AuthUser user, long id) {
     requireInventorySave(user);
     InventoryCheckResponse check = requireInventoryCheck(user.tenantId(), id);
-    requireStoreScope(user, check.storeId(), "店长只能提交本门店盘存单");
+    requireDomainStoreScope(
+        user, DataScopeDomains.WAREHOUSE, check.storeId(), "提交盘存单");
     if (!repository.updateInventoryCheckStatus(user.tenantId(), id, "DRAFT", "SUBMITTED", user.id())) {
       throw new BusinessException("BAD_STATUS", "只有草稿盘存单可以提交", HttpStatus.CONFLICT);
     }
@@ -108,6 +132,8 @@ public class OperationsBusinessService {
   public InventoryCheckResponse reviewInventoryCheck(AuthUser user, long id) {
     requireInventoryReview(user);
     InventoryCheckResponse check = requireInventoryCheck(user.tenantId(), id);
+    requireDomainStoreScope(
+        user, DataScopeDomains.WAREHOUSE, check.storeId(), "复核盘存单");
     if (!repository.updateInventoryCheckStatus(user.tenantId(), id, "SUBMITTED", "REVIEWED", user.id())) {
       throw new BusinessException("BAD_STATUS", "只有已提交盘存单可以复核", HttpStatus.CONFLICT);
     }
@@ -119,7 +145,8 @@ public class OperationsBusinessService {
   public InventoryCheckResponse cancelInventoryCheck(AuthUser user, long id) {
     requireInventorySave(user);
     InventoryCheckResponse check = requireInventoryCheck(user.tenantId(), id);
-    requireStoreScope(user, check.storeId(), "店长只能作废本门店盘存单");
+    requireDomainStoreScope(
+        user, DataScopeDomains.WAREHOUSE, check.storeId(), "作废盘存单");
     if (!repository.updateInventoryCheckStatus(user.tenantId(), id, "DRAFT", "CANCELLED", user.id())) {
       throw new BusinessException("BAD_STATUS", "已复核盘存单不能作废", HttpStatus.CONFLICT);
     }
@@ -128,74 +155,29 @@ public class OperationsBusinessService {
   }
 
   public List<ExamPaperResponse> examPapers(AuthUser user) {
-    requireExamAccess(user);
+    requireExamManage(user);
+    requireExamScope(user, "管理考试试卷");
     return repository.examPapers(user.tenantId());
   }
 
   public ExamPaperResponse examPaper(AuthUser user, long paperId) {
-    requireExamAccess(user);
+    requireExamManage(user);
+    requireExamScope(user, "管理考试试卷");
     return repository.examPaper(user.tenantId(), paperId, true)
         .orElseThrow(() -> new BusinessException("PAPER_NOT_FOUND", "试卷不存在", HttpStatus.NOT_FOUND));
   }
 
-  @Transactional
-  public ExamAttemptResponse submitExamAttempt(AuthUser user, ExamAttemptRequest request) {
-    requireExamAccess(user);
-    requireLegacyExamSubmit(user);
-    if (request == null || request.paperId() == null) {
-      throw new BusinessException("PAPER_REQUIRED", "请选择考试试卷", HttpStatus.BAD_REQUEST);
-    }
-    ExamPaperResponse paper = repository.examPaper(user.tenantId(), request.paperId(), true)
-        .orElseThrow(() -> new BusinessException("PAPER_NOT_FOUND", "试卷不存在", HttpStatus.NOT_FOUND));
-    List<OperationsBusinessRepository.QuestionForGrade> questions = repository.questionsForGrade(user.tenantId(), request.paperId());
-    if (questions.isEmpty()) {
-      throw new BusinessException("QUESTION_EMPTY", "试卷暂无题目，不能提交考试", HttpStatus.CONFLICT);
-    }
-    Map<Long, String> answerMap = new HashMap<>();
-    for (ExamAnswerRequest answer : request.answers() == null ? List.<ExamAnswerRequest>of() : request.answers()) {
-      if (answer.questionId() != null) {
-        answerMap.put(answer.questionId(), answer.userAnswer());
-      }
-    }
-    String storeId = normalizeStoreForOptionalWrite(user, request.storeId());
-    String storeName = storeId == null ? null : repository.storeName(user.tenantId(), storeId).orElse(null);
-    BigDecimal score = BigDecimal.ZERO;
-    Map<Long, Boolean> correctMap = new HashMap<>();
-    for (OperationsBusinessRepository.QuestionForGrade question : questions) {
-      String userAnswer = answerMap.get(question.id());
-      boolean correct = isCorrect(question, userAnswer);
-      correctMap.put(question.id(), correct);
-      if (correct) {
-        score = score.add(amount(question.score()));
-      }
-    }
-    score = score.setScale(2, RoundingMode.HALF_UP);
-    boolean passed = score.compareTo(amount(paper.passScore())) >= 0;
-    long attemptId = repository.insertExamAttempt(
-        user.tenantId(),
-        paper.id(),
-        paper.paperName(),
-        blankOr(request.examineeName(), user.displayName()),
-        user.role(),
-        storeId,
-        storeName,
-        score,
-        passed,
-        Boolean.TRUE.equals(request.violated()),
-        user.id()
-    );
-    for (OperationsBusinessRepository.QuestionForGrade question : questions) {
-      String userAnswer = answerMap.get(question.id());
-      boolean correct = Boolean.TRUE.equals(correctMap.get(question.id()));
-      repository.insertExamAnswer(user.tenantId(), attemptId, question.id(), userAnswer, correct, correct ? amount(question.score()) : BigDecimal.ZERO);
-    }
-    repository.logAction(user.tenantId(), user.id(), user.displayName(), "提交考试", "training_exam_attempt", String.valueOf(attemptId), storeId, passed ? "考试通过" : "考试未通过");
-    return repository.examAttempt(user.tenantId(), attemptId)
-        .orElseThrow(() -> new BusinessException("ATTEMPT_NOT_FOUND", "考试记录不存在", HttpStatus.NOT_FOUND));
-  }
-
   public List<ExamAttemptResponse> examAttempts(AuthUser user) {
-    requireExamAccess(user);
+    requireExamReport(user);
+    if (accessControl != null) {
+      DataScope scope = accessControl.dataScope(user, DataScopeDomains.EXAM);
+      if (DataScopeModes.SELF.equals(scope.mode())) {
+        return repository.examAttempts(user.tenantId(), null, user.id());
+      }
+      return scope.allowsAllStores()
+          ? repository.examAttempts(user.tenantId(), null, null)
+          : repository.examAttempts(user.tenantId(), null, null, Set.copyOf(scope.storeIds()));
+    }
     if ("STORE_MANAGER".equals(user.role())) {
       return repository.examAttempts(user.tenantId(), requiredStore(user), null);
     }
@@ -206,24 +188,36 @@ public class OperationsBusinessService {
   }
 
   public ExamAttemptResponse examAttempt(AuthUser user, long attemptId) {
-    requireExamAccess(user);
+    requireExamReport(user);
     ExamAttemptResponse attempt = repository.examAttempt(user.tenantId(), attemptId)
         .orElseThrow(() -> new BusinessException("ATTEMPT_NOT_FOUND", "考试记录不存在", HttpStatus.NOT_FOUND));
-    requireStoreScope(user, attempt.storeId(), "店长只能查看本门店考试记录");
-    if ("EMPLOYEE".equals(user.role()) && !Long.valueOf(user.id()).equals(attempt.submittedBy())) {
+    DataScope examScope = accessControl == null
+        ? null
+        : accessControl.dataScope(user, DataScopeDomains.EXAM);
+    if (examScope != null && DataScopeModes.SELF.equals(examScope.mode())) {
+      if (!Long.valueOf(user.id()).equals(attempt.submittedBy())) {
+        throw new BusinessException("FORBIDDEN", "只能查看自己的考试成绩", HttpStatus.FORBIDDEN);
+      }
+    } else {
+      requireDomainStoreScope(user, DataScopeDomains.EXAM, attempt.storeId(), "查看考试成绩");
+    }
+    if (accessControl == null && "EMPLOYEE".equals(user.role())
+        && !Long.valueOf(user.id()).equals(attempt.submittedBy())) {
       throw new BusinessException("FORBIDDEN", "员工只能查看自己的考试成绩", HttpStatus.FORBIDDEN);
     }
     return attempt;
   }
 
   public List<TrainingMaterialResponse> trainingMaterials(AuthUser user) {
-    requireTrainingAccess(user);
+    requireExamLearn(user);
+    requireExamScope(user, "查看培训资料");
     return repository.trainingMaterials(user.tenantId(), user.id());
   }
 
   @Transactional
   public List<TrainingMaterialResponse> markMaterialLearned(AuthUser user, long materialId) {
-    requireTrainingAccess(user);
+    requireExamLearn(user);
+    requireExamScope(user, "记录培训学习进度");
     if (!repository.materialExists(user.tenantId(), materialId)) {
       throw new BusinessException("MATERIAL_NOT_FOUND", "培训资料不存在", HttpStatus.NOT_FOUND);
     }
@@ -233,7 +227,16 @@ public class OperationsBusinessService {
   }
 
   public List<TrainingLearningRecordResponse> learningRecords(AuthUser user) {
-    requireTrainingRecordRead(user);
+    requireExamReport(user);
+    if (accessControl != null) {
+      DataScope scope = accessControl.dataScope(user, DataScopeDomains.EXAM);
+      if (DataScopeModes.SELF.equals(scope.mode())) {
+        return repository.learningRecords(user.tenantId(), null, null, user.id());
+      }
+      return scope.allowsAllStores()
+          ? repository.learningRecords(user.tenantId(), null)
+          : repository.learningRecords(user.tenantId(), null, Set.copyOf(scope.storeIds()));
+    }
     return repository.learningRecords(user.tenantId(), scopedStoreId(user));
   }
 
@@ -243,6 +246,16 @@ public class OperationsBusinessService {
   }
 
   private String normalizeStoreForWrite(AuthUser user, String requestedStoreId) {
+    if (accessControl != null) {
+      String storeId = requestedStoreId == null || requestedStoreId.isBlank()
+          ? ("STORE_MANAGER".equals(user.role()) ? requiredStore(user) : null)
+          : requestedStoreId.trim();
+      if (storeId == null) {
+        throw new BusinessException("STORE_REQUIRED", "请选择门店", HttpStatus.BAD_REQUEST);
+      }
+      requireDomainStoreScope(user, DataScopeDomains.WAREHOUSE, storeId, "保存盘存单");
+      return storeId;
+    }
     if ("STORE_MANAGER".equals(user.role())) {
       return requiredStore(user);
     }
@@ -252,21 +265,36 @@ public class OperationsBusinessService {
     return requestedStoreId.trim();
   }
 
-  private String normalizeStoreForOptionalWrite(AuthUser user, String requestedStoreId) {
-    if ("STORE_MANAGER".equals(user.role())) {
-      return requiredStore(user);
-    }
-    return requestedStoreId == null || requestedStoreId.isBlank() ? null : requestedStoreId.trim();
-  }
-
   private String scopedStoreId(AuthUser user) {
     return "STORE_MANAGER".equals(user.role()) ? requiredStore(user) : null;
   }
 
-  private void requireStoreScope(AuthUser user, String storeId, String message) {
-    if ("STORE_MANAGER".equals(user.role()) && !requiredStore(user).equals(storeId)) {
-      throw new BusinessException("FORBIDDEN", message, HttpStatus.FORBIDDEN);
+  private void requireDomainStoreScope(
+      AuthUser user,
+      String domain,
+      String storeId,
+      String action
+  ) {
+    if (accessControl != null) {
+      accessControl.requireStoreAccess(user, domain, storeId, action);
+      return;
     }
+    if ("STORE_MANAGER".equals(user.role()) && !requiredStore(user).equals(storeId)) {
+      throw new BusinessException("FORBIDDEN", "店长只能访问本门店数据", HttpStatus.FORBIDDEN);
+    }
+  }
+
+  private void requireExamScope(AuthUser user, String action) {
+    if (accessControl == null) {
+      return;
+    }
+    DataScope scope = accessControl.dataScope(user, DataScopeDomains.EXAM);
+    if (scope.allowsAllStores()
+        || DataScopeModes.SELF.equals(scope.mode())
+        || !scope.storeIds().isEmpty()) {
+      return;
+    }
+    throw new BusinessException("FORBIDDEN", "当前账号没有培训考试数据范围", HttpStatus.FORBIDDEN);
   }
 
   private String requiredStore(AuthUser user) {
@@ -277,67 +305,60 @@ public class OperationsBusinessService {
   }
 
   private void requireInventoryRead(AuthUser user) {
-    if (!List.of("ADMIN", "BOSS", "OWNER", "OPERATIONS", "FINANCE", "STORE_MANAGER").contains(user.role())) {
-      throw new BusinessException("FORBIDDEN", "无权查看盘存单", HttpStatus.FORBIDDEN);
+    if (accessControl != null) {
+      accessControl.requirePermission(user, PermissionCodes.INVENTORY_READ, "查看门店盘存单");
+      return;
     }
+    requireLegacyPermission(user, PermissionCodes.INVENTORY_READ, "无权查看盘存单");
   }
 
   private void requireInventorySave(AuthUser user) {
-    if (!List.of("ADMIN", "BOSS", "OWNER", "OPERATIONS", "STORE_MANAGER").contains(user.role())) {
-      throw new BusinessException("FORBIDDEN", "无权保存盘存单", HttpStatus.FORBIDDEN);
+    if (accessControl != null) {
+      accessControl.requirePermission(user, PermissionCodes.INVENTORY_MANAGE, "保存门店盘存单");
+      return;
     }
+    requireLegacyPermission(user, PermissionCodes.INVENTORY_MANAGE, "无权保存盘存单");
   }
 
   private void requireInventoryReview(AuthUser user) {
-    if (!List.of("ADMIN", "BOSS", "OWNER", "OPERATIONS", "FINANCE").contains(user.role())) {
-      throw new BusinessException("FORBIDDEN", "无权复核盘存单", HttpStatus.FORBIDDEN);
+    if (accessControl != null) {
+      accessControl.requirePermission(user, PermissionCodes.INVENTORY_REVIEW, "复核门店盘存单");
+      return;
     }
+    requireLegacyPermission(user, PermissionCodes.INVENTORY_REVIEW, "无权复核盘存单");
   }
 
-  private void requireExamAccess(AuthUser user) {
-    if (!List.of("ADMIN", "BOSS", "OWNER", "OPERATIONS", "OPS").contains(user.role())) {
-      throw new BusinessException("FORBIDDEN", "无权访问考试系统", HttpStatus.FORBIDDEN);
+  private void requireExamManage(AuthUser user) {
+    if (accessControl != null) {
+      accessControl.requireExamManage(user);
+      return;
     }
+    requireLegacyPermission(user, PermissionCodes.EXAM_MANAGE, "无权管理考试系统");
   }
 
-  private void requireLegacyExamSubmit(AuthUser user) {
-    if (!List.of("ADMIN", "OPERATIONS", "OPS").contains(user.role())) {
-      throw new BusinessException("FORBIDDEN", "请从分配给你的考试任务进入答题", HttpStatus.FORBIDDEN);
+  private void requireExamLearn(AuthUser user) {
+    if (accessControl != null) {
+      accessControl.requireExamRead(user);
+      return;
     }
+    requireLegacyPermission(user, PermissionCodes.EXAM_LEARN, "无权访问培训资料");
   }
 
-  private void requireTrainingAccess(AuthUser user) {
-    if (!List.of("ADMIN", "BOSS", "OWNER", "OPERATIONS", "STORE_MANAGER").contains(user.role())) {
-      throw new BusinessException("FORBIDDEN", "无权访问培训资料", HttpStatus.FORBIDDEN);
+  private void requireExamReport(AuthUser user) {
+    if (accessControl != null) {
+      accessControl.requireExamCompanyRead(user);
+      return;
     }
+    requireLegacyPermission(user, PermissionCodes.EXAM_REPORT, "无权查看培训考试报表");
   }
 
-  private void requireTrainingRecordRead(AuthUser user) {
-    if (!List.of("ADMIN", "BOSS", "OWNER", "OPERATIONS", "STORE_MANAGER").contains(user.role())) {
-      throw new BusinessException("FORBIDDEN", "无权查看培训学习记录", HttpStatus.FORBIDDEN);
+  private void requireLegacyPermission(AuthUser user, String permissionCode, String message) {
+    if (AccessControlService.isBoss(user)
+        || AuthorizationService.legacyTemplatePermissions(user == null ? null : user.role())
+            .contains(permissionCode)) {
+      return;
     }
-  }
-
-  private boolean isCorrect(OperationsBusinessRepository.QuestionForGrade question, String userAnswer) {
-    String normalized = blankToNull(userAnswer);
-    if (normalized == null) {
-      return false;
-    }
-    String standard = blankToNull(question.standardAnswer());
-    if (standard != null && standard.equalsIgnoreCase(normalized)) {
-      return true;
-    }
-    String keywords = blankToNull(question.acceptKeywords());
-    if (keywords == null) {
-      return false;
-    }
-    for (String keyword : keywords.split("[,，\\n]")) {
-      String k = keyword.trim();
-      if (!k.isBlank() && normalized.contains(k)) {
-        return true;
-      }
-    }
-    return false;
+    throw new BusinessException("FORBIDDEN", message, HttpStatus.FORBIDDEN);
   }
 
   private String normalizeDate(String value) {
@@ -358,11 +379,6 @@ public class OperationsBusinessService {
 
   private BigDecimal amount(BigDecimal value) {
     return value == null ? BigDecimal.ZERO : value;
-  }
-
-  private String blankOr(String value, String fallback) {
-    String normalized = blankToNull(value);
-    return normalized == null ? fallback : normalized;
   }
 
   private String blankToNull(String value) {

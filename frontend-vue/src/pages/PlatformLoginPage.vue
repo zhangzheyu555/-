@@ -1,5 +1,6 @@
 ﻿<script setup lang="ts">
 import { ExternalLink } from 'lucide-vue-next'
+import PageHeader from '../components/common/PageHeader.vue'
 
 const platforms = [
   { name: '美团', status: '未配置' },
@@ -11,11 +12,7 @@ const platforms = [
 
 <template>
   <section class="page-panel platform-page">
-    <div class="page-head">
-      <div>
-        <h2>平台登录</h2>
-      </div>
-    </div>
+    <PageHeader />
 
     <div class="platform-grid">
       <article v-for="platform in platforms" :key="platform.name" class="content-card platform-card">

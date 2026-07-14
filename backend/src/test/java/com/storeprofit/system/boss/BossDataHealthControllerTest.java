@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 
 import com.storeprofit.system.common.ApiResponse;
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthService;
 import com.storeprofit.system.platform.auth.AuthUser;
 import java.util.List;
@@ -71,14 +72,27 @@ class BossDataHealthControllerTest {
   }
 
   @Test
-  void serviceAllowsOperationsStaffToViewDataHealth() {
+  void compatibilityConstructorRejectsOperationsStaffFromBossDataHealth() {
     BossDataHealthService service = new BossDataHealthService();
+    AuthUser user = new AuthUser(3L, 1L, "default", "operations", "", "Operations", "OPERATIONS", null, true);
+
+    assertThatThrownBy(() -> service.dataHealth(user))
+        .isInstanceOfSatisfying(BusinessException.class, ex -> {
+          assertThat(ex.getCode()).isEqualTo("FORBIDDEN");
+          assertThat(ex.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+        });
+  }
+
+  @Test
+  void productionServiceDelegatesToSystemDashboardPermission() {
+    AccessControlService accessControl = mock(AccessControlService.class);
+    BossDataHealthService service = new BossDataHealthService(accessControl);
     AuthUser user = new AuthUser(3L, 1L, "default", "operations", "", "Operations", "OPERATIONS", null, true);
 
     BossDataHealthResponse result = service.dataHealth(user);
 
     assertThat(result.dataSource()).isEqualTo("SERVER_RULES");
-    assertThat(result.modules()).isNotEmpty();
+    verify(accessControl).requireSystemDashboardRead(user);
   }
 
   @Test

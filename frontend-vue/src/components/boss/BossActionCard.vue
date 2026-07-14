@@ -30,6 +30,12 @@ function deadline(value?: string) {
   }
   return value
 }
+
+function riskText(item: RoleTodoItem) {
+  if (item.status === 'RED' || item.status === 'RISK' || item.priority >= 3) return '高风险'
+  if (item.status === 'ORANGE' || item.priority === 2) return '需关注'
+  return '一般'
+}
 </script>
 
 <template>
@@ -38,10 +44,11 @@ function deadline(value?: string) {
       <div class="boss-action-title">{{ cleanText(item.title || '岗位上报事项') }}</div>
       <p>{{ cleanText(item.summary || '暂无说明') }}</p>
       <div class="boss-action-fields">
-        <span><b>来源岗位</b>{{ item.ownerName || '岗位上报' }}</span>
+        <span><b>负责人</b>{{ item.ownerName || '岗位上报' }}</span>
         <span><b>来源模块</b>{{ sourceLabel(item.sourceModule || item.dataSource || '') }}</span>
-        <span v-if="item.storeName || item.storeId"><b>门店</b>{{ cleanText(item.storeName || item.storeId || '') }}</span>
-        <span><b>截止</b>{{ deadline(item.dueAt) }}</span>
+        <span><b>门店</b>{{ cleanText(item.storeName || item.storeId || '全部门店') }}</span>
+        <span><b>截止时间</b>{{ deadline(item.dueAt) }}</span>
+        <span><b>风险</b>{{ riskText(item) }}</span>
       </div>
       <div class="boss-action-meta">
         <StatusBadge :label="statusLabel(item.status)" :tone="tone(item)" />
@@ -81,9 +88,8 @@ function deadline(value?: string) {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 14px;
   padding: 15px;
-  border: 1px solid var(--line);
-  border-left: 4px solid var(--primary);
-  border-radius: 12px;
+  border: 1px solid var(--ds-primary);
+  border-radius: 8px;
   background: #fff;
 }
 
@@ -91,20 +97,21 @@ function deadline(value?: string) {
   margin-bottom: 6px;
   color: var(--ink);
   font-size: 16px;
-  font-weight: 900;
+  font-weight: 700;
   line-height: 1.35;
 }
 
 .boss-action-main p {
   margin: 0;
-  color: var(--muted);
-  font-size: 13.5px;
+  color: var(--ds-secondary);
+  font-size: 14px;
+  font-weight: 400;
   line-height: 1.65;
 }
 
 .boss-action-fields {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   margin-top: 12px;
 }
@@ -115,14 +122,17 @@ function deadline(value?: string) {
   border: 1px solid var(--line);
   border-radius: 9px;
   background: #fafbfc;
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--ds-secondary);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
 }
 
 .boss-action-fields b {
   display: block;
   margin-bottom: 2px;
   color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .boss-action-meta {
@@ -131,7 +141,7 @@ function deadline(value?: string) {
   gap: 8px;
   margin-top: 10px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .boss-action-buttons {
@@ -140,6 +150,11 @@ function deadline(value?: string) {
   justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.boss-action-buttons .mini-button {
+  font-size: 14px;
+  font-weight: 600;
 }
 
 @media (max-width: 980px) {

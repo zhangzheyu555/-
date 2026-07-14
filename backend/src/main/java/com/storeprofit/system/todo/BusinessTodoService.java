@@ -5,6 +5,7 @@ import com.storeprofit.system.finance.FinanceRepository;
 import com.storeprofit.system.finance.ProfitEntryResponse;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
+import com.storeprofit.system.platform.authorization.DataScopeDomains;
 import com.storeprofit.system.todo.BusinessTodoRepository.BusinessTodoRow;
 import com.storeprofit.system.todo.BusinessTodoRepository.MissingProfitRow;
 import com.storeprofit.system.todo.BusinessTodoRepository.PendingExpenseRow;
@@ -17,9 +18,13 @@ import com.storeprofit.system.todo.RoleTodoActionRepository.RoleTodoAttachmentSu
 import com.storeprofit.system.todo.RoleTodoActionRepository.RoleTodoOperationLogRecord;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HexFormat;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -39,7 +44,9 @@ public class BusinessTodoService {
   private static final String RULE_REVENUE_DECLINE = "REVENUE_DECLINE";
   private static final String RULE_EXPENSE_REVIEW = "EXPENSE_PENDING_REVIEW";
   private static final String RULE_SALARY_REVIEW = "SALARY_PENDING_REVIEW";
-  private static final Set<String> GLOBAL_TODO_ROLES = Set.of("ADMIN", "BOSS", "OWNER");
+  private static final String RULE_ASSISTANT_ACTION = "ASSISTANT_ACTION";
+  private static final Set<String> MANUAL_ASSIGNEE_ROLES = Set.of(
+      "BOSS", "FINANCE", "STORE_MANAGER", "SUPERVISOR", "WAREHOUSE", "OPERATIONS");
   private static final Set<String> ALLOWED_ATTACHMENT_TYPES = Set.of(
       "image/jpeg", "image/png", "image/webp", "application/pdf");
 
@@ -67,20 +74,84 @@ public class BusinessTodoService {
   }
 
   public List<BusinessTodoResponse> list(AuthUser user, String status) {
+    accessControl.requireTodoRead(user);
+    return listVisible(user, status);
+  }
+
+  private List<BusinessTodoResponse> listVisible(AuthUser user, String status) {
     String normalizedStatus = status == null || status.isBlank() ? null : BusinessTodoStatus.parse(status).name();
-    return businessTodoRepository.list(user.tenantId(), normalizedStatus, 300).stream()
-        .filter(row -> canRead(user, row))
+    TodoVisibility visibility = visibility(user);
+    return businessTodoRepository.listVisible(
+            user.tenantId(),
+            normalizedStatus,
+            300,
+            visibility.role(),
+            visibility.allRoles(),
+            visibility.allStores(),
+            visibility.storeIds())
+        .stream()
         .map(row -> response(user, row, false))
         .toList();
   }
 
   public BusinessTodoResponse detail(AuthUser user, String id) {
+    accessControl.requireTodoRead(user);
     BusinessTodoRow row = requireVisible(user, id);
     return response(user, row, true);
   }
 
   @Transactional
+  public BusinessTodoResponse createManual(AuthUser user, ManualBusinessTodoRequest request) {
+    accessControl.requireTodoRead(user);
+    accessControl.requireTodoTransition(user);
+    if (request == null || !Boolean.TRUE.equals(request.confirmed())) {
+      throw new BusinessException("TODO_CONFIRMATION_REQUIRED", "请确认后再加入待办", HttpStatus.BAD_REQUEST);
+    }
+    String storeId = requireText(request.storeId(), "TODO_STORE_REQUIRED", "请选择待办所属门店");
+    accessControl.requireStoreAccess(user, storeId, "从经营助手创建待办");
+    String month = normalizeMonth(request.month());
+    String title = truncateTo(requireText(request.title(), "TODO_TITLE_REQUIRED", "请填写待办标题"), 120);
+    String action = truncateTo(requireText(request.summary(), "TODO_SUMMARY_REQUIRED", "请填写行动内容"), 500);
+    String assigneeRole = normalizeRole(requireText(
+        request.assigneeRole(), "TODO_ASSIGNEE_REQUIRED", "请选择待办负责人角色"));
+    if (!MANUAL_ASSIGNEE_ROLES.contains(assigneeRole)) {
+      throw new BusinessException("TODO_ASSIGNEE_INVALID", "待办负责人角色不正确", HttpStatus.BAD_REQUEST);
+    }
+    String sourceModule = safeText(request.sourceModule(), "ASSISTANT").toUpperCase(Locale.ROOT);
+    if (!"ASSISTANT".equals(sourceModule)) {
+      throw new BusinessException("TODO_SOURCE_INVALID", "仅允许从经营助手加入行动待办", HttpStatus.BAD_REQUEST);
+    }
+    String sourceRecordId = truncateTo(safeText(request.sourceRecordId(), "analysis-untracked"), 128);
+    String sourceKey = "assistant-action:" + stableHash(String.join("|",
+        Long.toString(user.tenantId()), storeId, month, sourceRecordId, title, action, assigneeRole));
+    String summary = assistantActionSummary(action, request.dueAt(), request.expectedImpact(), request.verificationMetric());
+    Optional<BusinessTodoRow> existing = businessTodoRepository.latestByRuleAndSource(
+        user.tenantId(), RULE_ASSISTANT_ACTION, sourceKey);
+    BusinessTodoRow row = businessTodoRepository.openOrRefresh(user.tenantId(), new BusinessTodoDraft(
+        RULE_ASSISTANT_ACTION,
+        "assistant",
+        sourceRecordId,
+        sourceKey,
+        title,
+        summary,
+        assigneeRole,
+        "BOSS".equals(assigneeRole) ? null : "BOSS",
+        storeId,
+        month,
+        2,
+        null
+    ));
+    if (existing.isEmpty()) {
+      saveAction(user, row, BusinessTodoStatus.PENDING, "ASSISTANT_MANUAL_CREATE",
+          "已人工确认经营分析行动并加入待办", List.of());
+    }
+    return response(user, row, true);
+  }
+
+  @Transactional
   public BusinessTodoResponse transition(AuthUser user, String id, BusinessTodoTransitionRequest request) {
+    accessControl.requireTodoRead(user);
+    accessControl.requireTodoTransition(user);
     BusinessTodoRow current = requireVisible(user, id);
     BusinessTodoStatus from = BusinessTodoStatus.parse(current.status());
     if (from.terminal()) {
@@ -96,7 +167,7 @@ public class BusinessTodoService {
     }
     String actionId = saveAction(user, current, target, "MANUAL_" + target.name(), note,
         request == null ? List.of() : request.attachments());
-    return detail(user, current.id());
+    return response(user, requireVisible(user, current.id()), true);
   }
 
   @Transactional
@@ -107,7 +178,7 @@ public class BusinessTodoService {
     }
     String targetMonth = normalizeMonth(month);
     reconcile(user.tenantId(), targetMonth, null);
-    return new BusinessTodoReconcileResponse(targetMonth, list(user, null).stream()
+    return new BusinessTodoReconcileResponse(targetMonth, listVisible(user, null).stream()
         .filter(item -> targetMonth.equals(item.month()) && !BusinessTodoStatus.COMPLETED.name().equals(item.status())
             && !BusinessTodoStatus.REJECTED.name().equals(item.status()))
         .count());
@@ -145,6 +216,7 @@ public class BusinessTodoService {
   }
 
   public DownloadedTodoAttachment attachment(AuthUser user, String todoId, String attachmentId) {
+    accessControl.requireTodoRead(user);
     BusinessTodoRow row = requireVisible(user, todoId);
     RoleTodoAttachmentContent file = actionRepository.attachment(user.tenantId(), todoId, attachmentId)
         .orElseThrow(() -> new BusinessException("TODO_ATTACHMENT_NOT_FOUND", "未找到待办附件", HttpStatus.NOT_FOUND));
@@ -368,23 +440,34 @@ public class BusinessTodoService {
 
   private BusinessTodoRow requireVisible(AuthUser user, String id) {
     String normalizedId = requireText(id, "TODO_ID_REQUIRED", "待办编号不能为空");
-    BusinessTodoRow row = businessTodoRepository.findById(user.tenantId(), normalizedId)
-        .orElseThrow(() -> new BusinessException("TODO_NOT_FOUND", "未找到待办", HttpStatus.NOT_FOUND));
-    if (!canRead(user, row)) {
+    TodoVisibility visibility = visibility(user);
+    Optional<BusinessTodoRow> visible = businessTodoRepository.findVisibleById(
+        user.tenantId(),
+        normalizedId,
+        visibility.role(),
+        visibility.allRoles(),
+        visibility.allStores(),
+        visibility.storeIds()
+    );
+    if (visible.isPresent()) {
+      return visible.get();
+    }
+    if (businessTodoRepository.existsById(user.tenantId(), normalizedId)) {
       throw new BusinessException("FORBIDDEN", "当前账号没有访问该待办的权限", HttpStatus.FORBIDDEN);
     }
-    return row;
+    throw new BusinessException("TODO_NOT_FOUND", "未找到待办", HttpStatus.NOT_FOUND);
   }
 
-  private boolean canRead(AuthUser user, BusinessTodoRow row) {
-    String role = normalizeRole(user.role());
-    if (GLOBAL_TODO_ROLES.contains(role)) {
-      return true;
-    }
-    if (row.storeId() != null && !row.storeId().isBlank() && !accessControl.canAccessStore(user, row.storeId())) {
-      return false;
-    }
-    return role.equals(normalizeRole(row.assigneeRole())) || role.equals(normalizeRole(row.reviewRole()));
+  private TodoVisibility visibility(AuthUser user) {
+    boolean boss = AccessControlService.isBoss(user);
+    boolean allStores = boss || accessControl.hasAllDataScope(user, DataScopeDomains.STORE);
+    List<String> storeIds = allStores
+        ? List.of()
+        : accessControl.allowedStoreIds(user, DataScopeDomains.STORE).stream()
+            .filter(value -> !"all".equalsIgnoreCase(value))
+            .sorted()
+            .toList();
+    return new TodoVisibility(normalizeRole(user.role()), boss, allStores, storeIds);
   }
 
   private void requireAllowedTransition(
@@ -394,7 +477,7 @@ public class BusinessTodoService {
       BusinessTodoStatus target
   ) {
     String role = normalizeRole(user.role());
-    boolean global = GLOBAL_TODO_ROLES.contains(role);
+    boolean global = AccessControlService.isBoss(user);
     boolean owner = role.equals(normalizeRole(row.assigneeRole()));
     boolean reviewer = role.equals(normalizeRole(row.reviewRole()));
     boolean allowed = switch (from) {
@@ -591,13 +674,16 @@ public class BusinessTodoService {
 
   private boolean canAct(AuthUser user, BusinessTodoRow row) {
     String role = normalizeRole(user.role());
-    if (GLOBAL_TODO_ROLES.contains(role)) {
+    if (AccessControlService.isBoss(user)) {
       return true;
     }
     return role.equals(normalizeRole(row.assigneeRole())) || role.equals(normalizeRole(row.reviewRole()));
   }
 
   private String targetRoute(BusinessTodoRow row) {
+    if ("assistant".equals(row.sourceModule())) {
+      return "/assistant?storeId=" + safeText(row.storeId(), "") + "&month=" + safeText(row.month(), "");
+    }
     if ("expense_claim".equals(row.sourceModule())) {
       return "/expenses";
     }
@@ -611,8 +697,7 @@ public class BusinessTodoService {
 
   private String roleLabel(String role) {
     return switch (normalizeRole(role)) {
-      case "ADMIN" -> "系统管理员";
-      case "BOSS", "OWNER" -> "老板";
+      case "BOSS" -> "老板（系统管理员）";
       case "FINANCE" -> "财务";
       case "STORE_MANAGER" -> "店长";
       case "SUPERVISOR" -> "督导";
@@ -676,12 +761,50 @@ public class BusinessTodoService {
   }
 
   private String normalizeRole(String role) {
-    return role == null ? "" : role.trim().toUpperCase(Locale.ROOT);
+    return AccessControlService.canonicalRole(role);
+  }
+
+  private String truncateTo(String value, int maxLength) {
+    String normalized = value == null ? "" : value.trim();
+    return normalized.length() <= maxLength ? normalized : normalized.substring(0, maxLength);
+  }
+
+  private String assistantActionSummary(
+      String action,
+      String dueAt,
+      String expectedImpact,
+      String verificationMetric
+  ) {
+    List<String> parts = new ArrayList<>();
+    parts.add(action);
+    if (dueAt != null && !dueAt.isBlank()) {
+      parts.add("建议期限：" + truncateTo(dueAt, 64));
+    }
+    if (expectedImpact != null && !expectedImpact.isBlank()) {
+      parts.add("预期改善：" + truncateTo(expectedImpact, 180));
+    }
+    if (verificationMetric != null && !verificationMetric.isBlank()) {
+      parts.add("验证指标：" + truncateTo(verificationMetric, 180));
+    }
+    return truncateTo(String.join("；", parts), 1000);
+  }
+
+  private String stableHash(String value) {
+    try {
+      byte[] digest = MessageDigest.getInstance("SHA-256")
+          .digest(value.getBytes(StandardCharsets.UTF_8));
+      return HexFormat.of().formatHex(digest, 0, 16);
+    } catch (NoSuchAlgorithmException ex) {
+      throw new IllegalStateException("SHA-256 is not available", ex);
+    }
   }
 
   public record BusinessTodoReconcileResponse(String month, long openCount) {
   }
 
   public record DownloadedTodoAttachment(String fileName, String contentType, byte[] content) {
+  }
+
+  private record TodoVisibility(String role, boolean allRoles, boolean allStores, List<String> storeIds) {
   }
 }

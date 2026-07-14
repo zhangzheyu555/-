@@ -3,6 +3,7 @@ import { http } from './http'
 export interface ProfitRankingExportParams {
   month?: string
   brandId?: string | number
+  storeId?: string
 }
 
 export async function downloadProfitRankingCsv(params: ProfitRankingExportParams, fallbackName: string) {
@@ -23,6 +24,7 @@ async function downloadCsv(path: string, params: ProfitRankingExportParams, fall
     params: {
       month: params.month || undefined,
       brandId: params.brandId || undefined,
+      storeId: params.storeId || undefined,
     },
   })
   downloadBlob(response.data, decodeFilename(String(response.headers['content-disposition'] || '')) || fallbackName)

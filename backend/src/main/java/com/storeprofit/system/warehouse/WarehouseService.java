@@ -1,8 +1,20 @@
 package com.storeprofit.system.warehouse;
 
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
+import com.storeprofit.system.platform.authorization.AuthorizationService;
+import com.storeprofit.system.platform.authorization.BusinessScope;
+import com.storeprofit.system.platform.authorization.BusinessScopeResolver;
+import com.storeprofit.system.platform.authorization.DataScope;
+import com.storeprofit.system.platform.authorization.DataScopeDomains;
+import com.storeprofit.system.platform.authorization.DataScopeModes;
+import com.storeprofit.system.platform.authorization.PermissionCodes;
 import com.storeprofit.system.warehouse.WarehouseRepository.ReturnSourceMovementRow;
+import com.storeprofit.system.warehouse.WarehouseTopologyRepository.BatchRow;
+import com.storeprofit.system.warehouse.WarehouseTopologyRepository.FacilityRow;
+import com.storeprofit.system.warehouse.WarehouseTopologyRepository.InventoryRow;
+import com.storeprofit.system.warehouse.WarehouseTopologyRepository.StoreSupplyRow;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
@@ -10,13 +22,16 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,6 +40,17 @@ import org.springframework.transaction.annotation.Transactional;
 public class WarehouseService {
   private static final DateTimeFormatter RETURN_NO_TIME = DateTimeFormatter.ofPattern("yyMMddHHmmss");
   private final WarehouseRepository warehouseRepository;
+  private final AccessControlService accessControl;
+  private final BusinessScopeResolver businessScopeResolver;
+  private final WarehouseTopologyService topologyService;
+  private final WarehouseTopologyRepository topologyRepository;
+
+  private record WarehouseReadScope(
+      boolean central,
+      boolean allStores,
+      List<String> storeIds
+  ) {
+  }
 
   private record ReturnAvailability(
       BigDecimal receivedQuantity,
@@ -35,23 +61,81 @@ public class WarehouseService {
   ) {
   }
 
-  public WarehouseService(WarehouseRepository warehouseRepository) {
+  @Autowired
+  public WarehouseService(
+      WarehouseRepository warehouseRepository,
+      AccessControlService accessControl,
+      BusinessScopeResolver businessScopeResolver,
+      WarehouseTopologyService topologyService,
+      WarehouseTopologyRepository topologyRepository
+  ) {
     this.warehouseRepository = warehouseRepository;
+    this.accessControl = accessControl;
+    this.businessScopeResolver = businessScopeResolver;
+    this.topologyService = topologyService;
+    this.topologyRepository = topologyRepository;
+  }
+
+  public WarehouseService(
+      WarehouseRepository warehouseRepository,
+      AccessControlService accessControl,
+      BusinessScopeResolver businessScopeResolver
+  ) {
+    this(warehouseRepository, accessControl, businessScopeResolver, null, null);
+  }
+
+  public WarehouseService(
+      WarehouseRepository warehouseRepository,
+      AccessControlService accessControl
+  ) {
+    this(warehouseRepository, accessControl, null, null, null);
+  }
+
+  /** Compatibility constructor retained for isolated service tests. */
+  public WarehouseService(WarehouseRepository warehouseRepository) {
+    this(warehouseRepository, null, null, null, null);
   }
 
   public WarehouseOverviewResponse overview(AuthUser user) {
-    requireWarehouseRead(user);
+    WarehouseReadScope readScope = requireWarehouseRead(user);
     List<WarehouseItemResponse> items = warehouseRepository.items(user.tenantId());
+    if (!readScope.central()) {
+      List<WarehouseRequisitionResponse> requisitions = scopedRequisitions(user, readScope);
+      List<WarehouseDeliveryResponse> deliveries = scopedDeliveries(user, readScope, 80);
+      List<WarehouseStockMovementResponse> movements = scopedMovements(user, readScope, 80);
+      List<WarehouseItemResponse> safeItems = safeItems(items, user.tenantId(), readScope.storeIds());
+      List<WarehouseAlertResponse> safeAlerts = alerts(safeItems);
+      WarehouseSummaryResponse safeSummary = new WarehouseSummaryResponse(
+          safeItems.size(),
+          (int) safeItems.stream().filter(item -> "LOW".equals(item.alertLevel())).count(),
+          (int) safeItems.stream().filter(item -> "EXPIRING".equals(item.alertLevel())).count(),
+          0,
+          (int) requisitions.stream().filter(row -> List.of("SUBMITTED", "APPROVED").contains(row.status())).count(),
+          (int) deliveries.stream().filter(row -> "SHIPPED".equals(row.status())).count(),
+          0,
+          amount(BigDecimal.ZERO)
+      );
+      return new WarehouseOverviewResponse(
+          safeSummary,
+          safeAlerts,
+          safeItems,
+          safeRequisitions(requisitions),
+          List.of(),
+          List.of(),
+          safeDeliveries(deliveries),
+          movements,
+          List.of()
+      );
+    }
     List<WarehouseAlertResponse> alerts = alerts(items);
-    List<WarehouseRequisitionResponse> requisitions = requisitionsFor(user);
-    String scopedStoreId = scopedStoreId(user);
+    List<WarehouseRequisitionResponse> requisitions = scopedRequisitions(user, readScope);
     WarehouseSummaryResponse summary = new WarehouseSummaryResponse(
         items.size(),
         (int) items.stream().filter(item -> "LOW".equals(item.alertLevel())).count(),
         (int) items.stream().filter(item -> "EXPIRING".equals(item.alertLevel())).count(),
         (int) items.stream().filter(item -> "OVERSTOCK".equals(item.alertLevel())).count(),
         warehouseRepository.pendingRequisitionCount(user.tenantId()),
-        warehouseRepository.pendingReceiptCount(user.tenantId(), scopedStoreId),
+        warehouseRepository.pendingReceiptCount(user.tenantId(), null),
         warehouseRepository.pendingPurchaseCount(user.tenantId()),
         items.stream().map(WarehouseItemResponse::stockValue).reduce(BigDecimal.ZERO, BigDecimal::add).setScale(2, RoundingMode.HALF_UP)
     );
@@ -62,37 +146,106 @@ public class WarehouseService {
         requisitions,
         warehouseRepository.suppliers(user.tenantId()),
         warehouseRepository.purchaseOrders(user.tenantId()),
-        warehouseRepository.deliveries(user.tenantId(), scopedStoreId),
-        warehouseRepository.movements(user.tenantId(), scopedStoreId, 80),
+        warehouseRepository.deliveries(user.tenantId(), null),
+        warehouseRepository.movements(user.tenantId(), null, 80),
         warehouseRepository.stockBatches(user.tenantId())
     );
-    return "STORE_MANAGER".equals(user.role()) ? storeManagerSafeOverview(response, user.tenantId(), scopedStoreId) : response;
+    return response;
+  }
+
+  /** Warehouse selection is consumed by the V43-aware endpoint; legacy callers keep the no-arg form. */
+  public WarehouseOverviewResponse overview(AuthUser user, Long warehouseId) {
+    if (warehouseId == null) {
+      if (topologyService == null) {
+        return overview(user);
+      }
+      warehouseId = topologyService.defaultVisibleFacility(user).id();
+    }
+    // The facility-specific implementation is intentionally assembled from warehouse-aware repository
+    // queries so one warehouse can never expand the legacy tenant-wide result set.
+    FacilityRow facility = null;
+    if (topologyService != null) {
+      topologyService.visibleFacilities(user);
+      facility = topologyService.requireVisibleFacility(user, warehouseId, "查看仓库概览");
+    }
+    List<WarehouseItemResponse> items = warehouseRepository.items(user.tenantId(), warehouseId);
+    if (isStoreManager(user)) {
+      items = safeItems(items, user.tenantId(), List.of(user.storeId()));
+    }
+    List<WarehouseRequisitionResponse> requisitions = warehouseRepository.requisitions(
+        user.tenantId(), isStoreManager(user) ? user.storeId() : null, warehouseId);
+    List<WarehouseDeliveryResponse> deliveries = warehouseRepository.deliveries(
+        user.tenantId(), isStoreManager(user) ? user.storeId() : null, warehouseId);
+    List<WarehouseStockMovementResponse> movements = isStoreManager(user)
+        ? List.of()
+        : warehouseRepository.movements(user.tenantId(), null, warehouseId, 80);
+    List<WarehousePurchaseOrderResponse> purchases = isStoreManager(user)
+        ? List.of()
+        : warehouseRepository.purchaseOrders(user.tenantId(), warehouseId);
+    List<WarehouseStockBatchResponse> batches = isStoreManager(user)
+        ? List.of()
+        : warehouseRepository.stockBatches(user.tenantId(), warehouseId);
+    WarehouseSummaryResponse summary = new WarehouseSummaryResponse(
+        items.size(),
+        (int) items.stream().filter(item -> "LOW".equals(item.alertLevel())).count(),
+        (int) items.stream().filter(item -> "EXPIRING".equals(item.alertLevel())).count(),
+        (int) items.stream().filter(item -> "OVERSTOCK".equals(item.alertLevel())).count(),
+        warehouseRepository.pendingRequisitionCount(user.tenantId(), warehouseId),
+        (int) deliveries.stream().filter(row -> "SHIPPED".equals(row.status())).count(),
+        warehouseRepository.pendingPurchaseCount(user.tenantId(), warehouseId),
+        items.stream().map(WarehouseItemResponse::stockValue).reduce(BigDecimal.ZERO, BigDecimal::add)
+            .setScale(2, RoundingMode.HALF_UP)
+    );
+    return new WarehouseOverviewResponse(
+        summary, alerts(items), items,
+        isStoreManager(user) ? safeRequisitions(requisitions) : requisitions,
+        facility != null && facility.externalPurchaseAllowed() && !isStoreManager(user)
+            ? warehouseRepository.suppliers(user.tenantId()) : List.of(),
+        purchases,
+        isStoreManager(user) ? safeDeliveries(deliveries) : deliveries,
+        movements,
+        batches);
   }
 
   public List<WarehouseItemResponse> items(AuthUser user) {
-    requireWarehouseRead(user);
+    if (topologyService != null) {
+      FacilityRow facility = topologyService.defaultVisibleFacility(user);
+      List<WarehouseItemResponse> rows = warehouseRepository.items(user.tenantId(), facility.id());
+      return isStoreManager(user) ? safeItems(rows, user.tenantId(), List.of(user.storeId())) : rows;
+    }
+    WarehouseReadScope readScope = requireWarehouseRead(user);
     List<WarehouseItemResponse> items = warehouseRepository.items(user.tenantId());
-    return "STORE_MANAGER".equals(user.role()) ? safeItems(items, user.tenantId(), scopedStoreId(user)) : items;
+    return readScope.central() ? items : safeItems(items, user.tenantId(), readScope.storeIds());
   }
 
   public WarehouseItemResponse item(AuthUser user, long itemId) {
-    requireWarehouseRead(user);
+    if (topologyService != null) {
+      FacilityRow facility = topologyService.defaultVisibleFacility(user);
+      WarehouseItemResponse row = warehouseRepository.item(user.tenantId(), itemId, facility.id())
+          .orElseThrow(() -> new BusinessException("ITEM_NOT_FOUND", "商品不存在", HttpStatus.NOT_FOUND));
+      return isStoreManager(user) ? safeItems(List.of(row), user.tenantId(), List.of(user.storeId())).getFirst() : row;
+    }
+    WarehouseReadScope readScope = requireWarehouseRead(user);
     WarehouseItemResponse item = warehouseRepository.item(user.tenantId(), itemId)
         .orElseThrow(() -> new BusinessException("ITEM_NOT_FOUND", "商品不存在", HttpStatus.NOT_FOUND));
-    if ("STORE_MANAGER".equals(user.role()) && !item.active()) {
+    if (!readScope.central() && !item.active()) {
       throw new BusinessException("ITEM_NOT_FOUND", "商品不存在或已停用", HttpStatus.NOT_FOUND);
     }
-    return "STORE_MANAGER".equals(user.role()) ? safeItems(List.of(item), user.tenantId(), scopedStoreId(user)).get(0) : item;
+    return readScope.central() ? item : safeItems(List.of(item), user.tenantId(), readScope.storeIds()).get(0);
   }
 
   public List<WarehouseItemCategoryResponse> itemCategories(AuthUser user) {
-    requireWarehouseRead(user);
+    if (topologyService != null) {
+      topologyService.visibleFacilities(user);
+    } else {
+      requireWarehouseRead(user);
+    }
     return categoryTree(warehouseRepository.itemCategories(user.tenantId()));
   }
 
   @Transactional
   public void saveItem(AuthUser user, WarehouseItemRequest request) {
-    requireWarehouseManage(user);
+    requireWarehouseConfigure(user);
     if (request.id() != null && !warehouseRepository.itemExists(user.tenantId(), request.id())) {
       throw new BusinessException("ITEM_NOT_FOUND", "商品不存在", HttpStatus.BAD_REQUEST);
     }
@@ -110,7 +263,7 @@ public class WarehouseService {
 
   @Transactional
   public WarehouseItemCategoryResponse saveItemCategory(AuthUser user, WarehouseItemCategoryRequest request) {
-    requireWarehouseManage(user);
+    requireWarehouseConfigure(user);
     String name = request.name() == null ? "" : request.name().trim();
     if (name.isBlank()) {
       throw new BusinessException("CATEGORY_NAME_REQUIRED", "请填写类别名称", HttpStatus.BAD_REQUEST);
@@ -142,7 +295,7 @@ public class WarehouseService {
 
   @Transactional
   public void setItemCategoryEnabled(AuthUser user, long categoryId, WarehouseItemEnabledRequest request) {
-    requireWarehouseManage(user);
+    requireWarehouseConfigure(user);
     if (!warehouseRepository.itemCategoryExists(user.tenantId(), categoryId)) {
       throw new BusinessException("CATEGORY_NOT_FOUND", "商品类别不存在", HttpStatus.BAD_REQUEST);
     }
@@ -153,7 +306,7 @@ public class WarehouseService {
 
   @Transactional
   public void deleteItemCategory(AuthUser user, long categoryId) {
-    requireWarehouseManage(user);
+    requireWarehouseConfigure(user);
     if (!warehouseRepository.itemCategoryExists(user.tenantId(), categoryId)) {
       throw new BusinessException("CATEGORY_NOT_FOUND", "商品类别不存在", HttpStatus.NOT_FOUND);
     }
@@ -169,7 +322,7 @@ public class WarehouseService {
 
   @Transactional
   public void setItemEnabled(AuthUser user, long itemId, WarehouseItemEnabledRequest request) {
-    requireWarehouseManage(user);
+    requireWarehouseConfigure(user);
     if (!warehouseRepository.itemExists(user.tenantId(), itemId)) {
       throw new BusinessException("ITEM_NOT_FOUND", "商品不存在", HttpStatus.BAD_REQUEST);
     }
@@ -180,26 +333,34 @@ public class WarehouseService {
 
   @Transactional
   public void updateAlertSettings(AuthUser user, long itemId, WarehouseAlertSettingsRequest request) {
-    requireWarehouseManage(user);
+    requireWarehouseConfigure(user);
     if (!warehouseRepository.itemExists(user.tenantId(), itemId)) {
       throw new BusinessException("ITEM_NOT_FOUND", "物料不存在", HttpStatus.BAD_REQUEST);
     }
     WarehouseAlertSettingsRequest safeRequest = request == null
-        ? new WarehouseAlertSettingsRequest(BigDecimal.ZERO, true, 3)
+        ? new WarehouseAlertSettingsRequest(BigDecimal.ZERO, true, 3, null)
         : request;
-    warehouseRepository.updateAlertSettings(
-        user.tenantId(),
-        itemId,
-        amount(safeRequest.minStockQuantity()),
-        safeRequest.alertEnabled() == null || safeRequest.alertEnabled(),
-        safeRequest.expiryAlertDays()
-    );
+    FacilityRow facility = topologyService == null ? null
+        : (safeRequest.warehouseId() == null
+            ? topologyService.defaultVisibleFacility(user)
+            : topologyService.requireVisibleFacility(user, safeRequest.warehouseId(), "设置库存预警"));
+    if (facility == null) {
+      warehouseRepository.updateAlertSettings(
+          user.tenantId(), itemId, amount(safeRequest.minStockQuantity()),
+          safeRequest.alertEnabled() == null || safeRequest.alertEnabled(),
+          safeRequest.expiryAlertDays());
+    } else {
+      warehouseRepository.updateAlertSettings(
+          user.tenantId(), facility.id(), itemId, amount(safeRequest.minStockQuantity()),
+          safeRequest.alertEnabled() == null || safeRequest.alertEnabled(),
+          safeRequest.expiryAlertDays());
+    }
     warehouseRepository.logAction(
         user.tenantId(),
         user.id(),
         user.displayName(),
         "设置库存预警",
-        String.valueOf(itemId),
+        facility == null ? String.valueOf(itemId) : facility.id() + ":" + itemId,
         null,
         "最低安全库存 " + amount(safeRequest.minStockQuantity()).stripTrailingZeros().toPlainString()
     );
@@ -207,7 +368,19 @@ public class WarehouseService {
 
   @Transactional
   public void receiveStock(AuthUser user, WarehouseStockBatchRequest request) {
-    requireWarehouseManage(user);
+    if (topologyService != null) {
+      throw new BusinessException(
+          "DIRECT_STOCK_RECEIVE_DISABLED",
+          "请先创建并审批采购单，再通过采购单办理入库",
+          HttpStatus.CONFLICT
+      );
+    }
+    FacilityRow facility = topologyService == null
+        ? null
+        : topologyService.requirePurchaseWarehouse(user, request.warehouseId(), "外部采购入库");
+    if (facility == null) {
+      requireWarehouseManage(user);
+    }
     if (!warehouseRepository.activeItemExists(user.tenantId(), request.itemId())) {
       throw new BusinessException("ITEM_NOT_FOUND", "商品不存在或已停用", HttpStatus.BAD_REQUEST);
     }
@@ -222,20 +395,29 @@ public class WarehouseService {
     if (requestKey != null && !warehouseRepository.reserveRequest(user.tenantId(), "WAREHOUSE_STOCK_RECEIVE", requestKey)) {
       return;
     }
-    warehouseRepository.upsertBatch(user.tenantId(), request);
-    Long batchId = warehouseRepository.batchId(user.tenantId(), request.itemId(), request.batchNo()).orElse(null);
-    warehouseRepository.insertMovement(
-        user.tenantId(),
-        request.itemId(),
-        batchId,
-        "IN",
-        request.quantity(),
-        "MANUAL_RECEIVE",
-        request.batchNo(),
-        null,
-        request.note(),
-        user.id()
-    );
+    long warehouseId = facility == null ? -1 : facility.id();
+    if (facility == null) {
+      warehouseRepository.upsertBatch(user.tenantId(), request);
+    } else {
+      warehouseRepository.upsertBatch(user.tenantId(), warehouseId, request);
+      InventoryRow inventory = topologyRepository.lockInventory(user.tenantId(), warehouseId, request.itemId());
+      BigDecimal quantity = amount(request.quantity());
+      BigDecimal newCost = weightedCost(inventory.onHand(), inventory.unitCost(), quantity, amount(request.unitCost()));
+      if (!topologyRepository.updateInventory(user.tenantId(), inventory,
+          inventory.onHand().add(quantity), inventory.reserved(), inventory.inTransit(), newCost)) {
+        throw new BusinessException("WAREHOUSE_CONCURRENT_UPDATE", "库存已被其他操作更新，请刷新后重试", HttpStatus.CONFLICT);
+      }
+    }
+    Long batchId = facility == null
+        ? warehouseRepository.batchId(user.tenantId(), request.itemId(), request.batchNo()).orElse(null)
+        : warehouseRepository.batchId(user.tenantId(), warehouseId, request.itemId(), request.batchNo()).orElse(null);
+    if (facility == null) {
+      warehouseRepository.insertMovement(user.tenantId(), request.itemId(), batchId, "IN",
+          request.quantity(), "MANUAL_RECEIVE", request.batchNo(), null, request.note(), user.id());
+    } else {
+      warehouseRepository.insertMovement(user.tenantId(), warehouseId, request.itemId(), batchId, "IN",
+          request.quantity(), "MANUAL_RECEIVE", request.batchNo(), null, request.note(), user.id());
+    }
     if (requestKey != null) {
       warehouseRepository.completeReservedRequest(user.tenantId(), "WAREHOUSE_STOCK_RECEIVE", requestKey, String.valueOf(batchId));
     }
@@ -243,27 +425,56 @@ public class WarehouseService {
   }
 
   public List<WarehouseRequisitionResponse> requisitions(AuthUser user) {
-    requireWarehouseRead(user);
-    List<WarehouseRequisitionResponse> requisitions = requisitionsFor(user);
-    return "STORE_MANAGER".equals(user.role()) ? safeRequisitions(requisitions) : requisitions;
+    if (topologyService != null) {
+      FacilityRow facility = topologyService.defaultVisibleFacility(user);
+      List<WarehouseRequisitionResponse> rows = warehouseRepository.requisitions(
+          user.tenantId(), isStoreManager(user) ? user.storeId() : null, facility.id());
+      return isStoreManager(user) ? safeRequisitions(rows) : rows;
+    }
+    WarehouseReadScope readScope = requireWarehouseRead(user);
+    List<WarehouseRequisitionResponse> requisitions = scopedRequisitions(user, readScope);
+    return readScope.central() ? requisitions : safeRequisitions(requisitions);
   }
 
   public List<WarehouseStockMovementResponse> movements(AuthUser user) {
-    requireWarehouseRead(user);
-    return warehouseRepository.movements(user.tenantId(), scopedStoreId(user), 120);
+    if (topologyService != null) {
+      FacilityRow facility = topologyService.defaultVisibleFacility(user);
+      return warehouseRepository.movements(user.tenantId(), isStoreManager(user) ? user.storeId() : null,
+          facility.id(), 120);
+    }
+    WarehouseReadScope readScope = requireWarehouseRead(user);
+    return scopedMovements(user, readScope, 120);
   }
 
   public List<WarehouseReturnResponse> returns(AuthUser user) {
-    requireReturnRead(user);
-    return warehouseRepository.returns(user.tenantId(), scopedStoreId(user));
+    if (topologyService != null) {
+      List<WarehouseFacilityResponse> facilities = topologyService.visibleFacilities(user);
+      List<WarehouseReturnResponse> rows = facilities.stream()
+          .flatMap(facility -> warehouseRepository.returns(user.tenantId(),
+              isStoreManager(user) ? user.storeId() : null, facility.id()).stream())
+          .collect(Collectors.toMap(WarehouseReturnResponse::id, Function.identity(), (a, b) -> a,
+              java.util.LinkedHashMap::new)).values().stream().toList();
+      return isStoreManager(user) ? safeReturns(rows) : rows;
+    }
+    WarehouseReadScope readScope = requireReturnRead(user);
+    List<WarehouseReturnResponse> returns = scopedReturns(user, readScope);
+    return readScope.central() ? returns : safeReturns(returns);
   }
 
   public WarehouseReturnResponse returnOrder(AuthUser user, String returnId) {
-    requireReturnRead(user);
+    if (topologyService != null) {
+      WarehouseReturnResponse order = warehouseRepository.returnOrder(user.tenantId(), returnId)
+          .orElseThrow(() -> new BusinessException("RETURN_NOT_FOUND", "配送退货单不存在", HttpStatus.NOT_FOUND));
+      FacilityRow supply = returnFacility(user, order.id());
+      topologyService.visibleFacilities(user);
+      topologyService.requireVisibleFacility(user, supply.id(), "查看配送退货单");
+      return isStoreManager(user) ? safeReturn(order) : order;
+    }
+    WarehouseReadScope readScope = requireReturnRead(user);
     WarehouseReturnResponse order = warehouseRepository.returnOrder(user.tenantId(), returnId)
         .orElseThrow(() -> new BusinessException("RETURN_NOT_FOUND", "配送退货单不存在", HttpStatus.NOT_FOUND));
-    requireReturnScope(user, order.returnStoreId());
-    return order;
+    requireStoreInReadScope(user, readScope, order.returnStoreId(), "查看配送退货单");
+    return readScope.central() ? order : safeReturn(order);
   }
 
   @Transactional
@@ -274,11 +485,9 @@ public class WarehouseService {
       throw new BusinessException("SOURCE_REQUIRED", "请选择要退货的原叫货单", HttpStatus.BAD_REQUEST);
     }
     WarehouseRequisitionResponse requisition = requireRequisition(user.tenantId(), sourceRequisitionId);
+    requireWarehouseStoreScope(user, requisition.storeId(), "基于叫货单发起退货", false);
     if (!List.of("SHIPPED", "RECEIVED").contains(requisition.status())) {
       throw new BusinessException("BAD_SOURCE_STATUS", "只能基于已发货或已收货的叫货单发起退货", HttpStatus.CONFLICT);
-    }
-    if ("STORE_MANAGER".equals(user.role()) && (user.storeId() == null || !user.storeId().equals(requisition.storeId()))) {
-      throw new BusinessException("FORBIDDEN", "店长只能基于本门店叫货单发起退货", HttpStatus.FORBIDDEN);
     }
     String requestedStoreId = request.returnStoreId() == null ? "" : request.returnStoreId().trim();
     if (!requestedStoreId.isBlank() && !requestedStoreId.equals(requisition.storeId())) {
@@ -288,6 +497,8 @@ public class WarehouseService {
     if (!warehouseRepository.storeExists(user.tenantId(), storeId)) {
       throw new BusinessException("STORE_NOT_FOUND", "退货门店不存在", HttpStatus.BAD_REQUEST);
     }
+    FacilityRow returnWarehouse = topologyService == null ? null
+        : requisitionFacility(user, requisition.id());
     String returnDate = request.returnDate() == null || request.returnDate().isBlank()
         ? LocalDate.now().toString()
         : request.returnDate().trim();
@@ -344,7 +555,7 @@ public class WarehouseService {
         }
         BigDecimal used = movement.shippedQuantity().min(remaining);
         BigDecimal unitPrice = amount(movement.unitPrice());
-        BigDecimal returnPrice = amount(line.returnPrice() == null || "STORE_MANAGER".equals(user.role()) ? unitPrice : line.returnPrice());
+        BigDecimal returnPrice = amount(line.returnPrice() == null || !hasCentralCostAccess(user) ? unitPrice : line.returnPrice());
         total = total.add(used.multiply(returnPrice).setScale(2, RoundingMode.HALF_UP));
         drafts.add(new ReturnLineDraft(
             movement.sourceRequisitionLineId(),
@@ -363,23 +574,16 @@ public class WarehouseService {
         remaining = remaining.subtract(used).setScale(2, RoundingMode.HALF_UP);
       }
     }
-    warehouseRepository.insertReturnOrder(
-        user.tenantId(),
-        returnNo,
-        returnNo,
-        requisition.id(),
-        deliveryId,
-        storeId,
-        storeName,
-        receiveDepartment,
-        "SUBMITTED",
-        total,
-        returnHandler(user),
-        user.displayName(),
-        request.reason(),
-        request.note(),
-        returnDate
-    );
+    if (returnWarehouse == null) {
+      warehouseRepository.insertReturnOrder(user.tenantId(), returnNo, returnNo, requisition.id(),
+          deliveryId, storeId, storeName, receiveDepartment, "SUBMITTED", total,
+          returnHandler(user), user.displayName(), request.reason(), request.note(), returnDate);
+    } else {
+      warehouseRepository.insertReturnOrder(user.tenantId(), returnWarehouse.id(),
+          returnNo, returnNo, requisition.id(), deliveryId, storeId, storeName, receiveDepartment,
+          "SUBMITTED", total, returnHandler(user), user.displayName(), request.reason(),
+          request.note(), returnDate);
+    }
     for (ReturnLineDraft draft : drafts) {
       warehouseRepository.insertReturnOrderLine(
           user.tenantId(),
@@ -400,15 +604,24 @@ public class WarehouseService {
     }
     saveReturnAttachments(user, returnNo, request.attachments());
     warehouseRepository.logAction(user.tenantId(), user.id(), user.displayName(), "提交配送退货单", returnNo, storeId, request.note());
-    return warehouseRepository.returnOrder(user.tenantId(), returnNo)
+    WarehouseReturnResponse saved = warehouseRepository.returnOrder(user.tenantId(), returnNo)
         .orElseThrow(() -> new BusinessException("RETURN_SAVE_FAILED", "配送退货单保存失败", HttpStatus.INTERNAL_SERVER_ERROR));
+    return hasCentralCostAccess(user) ? saved : safeReturn(saved);
   }
 
   @Transactional
   public WarehouseReturnResponse reviewReturn(AuthUser user, String returnId, WarehouseReturnReviewRequest request) {
-    requireReturnReview(user);
+    if (topologyService == null) {
+      requireReturnReview(user);
+    }
     WarehouseReturnResponse order = warehouseRepository.returnOrder(user.tenantId(), returnId)
         .orElseThrow(() -> new BusinessException("RETURN_NOT_FOUND", "配送退货单不存在", HttpStatus.NOT_FOUND));
+    FacilityRow returnWarehouse = topologyService == null ? null : returnFacility(user, order.id());
+    if (returnWarehouse == null) {
+      requireWarehouseStoreScope(user, order.returnStoreId(), "审核配送退货单", true);
+    } else {
+      topologyService.requireRequisitionProcess(user, returnWarehouse, "审核配送退货单");
+    }
     if (!"SUBMITTED".equals(order.status())) {
       throw new BusinessException("BAD_RETURN_STATUS", "只有已提交的退货单可以审核", HttpStatus.CONFLICT);
     }
@@ -428,15 +641,24 @@ public class WarehouseService {
           user.role()
       );
     }
-    return warehouseRepository.returnOrder(user.tenantId(), order.id())
+    WarehouseReturnResponse updated = warehouseRepository.returnOrder(user.tenantId(), order.id())
         .orElseThrow(() -> new BusinessException("RETURN_NOT_FOUND", "配送退货单不存在", HttpStatus.NOT_FOUND));
+    return hasCentralCostAccess(user) ? updated : safeReturn(updated);
   }
 
   @Transactional
   public WarehouseReturnResponse receiveReturn(AuthUser user, String returnId, WarehouseReturnReceiveRequest request) {
-    requireReturnReview(user);
+    if (topologyService == null) {
+      requireReturnReview(user);
+    }
     WarehouseReturnResponse order = warehouseRepository.returnOrder(user.tenantId(), returnId)
         .orElseThrow(() -> new BusinessException("RETURN_NOT_FOUND", "配送退货单不存在", HttpStatus.NOT_FOUND));
+    FacilityRow returnWarehouse = topologyService == null ? null : returnFacility(user, order.id());
+    if (returnWarehouse == null) {
+      requireWarehouseStoreScope(user, order.returnStoreId(), "确认配送退货入库", true);
+    } else {
+      topologyService.requireRequisitionProcess(user, returnWarehouse, "确认配送退货入库");
+    }
     if (!"APPROVED".equals(order.status())) {
       throw new BusinessException("BAD_RETURN_STATUS", "只有仓库已通过的退货单可以确认收货", HttpStatus.CONFLICT);
     }
@@ -445,30 +667,39 @@ public class WarehouseService {
       if (line.batchId() == null) {
         throw new BusinessException("RETURN_BATCH_NOT_FOUND", "退货明细缺少原出库批次，不能回库", HttpStatus.CONFLICT);
       }
-      warehouseRepository.addBatchQuantity(user.tenantId(), line.batchId(), line.quantity());
-      warehouseRepository.insertMovement(
-          user.tenantId(),
-          line.itemId(),
-          line.batchId(),
-          "IN",
-          line.quantity(),
-          "RETURN",
-          order.id(),
-          order.returnStoreId(),
-          note == null || note.isBlank() ? "配送退货回库" : note,
-          user.id()
-      );
-      warehouseRepository.addStoreInventory(
-          user.tenantId(),
-          order.returnStoreId(),
-          line.itemId(),
-          line.quantity().negate(),
-          "OUT",
-          "STORE_RETURN",
-          order.id(),
-          note == null || note.isBlank() ? "配送退货回库" : note,
-          user.id()
-      );
+      String returnNote = note == null || note.isBlank() ? "配送退货回库" : note;
+      if (returnWarehouse == null) {
+        warehouseRepository.addBatchQuantity(user.tenantId(), line.batchId(), line.quantity());
+        warehouseRepository.insertMovement(user.tenantId(), line.itemId(), line.batchId(), "IN",
+            line.quantity(), "RETURN", order.id(), order.returnStoreId(), returnNote, user.id());
+        warehouseRepository.addStoreInventory(user.tenantId(), order.returnStoreId(), line.itemId(),
+            line.quantity().negate(), "OUT", "STORE_RETURN", order.id(), returnNote, user.id());
+      } else {
+        FacilityRow warehouse = returnWarehouse;
+        BatchRow batch = topologyRepository.batchForUpdate(
+                user.tenantId(), warehouse.id(), line.batchId())
+            .orElseThrow(() -> new BusinessException(
+                "RETURN_BATCH_NOT_FOUND", "退货批次不属于本店供货仓", HttpStatus.CONFLICT));
+        InventoryRow inventory = topologyRepository.lockInventory(
+            user.tenantId(), warehouse.id(), line.itemId());
+        if (!topologyRepository.updateBatchQuantity(user.tenantId(), batch,
+            batch.quantity().add(line.quantity()), batch.reservedQuantity())) {
+          throw warehouseConcurrentUpdate();
+        }
+        BigDecimal cost = weightedCost(inventory.onHand(), inventory.unitCost(),
+            line.quantity(), batch.unitCost());
+        if (!topologyRepository.updateInventory(user.tenantId(), inventory,
+            inventory.onHand().add(line.quantity()), inventory.reserved(), inventory.inTransit(), cost)) {
+          throw warehouseConcurrentUpdate();
+        }
+        topologyRepository.insertMovement(user.tenantId(), warehouse.id(), line.itemId(), line.batchId(),
+            "RETURN_IN", line.quantity(), BigDecimal.ZERO, BigDecimal.ZERO, batch.unitCost(),
+            "RETURN", order.id(), order.returnStoreId(), returnNote, user.id());
+        if (!warehouseRepository.subtractStoreInventoryIfEnough(user.tenantId(), order.returnStoreId(),
+            line.itemId(), line.quantity(), "STORE_RETURN", order.id(), returnNote, user.id())) {
+          throw new BusinessException("RETURN_STORE_STOCK_TOO_LOW", "门店当前库存不足，不能确认退货", HttpStatus.CONFLICT);
+        }
+      }
     }
     warehouseRepository.receiveReturnOrder(user.tenantId(), order.id(), user.displayName(), note);
     warehouseRepository.logAction(user.tenantId(), user.id(), user.displayName(), "确认收到配送退货", order.id(), order.returnStoreId(), note);
@@ -482,13 +713,38 @@ public class WarehouseService {
         user.displayName(),
         user.role()
     );
-    return warehouseRepository.returnOrder(user.tenantId(), order.id())
+    WarehouseReturnResponse updated = warehouseRepository.returnOrder(user.tenantId(), order.id())
         .orElseThrow(() -> new BusinessException("RETURN_NOT_FOUND", "配送退货单不存在", HttpStatus.NOT_FOUND));
+    return hasCentralCostAccess(user) ? updated : safeReturn(updated);
   }
 
   @Transactional
   public WarehousePurchaseOrderResponse createPurchaseOrder(AuthUser user, WarehousePurchaseOrderRequest request) {
-    requireWarehouseManage(user);
+    FacilityRow facility = topologyService == null
+        ? null
+        : topologyService.requirePurchaseWarehouse(user, request.warehouseId(), "创建外部采购单");
+    if (facility == null) {
+      requireWarehouseManage(user);
+    }
+    if (!warehouseRepository.activeSupplierExists(user.tenantId(), request.supplierId())) {
+      throw new BusinessException("SUPPLIER_NOT_FOUND", "供应商不存在、已停用或不属于当前企业", HttpStatus.BAD_REQUEST);
+    }
+    String purchaseRequestKey = normalizeClientRequestId(request.clientRequestId());
+    if (facility != null && purchaseRequestKey == null) {
+      throw new BusinessException("IDEMPOTENCY_KEY_REQUIRED", "创建采购单必须提供请求编号", HttpStatus.BAD_REQUEST);
+    }
+    if (facility != null) {
+      var duplicateId = warehouseRepository.purchaseOrderIdByRequestKey(user.tenantId(), purchaseRequestKey);
+      if (duplicateId.isPresent()) {
+        var duplicate = warehouseRepository.purchaseOrderForUpdate(user.tenantId(), duplicateId.get())
+            .orElseThrow(() -> new BusinessException("PO_NOT_FOUND", "采购单不存在", HttpStatus.NOT_FOUND));
+        if (duplicate.warehouseId() != facility.id()) {
+          throw new BusinessException("IDEMPOTENCY_KEY_CONFLICT", "该请求编号已用于另一仓库采购单", HttpStatus.CONFLICT);
+        }
+        return warehouseRepository.purchaseOrder(user.tenantId(), duplicateId.get())
+            .orElseThrow(() -> new BusinessException("PO_NOT_FOUND", "采购单不存在", HttpStatus.NOT_FOUND));
+      }
+    }
     String id = "PO" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 6);
     BigDecimal total = BigDecimal.ZERO;
     for (WarehousePurchaseOrderLineRequest line : request.lines()) {
@@ -497,7 +753,16 @@ public class WarehouseService {
       }
       total = total.add(positive(line.orderedQuantity(), "采购数量").multiply(amount(line.unitCost())));
     }
-    warehouseRepository.insertPurchaseOrder(user.tenantId(), id, request.supplierId(), total, request.note(), user.id());
+    if (facility == null) {
+      warehouseRepository.insertPurchaseOrder(user.tenantId(), id, request.supplierId(), total, request.note(), user.id());
+    } else {
+      if (!warehouseRepository.insertPurchaseOrder(user.tenantId(), facility.id(), id, request.supplierId(),
+          total, request.note(), user.id(), purchaseRequestKey)) {
+        return warehouseRepository.purchaseOrderIdByRequestKey(user.tenantId(), purchaseRequestKey)
+            .flatMap(existingId -> warehouseRepository.purchaseOrder(user.tenantId(), existingId))
+            .orElseThrow(() -> warehouseConcurrentUpdate());
+      }
+    }
     for (WarehousePurchaseOrderLineRequest line : request.lines()) {
       warehouseRepository.insertPurchaseOrderLine(
           user.tenantId(),
@@ -520,19 +785,28 @@ public class WarehouseService {
     if (!warehouseRepository.storeExists(user.tenantId(), storeId)) {
       throw new BusinessException("STORE_NOT_FOUND", "门店不存在", HttpStatus.BAD_REQUEST);
     }
+    StoreSupplyRow storeSupply = topologyService == null
+        ? null
+        : topologyService.requireStoreSupplyWarehouse(user, storeId, "提交门店叫货");
     String requestKey = normalizeClientRequestId(request.clientRequestId());
     if (requestKey != null) {
       var previousId = warehouseRepository.reservedRequestBusinessId(user.tenantId(), "STORE_REQUISITION", requestKey);
       if (previousId.isPresent()) {
-        return requireRequisition(user.tenantId(), previousId.get());
+        WarehouseRequisitionResponse existing = requireRequisition(user.tenantId(), previousId.get());
+        requireWarehouseStoreScope(user, existing.storeId(), "查看已提交叫货单", false);
+        return hasCentralCostAccess(user) ? existing : safeRequisitions(List.of(existing)).get(0);
       }
       if (!warehouseRepository.reserveRequest(user.tenantId(), "STORE_REQUISITION", requestKey)) {
-        return warehouseRepository.reservedRequestBusinessId(user.tenantId(), "STORE_REQUISITION", requestKey)
+        WarehouseRequisitionResponse existing = warehouseRepository.reservedRequestBusinessId(user.tenantId(), "STORE_REQUISITION", requestKey)
             .map(id -> requireRequisition(user.tenantId(), id))
             .orElseThrow(() -> new BusinessException("REQUEST_IN_PROGRESS", "叫货单正在提交，请稍后刷新", HttpStatus.CONFLICT));
+        requireWarehouseStoreScope(user, existing.storeId(), "查看已提交叫货单", false);
+        return hasCentralCostAccess(user) ? existing : safeRequisitions(List.of(existing)).get(0);
       }
     }
-    Map<Long, WarehouseItemResponse> items = warehouseRepository.items(user.tenantId()).stream()
+    Map<Long, WarehouseItemResponse> items = (storeSupply == null
+        ? warehouseRepository.items(user.tenantId())
+        : warehouseRepository.items(user.tenantId(), storeSupply.warehouse().id())).stream()
         .collect(Collectors.toMap(WarehouseItemResponse::id, Function.identity()));
     String id = "REQ" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 6);
     BigDecimal total = BigDecimal.ZERO;
@@ -547,7 +821,12 @@ public class WarehouseService {
       total = total.add(quantity.multiply(item.unitPrice()));
       drafts.add(new LineDraft(item, quantity, warning, line.note()));
     }
-    warehouseRepository.insertRequisition(user.tenantId(), id, storeId, total, request.note(), user.id());
+    if (storeSupply == null) {
+      warehouseRepository.insertRequisition(user.tenantId(), id, storeId, total, request.note(), user.id());
+    } else {
+      warehouseRepository.insertRequisition(user.tenantId(), id, storeId, storeSupply.warehouse().id(),
+          total, request.note(), user.id(), requestKey);
+    }
     for (LineDraft draft : drafts) {
       warehouseRepository.insertRequisitionLine(
           user.tenantId(),
@@ -563,14 +842,24 @@ public class WarehouseService {
       warehouseRepository.completeReservedRequest(user.tenantId(), "STORE_REQUISITION", requestKey, id);
     }
     warehouseRepository.logAction(user.tenantId(), user.id(), user.displayName(), "提交叫货", id, storeId, request.note());
-    return warehouseRepository.requisition(user.tenantId(), id)
+    WarehouseRequisitionResponse saved = warehouseRepository.requisition(user.tenantId(), id)
         .orElseThrow(() -> new BusinessException("REQ_NOT_FOUND", "叫货单保存失败", HttpStatus.INTERNAL_SERVER_ERROR));
+    return hasCentralCostAccess(user) ? saved : safeRequisitions(List.of(saved)).get(0);
   }
 
   @Transactional
   public void review(AuthUser user, String requisitionId, WarehouseRequisitionReviewRequest request) {
-    requireWarehouseManage(user);
+    if (topologyService == null) {
+      requireRequisitionReview(user);
+    }
     WarehouseRequisitionResponse requisition = requireRequisitionForUpdate(user.tenantId(), requisitionId);
+    FacilityRow supplyWarehouse = topologyService == null ? null
+        : requisitionFacility(user, requisition.id());
+    if (supplyWarehouse == null) {
+      requireWarehouseStoreScope(user, requisition.storeId(), "审核叫货单", true);
+    } else {
+      topologyService.requireRequisitionProcess(user, supplyWarehouse, "审核叫货单");
+    }
     if (!"SUBMITTED".equals(requisition.status())) {
       throw new BusinessException("BAD_STATUS", "只有待审核叫货单可以审核", HttpStatus.CONFLICT);
     }
@@ -585,6 +874,12 @@ public class WarehouseService {
       BigDecimal approved = request.approved()
           ? amount(approvedMap.getOrDefault(line.itemId(), line.requestedQuantity()))
           : BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+      if (approved.compareTo(line.requestedQuantity()) > 0) {
+        throw new BusinessException("APPROVED_QUANTITY_TOO_LARGE", "批准数量不能超过申请数量", HttpStatus.BAD_REQUEST);
+      }
+      if (request.approved() && supplyWarehouse != null && approved.signum() > 0) {
+        reserveRequisitionStock(user, supplyWarehouse, requisitionId, line, approved);
+      }
       warehouseRepository.updateApprovedQuantity(user.tenantId(), requisitionId, line.itemId(), approved);
       total = total.add(approved.multiply(line.unitPrice()));
     }
@@ -594,20 +889,34 @@ public class WarehouseService {
 
   @Transactional
   public void ship(AuthUser user, String requisitionId) {
-    requireWarehouseManage(user);
+    if (topologyService == null) {
+      requireRequisitionReview(user);
+    }
     WarehouseRequisitionResponse requisition = requireRequisitionForUpdate(user.tenantId(), requisitionId);
-    if (!List.of("SUBMITTED", "APPROVED").contains(requisition.status())) {
-      throw new BusinessException("BAD_STATUS", "只有待审核或待配货叫货单可以配货", HttpStatus.CONFLICT);
+    FacilityRow supplyWarehouse = topologyService == null ? null
+        : requisitionFacility(user, requisition.id());
+    if (supplyWarehouse == null) {
+      requireWarehouseStoreScope(user, requisition.storeId(), "处理叫货配货", true);
+    } else {
+      topologyService.requireRequisitionProcess(user, supplyWarehouse, "处理叫货配货");
+    }
+    if (!(supplyWarehouse == null ? List.of("SUBMITTED", "APPROVED") : List.of("APPROVED")).contains(requisition.status())) {
+      throw new BusinessException("BAD_STATUS", "只有已审核的叫货单可以配货", HttpStatus.CONFLICT);
     }
     for (WarehouseRequisitionLineResponse line : requisition.lines()) {
       BigDecimal quantity = line.approvedQuantity().compareTo(BigDecimal.ZERO) > 0
           ? line.approvedQuantity()
           : line.requestedQuantity();
-      deductStock(user, requisition, line.itemId(), quantity);
+      if (supplyWarehouse == null) {
+        deductStock(user, requisition, line.itemId(), quantity);
+      } else {
+        shipReservedRequisitionStock(user, supplyWarehouse, requisition, line, quantity);
+      }
       warehouseRepository.updateShippedQuantity(user.tenantId(), requisitionId, line.itemId(), quantity);
     }
     warehouseRepository.markShipped(user.tenantId(), requisitionId, user.id());
-    createDeliveryForRequisition(user, requireRequisition(user.tenantId(), requisitionId));
+    createDeliveryForRequisition(user, requireRequisition(user.tenantId(), requisitionId),
+        supplyWarehouse == null ? null : supplyWarehouse.id());
     warehouseRepository.logAction(user.tenantId(), user.id(), user.displayName(), "完成配货", requisitionId, requisition.storeId(), "仓库出库");
     warehouseRepository.insertTodoAction(
         "todo-act-" + UUID.randomUUID(),
@@ -625,15 +934,27 @@ public class WarehouseService {
   public void receiveByStore(AuthUser user, String requisitionId, WarehouseReceiptRequest request) {
     requireStoreReceiver(user);
     WarehouseRequisitionResponse requisition = requireRequisitionForUpdate(user.tenantId(), requisitionId);
+    requireWarehouseStoreScope(user, requisition.storeId(), "确认门店收货", false);
+    if ("RECEIVED".equals(requisition.status())) {
+      return;
+    }
     if (!"SHIPPED".equals(requisition.status())) {
       throw new BusinessException("BAD_STATUS", "这张叫货单还没有发货，不能确认收货", HttpStatus.CONFLICT);
     }
-    if ("STORE_MANAGER".equals(user.role()) && (user.storeId() == null || !user.storeId().equals(requisition.storeId()))) {
-      throw new BusinessException("FORBIDDEN", "店长只能确认本门店收货", HttpStatus.FORBIDDEN);
+    FacilityRow supplyWarehouse = topologyService == null ? null
+        : requisitionFacility(user, requisition.id());
+    if (supplyWarehouse != null) {
+      topologyService.requireVisibleFacility(user, supplyWarehouse.id(), "确认门店收货");
     }
-    WarehouseDeliveryResponse delivery = createDeliveryForRequisition(user, requisition);
+    WarehouseDeliveryResponse delivery = createDeliveryForRequisition(user, requisition,
+        supplyWarehouse == null ? null : supplyWarehouse.id());
     String receiptId = "RCV" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 6);
-    warehouseRepository.insertReceipt(user.tenantId(), receiptId, delivery.id(), requisition.id(), requisition.storeId(), user.id(), request.note());
+    if (supplyWarehouse == null) {
+      warehouseRepository.insertReceipt(user.tenantId(), receiptId, delivery.id(), requisition.id(), requisition.storeId(), user.id(), request.note());
+    } else {
+      warehouseRepository.insertReceipt(user.tenantId(), supplyWarehouse.id(), receiptId,
+          delivery.id(), requisition.id(), requisition.storeId(), user.id(), request.note());
+    }
     for (WarehouseDeliveryLineResponse line : delivery.lines()) {
       warehouseRepository.insertReceiptLine(user.tenantId(), receiptId, line.itemId(), line.shippedQuantity(), request.note());
       warehouseRepository.updateDeliveryLineReceived(user.tenantId(), delivery.id(), line.itemId(), line.shippedQuantity());
@@ -665,17 +986,130 @@ public class WarehouseService {
   }
 
   private WarehouseDeliveryResponse createDeliveryForRequisition(AuthUser user, WarehouseRequisitionResponse requisition) {
+    return createDeliveryForRequisition(user, requisition, null);
+  }
+
+  @Transactional
+  public WarehousePurchaseOrderResponse approvePurchaseOrder(AuthUser user, String purchaseOrderId) {
+    var lock = warehouseRepository.purchaseOrderForUpdate(user.tenantId(), purchaseOrderId)
+        .orElseThrow(() -> new BusinessException("PO_NOT_FOUND", "采购单不存在", HttpStatus.NOT_FOUND));
+    FacilityRow facility = topologyService.requirePurchaseWarehouse(
+        user, lock.warehouseId(), "审批外部采购单");
+    if ("ORDERED".equals(lock.status())) {
+      return warehouseRepository.purchaseOrder(user.tenantId(), purchaseOrderId).orElseThrow();
+    }
+    if (!"DRAFT".equals(lock.status()) || warehouseRepository.markPurchaseOrdered(
+        user.tenantId(), purchaseOrderId) != 1) {
+      throw new BusinessException("PO_STATUS_CONFLICT", "只有草稿采购单可以审批", HttpStatus.CONFLICT);
+    }
+    warehouseRepository.logAction(user.tenantId(), user.id(), user.displayName(),
+        "审批外部采购单", purchaseOrderId, null, facility.name());
+    return warehouseRepository.purchaseOrder(user.tenantId(), purchaseOrderId)
+        .orElseThrow(() -> new BusinessException("PO_NOT_FOUND", "采购单不存在", HttpStatus.NOT_FOUND));
+  }
+
+  @Transactional
+  public WarehousePurchaseOrderResponse receivePurchaseOrder(
+      AuthUser user, String purchaseOrderId, WarehousePurchaseReceiveRequest request
+  ) {
+    var lock = warehouseRepository.purchaseOrderForUpdate(user.tenantId(), purchaseOrderId)
+        .orElseThrow(() -> new BusinessException("PO_NOT_FOUND", "采购单不存在", HttpStatus.NOT_FOUND));
+    FacilityRow facility = topologyService.requirePurchaseWarehouse(
+        user, lock.warehouseId(), "确认外部采购入库");
+    if ("RECEIVED".equals(lock.status())) {
+      return warehouseRepository.purchaseOrder(user.tenantId(), purchaseOrderId).orElseThrow();
+    }
+    if (!"ORDERED".equals(lock.status())) {
+      throw new BusinessException("PO_STATUS_CONFLICT", "只有已审批采购单可以入库", HttpStatus.CONFLICT);
+    }
+    String requestKey = normalizeClientRequestId(request.clientRequestId());
+    String requestType = "PURCHASE_RECEIVE:" + purchaseOrderId;
+    if (requestKey == null) {
+      throw new BusinessException("IDEMPOTENCY_KEY_REQUIRED", "采购入库必须提供请求编号", HttpStatus.BAD_REQUEST);
+    }
+    if (!warehouseRepository.reserveRequest(user.tenantId(), requestType, requestKey)) {
+      return warehouseRepository.purchaseOrder(user.tenantId(), purchaseOrderId)
+          .orElseThrow(() -> new BusinessException("PO_NOT_FOUND", "采购单不存在", HttpStatus.NOT_FOUND));
+    }
+    WarehousePurchaseOrderResponse order = warehouseRepository.purchaseOrder(user.tenantId(), purchaseOrderId)
+        .orElseThrow(() -> new BusinessException("PO_NOT_FOUND", "采购单不存在", HttpStatus.NOT_FOUND));
+    Map<Long, WarehousePurchaseOrderLineResponse> orderedLines = order.lines().stream()
+        .collect(Collectors.toMap(WarehousePurchaseOrderLineResponse::itemId, Function.identity()));
+    if (request.lines().size() != orderedLines.size()) {
+      throw new BusinessException("PO_RECEIVE_LINES_INCOMPLETE", "采购入库必须完整核对全部采购明细", HttpStatus.BAD_REQUEST);
+    }
+    Set<Long> receivedItems = new java.util.HashSet<>();
+    for (WarehousePurchaseReceiveLineRequest line : request.lines()) {
+      WarehousePurchaseOrderLineResponse ordered = orderedLines.get(line.itemId());
+      if (ordered == null || !receivedItems.add(line.itemId())) {
+        throw new BusinessException("PO_RECEIVE_LINE_INVALID", "采购入库明细与采购单不一致", HttpStatus.BAD_REQUEST);
+      }
+      BigDecimal quantity = positive(line.quantity(), "采购入库数量");
+      if (quantity.compareTo(ordered.orderedQuantity()) != 0) {
+        throw new BusinessException("PO_RECEIVE_QUANTITY_MISMATCH", "采购入库数量必须与已审批数量一致", HttpStatus.BAD_REQUEST);
+      }
+      LocalDate receivedDate = parseDate(line.receivedDate(), "到货日期");
+      if (line.expiryDate() != null && !line.expiryDate().isBlank()
+          && parseDate(line.expiryDate(), "到期日期").isBefore(receivedDate)) {
+        throw new BusinessException("BAD_EXPIRY_DATE", "到期日期不能早于到货日期", HttpStatus.BAD_REQUEST);
+      }
+      WarehouseStockBatchRequest batchRequest = new WarehouseStockBatchRequest(
+          line.itemId(), line.batchNo(), line.receivedDate(), line.expiryDate(), quantity,
+          ordered.unitCost(), line.note(), requestKey, facility.id());
+      warehouseRepository.upsertBatch(user.tenantId(), facility.id(), batchRequest);
+      Long batchId = warehouseRepository.batchId(
+          user.tenantId(), facility.id(), line.itemId(), line.batchNo()).orElse(null);
+      InventoryRow inventory = topologyRepository.lockInventory(
+          user.tenantId(), facility.id(), line.itemId());
+      BigDecimal cost = weightedCost(inventory.onHand(), inventory.unitCost(), quantity, ordered.unitCost());
+      if (!topologyRepository.updateInventory(user.tenantId(), inventory,
+          inventory.onHand().add(quantity), inventory.reserved(), inventory.inTransit(), cost)) {
+        throw warehouseConcurrentUpdate();
+      }
+      topologyRepository.insertMovement(user.tenantId(), facility.id(), line.itemId(), batchId,
+          "PURCHASE_IN", quantity, BigDecimal.ZERO, BigDecimal.ZERO, ordered.unitCost(),
+          "PURCHASE_ORDER", purchaseOrderId, null,
+          line.note() == null ? "采购单入库" : line.note(), user.id());
+      if (warehouseRepository.setPurchaseLineReceived(
+          user.tenantId(), purchaseOrderId, line.itemId(), quantity) != 1) {
+        throw warehouseConcurrentUpdate();
+      }
+    }
+    if (warehouseRepository.markPurchaseReceived(user.tenantId(), purchaseOrderId, user.id()) != 1) {
+      throw warehouseConcurrentUpdate();
+    }
+    warehouseRepository.completeReservedRequest(user.tenantId(), requestType, requestKey, purchaseOrderId);
+    warehouseRepository.logAction(user.tenantId(), user.id(), user.displayName(),
+        "采购单确认入库", purchaseOrderId, null, request.note());
+    return warehouseRepository.purchaseOrder(user.tenantId(), purchaseOrderId)
+        .orElseThrow(() -> new BusinessException("PO_NOT_FOUND", "采购单不存在", HttpStatus.NOT_FOUND));
+  }
+
+  private WarehouseDeliveryResponse createDeliveryForRequisition(
+      AuthUser user, WarehouseRequisitionResponse requisition, Long warehouseId
+  ) {
     return warehouseRepository.deliveryByRequisition(user.tenantId(), requisition.id())
-        .orElseGet(() -> repairDeliveryForShippedRequisition(user, requisition));
+        .orElseGet(() -> repairDeliveryForShippedRequisition(user, requisition, warehouseId));
   }
 
   private WarehouseDeliveryResponse repairDeliveryForShippedRequisition(AuthUser user, WarehouseRequisitionResponse requisition) {
+    return repairDeliveryForShippedRequisition(user, requisition, null);
+  }
+
+  private WarehouseDeliveryResponse repairDeliveryForShippedRequisition(
+      AuthUser user, WarehouseRequisitionResponse requisition, Long warehouseId
+  ) {
     if (!"SHIPPED".equals(requisition.status())) {
       throw new BusinessException("BAD_STATUS", "这张叫货单还没有发货，不能确认收货", HttpStatus.CONFLICT);
     }
     Map<Long, BigDecimal> movementQuantities = warehouseRepository.shippedQuantitiesFromMovements(user.tenantId(), requisition.id());
     String deliveryId = "DO-" + requisition.id();
-    warehouseRepository.insertDelivery(user.tenantId(), deliveryId, requisition.id(), requisition.storeId(), user.id(), "自动补建配送单");
+    if (warehouseId == null) {
+      warehouseRepository.insertDelivery(user.tenantId(), deliveryId, requisition.id(), requisition.storeId(), user.id(), "自动补建配送单");
+    } else {
+      warehouseRepository.insertDelivery(user.tenantId(), warehouseId, deliveryId, requisition.id(),
+          requisition.storeId(), user.id(), "自动补建配送单");
+    }
     int createdLines = 0;
     for (WarehouseRequisitionLineResponse line : requisition.lines()) {
       BigDecimal quantity = amount(line.shippedQuantity());
@@ -700,6 +1134,96 @@ public class WarehouseService {
     }
     return warehouseRepository.deliveryByRequisition(user.tenantId(), requisition.id())
         .orElseThrow(() -> new BusinessException("DELIVERY_REPAIR_FAILED", "叫货单配送明细修复失败，请联系仓库管理员", HttpStatus.CONFLICT));
+  }
+
+  private void reserveRequisitionStock(
+      AuthUser user,
+      FacilityRow facility,
+      String requisitionId,
+      WarehouseRequisitionLineResponse line,
+      BigDecimal quantity
+  ) {
+    InventoryRow inventory = topologyRepository.lockInventory(user.tenantId(), facility.id(), line.itemId());
+    if (inventory.available().compareTo(quantity) < 0) {
+      throw new BusinessException("INSUFFICIENT_STOCK", line.itemName() + "可用库存不足", HttpStatus.CONFLICT);
+    }
+    BigDecimal remaining = amount(quantity);
+    for (BatchRow batch : topologyRepository.positiveBatchesForUpdate(user.tenantId(), facility.id(), line.itemId())) {
+      BigDecimal available = batch.quantity().subtract(batch.reservedQuantity());
+      BigDecimal used = available.min(remaining);
+      if (used.signum() > 0 && !topologyRepository.updateBatchQuantity(user.tenantId(), batch,
+          batch.quantity(), batch.reservedQuantity().add(used))) {
+        throw warehouseConcurrentUpdate();
+      }
+      remaining = remaining.subtract(used);
+      if (remaining.signum() == 0) {
+        break;
+      }
+    }
+    if (remaining.signum() > 0) {
+      throw new BusinessException("WAREHOUSE_BATCH_STOCK_INCONSISTENT", "批次库存与库存汇总不一致", HttpStatus.CONFLICT);
+    }
+    if (!topologyRepository.updateInventory(user.tenantId(), inventory, inventory.onHand(),
+        inventory.reserved().add(quantity), inventory.inTransit(), inventory.unitCost())) {
+      throw warehouseConcurrentUpdate();
+    }
+    topologyRepository.insertMovement(user.tenantId(), facility.id(), line.itemId(), null, "RESERVE",
+        BigDecimal.ZERO, quantity, BigDecimal.ZERO, inventory.unitCost(), "REQUISITION", requisitionId,
+        null, "门店叫货审批预占", user.id());
+  }
+
+  private void shipReservedRequisitionStock(
+      AuthUser user,
+      FacilityRow facility,
+      WarehouseRequisitionResponse requisition,
+      WarehouseRequisitionLineResponse line,
+      BigDecimal quantity
+  ) {
+    InventoryRow inventory = topologyRepository.lockInventory(user.tenantId(), facility.id(), line.itemId());
+    if (inventory.onHand().compareTo(quantity) < 0 || inventory.reserved().compareTo(quantity) < 0) {
+      throw new BusinessException("WAREHOUSE_RESERVATION_INVALID", "叫货单预占库存不足", HttpStatus.CONFLICT);
+    }
+    BigDecimal remaining = amount(quantity);
+    for (BatchRow batch : topologyRepository.positiveBatchesForUpdate(user.tenantId(), facility.id(), line.itemId())) {
+      BigDecimal used = batch.reservedQuantity().min(remaining);
+      if (used.signum() > 0) {
+        if (batch.quantity().compareTo(used) < 0 || !topologyRepository.updateBatchQuantity(
+            user.tenantId(), batch, batch.quantity().subtract(used), batch.reservedQuantity().subtract(used))) {
+          throw warehouseConcurrentUpdate();
+        }
+        topologyRepository.insertMovement(user.tenantId(), facility.id(), line.itemId(), batch.id(), "OUT",
+            used.negate(), used.negate(), BigDecimal.ZERO, batch.unitCost(), "REQUISITION",
+            requisition.id(), requisition.storeId(), "门店叫货出库", user.id());
+        remaining = remaining.subtract(used);
+      }
+      if (remaining.signum() == 0) {
+        break;
+      }
+    }
+    if (remaining.signum() > 0) {
+      throw new BusinessException("WAREHOUSE_RESERVATION_INVALID", "叫货单批次预占库存不足", HttpStatus.CONFLICT);
+    }
+    BigDecimal remainingCost = remainingBatchCost(user.tenantId(), facility.id(), line.itemId());
+    if (!topologyRepository.updateInventory(user.tenantId(), inventory,
+        inventory.onHand().subtract(quantity), inventory.reserved().subtract(quantity),
+        inventory.inTransit(), remainingCost)) {
+      throw warehouseConcurrentUpdate();
+    }
+  }
+
+  private BigDecimal remainingBatchCost(long tenantId, long warehouseId, long itemId) {
+    BigDecimal quantity = BigDecimal.ZERO;
+    BigDecimal value = BigDecimal.ZERO;
+    for (BatchRow batch : topologyRepository.positiveBatchesForUpdate(tenantId, warehouseId, itemId)) {
+      quantity = quantity.add(batch.quantity());
+      value = value.add(batch.quantity().multiply(batch.unitCost()));
+    }
+    return quantity.signum() == 0 ? BigDecimal.ZERO.setScale(4, RoundingMode.HALF_UP)
+        : value.divide(quantity, 4, RoundingMode.HALF_UP);
+  }
+
+  private BusinessException warehouseConcurrentUpdate() {
+    return new BusinessException("WAREHOUSE_CONCURRENT_UPDATE", "库存已被其他操作更新，请刷新后重试", HttpStatus.CONFLICT);
   }
 
   private void deductStock(AuthUser user, WarehouseRequisitionResponse requisition, long itemId, BigDecimal quantity) {
@@ -732,8 +1256,77 @@ public class WarehouseService {
     }
   }
 
-  private List<WarehouseRequisitionResponse> requisitionsFor(AuthUser user) {
-    return withReturnAvailability(user.tenantId(), warehouseRepository.requisitions(user.tenantId(), scopedStoreId(user)));
+  private List<WarehouseRequisitionResponse> scopedRequisitions(AuthUser user, WarehouseReadScope readScope) {
+    List<WarehouseRequisitionResponse> rows = readScope.central() || readScope.allStores()
+        ? warehouseRepository.requisitions(user.tenantId(), null)
+        : readScope.storeIds().stream()
+            .flatMap(storeId -> warehouseRepository.requisitions(user.tenantId(), storeId).stream())
+            .distinct()
+            .sorted(Comparator.comparing(
+                WarehouseRequisitionResponse::submittedAt,
+                Comparator.nullsLast(Comparator.reverseOrder())
+            ))
+            .limit(80)
+            .toList();
+    return withReturnAvailability(user.tenantId(), rows);
+  }
+
+  private List<WarehouseDeliveryResponse> scopedDeliveries(
+      AuthUser user,
+      WarehouseReadScope readScope,
+      int limit
+  ) {
+    if (readScope.central() || readScope.allStores()) {
+      return warehouseRepository.deliveries(user.tenantId(), null);
+    }
+    return readScope.storeIds().stream()
+        .flatMap(storeId -> warehouseRepository.deliveries(user.tenantId(), storeId).stream())
+        .distinct()
+        .sorted(Comparator.comparing(
+            WarehouseDeliveryResponse::shippedAt,
+            Comparator.nullsLast(Comparator.reverseOrder())
+        ))
+        .limit(Math.max(1, limit))
+        .toList();
+  }
+
+  private List<WarehouseStockMovementResponse> scopedMovements(
+      AuthUser user,
+      WarehouseReadScope readScope,
+      int limit
+  ) {
+    if (readScope.central()) {
+      return warehouseRepository.movements(user.tenantId(), null, limit);
+    }
+    if (readScope.allStores()) {
+      return warehouseRepository.movements(user.tenantId(), null, limit).stream()
+          .filter(row -> row.storeId() != null && !row.storeId().isBlank())
+          .toList();
+    }
+    return readScope.storeIds().stream()
+        .flatMap(storeId -> warehouseRepository.movements(user.tenantId(), storeId, limit).stream())
+        .distinct()
+        .sorted(Comparator.comparing(
+            WarehouseStockMovementResponse::createdAt,
+            Comparator.nullsLast(Comparator.reverseOrder())
+        ))
+        .limit(Math.max(1, limit))
+        .toList();
+  }
+
+  private List<WarehouseReturnResponse> scopedReturns(AuthUser user, WarehouseReadScope readScope) {
+    if (readScope.central() || readScope.allStores()) {
+      return warehouseRepository.returns(user.tenantId(), null);
+    }
+    return readScope.storeIds().stream()
+        .flatMap(storeId -> warehouseRepository.returns(user.tenantId(), storeId).stream())
+        .distinct()
+        .sorted(Comparator.comparing(
+            WarehouseReturnResponse::createdAt,
+            Comparator.nullsLast(Comparator.reverseOrder())
+        ))
+        .limit(120)
+        .toList();
   }
 
   private List<WarehouseRequisitionResponse> withReturnAvailability(long tenantId, List<WarehouseRequisitionResponse> requisitions) {
@@ -742,6 +1335,8 @@ public class WarehouseService {
             row.id(),
             row.storeId(),
             row.storeName(),
+            row.warehouseId(),
+            row.warehouseName(),
             row.status(),
             row.statusLabel(),
             row.totalAmount(),
@@ -815,13 +1410,6 @@ public class WarehouseService {
     );
   }
 
-  private String scopedStoreId(AuthUser user) {
-    if ("STORE_MANAGER".equals(user.role()) && user.storeId() != null && !user.storeId().isBlank()) {
-      return user.storeId();
-    }
-    return null;
-  }
-
   private WarehouseRequisitionResponse requireRequisition(long tenantId, String requisitionId) {
     return warehouseRepository.requisition(tenantId, requisitionId)
         .orElseThrow(() -> new BusinessException("REQ_NOT_FOUND", "叫货单不存在", HttpStatus.NOT_FOUND));
@@ -845,39 +1433,12 @@ public class WarehouseService {
         .toList();
   }
 
-  private WarehouseOverviewResponse storeManagerSafeOverview(WarehouseOverviewResponse response, long tenantId, String storeId) {
-    List<WarehouseRequisitionResponse> requisitions = safeRequisitions(response.requisitions());
-    List<WarehouseDeliveryResponse> deliveries = safeDeliveries(response.deliveries());
-    List<WarehouseItemResponse> items = safeItems(response.items(), tenantId, storeId);
-    List<Long> visibleItemIds = items.stream().map(WarehouseItemResponse::id).toList();
-    List<WarehouseAlertResponse> alerts = response.alerts().stream()
-        .filter(alert -> visibleItemIds.contains(alert.itemId()))
-        .toList();
-    WarehouseSummaryResponse summary = new WarehouseSummaryResponse(
-        items.size(),
-        (int) items.stream().filter(item -> "LOW".equals(item.alertLevel())).count(),
-        (int) items.stream().filter(item -> "EXPIRING".equals(item.alertLevel())).count(),
-        0,
-        (int) requisitions.stream().filter(row -> List.of("SUBMITTED", "APPROVED").contains(row.status())).count(),
-        (int) requisitions.stream().filter(row -> "SHIPPED".equals(row.status())).count(),
-        0,
-        amount(BigDecimal.ZERO)
-    );
-    return new WarehouseOverviewResponse(
-        summary,
-        alerts,
-        items,
-        requisitions,
-        List.of(),
-        List.of(),
-        deliveries,
-        response.movements(),
-        List.of()
-    );
-  }
-
-  private List<WarehouseItemResponse> safeItems(List<WarehouseItemResponse> items, long tenantId, String storeId) {
-    Map<Long, BigDecimal> storeStocks = warehouseRepository.storeInventoryQuantities(tenantId, storeId);
+  private List<WarehouseItemResponse> safeItems(List<WarehouseItemResponse> items, long tenantId, List<String> storeIds) {
+    Map<Long, BigDecimal> storeStocks = new HashMap<>();
+    for (String storeId : storeIds) {
+      warehouseRepository.storeInventoryQuantities(tenantId, storeId)
+          .forEach((itemId, quantity) -> storeStocks.merge(itemId, amount(quantity), BigDecimal::add));
+    }
     return items.stream()
         .filter(WarehouseItemResponse::active)
         .map(item -> {
@@ -934,6 +1495,8 @@ public class WarehouseService {
             row.id(),
             row.storeId(),
             row.storeName(),
+            row.warehouseId(),
+            row.warehouseName(),
             row.status(),
             row.statusLabel(),
             amount(BigDecimal.ZERO),
@@ -999,6 +1562,59 @@ public class WarehouseService {
         .toList();
   }
 
+  private List<WarehouseReturnResponse> safeReturns(List<WarehouseReturnResponse> returns) {
+    return returns.stream().map(this::safeReturn).toList();
+  }
+
+  private WarehouseReturnResponse safeReturn(WarehouseReturnResponse row) {
+    return new WarehouseReturnResponse(
+        row.id(),
+        row.returnNo(),
+        row.sourceRequisitionId(),
+        row.sourceDeliveryId(),
+        row.returnStoreId(),
+        row.returnStoreName(),
+        row.receiveDepartment(),
+        row.status(),
+        row.statusLabel(),
+        amount(BigDecimal.ZERO),
+        row.handledBy(),
+        row.createdBy(),
+        row.updatedBy(),
+        row.reviewedBy(),
+        row.checkedBy(),
+        row.reason(),
+        row.note(),
+        row.reviewNote(),
+        row.receivedNote(),
+        row.returnDate(),
+        row.reviewedAt(),
+        row.receivedAt(),
+        row.createdAt(),
+        row.updatedAt(),
+        row.lineCount(),
+        row.attachmentCount(),
+        row.lines().stream()
+            .map(line -> new WarehouseReturnLineResponse(
+                line.id(),
+                line.itemId(),
+                line.itemName(),
+                line.spec(),
+                line.batchId(),
+                line.batchNo(),
+                line.sourceRequisitionLineId(),
+                line.quantity(),
+                line.unit(),
+                amount(BigDecimal.ZERO),
+                amount(BigDecimal.ZERO),
+                amount(BigDecimal.ZERO),
+                line.reason(),
+                line.note()
+            ))
+            .toList()
+    );
+  }
+
   private List<WarehouseItemCategoryResponse> categoryTree(List<WarehouseItemCategoryResponse> categories) {
     return categoryChildren(categories, null);
   }
@@ -1048,16 +1664,25 @@ public class WarehouseService {
   }
 
   private String normalizeStoreForSubmit(AuthUser user, String requestedStoreId) {
-    if ("STORE_MANAGER".equals(user.role())) {
-      if (user.storeId() == null || user.storeId().isBlank()) {
-        throw new BusinessException("NO_STORE_SCOPE", "店长账号未绑定门店", HttpStatus.FORBIDDEN);
-      }
-      return user.storeId();
+    if (businessScopeResolver != null && isStoreManager(user)) {
+      return businessScopeResolver.resolve(
+          user,
+          DataScopeDomains.WAREHOUSE,
+          requestedStoreId,
+          null,
+          "为门店提交叫货单"
+      ).storeId();
     }
-    if (requestedStoreId == null || requestedStoreId.isBlank()) {
+    String storeId = requestedStoreId == null ? "" : requestedStoreId.trim();
+    DataScope dataScope = warehouseDataScope(user);
+    if (storeId.isBlank() && dataScope.storeIds().size() == 1) {
+      storeId = dataScope.storeIds().get(0);
+    }
+    if (storeId.isBlank()) {
       throw new BusinessException("STORE_REQUIRED", "请选择叫货门店", HttpStatus.BAD_REQUEST);
     }
-    return requestedStoreId.trim();
+    requireWarehouseStoreScope(user, storeId, "为门店提交叫货单", false);
+    return storeId;
   }
 
   private boolean categoryWouldCreateCycle(long tenantId, long categoryId, long parentId) {
@@ -1084,6 +1709,24 @@ public class WarehouseService {
       throw new BusinessException("BAD_REQUEST_ID", "请求标识不正确，请刷新后重试", HttpStatus.BAD_REQUEST);
     }
     return requestId;
+  }
+
+  private FacilityRow requisitionFacility(AuthUser user, String requisitionId) {
+    long warehouseId = warehouseRepository.requisitionWarehouseId(user.tenantId(), requisitionId)
+        .orElseThrow(() -> new BusinessException(
+            "WAREHOUSE_NOT_FOUND", "叫货单未关联有效供货仓", HttpStatus.CONFLICT));
+    return topologyRepository.facility(user.tenantId(), warehouseId)
+        .orElseThrow(() -> new BusinessException(
+            "WAREHOUSE_NOT_FOUND", "叫货单供货仓不存在", HttpStatus.CONFLICT));
+  }
+
+  private FacilityRow returnFacility(AuthUser user, String returnId) {
+    long warehouseId = warehouseRepository.returnWarehouseId(user.tenantId(), returnId)
+        .orElseThrow(() -> new BusinessException(
+            "WAREHOUSE_NOT_FOUND", "退货单未关联有效供货仓", HttpStatus.CONFLICT));
+    return topologyRepository.facility(user.tenantId(), warehouseId)
+        .orElseThrow(() -> new BusinessException(
+            "WAREHOUSE_NOT_FOUND", "退货单供货仓不存在", HttpStatus.CONFLICT));
   }
 
   private void validateItemImage(String value) {
@@ -1159,56 +1802,242 @@ public class WarehouseService {
     }
   }
 
-  private void requireWarehouseRead(AuthUser user) {
-    if (!List.of("ADMIN", "BOSS", "OWNER", "WAREHOUSE", "STORE_MANAGER").contains(user.role())) {
-      throw new BusinessException("FORBIDDEN", "无权访问仓库中心", HttpStatus.FORBIDDEN);
+  private WarehouseReadScope requireWarehouseRead(AuthUser user) {
+    BusinessScope managerScope = resolveManagerScope(user, null, "访问仓库中心");
+    if (accessControl != null) {
+      boolean centralPermission = accessControl.hasPermission(user, PermissionCodes.WAREHOUSE_CENTRAL_READ);
+      if (centralPermission) {
+        accessControl.requireWarehouseCentralRead(user);
+      } else {
+        accessControl.requireWarehouseStoreRead(user);
+      }
+      DataScope dataScope = warehouseDataScope(user);
+      if (managerScope != null) {
+        dataScope = managerScope.dataScope();
+      }
+      if (dataScope.allowsAllStores()) {
+        return new WarehouseReadScope(centralPermission, true, List.of());
+      }
+      if (centralPermission && DataScopeModes.CENTRAL_WAREHOUSE.equals(dataScope.mode())) {
+        return new WarehouseReadScope(true, false, List.of());
+      }
+      if (!dataScope.storeIds().isEmpty()) {
+        return new WarehouseReadScope(false, false, dataScope.storeIds());
+      }
+      accessControl.requireStoreAccess(
+          user,
+          DataScopeDomains.WAREHOUSE,
+          "__NO_WAREHOUSE_SCOPE__",
+          "访问仓库中心"
+      );
+      throw new BusinessException("FORBIDDEN", "当前账号未配置仓库数据范围", HttpStatus.FORBIDDEN);
     }
-  }
-
-  private void requireWarehouseAccess(AuthUser user) {
-    requireWarehouseRead(user);
+    if (hasLegacyPermission(user, PermissionCodes.WAREHOUSE_CENTRAL_READ)) {
+      return new WarehouseReadScope(true, true, List.of());
+    }
+    requireLegacyPermission(user, PermissionCodes.WAREHOUSE_STORE_READ, "无权访问仓库中心");
+    DataScope dataScope = warehouseDataScope(user);
+    if (dataScope.storeIds().isEmpty()) {
+      throw new BusinessException("FORBIDDEN", "当前账号未配置仓库门店范围", HttpStatus.FORBIDDEN);
+    }
+    return new WarehouseReadScope(false, false, dataScope.storeIds());
   }
 
   private void requireWarehouseManage(AuthUser user) {
-    if (!List.of("ADMIN", "WAREHOUSE").contains(user.role())) {
-      throw new BusinessException("FORBIDDEN", "仅仓库管理员可维护仓库数据", HttpStatus.FORBIDDEN);
+    rejectStoreManagerCentralAction(user, "店长不能维护总仓物料、库存或采购数据");
+    if (accessControl != null) {
+      accessControl.requireWarehouseCentralManage(user);
+      return;
     }
+    requireLegacyPermission(
+        user,
+        PermissionCodes.WAREHOUSE_CENTRAL_MANAGE,
+        "仅老板或仓库管理员可维护仓库数据"
+    );
+  }
+
+  private void requireWarehouseConfigure(AuthUser user) {
+    rejectStoreManagerCentralAction(user, "店长不能维护仓库配置");
+    if (accessControl != null) {
+      if (topologyService != null) {
+        accessControl.requireWarehouseConfigure(user);
+      } else {
+        accessControl.requireWarehouseCentralManage(user);
+      }
+      return;
+    }
+    requireLegacyPermission(
+        user,
+        PermissionCodes.WAREHOUSE_CENTRAL_MANAGE,
+        "仅老板或获授权仓库管理员可维护仓库配置"
+    );
   }
 
   private void requireStoreRequisitionCreate(AuthUser user) {
-    if (!"STORE_MANAGER".equals(user.role())) {
-      throw new BusinessException("FORBIDDEN", "仅门店人员可提交叫货申请", HttpStatus.FORBIDDEN);
+    if (accessControl != null) {
+      accessControl.requireWarehouseRequisitionCreate(user);
+      return;
     }
+    requireLegacyPermission(
+        user,
+        PermissionCodes.WAREHOUSE_REQUISITION_CREATE,
+        "仅老板或门店人员可提交叫货申请"
+    );
   }
 
   private void requireReturnCreate(AuthUser user) {
-    if (!"STORE_MANAGER".equals(user.role())) {
-      throw new BusinessException("FORBIDDEN", "当前角色不能新建配送退货单", HttpStatus.FORBIDDEN);
+    if (accessControl != null) {
+      accessControl.requireWarehouseRequisitionCreate(user);
+      return;
     }
+    requireLegacyPermission(
+        user,
+        PermissionCodes.WAREHOUSE_REQUISITION_CREATE,
+        "当前角色不能新建配送退货单"
+    );
   }
 
   private void requireReturnReview(AuthUser user) {
-    if (!List.of("ADMIN", "WAREHOUSE").contains(user.role())) {
-      throw new BusinessException("FORBIDDEN", "仅仓库管理员可审核配送退货单", HttpStatus.FORBIDDEN);
+    rejectStoreManagerCentralAction(user, "店长不能审核或接收配送退货单");
+    if (accessControl != null) {
+      accessControl.requireWarehouseCentralManage(user);
+      return;
     }
+    requireLegacyPermission(
+        user,
+        PermissionCodes.WAREHOUSE_CENTRAL_MANAGE,
+        "仅老板或仓库管理员可审核配送退货单"
+    );
   }
 
-  private void requireReturnRead(AuthUser user) {
-    if (!List.of("ADMIN", "BOSS", "OWNER", "WAREHOUSE", "STORE_MANAGER").contains(user.role())) {
-      throw new BusinessException("FORBIDDEN", "无权查看配送退货单", HttpStatus.FORBIDDEN);
-    }
+  private WarehouseReadScope requireReturnRead(AuthUser user) {
+    return requireWarehouseRead(user);
   }
 
-  private void requireReturnScope(AuthUser user, String storeId) {
-    if ("STORE_MANAGER".equals(user.role()) && (user.storeId() == null || !user.storeId().equals(storeId))) {
-      throw new BusinessException("FORBIDDEN", "店长只能查看本门店配送退货单", HttpStatus.FORBIDDEN);
+  private void requireStoreInReadScope(
+      AuthUser user,
+      WarehouseReadScope readScope,
+      String storeId,
+      String action
+  ) {
+    if (readScope.central() || readScope.allStores() || readScope.storeIds().contains(storeId)) {
+      return;
     }
+    if (accessControl != null) {
+      accessControl.requireStoreAccess(user, DataScopeDomains.WAREHOUSE, storeId, action);
+    }
+    throw new BusinessException("FORBIDDEN", "当前账号不能访问该门店仓库数据", HttpStatus.FORBIDDEN);
   }
 
   private void requireStoreReceiver(AuthUser user) {
-    if (!"STORE_MANAGER".equals(user.role())) {
-      throw new BusinessException("FORBIDDEN", "仅对应门店可确认收货", HttpStatus.FORBIDDEN);
+    if (accessControl != null) {
+      accessControl.requireWarehouseRequisitionReceive(user);
+      return;
     }
+    requireLegacyPermission(
+        user,
+        PermissionCodes.WAREHOUSE_REQUISITION_RECEIVE,
+        "仅老板或对应门店可确认收货"
+    );
+  }
+
+  private void requireRequisitionReview(AuthUser user) {
+    rejectStoreManagerCentralAction(user, "店长不能审核叫货单或执行仓库发货");
+    if (accessControl != null) {
+      accessControl.requireWarehouseRequisitionReview(user);
+      return;
+    }
+    requireLegacyPermission(
+        user,
+        PermissionCodes.WAREHOUSE_REQUISITION_REVIEW,
+        "仅老板或仓库管理员可处理叫货申请"
+    );
+  }
+
+  private void requireWarehouseStoreScope(
+      AuthUser user,
+      String storeId,
+      String action,
+      boolean allowCentralWarehouse
+  ) {
+    if (resolveManagerScope(user, storeId, action) != null) {
+      return;
+    }
+    DataScope dataScope = warehouseDataScope(user);
+    if (dataScope.allowsAllStores()
+        || (allowCentralWarehouse && DataScopeModes.CENTRAL_WAREHOUSE.equals(dataScope.mode()))) {
+      return;
+    }
+    if (accessControl != null) {
+      accessControl.requireStoreAccess(user, DataScopeDomains.WAREHOUSE, storeId, action);
+      return;
+    }
+    if (dataScope.allowsStore(storeId)) {
+      return;
+    }
+    throw new BusinessException("FORBIDDEN", "当前账号不能操作该门店仓库数据", HttpStatus.FORBIDDEN);
+  }
+
+  private boolean hasCentralCostAccess(AuthUser user) {
+    boolean centralPermission = accessControl != null
+        ? accessControl.hasPermission(user, PermissionCodes.WAREHOUSE_CENTRAL_READ)
+        : hasLegacyPermission(user, PermissionCodes.WAREHOUSE_CENTRAL_READ);
+    if (!centralPermission) {
+      return false;
+    }
+    DataScope dataScope = warehouseDataScope(user);
+    return dataScope.allowsAllStores() || DataScopeModes.CENTRAL_WAREHOUSE.equals(dataScope.mode());
+  }
+
+  private DataScope warehouseDataScope(AuthUser user) {
+    if (accessControl != null) {
+      DataScope configured = accessControl.dataScope(user, DataScopeDomains.WAREHOUSE);
+      if (configured != null) {
+        return configured;
+      }
+    }
+    if (AccessControlService.isBoss(user)) {
+      return DataScope.all();
+    }
+    if (hasLegacyPermission(user, PermissionCodes.WAREHOUSE_CENTRAL_READ)) {
+      return new DataScope(DataScopeModes.CENTRAL_WAREHOUSE, List.of());
+    }
+    if (user != null && user.storeId() != null && !user.storeId().isBlank()) {
+      return new DataScope(DataScopeModes.OWN_STORE, List.of(user.storeId().trim()));
+    }
+    return DataScope.none();
+  }
+
+  private BusinessScope resolveManagerScope(AuthUser user, String storeId, String action) {
+    if (businessScopeResolver == null || !isStoreManager(user)) {
+      return null;
+    }
+    return businessScopeResolver.resolve(
+        user, DataScopeDomains.WAREHOUSE, storeId, null, action);
+  }
+
+  private boolean isStoreManager(AuthUser user) {
+    return user != null
+        && "STORE_MANAGER".equals(AccessControlService.canonicalRole(user.role()));
+  }
+
+  private void rejectStoreManagerCentralAction(AuthUser user, String message) {
+    if (isStoreManager(user)) {
+      throw new BusinessException("FORBIDDEN", message, HttpStatus.FORBIDDEN);
+    }
+  }
+
+  private boolean hasLegacyPermission(AuthUser user, String permissionCode) {
+    return AccessControlService.isBoss(user)
+        || AuthorizationService.legacyTemplatePermissions(user == null ? null : user.role())
+            .contains(permissionCode);
+  }
+
+  private void requireLegacyPermission(AuthUser user, String permissionCode, String message) {
+    if (hasLegacyPermission(user, permissionCode)) {
+      return;
+    }
+    throw new BusinessException("FORBIDDEN", message, HttpStatus.FORBIDDEN);
   }
 
   private LocalDate parseDate(String value, String label) {
@@ -1229,6 +2058,18 @@ public class WarehouseService {
 
   private BigDecimal amount(BigDecimal value) {
     return value == null ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP) : value.setScale(2, RoundingMode.HALF_UP);
+  }
+
+  private BigDecimal weightedCost(
+      BigDecimal oldQuantity, BigDecimal oldCost, BigDecimal addedQuantity, BigDecimal addedCost
+  ) {
+    BigDecimal total = amount(oldQuantity).add(amount(addedQuantity));
+    if (total.signum() == 0) {
+      return BigDecimal.ZERO.setScale(4, RoundingMode.HALF_UP);
+    }
+    return amount(oldQuantity).multiply(oldCost == null ? BigDecimal.ZERO : oldCost)
+        .add(amount(addedQuantity).multiply(addedCost == null ? BigDecimal.ZERO : addedCost))
+        .divide(total, 4, RoundingMode.HALF_UP);
   }
 
   private String returnNo() {

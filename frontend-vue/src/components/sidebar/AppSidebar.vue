@@ -1,22 +1,18 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { BarChart3, Bot, ClipboardList, ClipboardPenLine, Database, Download, GraduationCap, Home, LogOut, Package, ReceiptText, Route, ShieldCheck, Truck, Undo2, UserRound, UserRoundCog, Warehouse } from 'lucide-vue-next'
+import { BarChart3, Bot, Building2, ClipboardCheck, ClipboardPenLine, Download, GraduationCap, Home, LogOut, Package, ReceiptText, ShieldCheck, UserRound, UserRoundCog, Warehouse } from 'lucide-vue-next'
 import { useAuthStore } from '../../stores/auth'
-
-interface MenuItem {
-  label: string
-  to: string
-  icon: unknown
-}
-
-interface MenuGroup {
-  title?: string
-  items: MenuItem[]
-}
+import {
+  resolveMenuGroups,
+  resolveUtilityMenuItems,
+  type MenuIconKey,
+  type PermissionMenuItem,
+} from '../../permissions/menu'
 
 const auth = useAuthStore()
 const route = useRoute()
+const menuScrollRef = ref<HTMLElement | null>(null)
 withDefaults(defineProps<{
   mode?: 'desktop' | 'mobile'
 }>(), {
@@ -27,265 +23,369 @@ const emit = defineEmits<{
   logout: []
 }>()
 
-function bossMenuGroups(): MenuGroup[] {
-  return [
-    {
-      title: '经营分析',
-      items: [
-        { label: '今日待办', to: '/todos', icon: ClipboardList },
-        { label: '利润概览', to: '/profit', icon: BarChart3 },
-        { label: '利润表', to: '/profit-table', icon: BarChart3 },
-        { label: '门店详情', to: '/store-detail', icon: Home },
-      ],
-    },
-    {
-      title: '录入与审核',
-      items: [
-        { label: '数据录入', to: '/data-entry', icon: Database },
-        { label: '报销栏', to: '/expenses', icon: ReceiptText },
-        { label: '员工工资', to: '/salary', icon: ClipboardPenLine },
-        { label: '数据导出', to: '/export', icon: Download },
-      ],
-    },
-    {
-      title: '门店运营',
-      items: [
-        { label: '督导巡店', to: '/inspection', icon: ClipboardPenLine },
-        { label: '仓库中心', to: '/warehouse', icon: Warehouse },
-        { label: '培训考试', to: '/exam-center', icon: GraduationCap },
-        { label: '门店管理', to: '/stores', icon: Home },
-      ],
-    },
-    {
-      title: '系统记录',
-      items: [
-        { label: '操作日志', to: '/logs', icon: ClipboardPenLine },
-      ],
-    },
-  ]
+const menuSubject = computed(() => ({
+  role: auth.role,
+  permissions: auth.permissions,
+  defaultWorkspace: auth.defaultWorkspace,
+  dataScopes: auth.dataScopes,
+}))
+const menuGroups = computed(() => resolveMenuGroups(menuSubject.value))
+const utilityMenuItems = computed(() => resolveUtilityMenuItems(menuSubject.value))
+
+const menuIcons: Record<MenuIconKey, unknown> = {
+  assistant: Bot,
+  dashboard: Home,
+  exam: GraduationCap,
+  expense: ReceiptText,
+  export: Download,
+  inspection: ClipboardCheck,
+  inventory: Package,
+  log: ClipboardPenLine,
+  platform: ShieldCheck,
+  profit: BarChart3,
+  salary: ClipboardPenLine,
+  store: Building2,
+  users: UserRoundCog,
+  warehouse: Warehouse,
 }
 
-function adminMenuGroups(): MenuGroup[] {
-  return [
-    {
-      title: '工作台',
-      items: [
-        { label: '今日待办', to: '/todos', icon: ClipboardList },
-      ],
-    },
-    {
-      title: '管理中心',
-      items: [
-        { label: '门店管理', to: '/stores', icon: Home },
-        { label: '账号权限', to: '/users', icon: UserRoundCog },
-        { label: '平台配置', to: '/platform-login', icon: UserRoundCog },
-        { label: '仓库中心', to: '/warehouse', icon: Warehouse },
-        { label: '培训考试', to: '/exam-center', icon: GraduationCap },
-        { label: '操作日志', to: '/logs', icon: ClipboardPenLine },
-      ],
-    },
-  ]
+function menuIcon(icon: MenuIconKey) {
+  return menuIcons[icon]
 }
 
-const menuGroups = computed<MenuGroup[]>(() => {
-  if (auth.role === 'ADMIN') {
-    return adminMenuGroups()
-  }
-  if (auth.role === 'BOSS' || auth.role === 'OWNER') {
-    return bossMenuGroups()
-  }
-  const byRole: Record<string, MenuGroup[]> = {
-    STORE_MANAGER: [
-      {
-        title: '门店日常',
-        items: [
-          { label: '今日待办', to: '/todos', icon: ClipboardList },
-          { label: '本店库存', to: '/warehouse', icon: Package },
-          { label: '向公司仓库叫货', to: '/warehouse?section=requisition', icon: ClipboardList },
-          { label: '我的叫货单', to: '/warehouse?section=orders', icon: ReceiptText },
-          { label: '确认收货', to: '/warehouse?section=receipts', icon: Truck },
-          { label: '配送退货', to: '/warehouse?section=returns', icon: Undo2 },
-        ],
-      },
-      {
-        title: '本店数据',
-        items: [
-          { label: '数据录入', to: '/data-entry', icon: Database },
-          { label: '报销栏', to: '/expenses', icon: ReceiptText },
-          { label: '门店详情', to: '/store-detail', icon: Home },
-          { label: '员工工资', to: '/salary', icon: ClipboardPenLine },
-          { label: '培训考试', to: '/exam-center', icon: GraduationCap },
-        ],
-      },
-    ],
-    WAREHOUSE: [
-      {
-        title: '仓库作业',
-        items: [
-          { label: '今日待办', to: '/todos', icon: ClipboardList },
-          { label: '仓库中心', to: '/warehouse', icon: Warehouse },
-          { label: '库存物料', to: '/warehouse/inventory', icon: Package },
-          { label: '门店叫货', to: '/warehouse?tab=requisitions', icon: ClipboardList },
-          { label: '采购入库', to: '/warehouse/purchase', icon: Truck },
-        ],
-      },
-      {
-        title: '库存资料',
-        items: [
-          { label: '物料档案', to: '/warehouse/items', icon: Package },
-          { label: '出入库记录', to: '/warehouse/movements', icon: ReceiptText },
-        ],
-      },
-    ],
-    FINANCE: [
-      {
-        title: '财务处理',
-        items: [
-          { label: '今日待办', to: '/todos', icon: ClipboardList },
-          { label: '数据录入', to: '/data-entry', icon: Database },
-          { label: '报销栏', to: '/expenses', icon: ReceiptText },
-          { label: '利润表', to: '/profit-table', icon: BarChart3 },
-          { label: '员工工资', to: '/salary', icon: ClipboardPenLine },
-          { label: '数据导出', to: '/export', icon: Download },
-        ],
-      },
-    ],
-    SUPERVISOR: [
-      {
-        title: '督导巡店',
-        items: [
-          { label: '今日待办', to: '/todos', icon: ClipboardList },
-          { label: '督导巡店', to: '/inspection', icon: ClipboardPenLine },
-          { label: '巡检记录', to: '/inspection/records', icon: Route },
-          { label: '发起巡检', to: '/inspection/tasks', icon: ClipboardList },
-          { label: '稽核标准', to: '/inspection/rules', icon: ShieldCheck },
-        ],
-      },
-    ],
-    OPERATIONS: [
-      {
-        title: '运营工作',
-        items: [
-          { label: '今日待办', to: '/todos', icon: ClipboardList },
-          { label: '运营中心', to: '/operations', icon: Route },
-          { label: '数据分析', to: '/operations/analysis', icon: BarChart3 },
-          { label: '店铺盘存', to: '/operations/inventory-check', icon: Package },
-          { label: '饿了么订单', to: '/operations/eleme', icon: ReceiptText },
-        ],
-      },
-      {
-        title: '运营配置',
-        items: [
-          { label: '新人培训', to: '/operations/training', icon: ClipboardPenLine },
-          { label: '培训考试', to: '/exam-center', icon: GraduationCap },
-          { label: '数据健康', to: '/operations/data-health', icon: ShieldCheck },
-          { label: '平台账号', to: '/operations/platform', icon: UserRoundCog },
-        ],
-      },
-    ],
-    OPS: [
-      {
-        title: '运营工作',
-        items: [
-          { label: '运营中心', to: '/operations', icon: Route },
-          { label: '数据分析', to: '/operations/analysis', icon: BarChart3 },
-          { label: '店铺盘存', to: '/operations/inventory-check', icon: Package },
-          { label: '饿了么订单', to: '/operations/eleme', icon: ReceiptText },
-        ],
-      },
-      {
-        title: '运营配置',
-        items: [
-          { label: '新人培训', to: '/operations/training', icon: ClipboardPenLine },
-          { label: '培训考试', to: '/exam-center', icon: GraduationCap },
-          { label: '数据健康', to: '/operations/data-health', icon: ShieldCheck },
-          { label: '平台账号', to: '/operations/platform', icon: UserRoundCog },
-        ],
-      },
-    ],
-    EMPLOYEE: [
-      {
-        title: '学习任务',
-        items: [
-          { label: '我的考试', to: '/exam-center', icon: GraduationCap },
-        ],
-      },
-    ],
-  }
-  return byRole[auth.role] || []
-})
+const activeMenuKey = computed(() => String(route.meta.menuKey || ''))
 
-const assistantRoles = new Set(['ADMIN', 'BOSS', 'OWNER', 'FINANCE', 'STORE_MANAGER', 'SUPERVISOR', 'WAREHOUSE', 'OPERATIONS', 'OPS'])
-const utilityMenuItems = computed<MenuItem[]>(() => assistantRoles.has(auth.role)
-  ? [{ label: '门店经营助手', to: '/assistant', icon: Bot }]
-  : [])
-
-function isMenuActive(to: string) {
-  const [path, queryText = ''] = to.split('?')
-  const activeMenu = typeof route.meta.activeMenu === 'string' ? route.meta.activeMenu : ''
-  if (activeMenu) {
-    return path === activeMenu
-  }
-  if (path === '/inspection') {
-    return route.path === '/inspection' || route.path.startsWith('/inspection/')
-  }
-  if (['/warehouse', '/operations'].includes(path)) {
-    const params = new URLSearchParams(queryText)
-    const menuTab = params.get('tab') || ''
-    const menuSection = params.get('section') || ''
-    const currentTab = String(route.query.tab || '')
-    const currentSection = String(route.query.section || '')
-    return route.path === path && menuTab === currentTab && menuSection === currentSection
-  }
-  return route.path === path || route.path.startsWith(`${path}/`)
+function isMenuActive(item: PermissionMenuItem) {
+  return item.key === activeMenuKey.value
 }
+
+async function revealActiveMenuItem() {
+  await nextTick()
+  const menu = menuScrollRef.value
+  const activeElement = menu?.querySelector<HTMLElement>('[aria-current="page"]')
+  if (!menu || !activeElement) return
+
+  const menuRect = menu.getBoundingClientRect()
+  const activeRect = activeElement.getBoundingClientRect()
+  const visibilityTolerance = 1
+  const isVisible = activeRect.top >= menuRect.top - visibilityTolerance
+    && activeRect.bottom <= menuRect.bottom + visibilityTolerance
+  if (isVisible) return
+
+  activeElement.scrollIntoView({
+    block: 'nearest',
+    inline: 'nearest',
+    behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+  })
+}
+
+watch(
+  [() => route.fullPath, menuGroups],
+  () => void revealActiveMenuItem(),
+  { immediate: true, flush: 'post' },
+)
 </script>
 
 <template>
-  <aside class="sidebar" :class="`sidebar-${mode}`">
-    <header class="brand sidebar-brand">
-      <span class="brand-mark" />
-      <span>门店<b>经营</b></span>
+  <aside class="app-sidebar" :class="`app-sidebar--${mode}`">
+    <header class="sidebar-brand">
+      <img class="sidebar-brand-icon" src="/icons/app-icon-192.png" alt="" width="32" height="32" />
+      <span>门店经营</span>
     </header>
 
-    <div class="sidebar-scroll nav-list">
-      <nav class="primary-navigation" aria-label="主菜单">
-        <div v-for="group in menuGroups" :key="group.title || 'default'" class="nav-group">
-          <div v-if="group.title" class="nav-group-title">{{ group.title }}</div>
+    <nav ref="menuScrollRef" class="sidebar-navigation" tabindex="0" aria-label="主导航">
+      <div class="sidebar-navigation-primary">
+        <div v-for="group in menuGroups" :key="group.title || 'default'" class="sidebar-navigation-group">
+          <div v-if="group.title" class="sidebar-navigation-title">{{ group.title }}</div>
           <RouterLink v-for="item in group.items" :key="item.to" v-slot="{ href, navigate }" custom :to="item.to">
-            <a class="nav-link" :class="{ 'router-link-active': isMenuActive(item.to) }" :href="href" @click="emit('navigate'); navigate($event)">
-              <component :is="item.icon" :size="18" />
+            <a
+              class="sidebar-navigation-link"
+              :class="{ 'router-link-active': isMenuActive(item) }"
+              :href="href"
+              :aria-current="isMenuActive(item) ? 'page' : undefined"
+              :data-menu-key="item.key"
+              @click="emit('navigate'); navigate($event)"
+            >
+              <component :is="menuIcon(item.icon)" :size="18" />
               <span>{{ item.label }}</span>
             </a>
           </RouterLink>
         </div>
-      </nav>
+      </div>
 
-      <nav v-if="utilityMenuItems.length" class="utility-navigation" aria-label="辅助工具">
-        <div class="nav-group">
-          <div class="nav-group-title">辅助工具</div>
+      <div v-if="utilityMenuItems.length" class="sidebar-navigation-utility">
+        <div class="sidebar-navigation-group">
+          <div class="sidebar-navigation-title">辅助工具</div>
           <RouterLink v-for="item in utilityMenuItems" :key="item.to" v-slot="{ href, navigate }" custom :to="item.to">
-            <a class="nav-link" :class="{ 'router-link-active': isMenuActive(item.to) }" :href="href" @click="emit('navigate'); navigate($event)">
-              <component :is="item.icon" :size="18" />
+            <a
+              class="sidebar-navigation-link"
+              :class="{ 'router-link-active': isMenuActive(item) }"
+              :href="href"
+              :aria-current="isMenuActive(item) ? 'page' : undefined"
+              :data-menu-key="item.key"
+              @click="emit('navigate'); navigate($event)"
+            >
+              <component :is="menuIcon(item.icon)" :size="18" />
               <span>{{ item.label }}</span>
             </a>
           </RouterLink>
         </div>
-      </nav>
-    </div>
+      </div>
+    </nav>
 
-    <footer class="sidebar-footer">
-      <div class="current-user">
-        <span class="current-user-avatar" aria-hidden="true"><UserRound :size="18" /></span>
-        <span class="current-user-copy">
+    <footer class="sidebar-account">
+      <div class="sidebar-account-user">
+        <span class="sidebar-account-avatar" aria-hidden="true"><UserRound :size="18" /></span>
+        <span class="sidebar-account-copy">
           <strong :title="auth.user?.displayName || '当前用户'">{{ auth.user?.displayName || '当前用户' }}</strong>
           <span>{{ auth.roleLabel }}</span>
         </span>
       </div>
-      <button class="logout-button" type="button" :disabled="auth.loggingOut" @click="emit('navigate'); emit('logout')">
+      <button class="sidebar-logout" type="button" :disabled="auth.loggingOut" @click="emit('navigate'); emit('logout')">
         <LogOut :size="17" />
         <span>{{ auth.loggingOut ? '正在退出' : '退出登录' }}</span>
       </button>
     </footer>
   </aside>
 </template>
+
+<style scoped>
+.app-sidebar {
+  display: grid;
+  width: var(--ds-sidebar-width);
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  padding: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--ds-line);
+  background: #fff;
+  color: var(--ds-text);
+}
+
+.app-sidebar--desktop {
+  position: relative;
+  z-index: 1300;
+}
+
+.sidebar-brand {
+  display: flex;
+  height: 62px;
+  flex: none;
+  position: relative;
+  z-index: 2;
+  align-items: center;
+  gap: 10px;
+  padding: 0 19px;
+  border-bottom: 1px solid var(--ds-line);
+  background: var(--surface, #fff);
+  color: var(--ds-ink);
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.sidebar-brand-icon {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 7px;
+  object-fit: contain;
+}
+
+.sidebar-navigation {
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 9px 12px 11px;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  scrollbar-gutter: auto;
+  outline: none;
+}
+
+.sidebar-navigation:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--ds-primary-soft);
+}
+
+.sidebar-navigation::-webkit-scrollbar,
+.sidebar-navigation::-webkit-scrollbar-track,
+.sidebar-navigation::-webkit-scrollbar-thumb,
+.sidebar-navigation::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.sidebar-navigation-primary,
+.sidebar-navigation-utility,
+.sidebar-navigation-group {
+  flex: none;
+}
+
+.sidebar-navigation-group {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+}
+
+.sidebar-navigation-group + .sidebar-navigation-group,
+.sidebar-navigation-utility {
+  margin-top: 11px;
+}
+
+.sidebar-navigation-title {
+  height: 20px;
+  margin: 0 8px 2px;
+  padding: 0;
+  color: var(--ds-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.sidebar-navigation-link {
+  display: flex;
+  min-height: 37px;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 0 11px;
+  border-radius: 6px;
+  color: var(--ds-secondary);
+  font-size: 15px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.sidebar-navigation-link:hover {
+  background: var(--ds-surface-muted);
+  color: var(--ds-ink);
+}
+
+.sidebar-navigation-link.router-link-active {
+  background: var(--ds-primary-soft);
+  color: var(--ds-primary-hover);
+}
+
+.sidebar-navigation-link.router-link-active svg {
+  color: var(--ds-primary-hover);
+}
+
+.sidebar-account {
+  display: grid;
+  position: relative;
+  z-index: 2;
+  flex: none;
+  gap: 8px;
+  padding: 12px 14px 13px;
+  border-top: 1px solid var(--ds-line);
+  background: var(--surface, #fff);
+}
+
+.sidebar-account-user {
+  display: flex;
+  min-width: 0;
+  min-height: 36px;
+  align-items: center;
+  gap: 10px;
+}
+
+.sidebar-account-avatar {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--ds-primary-soft);
+  color: var(--ds-primary);
+}
+
+.sidebar-account-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 1px;
+}
+
+.sidebar-account-copy strong,
+.sidebar-account-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-account-copy strong {
+  color: var(--ds-ink);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 18px;
+}
+
+.sidebar-account-copy span {
+  color: var(--ds-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.sidebar-logout {
+  display: flex;
+  min-height: 35px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--ds-line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ds-secondary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sidebar-logout:hover:not(:disabled) {
+  border-color: #efc4c8;
+  background: var(--ds-danger-soft);
+  color: var(--ds-danger);
+}
+
+.sidebar-logout:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+@media (max-width: 768px) {
+  .app-sidebar--desktop {
+    display: none;
+  }
+
+  .app-sidebar--mobile {
+    width: 100%;
+    height: 100%;
+    border-right: 0;
+  }
+
+  .app-sidebar--mobile .sidebar-brand {
+    height: 68px;
+    padding: 0 18px;
+  }
+
+  .app-sidebar--mobile .sidebar-navigation {
+    padding: 10px 12px 12px;
+  }
+
+  .app-sidebar--mobile .sidebar-navigation-link {
+    min-height: 44px;
+    white-space: normal;
+  }
+
+  .app-sidebar--mobile .sidebar-account {
+    padding: 12px 14px max(13px, env(safe-area-inset-bottom));
+  }
+}
+</style>

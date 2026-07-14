@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import PageHeader from '../components/common/PageHeader.vue'
+import SecondaryNavigation from '../components/common/SecondaryNavigation.vue'
+import ActionConfirmDialog from '../components/ui/ActionConfirmDialog.vue'
 import CategoryFilter from '../components/warehouse/CategoryFilter.vue'
 import MyRequisitionList from '../components/warehouse/MyRequisitionList.vue'
 import PendingReceiptList from '../components/warehouse/PendingReceiptList.vue'
@@ -10,29 +13,54 @@ import WarehouseStoreRequisitionForm from '../components/warehouse/WarehouseStor
 import { useAuthStore } from '../stores/auth'
 import { useWarehouseStore } from '../stores/warehouse'
 import type { WarehouseItem } from '../api/warehouse'
+import { PERMISSIONS } from '../permissions/permissions'
+import { useBusinessScope } from '../composables/useBusinessScope'
 import WarehouseWorkbenchPage from './WarehouseWorkbenchPage.vue'
 
 const auth = useAuthStore()
 const route = useRoute()
+const router = useRouter()
 const warehouse = useWarehouseStore()
+const businessScope = useBusinessScope()
 const localError = ref('')
-const storeRequisitionForm = ref<{ addItem: (item: WarehouseItem) => void } | null>(null)
+const pendingReceiptId = ref<string | null>(null)
+const receiptConfirmBusy = ref(false)
 
 const overview = computed(() => warehouse.overview)
-const isStoreManager = computed(() => auth.role === 'STORE_MANAGER')
-const canManage = computed(() => auth.role === 'WAREHOUSE' || auth.role === 'ADMIN')
-const isReadonlyViewer = computed(() => auth.role === 'BOSS' || auth.role === 'OWNER')
-const showWorkbench = computed(() => canManage.value || isReadonlyViewer.value)
+const canManage = computed(() => (
+  auth.hasPermission(PERMISSIONS.WAREHOUSE_CONFIGURE)
+  || auth.hasPermission(PERMISSIONS.WAREHOUSE_CENTRAL_MANAGE)
+))
+const showWorkbench = computed(() => (
+  !businessScope.isStoreManager.value
+  && (auth.hasPermission(PERMISSIONS.WAREHOUSE_READ) || auth.hasPermission(PERMISSIONS.WAREHOUSE_CENTRAL_READ))
+))
+const showStoreInventory = computed(() => (
+  (businessScope.isStoreManager.value || !showWorkbench.value)
+  && auth.hasPermission(PERMISSIONS.WAREHOUSE_STORE_READ)
+))
+const canCreateRequisition = computed(() => auth.hasPermission(PERMISSIONS.WAREHOUSE_REQUISITION_CREATE))
+const canReceiveRequisition = computed(() => auth.hasPermission(PERMISSIONS.WAREHOUSE_REQUISITION_RECEIVE))
+const storeNavigationItems = computed(() => {
+  const items = [
+    { key: 'inventory', label: '本店库存', to: '/store/inventory' },
+  ]
+  if (canCreateRequisition.value) {
+    items.push({ key: 'requisition', label: '门店叫货', to: '/store/inventory/requisition' })
+  }
+  if (canCreateRequisition.value || canReceiveRequisition.value) {
+    items.push({ key: 'records', label: '本店记录', to: '/store/inventory/records' })
+  }
+  return items
+})
+const activeStoreNavigation = computed(() => String(route.meta.storeWarehouseTab || 'inventory'))
 const activeItems = computed(() => (overview.value?.items || []).filter((item) => item.active !== false))
+const supplyWarehouse = computed(() => warehouse.warehouses[0] || overview.value?.warehouse || null)
+const supplyWarehouseName = computed(() => supplyWarehouse.value?.name || '供货仓待配置')
 const requisitions = computed(() => overview.value?.requisitions || [])
 const shippedRequisitions = computed(() => requisitions.value.filter((row) => row.status === 'SHIPPED'))
 const filteredItems = computed(() => activeItems.value.filter(matchesSelectedCategory))
 const selectedCategoryLabel = computed(() => categoryLabel(warehouse.selectedCategory))
-const pageTitle = computed(() => {
-  const routeTitle = route.meta.title
-  return typeof routeTitle === 'string' && routeTitle ? routeTitle : '仓库中心'
-})
-
 watch(
   () => filteredItems.value.map((item) => item.id).join(','),
   () => {
@@ -71,8 +99,17 @@ function categoryLabel(value: string) {
 
 async function refresh() {
   localError.value = ''
+  if (businessScope.configurationError.value) {
+    localError.value = businessScope.configurationError.value
+    return
+  }
   try {
-    await warehouse.loadAll()
+    if (businessScope.isStoreManager.value) {
+      await warehouse.loadWarehouses()
+      await Promise.all([warehouse.loadOverview(warehouse.selectedWarehouseId), warehouse.loadCategories()])
+    } else {
+      await warehouse.loadAll()
+    }
   } catch {
     localError.value = warehouse.error || '仓库数据加载失败'
   }
@@ -83,6 +120,7 @@ async function submitRequisition(payload: {
   note?: string
   clientRequestId: string
 }) {
+  if (!canCreateRequisition.value) return
   localError.value = ''
   try {
     await warehouse.submitRequisition(payload.lines, payload.note, payload.clientRequestId)
@@ -92,18 +130,33 @@ async function submitRequisition(payload: {
 }
 
 async function receiveRequisition(requisitionId: string) {
+  if (!canReceiveRequisition.value || receiptConfirmBusy.value) return
   localError.value = ''
-  if (!window.confirm('确认已收到该叫货单商品吗？')) return
+  pendingReceiptId.value = requisitionId
+}
+
+function cancelReceiveRequisition() {
+  if (receiptConfirmBusy.value) return
+  pendingReceiptId.value = null
+}
+
+async function confirmReceiveRequisition() {
+  const requisitionId = pendingReceiptId.value
+  if (!requisitionId || receiptConfirmBusy.value) return
+  receiptConfirmBusy.value = true
   try {
     await warehouse.receiveRequisition(requisitionId, '店长确认收货')
   } catch {
     localError.value = warehouse.error || '确认收货失败'
+  } finally {
+    receiptConfirmBusy.value = false
+    pendingReceiptId.value = null
   }
 }
 
 function addItemToRequisition(item: WarehouseItem) {
-  storeRequisitionForm.value?.addItem(item)
-  document.getElementById('store-requisition-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  if (!canCreateRequisition.value) return
+  void router.push({ path: '/store/inventory/requisition', query: { itemId: String(item.id) } })
 }
 
 onMounted(() => {
@@ -113,22 +166,38 @@ onMounted(() => {
 
 <template>
   <section class="page-panel warehouse-page">
-    <div class="page-head">
-      <h2>{{ pageTitle }}</h2>
-      <button class="ghost-button" type="button" :disabled="warehouse.loading" @click="refresh">
-        <RefreshCw :size="16" />
-        刷新
-      </button>
-    </div>
+    <PageHeader
+      title="仓库中心"
+      :subtitle="businessScope.isStoreManager.value
+        ? businessScope.managerScopeLabel.value
+        : '统一管理库存、物料和采购流转'"
+    >
+      <template #actions>
+        <button class="ghost-button" type="button" :disabled="warehouse.loading" @click="refresh">
+          <RefreshCw :size="16" />刷新
+        </button>
+      </template>
+    </PageHeader>
 
     <div v-if="warehouse.error || localError" class="error-box">{{ localError || warehouse.error }}</div>
     <div v-if="warehouse.actionMessage" class="success-box">{{ warehouse.actionMessage }}</div>
     <div v-if="warehouse.loading && !overview" class="empty-state">正在读取仓库数据...</div>
 
-    <WarehouseWorkbenchPage v-if="overview && showWorkbench" :can-manage="canManage" />
+    <WarehouseWorkbenchPage v-if="!businessScope.configurationError.value && overview && showWorkbench" :can-manage="canManage" />
 
-    <template v-else-if="overview && isStoreManager">
-      <div class="store-warehouse-grid">
+    <template v-else-if="!businessScope.configurationError.value && overview && showStoreInventory">
+      <div class="store-supply-warehouse" aria-label="供货仓">
+        <span>供货仓</span>
+        <strong>{{ supplyWarehouseName }}</strong>
+        <small>叫货单将由系统自动发送到该仓库，门店不能自行更改。</small>
+      </div>
+      <SecondaryNavigation
+        :items="storeNavigationItems"
+        :model-value="activeStoreNavigation"
+        label="本店仓库功能"
+      />
+
+      <div v-if="activeStoreNavigation === 'inventory'" class="store-warehouse-grid">
         <CategoryFilter
           :categories="warehouse.categories"
           :items="activeItems"
@@ -139,28 +208,43 @@ onMounted(() => {
           :items="filteredItems"
           :all-count="activeItems.length"
           :category-label="selectedCategoryLabel"
+          :can-requisition="canCreateRequisition"
+          :supply-warehouse-name="supplyWarehouseName"
           @pick="addItemToRequisition"
         />
       </div>
 
-      <div class="section-stack warehouse-actions">
-        <WarehouseStoreRequisitionForm
-          ref="storeRequisitionForm"
-          :items="activeItems"
-          :submitting="warehouse.submitting"
-          :success-message="warehouse.actionMessage"
-          @submit="submitRequisition"
-        />
+      <WarehouseStoreRequisitionForm
+        v-else-if="activeStoreNavigation === 'requisition' && canCreateRequisition"
+        :items="activeItems"
+        :initial-item-id="Number(route.query.itemId || 0)"
+        :submitting="warehouse.submitting"
+        :success-message="warehouse.actionMessage"
+        @submit="submitRequisition"
+      />
+
+      <div v-else-if="activeStoreNavigation === 'records'" class="section-stack warehouse-actions">
         <PendingReceiptList
+          v-if="canReceiveRequisition"
           :requisitions="shippedRequisitions"
           :receiving-id="warehouse.receivingId"
           @receive="receiveRequisition"
         />
-        <MyRequisitionList :requisitions="requisitions" />
+        <MyRequisitionList v-if="canCreateRequisition || canReceiveRequisition" :requisitions="requisitions" />
       </div>
     </template>
 
-    <div v-else-if="overview" class="empty-state">当前角色无权访问仓库中心。</div>
+    <div v-else-if="!businessScope.configurationError.value && overview" class="empty-state">当前角色无权访问仓库中心。</div>
+
+    <ActionConfirmDialog
+      :open="Boolean(pendingReceiptId)"
+      title="确认收货"
+      message="确认已收到该叫货单商品吗？"
+      confirm-label="确认收货"
+      :busy="receiptConfirmBusy"
+      @cancel="cancelReceiveRequisition"
+      @confirm="confirmReceiveRequisition"
+    />
   </section>
 </template>
 
@@ -194,6 +278,52 @@ onMounted(() => {
 }
 
 .warehouse-actions > :first-child {
-  grid-column: 1 / -1;
+  grid-column: auto;
+}
+
+.warehouse-page > .error-box,
+.warehouse-page > .success-box {
+  margin: 0;
+}
+
+.store-supply-warehouse {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--ds-line);
+  border-radius: 8px;
+  background: var(--ds-surface);
+}
+
+.store-supply-warehouse span,
+.store-supply-warehouse small {
+  color: var(--ds-muted);
+  font-size: 13px;
+}
+
+.store-supply-warehouse strong {
+  color: var(--ds-primary-hover);
+}
+
+.store-supply-warehouse small {
+  margin-left: auto;
+}
+
+@media (max-width: 768px) {
+  .store-supply-warehouse {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .store-supply-warehouse small {
+    margin-left: 0;
+  }
+  .store-warehouse-grid,
+  .warehouse-actions {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

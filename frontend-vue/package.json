@@ -14,17 +14,19 @@
     "test:e2e:write": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"if ($env:E2E_WRITE -ne '1') { throw '写入类 E2E 默认禁用，请先设置 E2E_WRITE=1' }; npx playwright test tests/e2e/write\""
   },
   "dependencies": {
-    "@vitejs/plugin-vue": "^5.2.4",
     "axios": "^1.7.9",
     "lucide-vue-next": "^0.468.0",
+    "papaparse": "^5.5.4",
     "pinia": "^2.2.8",
-    "vite": "^5.4.21",
     "vue": "^3.5.13",
     "vue-router": "^4.5.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
+    "@types/papaparse": "^5.5.2",
+    "@vitejs/plugin-vue": "^6.0.7",
     "typescript": "^5.7.3",
+    "vite": "^8.1.4",
     "vue-tsc": "^2.2.0"
   }
 }

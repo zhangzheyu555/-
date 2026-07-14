@@ -92,7 +92,7 @@ export const useBossStore = defineStore('boss-dashboard', {
         } catch {
           dashboard = await fallbackDashboardFromBossTodos()
         }
-        this.applyDashboard(dashboard)
+        this.applyDashboard(dashboard || emptyDashboard())
       } catch (error) {
         this.error = error instanceof Error ? error.message : '老板驾驶舱加载失败，请稍后重试。'
         this.applyDashboard(emptyDashboard())
@@ -100,7 +100,8 @@ export const useBossStore = defineStore('boss-dashboard', {
         this.loading = false
       }
     },
-    applyDashboard(dashboard: BossTodoDashboard) {
+    applyDashboard(dashboard?: BossTodoDashboard) {
+      if (!dashboard) dashboard = emptyDashboard()
       const needsBossAction = dashboard.needsBossAction || []
       const riskGroups = dashboard.highRiskReminders || []
       const progress = dashboard.roleProgress || []
@@ -148,8 +149,9 @@ export const useBossStore = defineStore('boss-dashboard', {
 
 async function fallbackDashboardFromBossTodos(): Promise<BossTodoDashboard> {
   const todos = await getBossTodos({ includeDone: true, limit: 160 })
-  const open = todos.items.filter((item) => !isDone(item))
-  const done = todos.items.filter(isDone)
+  const items = Array.isArray(todos?.items) ? todos.items : []
+  const open = items.filter((item) => !isDone(item))
+  const done = items.filter(isDone)
   const needsBossAction = open.filter((item) => isBossEscalation(item))
   const highRiskReminders = groupRiskItems(open.filter((item) => !isBossEscalation(item)))
   return {
@@ -299,16 +301,17 @@ export function routeForSource(source: string) {
   if (includesText(source, ['warehouse', '仓库', '库存', '叫货', '退货'])) return '/warehouse'
   if (includesText(source, ['inspection', 'supervisor', '巡店', '整改'])) return '/inspection'
   if (includesText(source, ['store', '门店', '店长', '经营'])) return '/store-detail'
-  if (includesText(source, ['operation', 'ops', '运营', '导入', '平台'])) return '/operations'
+  if (includesText(source, ['平台', '账号'])) return '/platform-login'
+  if (includesText(source, ['operation', 'ops', '运营', '导入'])) return '/boss'
   return '/boss'
 }
 
 function routeForOwner(ownerName: string, source: string) {
-  if (includesText(ownerName, ['财务']) || includesText(source, ['财务', '利润', '报销'])) return '/finance'
+  if (includesText(ownerName, ['财务']) || includesText(source, ['财务', '利润', '报销'])) return '/profit-table'
   if (includesText(ownerName, ['仓库']) || includesText(source, ['仓库'])) return '/warehouse'
   if (includesText(ownerName, ['督导']) || includesText(source, ['督导'])) return '/inspection'
   if (includesText(ownerName, ['店长']) || includesText(source, ['门店'])) return '/store-detail'
-  if (includesText(ownerName, ['运营']) || includesText(source, ['运营'])) return '/operations'
+  if (includesText(ownerName, ['运营']) || includesText(source, ['运营'])) return '/boss'
   return '/boss'
 }
 
@@ -329,7 +332,7 @@ export function sourceLabel(source: string) {
   if (includesText(source, ['warehouse', '仓库', '库存', '叫货', '退货'])) return '仓库中心'
   if (includesText(source, ['inspection', 'supervisor', '巡店', '整改'])) return '督导巡店'
   if (includesText(source, ['store', '门店', '店长'])) return '门店详情'
-  if (includesText(source, ['operation', 'ops', '运营', '导入'])) return '运营中心'
+  if (includesText(source, ['operation', 'ops', '运营', '导入'])) return '运营事项'
   if (includesText(source, ['escalation', '上报'])) return '岗位上报'
   return cleanText(source || '业务事项')
 }

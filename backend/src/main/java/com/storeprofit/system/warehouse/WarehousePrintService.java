@@ -1,12 +1,20 @@
 package com.storeprofit.system.warehouse;
 
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
+import com.storeprofit.system.platform.authorization.AuthorizationService;
+import com.storeprofit.system.platform.authorization.DataScope;
+import com.storeprofit.system.platform.authorization.DataScopeDomains;
+import com.storeprofit.system.platform.authorization.DataScopeModes;
+import com.storeprofit.system.platform.authorization.PermissionCodes;
 import com.storeprofit.system.warehouse.WarehouseRepository.WarehouseDeliveryPrintHeader;
 import com.storeprofit.system.warehouse.WarehouseRepository.WarehouseDeliveryPrintLine;
 import com.storeprofit.system.warehouse.WarehouseRepository.WarehouseMovementPrintRow;
 import com.storeprofit.system.warehouse.WarehouseRepository.WarehouseReceiptPrintRow;
+import java.math.BigDecimal;
 import java.util.List;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,15 +23,46 @@ import org.springframework.transaction.annotation.Transactional;
 public class WarehousePrintService {
   private final WarehouseRepository warehouseRepository;
   private final WarehousePdfRenderer pdfRenderer;
+  private final AccessControlService accessControl;
+  private final WarehouseTopologyService topologyService;
 
-  public WarehousePrintService(WarehouseRepository warehouseRepository, WarehousePdfRenderer pdfRenderer) {
+  @Autowired
+  public WarehousePrintService(
+      WarehouseRepository warehouseRepository,
+      WarehousePdfRenderer pdfRenderer,
+      AccessControlService accessControl,
+      WarehouseTopologyService topologyService
+  ) {
     this.warehouseRepository = warehouseRepository;
     this.pdfRenderer = pdfRenderer;
+    this.accessControl = accessControl;
+    this.topologyService = topologyService;
+  }
+
+  public WarehousePrintService(
+      WarehouseRepository warehouseRepository,
+      WarehousePdfRenderer pdfRenderer,
+      AccessControlService accessControl
+  ) {
+    this(warehouseRepository, pdfRenderer, accessControl, null);
+  }
+
+  /** Compatibility constructor retained for isolated service tests. */
+  public WarehousePrintService(WarehouseRepository warehouseRepository, WarehousePdfRenderer pdfRenderer) {
+    this(warehouseRepository, pdfRenderer, null, null);
   }
 
   @Transactional
   public WarehousePrintDocument receiptPdf(AuthUser user, long batchId) {
-    requireReceiptAccess(user);
+    if (topologyService == null) {
+      requireReceiptAccess(user);
+    } else {
+      if (isStoreManager(user)) {
+        throw new BusinessException("FORBIDDEN", "店长不能下载包含采购成本的仓库入库单", HttpStatus.FORBIDDEN);
+      }
+      accessControl.requireWarehousePurchase(user);
+      requirePrintFacility(user, warehouseRepository.batchWarehouseId(user.tenantId(), batchId), "下载仓库入库单");
+    }
     WarehouseReceiptPrintRow row = warehouseRepository.receiptPrintRow(user.tenantId(), batchId)
         .orElseThrow(() -> new BusinessException("RECEIPT_NOT_FOUND", "入库批次不存在", HttpStatus.NOT_FOUND));
     byte[] bytes = pdfRenderer.receipt(row);
@@ -43,8 +82,15 @@ public class WarehousePrintService {
   public WarehousePrintDocument deliveryPdf(AuthUser user, String requisitionId) {
     WarehouseDeliveryPrintHeader header = warehouseRepository.deliveryPrintHeader(user.tenantId(), requisitionId)
         .orElseThrow(() -> new BusinessException("DELIVERY_NOT_FOUND", "出库单不存在", HttpStatus.NOT_FOUND));
-    requireDeliveryAccess(user, header.storeId());
+    boolean central = topologyService == null
+        ? requireDeliveryAccess(user, header.storeId())
+        : requirePrintStoreDocument(user,
+            warehouseRepository.deliveryWarehouseId(user.tenantId(), requisitionId),
+            header.storeId(), "下载该出库单");
     List<WarehouseDeliveryPrintLine> lines = warehouseRepository.deliveryPrintLines(user.tenantId(), requisitionId);
+    if (!central) {
+      lines = safeDeliveryLines(lines);
+    }
     byte[] bytes = pdfRenderer.delivery(header, lines);
     warehouseRepository.logAction(
         user.tenantId(),
@@ -65,7 +111,14 @@ public class WarehousePrintService {
     if ("OUT".equals(row.movementType()) && "REQUISITION".equals(row.sourceType()) && row.sourceId() != null && !row.sourceId().isBlank()) {
       return deliveryPdf(user, row.sourceId());
     }
-    requireMovementAccess(user, row);
+    if (topologyService == null) {
+      requireMovementAccess(user, row);
+    } else {
+      if (isStoreManager(user)) {
+        throw new BusinessException("FORBIDDEN", "店长不能下载仓库库存流水单", HttpStatus.FORBIDDEN);
+      }
+      requirePrintFacility(user, warehouseRepository.movementWarehouseId(user.tenantId(), movementId), "下载库存流水单");
+    }
     byte[] bytes = pdfRenderer.movement(row);
     String action = "IN".equals(row.movementType()) ? "下载入库单" : "下载库存流水单";
     warehouseRepository.logAction(
@@ -84,8 +137,12 @@ public class WarehousePrintService {
   public WarehousePrintDocument returnPdf(AuthUser user, String returnId) {
     WarehouseReturnResponse order = warehouseRepository.returnOrder(user.tenantId(), returnId)
         .orElseThrow(() -> new BusinessException("RETURN_NOT_FOUND", "配送退货单不存在", HttpStatus.NOT_FOUND));
-    requireReturnAccess(user, order.returnStoreId());
-    byte[] bytes = pdfRenderer.returnOrder(order);
+    boolean central = topologyService == null
+        ? requireReturnAccess(user, order.returnStoreId())
+        : requirePrintStoreDocument(user,
+            warehouseRepository.returnWarehouseId(user.tenantId(), returnId),
+            order.returnStoreId(), "下载该配送退货单");
+    byte[] bytes = pdfRenderer.returnOrder(central ? order : safeReturn(order));
     warehouseRepository.logAction(
         user.tenantId(),
         user.id(),
@@ -99,30 +156,58 @@ public class WarehousePrintService {
   }
 
   private void requireReceiptAccess(AuthUser user) {
-    if (user != null && List.of("ADMIN", "BOSS", "OWNER", "WAREHOUSE").contains(user.role())) {
+    if (accessControl != null) {
+      accessControl.requireWarehouseCentralRead(user);
+      DataScope dataScope = warehouseDataScope(user);
+      if (dataScope.allowsAllStores() || DataScopeModes.CENTRAL_WAREHOUSE.equals(dataScope.mode())) {
+        return;
+      }
+      accessControl.requireStoreAccess(
+          user,
+          DataScopeDomains.WAREHOUSE,
+          "__CENTRAL_WAREHOUSE__",
+          "下载仓库入库单"
+      );
+      throw new BusinessException("FORBIDDEN", "无权下载入库单", HttpStatus.FORBIDDEN);
+    }
+    if (hasLegacyPermission(user, PermissionCodes.WAREHOUSE_CENTRAL_READ)) {
       return;
     }
     throw new BusinessException("FORBIDDEN", "无权下载入库单", HttpStatus.FORBIDDEN);
   }
 
-  private void requireDeliveryAccess(AuthUser user, String storeId) {
-    if (user != null && List.of("ADMIN", "BOSS", "OWNER", "WAREHOUSE").contains(user.role())) {
-      return;
-    }
-    if (user != null && "STORE_MANAGER".equals(user.role()) && storeId != null && storeId.equals(user.storeId())) {
-      return;
-    }
-    throw new BusinessException("FORBIDDEN", "无权下载该出库单", HttpStatus.FORBIDDEN);
+  private boolean requirePrintFacility(AuthUser user, java.util.Optional<Long> warehouseId, String action) {
+    long id = warehouseId.orElseThrow(() -> new BusinessException(
+        "WAREHOUSE_NOT_FOUND", "单据未关联有效仓库", HttpStatus.CONFLICT));
+    topologyService.visibleFacilities(user);
+    topologyService.requireVisibleFacility(user, id, action);
+    return user != null && !"STORE_MANAGER".equals(AccessControlService.canonicalRole(user.role()));
   }
 
-  private void requireReturnAccess(AuthUser user, String storeId) {
-    if (user != null && List.of("ADMIN", "BOSS", "OWNER", "WAREHOUSE").contains(user.role())) {
-      return;
+  private boolean requirePrintStoreDocument(
+      AuthUser user,
+      java.util.Optional<Long> warehouseId,
+      String storeId,
+      String action
+  ) {
+    boolean central = requirePrintFacility(user, warehouseId, action);
+    if (!central) {
+      requireStoreDocumentAccess(user, storeId, action);
     }
-    if (user != null && "STORE_MANAGER".equals(user.role()) && storeId != null && storeId.equals(user.storeId())) {
-      return;
-    }
-    throw new BusinessException("FORBIDDEN", "无权下载该配送退货单", HttpStatus.FORBIDDEN);
+    return central;
+  }
+
+  private boolean isStoreManager(AuthUser user) {
+    return user != null
+        && "STORE_MANAGER".equals(AccessControlService.canonicalRole(user.role()));
+  }
+
+  private boolean requireDeliveryAccess(AuthUser user, String storeId) {
+    return requireStoreDocumentAccess(user, storeId, "下载该出库单");
+  }
+
+  private boolean requireReturnAccess(AuthUser user, String storeId) {
+    return requireStoreDocumentAccess(user, storeId, "下载该配送退货单");
   }
 
   private void requireMovementAccess(AuthUser user, WarehouseMovementPrintRow row) {
@@ -131,6 +216,123 @@ public class WarehousePrintService {
       return;
     }
     requireDeliveryAccess(user, row.storeId());
+  }
+
+  private boolean requireStoreDocumentAccess(AuthUser user, String storeId, String action) {
+    if (accessControl != null) {
+      boolean centralPermission = accessControl.hasPermission(user, PermissionCodes.WAREHOUSE_CENTRAL_READ);
+      DataScope dataScope = warehouseDataScope(user);
+      if (centralPermission) {
+        accessControl.requireWarehouseCentralRead(user);
+        if (dataScope.allowsAllStores() || DataScopeModes.CENTRAL_WAREHOUSE.equals(dataScope.mode())) {
+          return true;
+        }
+      } else {
+        accessControl.requireWarehouseStoreRead(user);
+      }
+      accessControl.requireStoreAccess(user, DataScopeDomains.WAREHOUSE, storeId, action);
+      return false;
+    }
+    if (hasLegacyPermission(user, PermissionCodes.WAREHOUSE_CENTRAL_READ)) {
+      return true;
+    }
+    if (hasLegacyPermission(user, PermissionCodes.WAREHOUSE_STORE_READ)
+        && user != null
+        && storeId != null
+        && storeId.equals(user.storeId())) {
+      return false;
+    }
+    throw new BusinessException("FORBIDDEN", "无权" + action, HttpStatus.FORBIDDEN);
+  }
+
+  private DataScope warehouseDataScope(AuthUser user) {
+    if (accessControl != null) {
+      DataScope configured = accessControl.dataScope(user, DataScopeDomains.WAREHOUSE);
+      if (configured != null) {
+        return configured;
+      }
+    }
+    if (AccessControlService.isBoss(user)) {
+      return DataScope.all();
+    }
+    if (hasLegacyPermission(user, PermissionCodes.WAREHOUSE_CENTRAL_READ)) {
+      return new DataScope(DataScopeModes.CENTRAL_WAREHOUSE, List.of());
+    }
+    if (user != null && user.storeId() != null && !user.storeId().isBlank()) {
+      return new DataScope(DataScopeModes.OWN_STORE, List.of(user.storeId().trim()));
+    }
+    return DataScope.none();
+  }
+
+  private boolean hasLegacyPermission(AuthUser user, String permissionCode) {
+    return AccessControlService.isBoss(user)
+        || AuthorizationService.legacyTemplatePermissions(user == null ? null : user.role())
+            .contains(permissionCode);
+  }
+
+  private List<WarehouseDeliveryPrintLine> safeDeliveryLines(List<WarehouseDeliveryPrintLine> lines) {
+    return lines.stream()
+        .map(line -> new WarehouseDeliveryPrintLine(
+            line.itemId(),
+            line.itemName(),
+            line.spec(),
+            line.unit(),
+            line.shippedQuantity(),
+            BigDecimal.ZERO,
+            BigDecimal.ZERO,
+            line.batchNos(),
+            line.note()
+        ))
+        .toList();
+  }
+
+  private WarehouseReturnResponse safeReturn(WarehouseReturnResponse row) {
+    return new WarehouseReturnResponse(
+        row.id(),
+        row.returnNo(),
+        row.sourceRequisitionId(),
+        row.sourceDeliveryId(),
+        row.returnStoreId(),
+        row.returnStoreName(),
+        row.receiveDepartment(),
+        row.status(),
+        row.statusLabel(),
+        BigDecimal.ZERO,
+        row.handledBy(),
+        row.createdBy(),
+        row.updatedBy(),
+        row.reviewedBy(),
+        row.checkedBy(),
+        row.reason(),
+        row.note(),
+        row.reviewNote(),
+        row.receivedNote(),
+        row.returnDate(),
+        row.reviewedAt(),
+        row.receivedAt(),
+        row.createdAt(),
+        row.updatedAt(),
+        row.lineCount(),
+        row.attachmentCount(),
+        row.lines().stream()
+            .map(line -> new WarehouseReturnLineResponse(
+                line.id(),
+                line.itemId(),
+                line.itemName(),
+                line.spec(),
+                line.batchId(),
+                line.batchNo(),
+                line.sourceRequisitionLineId(),
+                line.quantity(),
+                line.unit(),
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                line.reason(),
+                line.note()
+            ))
+            .toList()
+    );
   }
 
   private String receiptFilename(WarehouseReceiptPrintRow row) {

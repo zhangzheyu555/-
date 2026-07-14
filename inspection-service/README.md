@@ -6,7 +6,8 @@
 
 1. 安装 Python：https://www.python.org/downloads/ 下载 3.12，安装时**勾选 "Add python.exe to PATH"**
 2. 双击本文件夹里的 **`start.bat`**
-   - 首次运行会自动创建虚拟环境并安装依赖（下载约 1-2GB，等它跑完）
+   - 首次运行会在 `%LOCALAPPDATA%\AI-Profit-OS\inspection-venv` 创建短路径虚拟环境并安装依赖（下载约 1-2GB，等它跑完）
+   - 虚拟环境放在仓库外，避免 PyTorch 在 Windows 深层目录中触发路径过长错误
    - 以后每次双击直接启动，几秒就好
 3. 看到 `Uvicorn running on http://127.0.0.1:8000` 即成功，**这个窗口别关**
 4. 再启动 Java 后端（backend 目录，需要 JDK21+Maven，没装 MySQL 就用：

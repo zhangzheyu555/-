@@ -23,7 +23,7 @@ public class SalaryExportService {
   public String exportCsv(AuthUser user, String month, Long brandId, String storeId) {
     if (accessControl != null) {
       accessControl.requireDataExport(user);
-    } else if (!List.of("ADMIN", "BOSS", "FINANCE").contains(user.role())) {
+    } else if (!AccessControlService.hasAnyRole(user, "FINANCE")) {
       throw new BusinessException("FORBIDDEN", "当前角色不能导出工资数据", HttpStatus.FORBIDDEN);
     }
     List<SalaryRecordResponse> rows = salaryQueryService.records(user, month, brandId, storeId);

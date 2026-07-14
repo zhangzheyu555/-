@@ -1,32 +1,51 @@
 import { defineStore } from 'pinia'
 import {
+  cancelWarehouseTransfer,
+  approveWarehousePurchaseOrder,
+  createWarehousePurchaseOrder,
+  createWarehouseTransfer,
   createWarehouseRequisition,
   deleteWarehouseItemCategory,
   downloadWarehousePdf,
   getWarehouseReturns,
   getWarehouseItemCategories,
   getWarehouseOverview,
+  getWarehouseTransfers,
+  getWarehouses,
+  receiveWarehouseTransfer,
   receiveWarehouseRequisition,
+  receiveWarehousePurchaseOrder,
   receiveWarehouseReturn,
   receiveWarehouseStock,
   reviewWarehouseRequisition,
   reviewWarehouseReturn,
+  reviewWarehouseTransfer,
+  shipWarehouseTransfer,
   shipWarehouseRequisition,
+  submitWarehouseTransfer,
   saveWarehouseItem,
   saveWarehouseItemCategory,
   setWarehouseItemEnabled,
   updateWarehouseAlertSettings,
   type WarehouseItemCategory,
   type WarehouseItemPayload,
+  type WarehouseInfo,
   type WarehouseOverview,
+  type WarehousePurchaseOrderCreatePayload,
+  type WarehousePurchaseOrderReceivePayload,
   type WarehouseReturnOrder,
+  type WarehouseTransfer,
+  type WarehouseTransferCreatePayload,
 } from '../api/warehouse'
 
-export type WarehouseTab = 'overview' | 'requisitions' | 'inventory' | 'purchase' | 'catalog' | 'alerts' | 'returns' | 'movements' | 'receipts' | 'prints'
+export type WarehouseTab = 'overview' | 'warehouse' | 'transfers' | 'requisitions' | 'inventory' | 'purchase' | 'catalog' | 'alerts' | 'returns' | 'movements' | 'receipts' | 'prints'
 
 export const useWarehouseStore = defineStore('warehouse', {
   state: () => ({
     overview: null as WarehouseOverview | null,
+    warehouses: [] as WarehouseInfo[],
+    transfers: [] as WarehouseTransfer[],
+    selectedWarehouseId: '' as string | number,
     categories: [] as WarehouseItemCategory[],
     returns: [] as WarehouseReturnOrder[],
     activeTab: 'overview' as WarehouseTab,
@@ -41,16 +60,32 @@ export const useWarehouseStore = defineStore('warehouse', {
     actionMessage: '',
   }),
   actions: {
-    async loadOverview() {
+    async loadWarehouses() {
+      const rows = await getWarehouses()
+      this.warehouses = rows
+      if (!rows.some((row) => String(row.id) === String(this.selectedWarehouseId))) {
+        this.selectedWarehouseId = rows.find((row) => row.code === 'JZ-CENTRAL')?.id || rows[0]?.id || ''
+      }
+      return rows
+    },
+    async loadOverview(warehouseId?: string | number) {
       this.loading = true
       this.error = ''
       try {
-        this.overview = await getWarehouseOverview()
+        this.overview = await getWarehouseOverview(warehouseId || this.selectedWarehouseId || undefined)
       } catch (error) {
         this.error = error instanceof Error ? error.message : '仓库数据加载失败'
         throw error
       } finally {
         this.loading = false
+      }
+    },
+    async loadTransfers(warehouseId?: string | number) {
+      try {
+        this.transfers = await getWarehouseTransfers(warehouseId || this.selectedWarehouseId || undefined)
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : '仓间调拨加载失败'
+        throw error
       }
     },
     async loadCategories() {
@@ -76,11 +111,25 @@ export const useWarehouseStore = defineStore('warehouse', {
       }
     },
     async loadAll() {
-      await Promise.all([this.loadOverview(), this.loadCategories(), this.loadReturns()])
+      await this.loadWarehouses()
+      await Promise.all([
+        this.loadOverview(this.selectedWarehouseId),
+        this.loadCategories(),
+        this.loadReturns(),
+        this.loadTransfers(this.selectedWarehouseId),
+      ])
+    },
+    async selectWarehouse(warehouseId: string | number) {
+      const selected = this.warehouses.find((row) => String(row.id) === String(warehouseId))
+      if (!selected) {
+        throw new Error('当前账号无权访问该仓库')
+      }
+      this.selectedWarehouseId = selected.id
+      await Promise.all([this.loadOverview(selected.id), this.loadTransfers(selected.id)])
     },
     setTab(tab: string | null | undefined) {
       const normalized = String(tab || 'overview') as WarehouseTab
-      this.activeTab = ['overview', 'requisitions', 'inventory', 'purchase', 'catalog', 'alerts', 'returns', 'movements', 'receipts', 'prints'].includes(normalized)
+      this.activeTab = ['overview', 'warehouse', 'transfers', 'requisitions', 'inventory', 'purchase', 'catalog', 'alerts', 'returns', 'movements', 'receipts', 'prints'].includes(normalized)
         ? normalized
         : 'overview'
     },
@@ -183,13 +232,79 @@ export const useWarehouseStore = defineStore('warehouse', {
       clientRequestId?: string
     }) {
       await this.runAction(`stock:${payload.clientRequestId || `${payload.itemId}-${payload.batchNo}`}`, async () => {
-        await receiveWarehouseStock(payload)
+        if (!this.selectedWarehouseId) {
+          throw new Error('未确定当前仓库，不能执行采购入库')
+        }
+        await receiveWarehouseStock({ ...payload, warehouseId: this.selectedWarehouseId })
         this.actionMessage = '采购到货已入库'
+      })
+    },
+    async createPurchaseOrder(payload: Omit<WarehousePurchaseOrderCreatePayload, 'warehouseId'>) {
+      await this.runAction(`purchase:create:${payload.clientRequestId}`, async () => {
+        if (!this.selectedWarehouseId) {
+          throw new Error('未确定当前仓库，不能创建采购单')
+        }
+        await createWarehousePurchaseOrder({ ...payload, warehouseId: this.selectedWarehouseId })
+        this.actionMessage = '采购草稿已创建，等待审批'
+      })
+    },
+    async approvePurchaseOrder(purchaseOrderId: string) {
+      await this.runAction(`purchase:approve:${purchaseOrderId}`, async () => {
+        await approveWarehousePurchaseOrder(purchaseOrderId)
+        this.actionMessage = '采购单已审批'
+      })
+    },
+    async receivePurchaseOrder(purchaseOrderId: string, payload: WarehousePurchaseOrderReceivePayload) {
+      await this.runAction(`purchase:receive:${purchaseOrderId}`, async () => {
+        await receiveWarehousePurchaseOrder(purchaseOrderId, payload)
+        this.actionMessage = '采购单已核对入库'
+      })
+    },
+    async createTransfer(payload: WarehouseTransferCreatePayload) {
+      await this.runAction(`transfer:create:${payload.clientRequestId}`, async () => {
+        await createWarehouseTransfer(payload)
+        this.actionMessage = '调拨草稿已创建'
+      })
+    },
+    async submitTransfer(id: string) {
+      await this.runAction(`transfer:submit:${id}`, async () => {
+        await submitWarehouseTransfer(id)
+        this.actionMessage = '调拨申请已提交荆州总仓'
+      })
+    },
+    async reviewTransfer(id: string, approved: boolean, note?: string) {
+      await this.runAction(`transfer:review:${id}`, async () => {
+        await reviewWarehouseTransfer(id, approved, note)
+        this.actionMessage = approved ? '调拨申请已审批通过' : '调拨申请已驳回'
+      })
+    },
+    async shipTransfer(id: string, clientRequestId: string, note?: string) {
+      await this.runAction(`transfer:ship:${id}`, async () => {
+        await shipWarehouseTransfer(id, clientRequestId, note)
+        this.actionMessage = '调拨单已发货，库存已转为在途'
+      })
+    },
+    async receiveTransfer(
+      id: string,
+      payload: { clientRequestId: string; note?: string; lines?: Array<{ itemId: number; receivedQuantity: number }> },
+    ) {
+      await this.runAction(`transfer:receive:${id}`, async () => {
+        await receiveWarehouseTransfer(id, payload)
+        this.actionMessage = '调拨到货已确认入库'
+      })
+    },
+    async cancelTransfer(id: string, clientRequestId: string, note?: string) {
+      await this.runAction(`transfer:cancel:${id}`, async () => {
+        await cancelWarehouseTransfer(id, clientRequestId, note)
+        this.actionMessage = '调拨单已取消'
       })
     },
     async saveAlertSettings(itemId: number, payload: { minStockQuantity: number; alertEnabled: boolean; expiryAlertDays?: number }) {
       await this.runAction(`alert-${itemId}`, async () => {
-        await updateWarehouseAlertSettings(itemId, payload)
+        if (!this.selectedWarehouseId) {
+          throw new Error('未确定当前仓库，不能保存库存预警')
+        }
+        await updateWarehouseAlertSettings(itemId, { ...payload, warehouseId: this.selectedWarehouseId })
         this.actionMessage = '库存预警已保存'
       })
     },
@@ -259,6 +374,9 @@ export const useWarehouseStore = defineStore('warehouse', {
     },
     clear() {
       this.overview = null
+      this.warehouses = []
+      this.transfers = []
+      this.selectedWarehouseId = ''
       this.categories = []
       this.returns = []
       this.error = ''

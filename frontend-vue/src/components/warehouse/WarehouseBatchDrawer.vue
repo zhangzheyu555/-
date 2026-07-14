@@ -1,15 +1,31 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
+import { onBeforeUnmount, onMounted } from 'vue'
+import { X } from 'lucide-vue-next'
 import StatusBadge from '../common/StatusBadge.vue'
 import type { WarehouseItem, WarehouseStockBatch } from '../../api/warehouse'
+import UiButton from '../ui/UiButton.vue'
 
 defineProps<{
   item: WarehouseItem
   batches: WarehouseStockBatch[]
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   close: []
 }>()
+
+onMounted(() => document.addEventListener('keydown', handleEscape))
+onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
+
+function requestClose() {
+  emit('close')
+}
+
+function handleEscape(event: KeyboardEvent) {
+  if (event.key !== 'Escape' || document.querySelector('[aria-modal="true"]')) return
+  event.preventDefault()
+  requestClose()
+}
 
 function qty(value: number | undefined, unit?: string) {
   return `${Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 1 })}${unit ? ` ${unit}` : ''}`
@@ -31,13 +47,16 @@ function statusTone(label: string) {
 </script>
 
 <template>
-  <aside class="batch-drawer" aria-label="批次库存明细">
+  <aside class="batch-drawer" role="dialog" aria-labelledby="batch-drawer-title">
     <div class="batch-drawer-head">
       <div>
         <span>批次库存明细</span>
-        <h3>{{ item.name }}</h3>
+        <h3 id="batch-drawer-title">{{ item.name }}</h3>
       </div>
-      <button class="mini-button" type="button" @click="$emit('close')">关闭</button>
+      <UiButton variant="secondary" type="button" aria-label="关闭批次库存明细" @click="requestClose">
+        <template #icon><X :size="16" /></template>
+        关闭
+      </UiButton>
     </div>
     <div v-if="!batches.length" class="empty-state compact">暂无批次库存。</div>
     <div v-else class="batch-drawer-list">
@@ -71,7 +90,7 @@ function statusTone(label: string) {
   display: grid;
   gap: 12px;
   padding: 16px;
-  border: 1px solid rgba(238, 126, 62, 0.22);
+  border: 1px solid rgba(118, 189, 184, 0.22);
   border-radius: 14px;
   background: var(--primary-soft);
 }

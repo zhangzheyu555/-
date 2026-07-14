@@ -8,14 +8,19 @@ const router = useRouter()
 const summary = ref<BossExamSummary | null>(null)
 const loading = ref(false)
 const error = ref('')
+const emit = defineEmits<{
+  'summary-count': [count: number]
+}>()
 
 async function load() {
   loading.value = true
   error.value = ''
   try {
     summary.value = await getBossExamSummary()
+    emit('summary-count', Number(summary.value?.activeExamCount || 0))
   } catch (reason) {
     summary.value = null
+    emit('summary-count', 0)
     error.value = reason instanceof Error ? reason.message : '考试概览加载失败，请刷新后重试。'
   } finally {
     loading.value = false
@@ -132,13 +137,16 @@ defineExpose({ load })
 .exam-metrics small {
   display: block;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .exam-metrics b {
   display: inline-block;
   margin: 3px 5px 0 0;
   font-size: 24px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
   line-height: 1.15;
 }
 
@@ -163,8 +171,8 @@ defineExpose({ load })
   padding: 9px 12px;
   background: #fff7ed;
   color: var(--warn);
-  font-size: 13px;
-  font-weight: 800;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .risk-row {
@@ -174,7 +182,7 @@ defineExpose({ load })
   gap: 10px;
   padding: 10px 12px;
   border-top: 1px solid var(--line);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .risk-row > span {
@@ -192,7 +200,7 @@ defineExpose({ load })
   border-radius: 999px;
   background: #fff4f2;
   color: var(--bad);
-  font-size: 11px;
+  font-size: 13px;
   font-style: normal;
   font-weight: 700;
 }
@@ -203,7 +211,7 @@ defineExpose({ load })
   border: 1px dashed var(--line-strong);
   border-radius: 8px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   text-align: center;
 }
 

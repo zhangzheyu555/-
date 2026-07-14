@@ -28,15 +28,22 @@ create database if not exists store_profit
 - username: `root`
 - password: 空
 
-可以用环境变量覆盖：
+数据库连接只能通过环境变量提供，以下五项均为必填：
 
 ```powershell
-$env:MYSQL_HOST="localhost"
-$env:MYSQL_PORT="3306"
-$env:MYSQL_DATABASE="store_profit"
-$env:MYSQL_USERNAME="root"
-$env:MYSQL_PASSWORD="你的密码"
+$env:APP_ENV="<TEST、QA、STAGING 或 PRODUCTION>"
+$env:MYSQL_HOST="<数据库地址>"
+$env:MYSQL_PORT="<数据库端口>"
+$env:MYSQL_DATABASE="<数据库名称>"
+$env:MYSQL_USERNAME="<数据库账号>"
+$env:MYSQL_PASSWORD="<数据库密码>"
 ```
+
+后端不会回退到默认 MySQL 账号或数据库，也不会自动创建数据库。`TEST`、`QA` 环境的数据库名必须包含 `test` 或 `qa`。请先由数据库管理员创建目标库并授予最小权限。
+
+本机隔离测试库可显式设置 `$env:MYSQL_SSL_MODE='DISABLED'`。生产环境必须设置
+`$env:MYSQL_SSL_MODE='VERIFY_IDENTITY'` 并保持
+`MYSQL_ALLOW_PUBLIC_KEY_RETRIEVAL=false`；不满足时后端会在连接数据库前拒绝启动。
 
 ## 启动
 

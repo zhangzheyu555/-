@@ -8,6 +8,7 @@ interface ProfitState {
   storeId: string
   loading: boolean
   error: string
+  requestSerial: number
 }
 
 const emptySummary: ProfitSummary = {
@@ -31,6 +32,7 @@ export const useProfitStore = defineStore('profit', {
     storeId: '',
     loading: false,
     error: '',
+    requestSerial: 0,
   }),
   getters: {
     months: (state): string[] => state.dashboard?.months || [],
@@ -82,24 +84,29 @@ export const useProfitStore = defineStore('profit', {
   },
   actions: {
     async load() {
+      const requestSerial = ++this.requestSerial
       this.loading = true
       this.error = ''
       try {
         const data = await getProfitDashboard({
           month: this.month || undefined,
           brandId: this.brandId || undefined,
+          storeId: this.storeId || undefined,
         })
+        if (requestSerial !== this.requestSerial) return
         this.dashboard = data
         this.month = data.summary?.month || this.month || data.months?.[0] || ''
-        if (this.storeId && !data.entries.some((entry) => entry.storeId === this.storeId)) {
-          this.storeId = ''
-        }
       } catch (error) {
-        this.error = error instanceof Error ? error.message : '利润概览加载失败'
-        this.dashboard = null
+        if (requestSerial !== this.requestSerial) return
+        this.error = normalizeProfitError(error)
       } finally {
-        this.loading = false
+        if (requestSerial === this.requestSerial) this.loading = false
       }
+    },
+    setFilters(filters: { month?: string; brandId?: string; storeId?: string }) {
+      this.month = filters.month || ''
+      this.brandId = filters.brandId || ''
+      this.storeId = filters.storeId || ''
     },
     async setMonth(month: string) {
       this.month = month
@@ -166,4 +173,12 @@ function summarizeEntries(entries: ProfitEntry[], month: string): ProfitSummary 
 
 function sum(values: unknown[]): number {
   return values.reduce<number>((total, value) => total + amount(value), 0)
+}
+
+function normalizeProfitError(error: unknown) {
+  const message = error instanceof Error ? error.message : ''
+  if (!message || /系统处理失败|request failed|java\.|exception|500|sql/i.test(message)) {
+    return '利润数据加载失败，请稍后重试。'
+  }
+  return message
 }

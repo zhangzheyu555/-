@@ -33,15 +33,15 @@ const cards = [
   min-height: 100px;
   padding: 16px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 8px;
   background: #fff;
 }
 
 .boss-focus-card span {
   display: block;
   color: var(--muted);
-  font-size: 13px;
-  font-weight: 900;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .boss-focus-card b {
@@ -49,19 +49,24 @@ const cards = [
   margin-top: 9px;
   color: var(--ink);
   font-size: 30px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
   line-height: 1;
 }
 
 .boss-focus-card.warn {
-  border-left: 4px solid var(--warn);
+  border-color: #efddb9;
+  background: var(--ds-warning-soft);
 }
 
 .boss-focus-card.bad {
-  border-left: 4px solid var(--bad);
+  border-color: #f0c4c8;
+  background: var(--ds-danger-soft);
 }
 
 .boss-focus-card.info {
-  border-left: 4px solid var(--rx);
+  border-color: var(--ds-line-strong);
+  background: var(--ds-primary-soft);
 }
 
 .boss-focus-card.muted {

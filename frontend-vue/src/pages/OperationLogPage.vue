@@ -1,6 +1,7 @@
 ﻿<script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
+import PageHeader from '../components/common/PageHeader.vue'
 import { getAuditLogs, type OperationLog } from '../api/operations'
 
 const logs = ref<OperationLog[]>([])
@@ -26,15 +27,13 @@ onMounted(() => {
 
 <template>
   <section class="page-panel logs-page">
-    <div class="page-head">
-      <div>
-        <h2>操作日志</h2>
-      </div>
-      <button class="ghost-button" type="button" :disabled="loading" @click="load">
-        <RefreshCw :size="16" />
-        刷新
-      </button>
-    </div>
+    <PageHeader>
+      <template #actions>
+        <button class="ghost-button" type="button" :disabled="loading" @click="load">
+          <RefreshCw :size="16" />刷新
+        </button>
+      </template>
+    </PageHeader>
 
     <div v-if="error" class="error-box">{{ error }}</div>
     <div v-if="loading && !logs.length" class="empty-state">正在读取操作日志...</div>

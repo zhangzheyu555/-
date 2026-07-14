@@ -2,11 +2,18 @@ package com.storeprofit.system.platform.auth;
 
 import com.storeprofit.system.audit.AuditRepository;
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.platform.authorization.AuthorizationService;
+import com.storeprofit.system.platform.authorization.DataScope;
+import com.storeprofit.system.platform.authorization.DataScopeDomains;
+import com.storeprofit.system.platform.authorization.DataScopeModes;
+import com.storeprofit.system.platform.authorization.DataScopeService;
+import com.storeprofit.system.platform.authorization.PermissionCodes;
 import java.util.LinkedHashSet;
-import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -17,40 +24,36 @@ import org.springframework.stereotype.Service;
 @Service
 public class AccessControlService {
   private static final Logger log = LoggerFactory.getLogger(AccessControlService.class);
-  private static final Set<String> GLOBAL_STORE_ROLES = Set.of("ADMIN", "BOSS", "FINANCE", "OWNER");
-  private static final Set<String> FINANCE_READ_ROLES = Set.of("ADMIN", "BOSS", "FINANCE", "STORE_MANAGER", "OWNER");
-  private static final Set<String> FINANCE_WRITE_ROLES = Set.of("ADMIN", "BOSS", "FINANCE", "STORE_MANAGER", "OWNER");
-  private static final Set<String> EXPENSE_READ_ROLES = Set.of("ADMIN", "BOSS", "FINANCE", "STORE_MANAGER", "OWNER");
-  private static final Set<String> EXPENSE_WRITE_ROLES = Set.of("ADMIN", "BOSS", "FINANCE", "STORE_MANAGER", "OWNER");
-  private static final Set<String> EXPENSE_REVIEW_ROLES = Set.of("ADMIN", "BOSS", "FINANCE", "OWNER");
-  private static final Set<String> SALARY_READ_ROLES = Set.of("ADMIN", "BOSS", "FINANCE", "STORE_MANAGER", "OWNER");
-  private static final Set<String> SALARY_EDIT_ROLES = Set.of("ADMIN", "BOSS", "FINANCE", "OWNER");
-  private static final Set<String> SALARY_REVIEW_ROLES = Set.of("ADMIN", "BOSS", "OWNER");
-  private static final Set<String> ATTACHMENT_ROLES = Set.of(
-      "ADMIN", "BOSS", "FINANCE", "STORE_MANAGER", "SUPERVISOR", "WAREHOUSE", "OWNER");
-  private static final Set<String> INSPECTION_READ_ROLES = Set.of(
-      "ADMIN", "BOSS", "SUPERVISOR", "STORE_MANAGER", "OWNER");
-  private static final Set<String> INSPECTION_MANAGE_ROLES = Set.of("ADMIN", "BOSS", "SUPERVISOR", "OWNER");
-  private static final Set<String> PLATFORM_ROLES = Set.of("ADMIN", "BOSS", "OPERATIONS", "OWNER");
-  private static final Set<String> EXAM_READ_ROLES = Set.of(
-      "ADMIN", "BOSS", "OWNER", "OPERATIONS", "OPS", "STORE_MANAGER", "EMPLOYEE");
-  private static final Set<String> EXAM_MANAGE_ROLES = Set.of("ADMIN", "OPERATIONS", "OPS");
-  private static final Set<String> EXAM_COMPANY_READ_ROLES = Set.of(
-      "ADMIN", "BOSS", "OWNER", "OPERATIONS", "OPS");
-  private static final Set<String> BOSS_EXAM_READ_ROLES = Set.of("ADMIN", "BOSS", "OWNER");
+  public static final String BOSS_ROLE = "BOSS";
 
   private final AuthService authService;
   private final AuthRepository authRepository;
   private final AuditRepository auditRepository;
+  private final AuthorizationService authorizationService;
+  private final DataScopeService dataScopeService;
 
+  @Autowired
+  public AccessControlService(
+      AuthService authService,
+      AuthRepository authRepository,
+      AuditRepository auditRepository,
+      AuthorizationService authorizationService,
+      DataScopeService dataScopeService
+  ) {
+    this.authService = authService;
+    this.authRepository = authRepository;
+    this.auditRepository = auditRepository;
+    this.authorizationService = authorizationService;
+    this.dataScopeService = dataScopeService;
+  }
+
+  /** Compatibility constructor retained for isolated service tests. */
   public AccessControlService(
       AuthService authService,
       AuthRepository authRepository,
       AuditRepository auditRepository
   ) {
-    this.authService = authService;
-    this.authRepository = authRepository;
-    this.auditRepository = auditRepository;
+    this(authService, authRepository, auditRepository, null, null);
   }
 
   public AuthUser requireUser(String authorization) {
@@ -58,77 +61,78 @@ public class AccessControlService {
   }
 
   public void requireFinanceRead(AuthUser user) {
-    requireRole(user, "查看经营数据", FINANCE_READ_ROLES);
+    requirePermission(user, PermissionCodes.FINANCE_PROFIT_READ, "查看经营数据");
   }
 
   public void requireFinanceWrite(AuthUser user) {
-    requireRole(user, "录入经营数据", FINANCE_WRITE_ROLES);
+    requirePermission(user, PermissionCodes.FINANCE_PROFIT_WRITE, "录入经营数据");
   }
 
   public void requireFinanceDelete(AuthUser user) {
-    requireRole(user, "删除经营数据", Set.of("ADMIN", "BOSS", "OWNER"));
+    requirePermission(user, PermissionCodes.FINANCE_PROFIT_DELETE, "删除经营数据");
   }
 
   public void requireExpenseRead(AuthUser user) {
-    requireRole(user, "查看报销数据", EXPENSE_READ_ROLES);
+    requirePermission(user, PermissionCodes.EXPENSE_READ, "查看报销数据");
   }
 
   public void requireExpenseWrite(AuthUser user) {
-    requireRole(user, "录入报销数据", EXPENSE_WRITE_ROLES);
+    requirePermission(user, PermissionCodes.EXPENSE_CREATE, "录入报销数据");
   }
 
   public void requireExpenseReview(AuthUser user) {
-    requireRole(user, "审核报销数据", EXPENSE_REVIEW_ROLES);
+    requirePermission(user, PermissionCodes.EXPENSE_REVIEW, "审核报销数据");
   }
 
   public void requireSalaryRead(AuthUser user) {
-    requireRole(user, "查看工资数据", SALARY_READ_ROLES);
+    requirePermission(user, PermissionCodes.SALARY_READ, "查看工资数据");
   }
 
   public void requireSalaryEdit(AuthUser user) {
-    requireRole(user, "录入工资数据", SALARY_EDIT_ROLES);
+    requirePermission(user, PermissionCodes.SALARY_EDIT, "录入工资数据");
   }
 
   public void requireSalaryReview(AuthUser user) {
-    requireRole(user, "审核工资数据", SALARY_REVIEW_ROLES);
+    requirePermission(user, PermissionCodes.SALARY_REVIEW, "审核工资数据");
+  }
+
+  public void requireSalaryPay(AuthUser user) {
+    requirePermission(user, PermissionCodes.SALARY_PAY, "发放工资");
   }
 
   public void requireAuditRead(AuthUser user) {
-    requireRole(user, "查看操作日志", Set.of("ADMIN", "BOSS", "OWNER"));
+    requirePermission(user, PermissionCodes.SYSTEM_AUDIT_READ, "查看操作日志");
   }
 
   public void requireAuditWrite(AuthUser user) {
-    requireRole(user, "补写操作日志", Set.of("ADMIN", "BOSS", "OWNER"));
+    requirePermission(user, PermissionCodes.SYSTEM_AUDIT_WRITE, "补写操作日志");
   }
 
   public void requireUserManagementRead(AuthUser user) {
-    requireRole(user, "查看账号权限", Set.of("ADMIN", "BOSS", "OWNER"));
+    requireBoss(user, "查看账号权限");
   }
 
   public void requireUserManagementWrite(AuthUser user) {
-    // 引导流程会把 admin 迁移成 BOSS（migrateAdminAccountToBoss），只留 ADMIN 会导致
-    // 系统里没有任何账号能建号/改密；老板本就是旧版页面用户权限页的使用者。
-    requireRole(user, "维护账号权限", Set.of("ADMIN", "BOSS", "OWNER"));
+    requireBoss(user, "维护账号权限");
   }
 
   public void requireDataExport(AuthUser user) {
-    requireRole(user, "导出经营数据", Set.of("ADMIN", "BOSS", "FINANCE", "OWNER"));
+    requirePermission(user, PermissionCodes.FINANCE_EXPORT, "导出经营数据");
   }
 
   public void requireLegacyStorageAccess(AuthUser user) {
-    // 旧版页面是全角色共用的：店长录报销、督导录巡检、财务录利润都要读写共享 KV。
-    // 读放行到全部内部角色；写仍由 StorageService.KEY_WRITE_ROLES 按 key 细分控制。
-    requireRole(user, "访问历史兼容数据",
-        Set.of("ADMIN", "BOSS", "OWNER", "FINANCE", "SUPERVISOR", "WAREHOUSE", "OPERATIONS", "STORE_MANAGER"));
+    // The legacy KV blob cannot enforce row-level store scope. Keep it behind the migration
+    // permission until each key has moved to a structured tenant-scoped repository.
+    requirePermission(user, PermissionCodes.SYSTEM_MIGRATION_MANAGE, "访问历史兼容数据");
   }
 
   public void requireAttachmentWrite(AuthUser user, String storeId) {
-    requireRole(user, "上传附件", ATTACHMENT_ROLES);
+    requirePermission(user, PermissionCodes.ATTACHMENT_WRITE, "上传附件");
     requireStoreAccess(user, storeId, "上传附件");
   }
 
   public void requireAttachmentRead(AuthUser user, String storeId, Long uploadedBy) {
-    requireRole(user, "查看附件", ATTACHMENT_ROLES);
+    requirePermission(user, PermissionCodes.ATTACHMENT_READ, "查看附件");
     if (storeId == null || storeId.isBlank()) {
       if (isGlobalStoreRole(user) || (uploadedBy != null && uploadedBy == user.id())) {
         return;
@@ -139,31 +143,135 @@ public class AccessControlService {
   }
 
   public void requireInspectionRead(AuthUser user) {
-    requireRole(user, "查看巡检数据", INSPECTION_READ_ROLES);
+    requirePermission(user, PermissionCodes.INSPECTION_READ, "查看巡检数据");
   }
 
   public void requireInspectionManage(AuthUser user) {
-    requireRole(user, "处理巡检数据", INSPECTION_MANAGE_ROLES);
+    requirePermission(user, PermissionCodes.INSPECTION_MANAGE, "处理巡检数据");
   }
 
   public void requirePlatformAccess(AuthUser user) {
-    requireRole(user, "查看平台数据", PLATFORM_ROLES);
+    requirePlatformRead(user);
+  }
+
+  public void requirePlatformRead(AuthUser user) {
+    requirePermission(user, PermissionCodes.PLATFORM_READ, "查看平台数据");
+  }
+
+  public void requirePlatformManage(AuthUser user) {
+    requirePermission(user, PermissionCodes.PLATFORM_MANAGE, "维护平台配置");
   }
 
   public void requireExamRead(AuthUser user) {
-    requireRole(user, "查看培训考试", EXAM_READ_ROLES);
+    requirePermission(user, PermissionCodes.EXAM_LEARN, "查看培训考试");
   }
 
   public void requireExamManage(AuthUser user) {
-    requireRole(user, "管理培训考试", EXAM_MANAGE_ROLES);
+    requirePermission(user, PermissionCodes.EXAM_MANAGE, "管理培训考试");
   }
 
   public void requireExamCompanyRead(AuthUser user) {
-    requireRole(user, "查看全部门店考试数据", EXAM_COMPANY_READ_ROLES);
+    requirePermission(user, PermissionCodes.EXAM_REPORT, "查看考试数据报表");
   }
 
   public void requireBossExamRead(AuthUser user) {
-    requireRole(user, "查看老板考试概览", BOSS_EXAM_READ_ROLES);
+    requirePermission(user, PermissionCodes.SYSTEM_DASHBOARD_READ, "查看老板考试概览");
+  }
+
+  public void requireSystemDashboardRead(AuthUser user) {
+    requirePermission(user, PermissionCodes.SYSTEM_DASHBOARD_READ, "查看老板工作台");
+  }
+
+  public void requireOperationsDashboardRead(AuthUser user) {
+    requirePermission(user, PermissionCodes.OPERATIONS_DASHBOARD_READ, "查看运营工作台");
+  }
+
+  public void requireStoreRead(AuthUser user) {
+    requirePermission(user, PermissionCodes.STORE_READ, "查看门店档案");
+  }
+
+  public void requireStoreManage(AuthUser user) {
+    requirePermission(user, PermissionCodes.STORE_MANAGE, "维护门店档案");
+  }
+
+  public void requireEmployeeRead(AuthUser user) {
+    requirePermission(user, PermissionCodes.EMPLOYEE_READ, "查看员工档案");
+  }
+
+  public void requireEmployeeManage(AuthUser user) {
+    requirePermission(user, PermissionCodes.EMPLOYEE_MANAGE, "维护员工档案");
+  }
+
+  public void requireWarehouseCentralRead(AuthUser user) {
+    requirePermission(user, PermissionCodes.WAREHOUSE_CENTRAL_READ, "查看总仓库存");
+  }
+
+  public void requireWarehouseCentralManage(AuthUser user) {
+    requirePermission(user, PermissionCodes.WAREHOUSE_CENTRAL_MANAGE, "维护总仓库存");
+  }
+
+  public void requireWarehouseStoreRead(AuthUser user) {
+    requirePermission(user, PermissionCodes.WAREHOUSE_STORE_READ, "查看门店库存");
+  }
+
+  public void requireWarehouseRequisitionCreate(AuthUser user) {
+    requirePermission(user, PermissionCodes.WAREHOUSE_REQUISITION_CREATE, "创建门店叫货单");
+  }
+
+  public void requireWarehouseRequisitionReview(AuthUser user) {
+    requirePermission(user, PermissionCodes.WAREHOUSE_REQUISITION_REVIEW, "审核门店叫货单");
+  }
+
+  public void requireWarehouseRequisitionReceive(AuthUser user) {
+    requirePermission(user, PermissionCodes.WAREHOUSE_REQUISITION_RECEIVE, "确认门店收货");
+  }
+
+  public void requireWarehouseRead(AuthUser user) {
+    requirePermission(user, PermissionCodes.WAREHOUSE_READ, "查看仓库");
+  }
+
+  public void requireWarehousePurchase(AuthUser user) {
+    requirePermission(user, PermissionCodes.WAREHOUSE_PURCHASE, "办理外部采购");
+  }
+
+  public void requireWarehouseTransferRequest(AuthUser user) {
+    requirePermission(user, PermissionCodes.WAREHOUSE_TRANSFER_REQUEST, "申请仓间调拨");
+  }
+
+  public void requireWarehouseTransferApprove(AuthUser user) {
+    requirePermission(user, PermissionCodes.WAREHOUSE_TRANSFER_APPROVE, "审批仓间调拨");
+  }
+
+  public void requireWarehouseTransferShip(AuthUser user) {
+    requirePermission(user, PermissionCodes.WAREHOUSE_TRANSFER_SHIP, "执行仓间调拨发货");
+  }
+
+  public void requireWarehouseTransferReceive(AuthUser user) {
+    requirePermission(user, PermissionCodes.WAREHOUSE_TRANSFER_RECEIVE, "确认仓间调拨收货");
+  }
+
+  public void requireWarehouseRequisitionProcess(AuthUser user) {
+    requirePermission(user, PermissionCodes.WAREHOUSE_REQUISITION_PROCESS, "处理门店叫货");
+  }
+
+  public void requireWarehouseConfigure(AuthUser user) {
+    requirePermission(user, PermissionCodes.WAREHOUSE_CONFIGURE, "维护仓库配置");
+  }
+
+  public void requireAssistantUse(AuthUser user) {
+    requirePermission(user, PermissionCodes.ASSISTANT_USE, "使用门店经营助手");
+  }
+
+  public void requireMigrationManage(AuthUser user) {
+    requirePermission(user, PermissionCodes.SYSTEM_MIGRATION_MANAGE, "管理历史数据迁移");
+  }
+
+  public void requireTodoRead(AuthUser user) {
+    requirePermission(user, PermissionCodes.TODO_READ, "查看业务待办");
+  }
+
+  public void requireTodoTransition(AuthUser user) {
+    requirePermission(user, PermissionCodes.TODO_TRANSITION, "处理业务待办");
   }
 
   public void requireOwnExamAssignment(AuthUser user, long assignedUserId, long assignmentId) {
@@ -197,23 +305,37 @@ public class AccessControlService {
   }
 
   public void requireStoreAccess(AuthUser user, String storeId, String action) {
+    requireStoreAccess(user, DataScopeDomains.STORE, storeId, action);
+  }
+
+  public void requireStoreAccess(AuthUser user, String domainCode, String storeId, String action) {
     String normalizedStoreId = storeId == null ? "" : storeId.trim();
     if (normalizedStoreId.isBlank()) {
       deny(user, action, "STORE", null, null, "未指定门店");
     }
-    if (isGlobalStoreRole(user)) {
+    if (hasAllDataScope(user, domainCode)) {
       return;
     }
-    if (allowedStoreIds(user).contains(normalizedStoreId)) {
+    if (allowedStoreIds(user, domainCode).contains(normalizedStoreId)) {
       return;
     }
     deny(user, action, "STORE", normalizedStoreId, normalizedStoreId, "门店不在当前账号的数据范围内");
   }
 
   public Set<String> allowedStoreIds(AuthUser user) {
+    return allowedStoreIds(user, DataScopeDomains.STORE);
+  }
+
+  public Set<String> allowedStoreIds(AuthUser user, String domainCode) {
+    if (dataScopeService != null) {
+      return dataScopeService.allowedStoreIds(user, domainCode);
+    }
     LinkedHashSet<String> values = new LinkedHashSet<>();
-    if (isGlobalStoreRole(user)) {
+    if (isBoss(user)) {
       values.add("all");
+      return values;
+    }
+    if (user == null) {
       return values;
     }
     if (user.storeId() != null && !user.storeId().isBlank()) {
@@ -224,25 +346,137 @@ public class AccessControlService {
   }
 
   public boolean canAccessStore(AuthUser user, String storeId) {
-    if (isGlobalStoreRole(user)) {
-      return true;
-    }
-    return storeId != null && allowedStoreIds(user).contains(storeId.trim());
+    return canAccessStore(user, DataScopeDomains.STORE, storeId);
   }
 
-  private void requireRole(AuthUser user, String action, Set<String> allowedRoles) {
-    if (user != null && allowedRoles.contains(normalizeRole(user.role()))) {
+  public Set<String> allowedWarehouseIds(AuthUser user) {
+    if (isBoss(user)) {
+      return Set.of("all");
+    }
+    if (dataScopeService != null) {
+      return dataScopeService.allowedWarehouseIds(user);
+    }
+    return Set.of();
+  }
+
+  public boolean canAccessWarehouse(AuthUser user, String warehouseId) {
+    if (isBoss(user)) {
+      return true;
+    }
+    return dataScopeService != null && dataScopeService.canAccessWarehouse(user, warehouseId);
+  }
+
+  public boolean canAccessStore(AuthUser user, String domainCode, String storeId) {
+    if (dataScopeService != null) {
+      return dataScopeService.canAccessStore(user, domainCode, storeId);
+    }
+    Set<String> allowedStoreIds = allowedStoreIds(user, domainCode);
+    return allowedStoreIds.contains("all")
+        || (storeId != null && allowedStoreIds.contains(storeId.trim()));
+  }
+
+  public boolean hasAllDataScope(AuthUser user, String domainCode) {
+    if (isBoss(user)) {
+      return true;
+    }
+    if (dataScopeService != null) {
+      return dataScopeService.hasAllDataScope(user, domainCode);
+    }
+    return false;
+  }
+
+  public DataScope dataScope(AuthUser user, String domainCode) {
+    if (isBoss(user)) {
+      return DataScope.all();
+    }
+    if (dataScopeService != null) {
+      return dataScopeService.scope(user, domainCode);
+    }
+    String role = user == null ? "" : canonicalRole(user.role());
+    if ("EMPLOYEE".equals(role) && DataScopeDomains.EXAM.equals(domainCode)) {
+      return new DataScope(DataScopeModes.SELF, java.util.List.of());
+    }
+    if ("WAREHOUSE".equals(role) && DataScopeDomains.WAREHOUSE.equals(domainCode)) {
+      return new DataScope(DataScopeModes.CENTRAL_WAREHOUSE, java.util.List.of());
+    }
+    if ("STORE_MANAGER".equals(role)
+        && user.storeId() != null
+        && !user.storeId().isBlank()) {
+      return new DataScope(DataScopeModes.OWN_STORE, java.util.List.of(user.storeId().trim()));
+    }
+    Set<String> allowedStoreIds = allowedStoreIds(user, domainCode);
+    if (allowedStoreIds.contains("all")) {
+      return DataScope.all();
+    }
+    return allowedStoreIds.isEmpty()
+        ? DataScope.none()
+        : new DataScope(DataScopeModes.STORE_LIST, allowedStoreIds.stream().sorted().toList());
+  }
+
+  public boolean hasPermission(AuthUser user, String permissionCode) {
+    if (isBoss(user)) {
+      return true;
+    }
+    if (authorizationService != null) {
+      return authorizationService.hasPermission(user, permissionCode);
+    }
+    return user != null && AuthorizationService.legacyTemplatePermissions(user.role()).contains(permissionCode);
+  }
+
+  public void requirePermission(AuthUser user, String permissionCode, String action) {
+    if (hasPermission(user, permissionCode)) {
       return;
     }
-    deny(user, action, "API", null, null, "角色不具备该业务权限");
+    deny(user, action, "API", permissionCode, null, "账号不具备权限 " + permissionCode);
+  }
+
+  public void requirePermission(AuthUser user, String permissionCode) {
+    requirePermission(user, permissionCode, "访问受保护业务");
+  }
+
+  public void requireBoss(AuthUser user, String action) {
+    if (isBoss(user)) {
+      return;
+    }
+    deny(user, action, "API", PermissionCodes.SYSTEM_USER_MANAGE, null, "账号权限管理仅限老板");
   }
 
   private boolean isGlobalStoreRole(AuthUser user) {
-    return user != null && GLOBAL_STORE_ROLES.contains(normalizeRole(user.role()));
+    return isBoss(user);
   }
 
-  private String normalizeRole(String role) {
-    return role == null ? "" : role.trim().toUpperCase();
+  public static boolean isBoss(AuthUser user) {
+    return user != null && isBossRole(user.role());
+  }
+
+  public static boolean isBossRole(String role) {
+    return BOSS_ROLE.equals(canonicalRole(role));
+  }
+
+  public static boolean hasAnyRole(AuthUser user, String... allowedRoles) {
+    return hasAnyRole(user, allowedRoles == null ? Set.of() : Set.of(allowedRoles));
+  }
+
+  public static boolean hasAnyRole(AuthUser user, Set<String> allowedRoles) {
+    if (user == null) {
+      return false;
+    }
+    String role = canonicalRole(user.role());
+    if (BOSS_ROLE.equals(role)) {
+      return true;
+    }
+    return allowedRoles != null && allowedRoles.stream()
+        .map(AccessControlService::canonicalRole)
+        .anyMatch(role::equals);
+  }
+
+  public static String canonicalRole(String role) {
+    String normalized = role == null ? "" : role.trim().toUpperCase(Locale.ROOT);
+    return switch (normalized) {
+      case "ADMIN", "OWNER" -> BOSS_ROLE;
+      case "OPS", "SUPERVISOR" -> "OPERATIONS";
+      default -> normalized;
+    };
   }
 
   private void deny(

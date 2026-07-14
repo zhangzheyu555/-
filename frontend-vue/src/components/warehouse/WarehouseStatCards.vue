@@ -16,7 +16,7 @@ function money(value: number) {
 
 <template>
   <div class="warehouse-stat-grid">
-    <div class="warehouse-stat featured">
+    <div class="warehouse-stat">
       <span>物料数</span>
       <b>{{ itemCount }}<small>项</small></b>
       <Package :size="20" />
@@ -26,12 +26,12 @@ function money(value: number) {
       <b>{{ money(stockValue) }}</b>
       <WalletCards :size="20" />
     </div>
-    <div class="warehouse-stat">
+    <div class="warehouse-stat" :class="{ featured: lowStockCount > 0 }">
       <span>低库存</span>
       <b>{{ lowStockCount }}<small>项</small></b>
       <AlertTriangle :size="20" />
     </div>
-    <div class="warehouse-stat">
+    <div class="warehouse-stat" :class="{ featured: lowStockCount <= 0 && expiringCount > 0 }">
       <span>临期风险</span>
       <b>{{ expiringCount }}<small>项</small></b>
       <ShieldAlert :size="20" />
@@ -62,8 +62,9 @@ function money(value: number) {
 }
 
 .warehouse-stat.featured {
-  border-color: transparent;
-  background: linear-gradient(135deg, #ff9146, #f67e36 48%, #5b403c);
+  border-color: var(--primary, #76bdb8);
+  background-color: var(--primary, #76bdb8);
+  background-image: none;
   color: #fff;
 }
 
@@ -74,7 +75,8 @@ function money(value: number) {
 }
 
 .warehouse-stat.featured span {
-  color: rgba(255, 255, 255, 0.86);
+  color: #fff;
+  opacity: 1;
 }
 
 .warehouse-stat b {
@@ -100,5 +102,21 @@ function money(value: number) {
   right: 14px;
   bottom: 14px;
   opacity: 0.3;
+}
+
+@media (max-width: 768px) {
+  .warehouse-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .warehouse-stat {
+    min-height: 82px;
+    padding: 14px;
+  }
+
+  .warehouse-stat b {
+    margin-top: 9px;
+    font-size: 23px;
+  }
 }
 </style>

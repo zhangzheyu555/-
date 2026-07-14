@@ -1,6 +1,7 @@
 package com.storeprofit.system.operations;
 
 import com.storeprofit.system.common.ApiResponse;
+import com.storeprofit.system.common.BusinessException;
 import com.storeprofit.system.operations.OperationsBusinessModels.ExamAttemptRequest;
 import com.storeprofit.system.operations.OperationsBusinessModels.ExamAttemptResponse;
 import com.storeprofit.system.operations.OperationsBusinessModels.ExamPaperResponse;
@@ -10,6 +11,9 @@ import com.storeprofit.system.operations.OperationsBusinessModels.TrainingLearni
 import com.storeprofit.system.operations.OperationsBusinessModels.TrainingMaterialResponse;
 import com.storeprofit.system.platform.auth.AuthService;
 import java.util.List;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -75,41 +79,63 @@ public class OperationsBusinessController {
   }
 
   @GetMapping("/api/operations/exam-papers")
-  public ApiResponse<List<ExamPaperResponse>> examPapers(
+  @Deprecated(since = "0.2.0", forRemoval = false)
+  public ResponseEntity<ApiResponse<List<ExamPaperResponse>>> examPapers(
       @RequestHeader(value = "Authorization", required = false) String authorization
   ) {
-    return ApiResponse.ok(operationsBusinessService.examPapers(authService.requireUser(authorization)));
+    return legacyReadOnly(
+        ApiResponse.ok(operationsBusinessService.examPapers(authService.requireUser(authorization))),
+        "/api/exam-center/overview"
+    );
   }
 
   @GetMapping("/api/operations/exam-papers/{id}")
-  public ApiResponse<ExamPaperResponse> examPaper(
+  @Deprecated(since = "0.2.0", forRemoval = false)
+  public ResponseEntity<ApiResponse<ExamPaperResponse>> examPaper(
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @PathVariable long id
   ) {
-    return ApiResponse.ok(operationsBusinessService.examPaper(authService.requireUser(authorization), id));
+    return legacyReadOnly(
+        ApiResponse.ok(operationsBusinessService.examPaper(authService.requireUser(authorization), id)),
+        "/api/exam-center/papers/" + id
+    );
   }
 
   @PostMapping("/api/operations/exam-attempts")
+  @Deprecated(since = "0.2.0", forRemoval = true)
   public ApiResponse<ExamAttemptResponse> submitExamAttempt(
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @RequestBody ExamAttemptRequest request
   ) {
-    return ApiResponse.ok(operationsBusinessService.submitExamAttempt(authService.requireUser(authorization), request));
+    authService.requireUser(authorization);
+    throw new BusinessException(
+        "LEGACY_EXAM_WRITE_DISABLED",
+        "旧考试提交入口已停用，请从考试中心的分配任务进入答题",
+        HttpStatus.GONE
+    );
   }
 
   @GetMapping("/api/operations/exam-attempts")
-  public ApiResponse<List<ExamAttemptResponse>> examAttempts(
+  @Deprecated(since = "0.2.0", forRemoval = false)
+  public ResponseEntity<ApiResponse<List<ExamAttemptResponse>>> examAttempts(
       @RequestHeader(value = "Authorization", required = false) String authorization
   ) {
-    return ApiResponse.ok(operationsBusinessService.examAttempts(authService.requireUser(authorization)));
+    return legacyReadOnly(
+        ApiResponse.ok(operationsBusinessService.examAttempts(authService.requireUser(authorization))),
+        "/api/exam-center/results"
+    );
   }
 
   @GetMapping("/api/operations/exam-attempts/{id}")
-  public ApiResponse<ExamAttemptResponse> examAttempt(
+  @Deprecated(since = "0.2.0", forRemoval = false)
+  public ResponseEntity<ApiResponse<ExamAttemptResponse>> examAttempt(
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @PathVariable long id
   ) {
-    return ApiResponse.ok(operationsBusinessService.examAttempt(authService.requireUser(authorization), id));
+    return legacyReadOnly(
+        ApiResponse.ok(operationsBusinessService.examAttempt(authService.requireUser(authorization), id)),
+        "/api/exam-center/results"
+    );
   }
 
   @GetMapping("/api/operations/training-materials")
@@ -132,5 +158,12 @@ public class OperationsBusinessController {
       @RequestHeader(value = "Authorization", required = false) String authorization
   ) {
     return ApiResponse.ok(operationsBusinessService.learningRecords(authService.requireUser(authorization)));
+  }
+
+  private <T> ResponseEntity<ApiResponse<T>> legacyReadOnly(ApiResponse<T> body, String successor) {
+    return ResponseEntity.ok()
+        .header("Deprecation", "true")
+        .header(HttpHeaders.LINK, "<" + successor + ">; rel=\"successor-version\"")
+        .body(body);
   }
 }

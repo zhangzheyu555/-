@@ -87,4 +87,13 @@ class FinanceControllerTest {
     verify(financeWorkbenchService).complete(boss, "profit-risk-rg1-2026-07", completion);
     verify(financeWorkbenchService).reject(boss, "expense-1", new FinanceTodoActionRequest("票据缺失"));
   }
+
+  @Test
+  void dashboardForwardsStoreIdSoCrossStoreRequestsCannotBeIgnored() {
+    when(authService.requireUser("Bearer token")).thenReturn(boss);
+
+    controller.dashboard("Bearer token", "2026-07", 9L, "rg1");
+
+    verify(financeService).dashboard(boss, "2026-07", 9L, "rg1");
+  }
 }

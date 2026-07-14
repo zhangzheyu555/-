@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { CheckCircle2, FileQuestion, Pencil, Send, XCircle } from 'lucide-vue-next'
+import { CheckCircle2, FileQuestion, MessageSquareText, Paperclip, Pencil, Send, XCircle } from 'lucide-vue-next'
 import StatusBadge from '../common/StatusBadge.vue'
-import type { ExpenseClaim } from '../../api/finance'
+import ExpenseSupplementAttachments from './ExpenseSupplementAttachments.vue'
+import type { ExpenseClaim, ExpenseSupplementAttachment } from '../../api/finance'
 
 const props = withDefaults(defineProps<{
   expenses: ExpenseClaim[]
@@ -17,6 +18,7 @@ defineEmits<{
   approve: [expense: ExpenseClaim]
   reject: [expense: ExpenseClaim]
   requestInfo: [expense: ExpenseClaim]
+  supplement: [expense: ExpenseClaim]
   escalate: [expense: ExpenseClaim]
   edit: [expense: ExpenseClaim]
   submit: [expense: ExpenseClaim]
@@ -51,6 +53,27 @@ function canReview(status: string) {
 function canEdit(status: string) {
   return ['草稿', '已驳回', 'REJECTED', '待补资料', 'REQUEST_INFO'].includes(status)
 }
+
+function canSupplement(status: string) {
+  return !['已完成', '已通过', 'APPROVED'].includes(status)
+}
+
+function supplementAttachments(expense: ExpenseClaim): ExpenseSupplementAttachment[] {
+  return (expense.supplements || []).flatMap((supplement) => supplement.attachments || [])
+}
+
+function supplementNote(expense: ExpenseClaim) {
+  if (expense.latestSupplementNote) return expense.latestSupplementNote
+  return (expense.supplements || []).find((supplement) => supplement.note?.trim())?.note || ''
+}
+
+function supplementCount(expense: ExpenseClaim) {
+  return Number(expense.supplementAttachmentCount ?? supplementAttachments(expense).length)
+}
+
+function hasSupplement(expense: ExpenseClaim) {
+  return Boolean(supplementNote(expense) || supplementCount(expense))
+}
 </script>
 
 <template>
@@ -75,6 +98,23 @@ function canEdit(status: string) {
             <span>月份：{{ expense.month || '-' }}</span>
             <span>品牌：{{ expense.brandName || '-' }}</span>
           </div>
+          <div v-if="hasSupplement(expense)" class="supplement-evidence">
+            <div v-if="supplementNote(expense)" class="supplement-note">
+              <MessageSquareText :size="15" />
+              <div>
+                <b>补充说明</b>
+                <p>{{ supplementNote(expense) }}</p>
+              </div>
+            </div>
+            <div v-if="supplementCount(expense)" class="supplement-count">
+              <Paperclip :size="14" />{{ supplementCount(expense) }} 个附件
+            </div>
+            <ExpenseSupplementAttachments
+              v-if="supplementAttachments(expense).length"
+              :expense-id="expense.id"
+              :attachments="supplementAttachments(expense)"
+            />
+          </div>
         </div>
         <div class="finance-row-side">
           <StatusBadge :label="statusLabel(expense.status)" :tone="tone(expense.status)" />
@@ -85,8 +125,18 @@ function canEdit(status: string) {
               :disabled="props.actioningId === expense.id"
               @click="$emit('requestInfo', expense)"
             >
-              补资料
+              要求补资料
               <FileQuestion :size="14" />
+            </button>
+            <button
+              v-if="props.editable"
+              class="mini-button"
+              type="button"
+              :disabled="props.actioningId === expense.id"
+              @click="$emit('supplement', expense)"
+            >
+              补充资料
+              <Paperclip :size="14" />
             </button>
             <button
               class="mini-button"
@@ -117,6 +167,16 @@ function canEdit(status: string) {
             </button>
           </div>
           <div v-else-if="props.editable && canEdit(expense.status)" class="finance-actions">
+            <button
+              v-if="canSupplement(expense.status)"
+              class="mini-button"
+              type="button"
+              :disabled="props.actioningId === expense.id"
+              @click="$emit('supplement', expense)"
+            >
+              补充资料
+              <Paperclip :size="14" />
+            </button>
             <button class="mini-button" type="button" :disabled="props.actioningId === expense.id" @click="$emit('edit', expense)">
               编辑
               <Pencil :size="14" />
@@ -196,6 +256,46 @@ function canEdit(status: string) {
   margin-top: 10px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.supplement-evidence {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.supplement-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  color: var(--primary-dark);
+}
+
+.supplement-note > div {
+  display: grid;
+  gap: 2px;
+}
+
+.supplement-note b,
+.supplement-note p,
+.supplement-count {
+  font-size: 12px;
+}
+
+.supplement-note p {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.supplement-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
 }
 
 .finance-row-side {

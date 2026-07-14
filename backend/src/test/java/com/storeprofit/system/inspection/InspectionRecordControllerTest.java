@@ -106,6 +106,22 @@ class InspectionRecordControllerTest {
     verify(inspectionService).bindDetectionResults(supervisor, "insp-1", request);
   }
 
+  @Test
+  void historyRepairUsesAuthenticatedInspectionManager() {
+    InspectionHistoryRepairResponse response =
+        new InspectionHistoryRepairResponse(2, 1, 1, 0, List.of("manual-1"));
+    when(accessControl.requireUser("Bearer token")).thenReturn(supervisor);
+    when(inspectionService.repairHistory(supervisor)).thenReturn(response);
+
+    ApiResponse<InspectionHistoryRepairResponse> result =
+        controller.repairHistory("Bearer token");
+
+    assertThat(result.data()).isSameAs(response);
+    verify(accessControl).requireUser("Bearer token");
+    verify(accessControl).requireInspectionManage(supervisor);
+    verify(inspectionService).repairHistory(supervisor);
+  }
+
   private InspectionRecordRequest request() {
     return new InspectionRecordRequest(
         "s1",

@@ -64,6 +64,7 @@ function lineText(row: WarehouseRequisition) {
           <tr>
             <th>叫货单</th>
             <th>门店</th>
+            <th>供货仓</th>
             <th>商品明细</th>
             <th>金额</th>
             <th>状态</th>
@@ -79,6 +80,7 @@ function lineText(row: WarehouseRequisition) {
                 <small>{{ row.note || '门店叫货' }}</small>
               </td>
               <td>{{ row.storeName || row.storeId }}</td>
+              <td>{{ row.warehouseName || '系统自动路由' }}</td>
               <td>{{ lineText(row) }}</td>
               <td>{{ Number(row.totalAmount || 0).toLocaleString('zh-CN', { style: 'currency', currency: 'CNY' }) }}</td>
               <td><StatusBadge :label="statusLabel(row.status)" :tone="statusTone(row.status)" /></td>
@@ -125,7 +127,7 @@ function lineText(row: WarehouseRequisition) {
               </td>
             </tr>
             <tr v-if="expandedId === row.id">
-              <td colspan="7">
+              <td colspan="8">
                 <div class="detail-panel">
                   <div class="detail-grid">
                     <span>审核时间：{{ row.reviewedAt || '-' }}</span>
@@ -147,7 +149,7 @@ function lineText(row: WarehouseRequisition) {
             </tr>
           </template>
           <tr v-if="!requisitions.length">
-            <td colspan="7" class="empty-cell">当前没有门店叫货单。</td>
+            <td colspan="8" class="empty-cell">当前没有门店叫货单。</td>
           </tr>
         </tbody>
       </table>

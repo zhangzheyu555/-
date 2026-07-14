@@ -2,6 +2,9 @@
 import { computed, reactive, ref } from 'vue'
 import { ChevronDown, FolderPlus, FolderTree, Pencil, Plus, Trash2 } from 'lucide-vue-next'
 import type { WarehouseItem, WarehouseItemCategory } from '../../api/warehouse'
+import ActionConfirmDialog from '../ui/ActionConfirmDialog.vue'
+import UiButton from '../ui/UiButton.vue'
+import UnsavedChangesDialog from '../ui/UnsavedChangesDialog.vue'
 
 const props = withDefaults(defineProps<{
   categories: WarehouseItemCategory[]
@@ -30,6 +33,9 @@ interface CategoryRow {
 
 const editorOpen = ref(false)
 const editorMode = ref<'create' | 'edit'>('create')
+const editorSnapshot = ref('')
+const showDiscardConfirmation = ref(false)
+const pendingDelete = ref<CategoryRow | null>(null)
 const editor = reactive({
   id: undefined as number | undefined,
   name: '',
@@ -53,6 +59,11 @@ function flatten(categories: WarehouseItemCategory[], depth = 0): CategoryRow[] 
 
 const rows = computed<CategoryRow[]>(() => flatten(props.categories))
 const parentOptions = computed(() => rows.value.filter((row) => row.id !== editor.id))
+const editorDirty = computed(() => editorOpen.value && JSON.stringify(editor) !== editorSnapshot.value)
+
+function captureEditor() {
+  editorSnapshot.value = JSON.stringify(editor)
+}
 
 function openCreate(parentId: number | null = null) {
   editorMode.value = 'create'
@@ -62,6 +73,7 @@ function openCreate(parentId: number | null = null) {
   editor.sortOrder = 0
   editor.enabled = true
   editorOpen.value = true
+  captureEditor()
 }
 
 function openEdit(row: CategoryRow) {
@@ -75,6 +87,7 @@ function openEdit(row: CategoryRow) {
   editor.sortOrder = source.sortOrder
   editor.enabled = source.enabled
   editorOpen.value = true
+  captureEditor()
 }
 
 function findCategory(id: number, categories: WarehouseItemCategory[]): WarehouseItemCategory | null {
@@ -96,11 +109,28 @@ function save() {
     enabled: editor.enabled,
   })
   editorOpen.value = false
+  editorSnapshot.value = ''
 }
 
 function remove(row: CategoryRow) {
-  if (!row.id || !window.confirm(`确认删除“${row.name}”吗？`)) return
-  emit('remove', row.id)
+  if (row.id) pendingDelete.value = row
+}
+
+function confirmRemove() {
+  if (!pendingDelete.value?.id) return
+  emit('remove', pendingDelete.value.id)
+  pendingDelete.value = null
+}
+
+function requestCancel() {
+  if (editorDirty.value) showDiscardConfirmation.value = true
+  else closeEditor()
+}
+
+function closeEditor() {
+  showDiscardConfirmation.value = false
+  editorOpen.value = false
+  editorSnapshot.value = ''
 }
 </script>
 
@@ -111,7 +141,7 @@ function remove(row: CategoryRow) {
         <FolderTree :size="18" />
         <h3>物料分类</h3>
       </div>
-      <button v-if="canManage" class="icon-button" type="button" title="新增分类" @click="openCreate()">
+      <button v-if="canManage" class="icon-button" type="button" title="新增分类" aria-label="新增物料分类" @click="openCreate()">
         <Plus :size="17" />
       </button>
     </div>
@@ -135,13 +165,13 @@ function remove(row: CategoryRow) {
           <b>{{ row.count }}</b>
         </button>
         <div v-if="canManage" class="category-tools">
-          <button class="icon-button small" type="button" title="新增下级分类" @click="openCreate(row.id || null)">
+          <button class="icon-button small" type="button" title="新增下级分类" :aria-label="`为${row.name}新增下级分类`" @click="openCreate(row.id || null)">
             <FolderPlus :size="14" />
           </button>
-          <button class="icon-button small" type="button" title="编辑分类" @click="openEdit(row)">
+          <button class="icon-button small" type="button" title="编辑分类" :aria-label="`编辑分类${row.name}`" @click="openEdit(row)">
             <Pencil :size="14" />
           </button>
-          <button class="icon-button small danger" type="button" title="删除分类" :disabled="actioningId === `category-delete:${row.id}`" @click="remove(row)">
+          <button class="icon-button small danger" type="button" title="删除分类" :aria-label="`删除分类${row.name}`" :disabled="actioningId === `category-delete:${row.id}`" @click="remove(row)">
             <Trash2 :size="14" />
           </button>
         </div>
@@ -171,10 +201,28 @@ function remove(row: CategoryRow) {
         启用分类
       </label>
       <div class="category-editor-actions">
-        <button class="mini-button" type="button" @click="editorOpen = false">取消</button>
-        <button class="mini-button primary" type="button" :disabled="!editor.name.trim()" @click="save">保存</button>
+        <UiButton variant="secondary" @click="requestCancel">取消</UiButton>
+        <UiButton variant="primary" :disabled="!editor.name.trim()" @click="save">保存</UiButton>
       </div>
     </div>
+
+    <UnsavedChangesDialog
+      :open="showDiscardConfirmation"
+      title="分类修改尚未保存"
+      message="关闭后，本次分类修改将不会保留。"
+      @keep-editing="showDiscardConfirmation = false"
+      @discard="closeEditor"
+    />
+    <ActionConfirmDialog
+      :open="Boolean(pendingDelete)"
+      title="确认删除物料分类？"
+      :message="pendingDelete ? `删除“${pendingDelete.name}”后无法恢复。` : ''"
+      cancel-label="取消"
+      confirm-label="确认删除"
+      confirm-variant="danger"
+      @cancel="pendingDelete = null"
+      @confirm="confirmRemove"
+    />
   </aside>
 </template>
 

@@ -14,10 +14,9 @@ const pages: Array<{ role: RoleKey | null; path: string; name: string }> = [
   { role: 'finance', path: '/expenses', name: 'finance-expenses' },
   { role: 'warehouse', path: '/warehouse', name: 'warehouse' },
   { role: 'warehouse', path: '/warehouse/items', name: 'warehouse-items' },
-  { role: 'supervisor', path: '/inspection', name: 'supervisor' },
-  { role: 'supervisor', path: '/inspection/records', name: 'inspection-records' },
-  { role: 'operations', path: '/operations', name: 'operations' },
-  { role: 'operations', path: '/operations/exam', name: 'operations-exam' },
+  { role: 'operations', path: '/operations/inspection', name: 'operations-inspection' },
+  { role: 'operations', path: '/operations/inspection/records', name: 'inspection-records' },
+  { role: 'operations', path: '/operations/exams', name: 'operations-exam' },
 ]
 
 test.describe('responsive smoke checks', () => {
@@ -45,8 +44,8 @@ test.describe('responsive smoke checks', () => {
 
     await page.getByRole('button', { name: '打开菜单' }).click()
     await expect(page.locator('.mobile-nav-drawer')).toHaveClass(/open/)
-    await expect(page.locator('.mobile-nav-drawer .nav-list')).toContainText('本店库存')
-    await expect(page.locator('.mobile-nav-drawer .nav-list')).not.toContainText('今日待办')
+    await expect(page.locator('.mobile-nav-drawer .sidebar-navigation')).toContainText('本店库存')
+    await expect(page.locator('.mobile-nav-drawer .sidebar-navigation')).not.toContainText('今日待办')
 
     await page.getByRole('button', { name: '关闭菜单' }).click()
     await expect(page.locator('.mobile-nav-drawer')).not.toHaveClass(/open/)

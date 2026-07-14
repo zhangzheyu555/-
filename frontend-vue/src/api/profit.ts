@@ -60,6 +60,7 @@ export interface ProfitEntry {
 
 export interface ProfitTrendPoint {
   month: string
+  sales?: number
   income: number
   net: number
   margin: number
@@ -76,12 +77,14 @@ export interface ProfitDashboard {
 export interface ProfitDashboardParams {
   month?: string
   brandId?: number | string
+  storeId?: string
 }
 
 export function getProfitDashboard(params: ProfitDashboardParams = {}) {
   const search = new URLSearchParams()
   if (params.month) search.set('month', String(params.month))
   if (params.brandId) search.set('brandId', String(params.brandId))
+  if (params.storeId) search.set('storeId', params.storeId)
   const query = search.toString()
   return apiGet<ProfitDashboard>(`/api/finance/dashboard${query ? `?${query}` : ''}`)
 }

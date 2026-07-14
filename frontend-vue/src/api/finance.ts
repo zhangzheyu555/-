@@ -1,13 +1,4 @@
 import { apiDelete, apiGet, apiPost, apiPostForm, apiPut, http } from './http'
-import type { RoleTodoItem } from './todos'
-
-export interface FinanceSummary {
-  pendingExpenseCount: number
-  profitRiskCount: number
-  salaryCheckCount: number
-  escalatedCount: number
-  headline: string
-}
 
 export interface ExpenseClaim {
   id: string
@@ -25,6 +16,32 @@ export interface ExpenseClaim {
   submittedBy?: number
   reviewedBy?: number
   reviewedAt?: string
+  supplements?: ExpenseSupplement[]
+  supplementAttachmentCount?: number
+  latestSupplementNote?: string
+}
+
+export interface ExpenseSupplementAttachment {
+  id: string | number
+  fileName: string
+  originalFileName?: string
+  contentType?: string
+  fileSize?: number
+  sizeBytes?: number
+  uploadedBy?: number
+  uploadedByName?: string
+  uploadedAt?: string
+  previewUrl?: string
+  downloadUrl?: string
+}
+
+export interface ExpenseSupplement {
+  id: string | number
+  note?: string
+  submittedBy?: number
+  submittedByName?: string
+  submittedAt?: string
+  attachments?: ExpenseSupplementAttachment[]
 }
 
 export interface ProfitEntry {
@@ -121,6 +138,7 @@ export interface SalaryRecord {
   position?: string
   attendance?: string
   gross?: number
+  netPay?: number
   normalHours?: number
   otHours?: number
   workHours?: number
@@ -139,7 +157,7 @@ export interface SalaryRecord {
   performance?: number
   deductUniform?: number
   returnUniform?: number
-  status?: 'DRAFT' | 'SUBMITTED' | 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED' | 'PAID' | 'LOCKED'
+  status?: 'PENDING_GENERATION' | 'DRAFT' | 'SUBMITTED' | 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED' | 'PAID' | 'LOCKED'
   submittedBy?: number
   reviewedBy?: number
   reviewedAt?: string
@@ -162,12 +180,17 @@ export interface SalarySkipDetail {
 }
 
 export interface SalaryPageResponse {
-  rows: SalaryRecord[]
+  content: SalaryRecord[]
+  rows?: SalaryRecord[]
   total: number
+  totalElements?: number
   page: number
   size: number
   totalPages: number
   summary: SalarySummary
+  statusCounts?: Record<string, number>
+  workHoursTotal?: number
+  vacationBalanceTotal?: number
 }
 
 export interface SalarySummary {
@@ -223,64 +246,6 @@ export interface SalaryRecordPayload {
   returnUniform?: number
 }
 
-export interface FinanceSalaryCheck {
-  id: string
-  employeeName: string
-  storeId?: string
-  storeName?: string
-  month: string
-  gross?: number
-  anomaly: string
-  status: string
-}
-
-export interface FinanceDataCheck {
-  id: string
-  source: string
-  issue: string
-  storeId?: string
-  storeName?: string
-  month?: string
-  status: string
-}
-
-export interface FinanceWorkbench {
-  roleName?: string
-  dataSource?: string
-  updatedAt?: string
-  month?: string
-  summary?: FinanceSummary
-  todayFocus?: {
-    pendingExpenseCount?: number
-    profitRiskStoreCount?: number
-    profitRiskCount?: number
-    salaryCheckCount?: number
-    escalatedToBossCount?: number
-    escalatedCount?: number
-    summary?: string
-    headline?: string
-  }
-  todoItems?: RoleTodoItem[]
-  needMyAction?: RoleTodoItem[]
-  expenseReviews?: ExpenseClaim[]
-  profitRisks?: ProfitEntry[]
-  salaryChecks?: FinanceSalaryCheck[]
-  dataChecks?: FinanceDataCheck[]
-  doneItems?: RoleTodoItem[]
-  doneReview?: RoleTodoItem[]
-  assistantPrompts?: string[]
-}
-
-export function getFinanceWorkbench() {
-  return apiGet<FinanceWorkbench>('/api/finance/workbench')
-}
-
-export function getFinanceTodos() {
-  return apiGet<{
-    items: RoleTodoItem[]
-  }>('/api/finance/todos?includeDone=true&limit=160')
-}
-
 export function getExpenses() {
   return apiGet<ExpenseClaim[]>('/api/expenses')
 }
@@ -299,6 +264,60 @@ export function submitExpense(id: string) {
 
 export function requestExpenseInfo(id: string, note?: string) {
   return apiPost<ExpenseClaim, { note?: string }>(`/api/expenses/${encodeURIComponent(id)}/request-info`, { note })
+}
+
+export function submitExpenseSupplement(
+  id: string,
+  note: string,
+  files: File[],
+  onProgress?: (percent: number) => void,
+) {
+  const form = new FormData()
+  form.append('note', note.trim())
+  for (const file of files) form.append('files', file, file.name)
+  return apiPostForm<ExpenseClaim>(`/api/expenses/${encodeURIComponent(id)}/supplements`, form, {
+    timeout: 120_000,
+    onUploadProgress: (event) => {
+      if (!onProgress) return
+      if (!event.total) {
+        onProgress(0)
+        return
+      }
+      onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)))
+    },
+  })
+}
+
+export async function fetchExpenseSupplementAttachment(
+  expenseId: string,
+  attachment: ExpenseSupplementAttachment,
+  mode: 'preview' | 'download',
+  signal?: AbortSignal,
+) {
+  const contentUrl = `/api/expenses/${encodeURIComponent(expenseId)}/attachments/${encodeURIComponent(String(attachment.id))}/content`
+  const response = await http.get<Blob>(contentUrl, {
+    responseType: 'blob',
+    timeout: 120_000,
+    signal,
+    params: mode === 'download' ? { download: true } : undefined,
+  })
+  return response.data
+}
+
+export function expenseAttachmentDisplayName(attachment: ExpenseSupplementAttachment) {
+  return String(attachment.originalFileName || attachment.fileName || '').trim() || '未命名附件'
+}
+
+export async function downloadExpenseSupplementAttachment(expenseId: string, attachment: ExpenseSupplementAttachment) {
+  const blob = await fetchExpenseSupplementAttachment(expenseId, attachment, 'download')
+  const blobUrl = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = blobUrl
+  link.download = expenseAttachmentDisplayName(attachment)
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(blobUrl), 0)
 }
 
 export function approveExpense(id: string, note?: string) {
@@ -326,13 +345,13 @@ export function getProfitMonths() {
   return apiGet<string[]>('/api/finance/months')
 }
 
-export function getProfitEntries(params: ProfitEntryQuery = {}) {
+export function getProfitEntries(params: ProfitEntryQuery = {}, signal?: AbortSignal) {
   const query = new URLSearchParams()
   if (params.month) query.set('month', params.month)
   if (params.brandId !== undefined) query.set('brandId', String(params.brandId))
   if (params.storeId) query.set('storeId', params.storeId)
   const suffix = query.toString() ? `?${query.toString()}` : ''
-  return apiGet<ProfitEntry[]>(`/api/finance/entries${suffix}`)
+  return apiGet<ProfitEntry[]>(`/api/finance/entries${suffix}`, { signal })
 }
 
 export function saveProfitEntry(payload: ProfitEntryPayload) {
@@ -387,6 +406,18 @@ export function getSalaryPage(params: SalaryPageQuery = {}) {
   return apiGet<SalaryPageResponse>(`/api/salaries/page${suffix}`)
 }
 
+export function getSalaryEmployeePage(params: SalaryPageQuery & { status?: string; keyword?: string } = {}, signal?: AbortSignal) {
+  const query = new URLSearchParams()
+  if (params.month) query.set('month', params.month)
+  if (params.brandId !== undefined) query.set('brandId', String(params.brandId))
+  if (params.storeId) query.set('storeId', params.storeId)
+  if (params.status) query.set('status', params.status)
+  if (params.keyword) query.set('keyword', params.keyword)
+  if (params.page !== undefined) query.set('page', String(params.page))
+  if (params.size !== undefined) query.set('size', String(params.size))
+  return apiGet<SalaryPageResponse>(`/api/salaries/employee-page?${query.toString()}`, { signal })
+}
+
 export function getSalaryRecord(id: string) {
   return apiGet<SalaryRecord>(`/api/salaries/${encodeURIComponent(id)}`)
 }
@@ -421,17 +452,6 @@ export async function exportSalaryCsv(params: { month?: string; brandId?: number
   link.download = `salary-export-${params.month || 'all'}.csv`
   link.click()
   window.URL.revokeObjectURL(url)
-}
-
-export function completeFinanceTodo(todoId: string, note: string) {
-  return apiPost<unknown, { note: string; attachments: unknown[] }>(`/api/finance/todos/${encodeURIComponent(todoId)}/complete`, {
-    note,
-    attachments: [],
-  })
-}
-
-export function requestFinanceTodoInfo(todoId: string, note: string) {
-  return apiPost<unknown, { note: string }>(`/api/finance/todos/${encodeURIComponent(todoId)}/request-info`, { note })
 }
 
 export function escalateFinanceTodo(todoId: string, reason: string, severity = 'RISK') {

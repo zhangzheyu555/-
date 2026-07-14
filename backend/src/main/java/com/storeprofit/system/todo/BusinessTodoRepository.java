@@ -56,6 +56,35 @@ public class BusinessTodoRepository {
     return rows.stream().findFirst();
   }
 
+  public Optional<BusinessTodoRow> findVisibleById(
+      long tenantId,
+      String id,
+      String role,
+      boolean allRoles,
+      boolean allStores,
+      List<String> storeIds
+  ) {
+    if (!allStores && (storeIds == null || storeIds.isEmpty())) {
+      return Optional.empty();
+    }
+    StringBuilder sql = new StringBuilder(baseSelect()).append(" and t.id = :id");
+    MapSqlParameterSource params = new MapSqlParameterSource()
+        .addValue("tenantId", tenantId)
+        .addValue("id", id);
+    appendVisibility(sql, params, role, allRoles, allStores, storeIds);
+    return namedJdbcTemplate.query(sql.toString(), params, this::mapRow).stream().findFirst();
+  }
+
+  public boolean existsById(long tenantId, String id) {
+    Integer count = jdbcTemplate.queryForObject(
+        "select count(*) from business_todo where tenant_id = ? and id = ?",
+        Integer.class,
+        tenantId,
+        id
+    );
+    return count != null && count > 0;
+  }
+
   public Optional<BusinessTodoRow> latestByRuleAndSource(long tenantId, String ruleCode, String sourceKey) {
     List<BusinessTodoRow> rows = namedJdbcTemplate.query(baseSelect() + """
         and t.rule_code = :ruleCode
@@ -83,6 +112,49 @@ public class BusinessTodoRepository {
         .append("t.priority desc, t.updated_at desc, t.id desc limit :limit");
     params.addValue("limit", limit);
     return namedJdbcTemplate.query(sql.toString(), params, this::mapRow);
+  }
+
+  public List<BusinessTodoRow> listVisible(
+      long tenantId,
+      String status,
+      int limit,
+      String role,
+      boolean allRoles,
+      boolean allStores,
+      List<String> storeIds
+  ) {
+    if (!allStores && (storeIds == null || storeIds.isEmpty())) {
+      return List.of();
+    }
+    StringBuilder sql = new StringBuilder(baseSelect());
+    MapSqlParameterSource params = new MapSqlParameterSource("tenantId", tenantId);
+    if (status != null && !status.isBlank()) {
+      sql.append(" and t.status = :status");
+      params.addValue("status", status);
+    }
+    appendVisibility(sql, params, role, allRoles, allStores, storeIds);
+    sql.append(" order by case when t.status in ('PENDING', 'IN_PROGRESS', 'PENDING_REVIEW') then 0 else 1 end, ")
+        .append("t.priority desc, t.updated_at desc, t.id desc limit :limit");
+    params.addValue("limit", limit);
+    return namedJdbcTemplate.query(sql.toString(), params, this::mapRow);
+  }
+
+  private void appendVisibility(
+      StringBuilder sql,
+      MapSqlParameterSource params,
+      String role,
+      boolean allRoles,
+      boolean allStores,
+      List<String> storeIds
+  ) {
+    if (!allRoles) {
+      sql.append(" and (upper(t.assignee_role) = :role or upper(t.review_role) = :role)");
+      params.addValue("role", role == null ? "" : role.trim().toUpperCase());
+    }
+    if (!allStores) {
+      sql.append(" and t.store_id in (:storeIds)");
+      params.addValue("storeIds", storeIds);
+    }
   }
 
   public List<BusinessTodoRow> activeByRuleAndMonth(long tenantId, String ruleCode, String month) {

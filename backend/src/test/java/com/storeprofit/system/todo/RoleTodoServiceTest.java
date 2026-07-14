@@ -57,11 +57,47 @@ class RoleTodoServiceTest {
           store_id varchar(64) not null,
           inspection_date date not null,
           inspector varchar(120) null,
-          full_score decimal(8,2) not null default 100,
-          score decimal(8,2) not null default 100,
+          full_score decimal(8,2) not null default 200,
+          score decimal(8,2) not null default 200,
           passed tinyint(1) not null default 1,
+          result_code varchar(32) null,
+          redlines_json text null,
           note text null,
           updated_at timestamp null
+        )
+        """);
+    jdbcTemplate.execute("""
+        create table inspection_result_repair_audit (
+          id bigint auto_increment primary key,
+          tenant_id bigint not null,
+          inspection_record_id varchar(120) not null,
+          original_standard_version_id bigint null,
+          original_standard_version varchar(64) null,
+          original_full_score decimal(8,2) not null,
+          original_pass_score decimal(8,2) null,
+          original_score decimal(8,2) not null,
+          original_material_score decimal(8,2) null,
+          original_hygiene_score decimal(8,2) null,
+          original_service_score decimal(8,2) null,
+          original_result_code varchar(32) null,
+          original_passed tinyint(1) not null,
+          repaired_standard_version_id bigint not null,
+          repaired_standard_version varchar(64) null,
+          repaired_full_score decimal(8,2) null,
+          repaired_pass_score decimal(8,2) null,
+          repaired_score decimal(8,2) null,
+          repaired_material_score decimal(8,2) null,
+          repaired_hygiene_score decimal(8,2) null,
+          repaired_service_score decimal(8,2) null,
+          repaired_result_code varchar(32) null,
+          repaired_passed tinyint(1) null,
+          repair_status varchar(32) not null,
+          repair_reason varchar(500) not null,
+          snapshot_item_count int not null default 0,
+          expected_item_count int not null default 0,
+          repaired_by bigint null,
+          repaired_at timestamp not null default current_timestamp,
+          unique(tenant_id, inspection_record_id, repaired_standard_version_id)
         )
         """);
     jdbcTemplate.execute("""
@@ -219,9 +255,9 @@ class RoleTodoServiceTest {
     jdbcTemplate.update("""
         insert into inspection_record(id, tenant_id, store_id, inspection_date, inspector, full_score, score, passed, note)
         values
-          ('insp-s1', 1, 's1', '2026-07-08', 'Supervisor', 100, 82, 0, 'fix'),
-          ('insp-s2-ok', 1, 's2', '2026-07-08', 'Supervisor', 100, 100, 1, 'ok'),
-          ('insp-other', 2, 'other', '2026-07-08', 'Other', 100, 50, 0, 'other tenant')
+          ('insp-s1', 1, 's1', '2026-07-08', 'Supervisor', 200, 164, 0, 'fix'),
+          ('insp-s2-ok', 1, 's2', '2026-07-08', 'Supervisor', 200, 200, 1, 'ok'),
+          ('insp-other', 2, 'other', '2026-07-08', 'Other', 200, 100, 0, 'other tenant')
         """);
     jdbcTemplate.update("""
         insert into store_requisition(id, tenant_id, store_id, status, total_amount, submitted_at)
@@ -266,7 +302,7 @@ class RoleTodoServiceTest {
   void bossSeesTenantScopedInspectionAndWarehouseTodos() {
     RoleTodoResponse response = service.todos(boss(), RoleTodoAudience.BOSS, new RoleTodoQuery(false, null, 50, null, null));
 
-    assertThat(response.roleName()).isEqualTo("\u8001\u677f");
+    assertThat(response.roleName()).isEqualTo("老板（系统管理员）");
     assertThat(response.dataSource()).contains("MySQL");
     assertThat(response.items()).extracting(RoleTodoItemResponse::id)
         .contains("profit-risk-s1-2026-07", "inspection-insp-s1", "expense-exp-s1", "warehouse-req-s1");
@@ -276,6 +312,59 @@ class RoleTodoServiceTest {
     assertThat(response.stats()).filteredOn(stat -> "PENDING".equals(stat.status()))
         .singleElement()
         .satisfies(stat -> assertThat(stat.count()).isEqualTo(2));
+  }
+
+  @Test
+  void inspectionTodosUseRepairPresentationAndCanonicalHundredPointConversion() {
+    jdbcTemplate.update("""
+        insert into inspection_record(
+          id, tenant_id, store_id, inspection_date, inspector,
+          full_score, score, passed, result_code, redlines_json, note
+        ) values
+          ('legacy-82-passed', 1, 's1', '2026-07-09', 'Supervisor', 200, 164, 0, 'FAILED', '[]', 'legacy migrated'),
+          ('wrong-200-98', 1, 's1', '2026-07-10', 'Supervisor', 200, 98, 1, 'PASSED', '[]', 'wrong result'),
+          ('manual-review', 1, 's1', '2026-07-11', 'Supervisor', 200, 190, 1, 'PASSED', '[]', 'incomplete snapshot')
+        """);
+    jdbcTemplate.update("""
+        insert into inspection_result_repair_audit(
+          tenant_id, inspection_record_id,
+          original_full_score, original_pass_score, original_score,
+          original_result_code, original_passed,
+          repaired_standard_version_id,
+          repaired_full_score, repaired_pass_score, repaired_score,
+          repaired_result_code, repaired_passed,
+          repair_status, repair_reason, snapshot_item_count, expected_item_count
+        ) values
+          (1, 'insp-s1', 100, 90, 82, 'FAILED', 0, 40,
+           200, 180, 196, 'PASSED', 1,
+           'RECALCULATED', '完整快照重新计算', 105, 105),
+          (1, 'manual-review', 200, 180, 190, 'PASSED', 1, 40,
+           null, null, null, null, null,
+           'MANUAL_REVIEW', '快照不完整', 87, 105)
+        """);
+
+    RoleTodoResponse response = service.todos(
+        supervisor(),
+        RoleTodoAudience.SUPERVISOR,
+        new RoleTodoQuery(false, null, 50, null, null)
+    );
+
+    assertThat(response.items()).extracting(RoleTodoItemResponse::id)
+        .doesNotContain("inspection-insp-s1")
+        .contains("inspection-legacy-82-passed", "inspection-wrong-200-98", "inspection-manual-review");
+    assertThat(response.items()).filteredOn(item -> "inspection-legacy-82-passed".equals(item.id()))
+        .singleElement()
+        .satisfies(item -> assertThat(item.summary()).contains("164/200"));
+    assertThat(response.items()).filteredOn(item -> "inspection-wrong-200-98".equals(item.id()))
+        .singleElement()
+        .satisfies(item -> assertThat(item.summary()).contains("98/200"));
+    assertThat(response.items()).filteredOn(item -> "inspection-manual-review".equals(item.id()))
+        .singleElement()
+        .satisfies(item -> {
+          assertThat(item.title()).contains("待人工复核");
+          assertThat(item.processStatus()).isEqualTo("待人工复核");
+          assertThat(item.summary()).contains("原始成绩不会被覆盖");
+        });
   }
 
   @Test
@@ -363,7 +452,7 @@ class RoleTodoServiceTest {
     BossTodoDashboardResponse dashboard =
         service.bossDashboard(boss(), new RoleTodoQuery(false, null, 200, null, null));
 
-    assertThat(dashboard.roleName()).isEqualTo("老板");
+    assertThat(dashboard.roleName()).isEqualTo("老板（系统管理员）");
     assertThat(dashboard.todayFocus().needsBossActionCount()).isEqualTo(2);
     assertThat(dashboard.todayFocus().roleWorkCount()).isEqualTo(5);
     assertThat(dashboard.needsBossAction()).extracting(RoleTodoItemResponse::id)
@@ -492,7 +581,7 @@ class RoleTodoServiceTest {
     RoleTodoEscalationResponse escalation = service.escalate(
         finance(),
         RoleTodoAudience.FINANCE,
-        "expense-claim-1",
+        "expense-exp-s1",
         new RoleTodoEscalationRequest("\u51ed\u8bc1\u7f3a\u5931\uff0c\u95e8\u5e97\u65e0\u6cd5\u8865\u9f50", "RISK")
     );
 
@@ -509,7 +598,7 @@ class RoleTodoServiceTest {
         .orElseThrow();
     assertThat(bossItem.status()).isEqualTo("RISK");
     assertThat(bossItem.sourceModule()).isEqualTo("\u8d22\u52a1\u4e0a\u62a5");
-    assertThat(bossItem.sourceRecordId()).isEqualTo("expense-claim-1");
+    assertThat(bossItem.sourceRecordId()).isEqualTo("expense-exp-s1");
     assertThat(bossItem.escalatedToBoss()).isTrue();
     assertThat(bossItem.summary()).contains("\u51ed\u8bc1\u7f3a\u5931");
   }
@@ -620,7 +709,7 @@ class RoleTodoServiceTest {
   }
 
   @Test
-  void resolvingTodoWritesHandledStatusBackToSourceModules() {
+  void resolvingTodoPreservesInspectionRawOutcomeAndWritesCompletionAction() {
     service.resolve(
         finance(),
         RoleTodoAudience.FINANCE,
@@ -639,6 +728,10 @@ class RoleTodoServiceTest {
     )).isEqualTo("已完成");
     assertThat(jdbcTemplate.queryForObject(
         "select passed from inspection_record where id = 'insp-s1'",
+        Integer.class
+    )).isEqualTo(0);
+    assertThat(jdbcTemplate.queryForObject(
+        "select count(*) from todo_action where todo_id = 'inspection-insp-s1' and status = 'DONE'",
         Integer.class
     )).isEqualTo(1);
   }

@@ -18,6 +18,9 @@ public class DeepSeekProperties {
   private double temperature = 0.2;
   private Duration connectTimeout = Duration.ofSeconds(5);
   private Duration timeout = Duration.ofSeconds(45);
+  private int maxRequestsPerMinute = 30;
+  private int circuitFailureThreshold = 3;
+  private Duration circuitOpenDuration = Duration.ofSeconds(30);
   private List<String> blockedWords = new ArrayList<>();
 
   private volatile Instant lastSuccessAt;
@@ -96,6 +99,32 @@ public class DeepSeekProperties {
     this.timeout = timeout == null ? Duration.ofSeconds(45) : timeout;
   }
 
+  public int getMaxRequestsPerMinute() {
+    return maxRequestsPerMinute;
+  }
+
+  public void setMaxRequestsPerMinute(int maxRequestsPerMinute) {
+    this.maxRequestsPerMinute = Math.max(1, maxRequestsPerMinute);
+  }
+
+  public int getCircuitFailureThreshold() {
+    return circuitFailureThreshold;
+  }
+
+  public void setCircuitFailureThreshold(int circuitFailureThreshold) {
+    this.circuitFailureThreshold = Math.max(1, circuitFailureThreshold);
+  }
+
+  public Duration getCircuitOpenDuration() {
+    return circuitOpenDuration;
+  }
+
+  public void setCircuitOpenDuration(Duration circuitOpenDuration) {
+    this.circuitOpenDuration = circuitOpenDuration == null
+        ? Duration.ofSeconds(30)
+        : circuitOpenDuration;
+  }
+
   public List<String> getBlockedWords() {
     return blockedWords;
   }
@@ -122,6 +151,10 @@ public class DeepSeekProperties {
   }
 
   public String getLastFailureCode() {
+    return lastFailureCode;
+  }
+
+  public String getLastErrorCode() {
     return lastFailureCode;
   }
 

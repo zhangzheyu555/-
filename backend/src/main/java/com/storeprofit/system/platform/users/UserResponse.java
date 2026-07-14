@@ -12,6 +12,14 @@ public record UserResponse(
     String roleLabel,
     String storeId,
     boolean enabled,
-    List<String> storeScope
+    List<String> storeScope,
+    List<String> availableWorkspaces,
+    String defaultWorkspace,
+    String effectivePermissionStatus,
+    String effectivePermissionMessage
 ) {
+  public UserResponse {
+    storeScope = storeScope == null ? List.of() : List.copyOf(storeScope);
+    availableWorkspaces = availableWorkspaces == null ? List.of() : List.copyOf(availableWorkspaces);
+  }
 }

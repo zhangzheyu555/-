@@ -4,6 +4,12 @@ import com.storeprofit.system.common.ApiResponse;
 import com.storeprofit.system.platform.auth.AuthService;
 import jakarta.validation.Valid;
 import java.util.List;
+import java.nio.charset.StandardCharsets;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -14,16 +20,28 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @RequestMapping("/api/expenses")
 public class ExpenseController {
   private final AuthService authService;
   private final ExpenseService expenseService;
+  private final ExpenseSupplementService expenseSupplementService;
 
-  public ExpenseController(AuthService authService, ExpenseService expenseService) {
+  @Autowired
+  public ExpenseController(
+      AuthService authService,
+      ExpenseService expenseService,
+      ExpenseSupplementService expenseSupplementService
+  ) {
     this.authService = authService;
     this.expenseService = expenseService;
+    this.expenseSupplementService = expenseSupplementService;
+  }
+
+  public ExpenseController(AuthService authService, ExpenseService expenseService) {
+    this(authService, expenseService, null);
   }
 
   @GetMapping
@@ -80,6 +98,53 @@ public class ExpenseController {
     return ApiResponse.ok(expenseService.requestInfo(authService.requireUser(authorization), id, request));
   }
 
+  @PostMapping(value = "/{id}/supplements", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+  public ApiResponse<ExpenseClaimResponse> supplement(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id,
+      @RequestParam(required = false) String note,
+      @RequestParam(value = "files", required = false) List<MultipartFile> files
+  ) {
+    return ApiResponse.ok(expenseSupplementService.submit(
+        authService.requireUser(authorization), id, note, files));
+  }
+
+  @GetMapping("/{id}/supplements")
+  public ApiResponse<List<ExpenseSupplementResponse>> supplements(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id
+  ) {
+    return ApiResponse.ok(expenseSupplementService.supplements(authService.requireUser(authorization), id));
+  }
+
+  @GetMapping("/{expenseId}/attachments/{attachmentId}/content")
+  public ResponseEntity<byte[]> attachmentContent(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String expenseId,
+      @PathVariable long attachmentId,
+      @RequestParam(defaultValue = "false") boolean download
+  ) {
+    return attachmentResponse(authorization, expenseId, attachmentId, download);
+  }
+
+  @GetMapping("/{id}/supplements/attachments/{attachmentId}/preview")
+  public ResponseEntity<byte[]> previewSupplementAttachment(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id,
+      @PathVariable long attachmentId
+  ) {
+    return attachmentResponse(authorization, id, attachmentId, false);
+  }
+
+  @GetMapping("/{id}/supplements/attachments/{attachmentId}/download")
+  public ResponseEntity<byte[]> downloadSupplementAttachment(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id,
+      @PathVariable long attachmentId
+  ) {
+    return attachmentResponse(authorization, id, attachmentId, true);
+  }
+
   @PostMapping("/{id}/reject")
   public ApiResponse<ExpenseClaimResponse> reject(
       @RequestHeader(value = "Authorization", required = false) String authorization,
@@ -96,5 +161,27 @@ public class ExpenseController {
   ) {
     expenseService.delete(authService.requireUser(authorization), id);
     return ApiResponse.ok();
+  }
+
+  private ResponseEntity<byte[]> attachmentResponse(
+      String authorization,
+      String expenseId,
+      long attachmentId,
+      boolean download
+  ) {
+    ExpenseSupplementService.AttachmentContent attachment = expenseSupplementService.attachment(
+        authService.requireUser(authorization), expenseId, attachmentId, download);
+    boolean forceDownload = download || MediaType.APPLICATION_PDF_VALUE.equalsIgnoreCase(attachment.contentType());
+    ContentDisposition disposition = (forceDownload ? ContentDisposition.attachment() : ContentDisposition.inline())
+        .filename(attachment.fileName(), StandardCharsets.UTF_8)
+        .build();
+    return ResponseEntity.ok()
+        .contentType(MediaType.parseMediaType(attachment.contentType()))
+        .contentLength(attachment.bytes().length)
+        .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
+        .header(HttpHeaders.CACHE_CONTROL, "private, no-store, max-age=0")
+        .header("X-Content-Type-Options", "nosniff")
+        .header("Content-Security-Policy", "sandbox; default-src 'none'")
+        .body(attachment.bytes());
   }
 }

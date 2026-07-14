@@ -15,6 +15,7 @@ public record SalaryRecordResponse(
     String position,
     String attendance,
     BigDecimal gross,
+    BigDecimal netPay,
     BigDecimal normalHours,
     BigDecimal otHours,
     BigDecimal workHours,
@@ -51,6 +52,7 @@ public record SalaryRecordResponse(
         id, storeId, storeCode, storeName, brandId, brandName, month,
         employeeId, employeeName, position, attendance,
         null, // gross
+        null, // netPay
         normalHours, otHours, workHours, vacationLeft, vacationNote,
         null, // base
         null, // social

@@ -24,13 +24,10 @@
   html,
   body,
   #app {
+    min-width: 0;
     width: 100%;
     max-width: 100%;
     overflow-x: hidden;
-  }
-
-  body {
-    min-width: 0;
   }
 
   .app-shell {
@@ -38,10 +35,6 @@
     width: 100%;
     height: 100dvh;
     overflow: hidden;
-  }
-
-  .sidebar-desktop {
-    display: none;
   }
 
   .mobile-menu-button {
@@ -61,18 +54,19 @@
     display: block;
     position: fixed;
     inset: 0;
-    z-index: 39;
+    z-index: 1390;
     background: rgba(20, 22, 28, 0.42);
   }
 
   .mobile-nav-drawer {
     display: flex;
+    min-height: 0;
     flex-direction: column;
     position: fixed;
     top: 0;
     bottom: 0;
     left: 0;
-    z-index: 40;
+    z-index: 1400;
     width: min(84vw, 320px);
     background: var(--surface);
     box-shadow: 18px 0 48px rgba(18, 21, 28, 0.24);
@@ -98,58 +92,6 @@
     font-size: 18px;
   }
 
-  .sidebar-mobile {
-    display: flex;
-    flex: 1;
-    flex-direction: column;
-    width: 100%;
-    height: auto;
-    min-height: 0;
-    position: static;
-    border-right: 0;
-    padding: 8px 14px 22px;
-    overflow: hidden;
-  }
-
-  .sidebar-mobile .brand {
-    flex-shrink: 0;
-    margin-bottom: 14px;
-  }
-
-  .sidebar-mobile .nav-list {
-    display: block;
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
-    overscroll-behavior: contain;
-  }
-
-  .sidebar-mobile .primary-navigation,
-  .sidebar-mobile .utility-navigation {
-    display: grid;
-    align-content: start;
-    gap: 12px;
-  }
-
-  .sidebar-mobile .nav-group {
-    gap: 8px;
-  }
-
-  .sidebar-mobile .nav-group-title {
-    padding-top: 6px;
-  }
-
-  .sidebar-mobile .nav-link {
-    min-height: 44px;
-    white-space: normal;
-  }
-
-  .sidebar-mobile .sidebar-footer {
-    flex: none;
-    padding-bottom: max(2px, env(safe-area-inset-bottom));
-  }
-
   .app-main {
     width: 100%;
     height: 100dvh;
@@ -172,6 +114,12 @@
     background: rgba(242, 243, 245, 0.96);
     border-bottom: 1px solid var(--line);
     backdrop-filter: blur(10px);
+  }
+
+  #app .topbar-primary-row {
+    min-width: 0;
+    justify-content: flex-start;
+    gap: 8px;
   }
 
   .topbar h1 {
@@ -205,6 +153,12 @@
     max-width: 100%;
     border-radius: 12px;
     padding: 14px;
+  }
+
+  #app .app-main > .page-panel {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
   }
 
   .page-head {

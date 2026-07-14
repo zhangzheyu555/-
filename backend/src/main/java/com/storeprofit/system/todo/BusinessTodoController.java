@@ -51,6 +51,14 @@ public class BusinessTodoController {
     return ApiResponse.ok(businessTodoService.transition(authService.requireUser(authorization), todoId, request));
   }
 
+  @PostMapping("/api/todos/manual")
+  public ApiResponse<BusinessTodoResponse> createManual(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @RequestBody ManualBusinessTodoRequest request
+  ) {
+    return ApiResponse.ok(businessTodoService.createManual(authService.requireUser(authorization), request));
+  }
+
   @PostMapping("/api/todos/reconcile")
   public ApiResponse<BusinessTodoService.BusinessTodoReconcileResponse> reconcile(
       @RequestHeader(value = "Authorization", required = false) String authorization,

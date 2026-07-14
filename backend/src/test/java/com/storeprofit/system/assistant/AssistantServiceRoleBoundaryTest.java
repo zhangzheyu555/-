@@ -20,10 +20,9 @@ class AssistantServiceRoleBoundaryTest {
         new AssistantChatRequest("全部门店利润排名", List.of(), "其他门店利润数据", null, null, null)
     );
 
-    assertThat(response.blocked()).isTrue();
-    assertThat(response.source()).isEqualTo("role-boundary");
-    assertThat(response.dataSource()).isEqualTo("SYSTEM_GUARDRAIL");
-    assertThat(response.answer()).contains("本店经营助手只能查看和回答你绑定门店的数据");
+    assertThat(response.error().code()).isEqualTo("FORBIDDEN_SCOPE");
+    assertThat(response.localData().source()).isEqualTo("系统安全规则");
+    assertThat(response.localData().summary()).contains("本店经营助手只能查看和回答你绑定门店的数据");
     verifyNoInteractions(financeService);
   }
 
@@ -34,9 +33,8 @@ class AssistantServiceRoleBoundaryTest {
         new AssistantChatRequest("本月净利润最低的门店是哪家", List.of(), "", null, null, null)
     );
 
-    assertThat(response.blocked()).isTrue();
-    assertThat(response.source()).isEqualTo("role-boundary");
-    assertThat(response.answer()).contains("仓库数据助手只回答库存、叫货、采购入库");
+    assertThat(response.error().code()).isEqualTo("FORBIDDEN_SCOPE");
+    assertThat(response.localData().summary()).contains("仓库数据助手只回答库存、叫货、采购入库");
     verifyNoInteractions(financeService);
   }
 
@@ -47,10 +45,10 @@ class AssistantServiceRoleBoundaryTest {
         new AssistantChatRequest("哪些商品库存不足", List.of(), "当前角色：仓库管理员；低库存提醒：2", null, null, null)
     );
 
-    assertThat(response.blocked()).isFalse();
-    assertThat(response.source()).isEqualTo("role-fallback-with-frontend-context");
-    assertThat(response.dataSource()).isEqualTo("FRONTEND_CONTEXT");
-    assertThat(response.answer()).contains("仓库数据助手已读取当前页面仓库上下文");
+    assertThat(response.error()).isNull();
+    assertThat(response.aiAnalysis().available()).isFalse();
+    assertThat(response.localData().source()).isEqualTo("后端权限规则");
+    assertThat(response.localData().summary()).contains("仓库数据助手需要仓库页面上下文");
     verifyNoInteractions(financeService);
   }
 

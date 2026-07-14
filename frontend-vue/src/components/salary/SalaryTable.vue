@@ -1,129 +1,91 @@
 <script setup lang="ts">
-import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, Eye, Loader2 } from 'lucide-vue-next'
 import type { SalaryRecord } from '../../api/finance'
 import { money, statusClass, statusLabel } from '../../composables/useSalaryPage'
-import SalaryWorkflowActions from './SalaryWorkflowActions.vue'
 
-defineProps<{
+const props = defineProps<{
   rows: SalaryRecord[]
   total: number
   page: number
   totalPages: number
   loading: boolean
-  canEdit: boolean
-  canReview: boolean
-  actioningId: string
-  deletingId: string
+  selectedRowKey: string
+  checkedIds: Set<string>
 }>()
 
 const emit = defineEmits<{
   'page-change': [page: number]
-  view: [record: SalaryRecord]
-  edit: [record: SalaryRecord]
-  submit: [record: SalaryRecord]
-  approve: [record: SalaryRecord]
-  reject: [record: SalaryRecord]
-  delete: [record: SalaryRecord]
-  markPaid: [record: SalaryRecord]
-  lock: [record: SalaryRecord]
+  select: [record: SalaryRecord]
+  'toggle-row': [record: SalaryRecord, checked: boolean]
+  'toggle-all': [checked: boolean]
 }>()
 
-function deductionTotal(r: SalaryRecord) {
-  return Number(r.deductUniform || 0) + Number(r.returnUniform || 0)
+function attendanceDays(value?: string) {
+  const match = String(value || '').match(/[\d.]+/)
+  return match ? match[0] : '--'
 }
 
-function allowanceTotal(r: SalaryRecord) {
-  return Number(r.social || 0) + Number(r.post || 0) + Number(r.meal || 0) + Number(r.subsidy || 0)
+function allChecked() {
+  return props.rows.length > 0 && props.rows.every((row) => props.checkedIds.has(row.id))
 }
 
-function bonusTotal(r: SalaryRecord) {
-  return Number(r.fullAttendance || 0) + Number(r.seniority || 0) + Number(r.lateNight || 0)
+function rowKey(row: SalaryRecord) {
+  return row.id || `employee:${row.employeeId || `${row.storeId}:${row.employeeName}`}`
 }
 </script>
 
 <template>
-  <div v-if="loading && total === 0" class="content-card loading-block"><Loader2 :size="24" class="spin" /> 工资明细加载中...</div>
-  <section v-if="total > 0 || loading" class="content-card table-card">
-    <div class="table-head"><h3>工资明细</h3><span class="table-count">共 {{ total }} 条 · 第 {{ page }}/{{ totalPages }} 页</span></div>
-    <div class="table-wrap">
-      <table class="salary-table">
+  <section class="salary-table-section">
+    <div v-if="loading && rows.length === 0" class="table-loading"><Loader2 :size="22" class="spin" />员工工资加载中</div>
+    <div v-else-if="rows.length === 0" class="table-empty">当前筛选范围暂无员工</div>
+    <div v-else class="table-wrap">
+      <table>
         <thead><tr>
-            <th>工号</th><th>姓名</th><th>门店</th><th>岗位</th>
-            <th class="r">基本工资</th><th class="r">加班</th><th class="r">绩效</th>
-            <th class="r">提成</th><th class="r">津贴</th><th class="r">奖金</th>
-            <th class="r">扣款</th><th class="r">应发</th><th>状态</th><th class="r">操作</th>
+          <th class="check"><input type="checkbox" :checked="allChecked()" aria-label="选择当前页" @change="emit('toggle-all', ($event.target as HTMLInputElement).checked)" /></th>
+          <th>姓名</th><th>工号</th><th>岗位</th><th class="num">出勤天数</th><th class="num">应发工资</th><th class="num">提成</th><th class="num">总工时</th><th class="num">假期余额</th><th>状态</th><th class="action">操作</th>
         </tr></thead>
         <tbody>
-          <tr v-for="r in rows" :key="r.id" @click="emit('view', r)">
-            <td class="muted">{{ r.employeeId || '-' }}</td>
-            <td><b>{{ r.employeeName }}</b></td>
-            <td class="muted">{{ r.storeName || r.storeId }}</td>
-            <td>{{ r.position || '-' }}</td>
-            <td class="r">{{ money(r.base) }}</td>
-            <td class="r">{{ money(r.overtime) }}</td>
-            <td class="r">{{ money(r.performance) }}</td>
-            <td class="r">{{ money(r.commission) }}</td>
-            <td class="r">{{ money(allowanceTotal(r)) }}</td>
-            <td class="r">{{ money(bonusTotal(r)) }}</td>
-            <td class="r">{{ money(deductionTotal(r)) }}</td>
-            <td class="r strong">{{ money(r.gross) }}</td>
-            <td><span class="status-pill" :class="statusClass(r.status)">{{ statusLabel(r.status) }}</span></td>
-            <SalaryWorkflowActions
-              :record="r"
-              :can-edit="canEdit"
-              :can-review="canReview"
-              :actioning-id="actioningId"
-              :deleting-id="deletingId"
-              :store-name="r.storeName || r.storeId"
-              @view="emit('view', $event)"
-              @edit="emit('edit', $event)"
-              @submit="emit('submit', $event)"
-              @approve="emit('approve', $event)"
-              @reject="emit('reject', $event)"
-              @delete="emit('delete', $event)"
-              @mark-paid="emit('markPaid', $event)"
-              @lock="emit('lock', $event)"
-            />
+          <tr v-for="row in rows" :key="rowKey(row)" :class="{ selected: rowKey(row) === selectedRowKey }" @click="emit('select', row)">
+            <td class="check" @click.stop><input type="checkbox" :checked="checkedIds.has(row.id)" :aria-label="`选择${row.employeeName}`" @change="emit('toggle-row', row, ($event.target as HTMLInputElement).checked)" /></td>
+            <td><b>{{ row.employeeName }}</b></td>
+            <td class="muted">{{ row.employeeId || '--' }}</td>
+            <td>{{ row.position || '--' }}</td>
+            <td class="num">{{ attendanceDays(row.attendance) }}</td>
+            <td class="num strong">{{ row.status === 'PENDING_GENERATION' ? '--' : money(row.gross) }}</td>
+            <td class="num commission">{{ row.status === 'PENDING_GENERATION' ? '--' : money(row.commission) }}</td>
+            <td class="num">{{ Number(row.workHours || 0).toFixed(2) }}</td>
+            <td class="num">{{ Number(row.vacationLeft || 0).toFixed(1) }}</td>
+            <td><span class="status-pill" :class="statusClass(row.status)">{{ statusLabel(row.status) }}</span></td>
+            <td class="action"><button type="button" title="查看工资明细" @click.stop="emit('select', row)"><Eye :size="15" /></button></td>
           </tr>
         </tbody>
       </table>
     </div>
-    <div v-if="totalPages > 1" class="pager">
-      <button :disabled="page <= 1" @click="emit('page-change', page - 1)"><ChevronLeft :size="16" /></button>
-      <template v-for="p in totalPages" :key="p">
-        <button v-if="p === 1 || p === totalPages || Math.abs(p - page) <= 2" :class="{ active: p === page }" @click="emit('page-change', p)">{{ p }}</button>
-        <span v-else-if="p === page - 3 || p === page + 3" class="pager-ellipsis">…</span>
-      </template>
-      <button :disabled="page >= totalPages" @click="emit('page-change', page + 1)"><ChevronRight :size="16" /></button>
-    </div>
+
+    <footer v-if="total > 0" class="table-footer">
+      <span>共 {{ total }} 条</span>
+      <div class="pager">
+        <button :disabled="page <= 1" @click="emit('page-change', page - 1)"><ChevronLeft :size="16" /></button>
+        <b>{{ page }}</b><span>/ {{ totalPages }}</span>
+        <button :disabled="page >= totalPages" @click="emit('page-change', page + 1)"><ChevronRight :size="16" /></button>
+      </div>
+    </footer>
   </section>
 </template>
 
 <style scoped>
-.table-card { padding: 18px 20px 20px; border-radius: 16px; box-shadow: 0 16px 38px rgba(24,28,35,0.06); }
-.table-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-.table-head h3 { margin: 0; font-size: 17px; }
-.table-count { color: var(--muted); font-size: 13px; }
-.table-wrap { overflow-x: auto; }
-.salary-table { width: 100%; min-width: 1200px; border-collapse: collapse; font-size: 13.5px; }
-.salary-table th, .salary-table td { padding: 10px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
-.salary-table th { color: var(--muted); font-size: 12px; font-weight: 900; white-space: nowrap; position: sticky; top: 0; background: #fff; z-index: 1; }
-.salary-table tbody tr { cursor: pointer; }
-.salary-table tbody tr:hover { background: var(--bg); }
-.salary-table .r { text-align: right; font-variant-numeric: tabular-nums; }
-.muted { color: var(--muted); }
-.strong { color: var(--ink); font-weight: 900; }
-.status-pill { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 9px; border-radius: 999px; background: rgba(39,174,96,0.12); color: var(--good); font-size: 11.5px; font-weight: 900; }
-.status-pill.warn, .status-pill.pending { background: rgba(245,158,11,0.14); color: #a16207; }
-.status-pill.done { background: rgba(39,174,96,0.12); color: var(--good); }
-.status-pill.rejected { background: rgba(220,38,38,0.12); color: var(--bad); }
-.status-pill.muted { background: rgba(107,114,128,0.13); color: var(--muted); }
-.pager { display: flex; justify-content: center; align-items: center; gap: 4px; margin-top: 16px; }
-.pager button { display: inline-flex; align-items: center; justify-content: center; min-width: 34px; height: 34px; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); font-size: 13px; font-weight: 700; cursor: pointer; }
-.pager button.active { background: #ee7e3e; border-color: #ee7e3e; color: #fff; }
-.pager button:disabled { opacity: 0.4; cursor: default; }
-.pager-ellipsis { padding: 0 6px; color: var(--muted); }
-.loading-block { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 40px; color: var(--muted); font-size: 15px; }
-.spin { animation: spin 1s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
+.salary-table-section { min-width: 0; border: 1px solid #dfe8e6; border-radius: 6px; overflow: hidden; background: #fff; }
+.table-wrap { width: 100%; overflow-x: auto; }
+table { width: 100%; min-width: 720px; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
+th, td { height: 46px; padding: 8px 9px; border-bottom: 1px solid #e6edeb; text-align: left; white-space: nowrap; }
+th { height: 40px; background: #f7faf9; color: #526765; font-size: 13px; font-weight: 600; }
+tbody tr { cursor: pointer; transition: background-color .12s ease; }tbody tr:hover { background: #f4faf8; }tbody tr.selected { background: #eef7f5; box-shadow: inset 3px 0 #276b65; }
+td b { color: #182424; font-weight: 600; }.muted { color: #6f817f; }.strong { color: #182424; font-weight: 700; }.commission { color: #15756b; font-weight: 600; }
+td { overflow: hidden; text-overflow: ellipsis; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }.check { width: 36px; text-align: center; }.action { width: 46px; text-align: center; }
+input[type='checkbox'] { width: 15px; height: 15px; accent-color: #276b65; cursor: pointer; }
+.action button { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid #d5e2df; border-radius: 4px; background: #fff; color: #526765; cursor: pointer; }.action button:hover { border-color: #6baaa4; color: #276b65; }
+.status-pill { display: inline-flex; padding: 4px 7px; border-radius: 4px; background: #e7f5ef; color: #28795f; font-size: 12px; font-weight: 600; }.status-pill.warn,.status-pill.pending { background: #fff2e2; color: #d46a16; }.status-pill.rejected { background: #fdeceb; color: #c34b40; }.status-pill.muted { background: #edf1f0; color: #637572; }
+.table-footer { display: flex; align-items: center; justify-content: space-between; min-height: 48px; padding: 8px 12px; color: #526765; font-size: 13px; }.pager { display: flex; align-items: center; gap: 8px; }.pager button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: 1px solid #d9e5e3; border-radius: 4px; background: #fff; color: #276b65; cursor: pointer; }.pager button:disabled { color: #aab7b5; cursor: default; }.pager b { min-width: 25px; padding: 5px 8px; border-radius: 4px; background: #276b65; color: #fff; text-align: center; }
+.table-loading,.table-empty { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 96px; color: #6f817f; font-size: 14px; }.spin { animation: spin 1s linear infinite; }@keyframes spin { to { transform: rotate(360deg); } }
 </style>

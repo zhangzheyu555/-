@@ -53,9 +53,11 @@ public class FinanceController {
   public ApiResponse<ProfitDashboardResponse> dashboard(
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @RequestParam(required = false) String month,
-      @RequestParam(required = false) Long brandId
+      @RequestParam(required = false) Long brandId,
+      @RequestParam(required = false) String storeId
   ) {
-    return ApiResponse.ok(financeService.dashboard(authService.requireUser(authorization), month, brandId));
+    return ApiResponse.ok(financeService.dashboard(
+        authService.requireUser(authorization), month, brandId, storeId));
   }
 
   @GetMapping("/entries")
@@ -71,7 +73,7 @@ public class FinanceController {
   @GetMapping("/entries/detail")
   public ApiResponse<ProfitEntryResponse> entry(
       @RequestHeader(value = "Authorization", required = false) String authorization,
-      @RequestParam String storeId,
+      @RequestParam(required = false) String storeId,
       @RequestParam String month
   ) {
     return ApiResponse.ok(financeService.entry(authService.requireUser(authorization), storeId, month));
@@ -89,7 +91,7 @@ public class FinanceController {
   @DeleteMapping("/entries")
   public ApiResponse<Void> delete(
       @RequestHeader(value = "Authorization", required = false) String authorization,
-      @RequestParam String storeId,
+      @RequestParam(required = false) String storeId,
       @RequestParam String month
   ) {
     financeService.delete(authService.requireUser(authorization), storeId, month);

@@ -1,11 +1,13 @@
 package com.storeprofit.system.expense;
 
+import com.storeprofit.system.platform.authorization.DataScope;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -25,6 +27,17 @@ public class ExpenseRepository {
   }
 
   public List<ExpenseClaimResponse> claims(long tenantId, String month, Long brandId, String storeId, String status) {
+    return claims(tenantId, month, brandId, storeId, status, null);
+  }
+
+  public List<ExpenseClaimResponse> claims(
+      long tenantId,
+      String month,
+      Long brandId,
+      String storeId,
+      String status,
+      DataScope dataScope
+  ) {
     StringBuilder sql = new StringBuilder("""
         select ec.id, ec.store_id, s.code as store_code, s.name as store_name,
                s.brand_id, b.name as brand_name, ec.month, ec.amount, ec.category,
@@ -52,12 +65,17 @@ public class ExpenseRepository {
       sql.append(" and ec.status = :status");
       params.addValue("status", status.trim());
     }
+    appendStoreScope(sql, params, "ec.store_id", dataScope);
     sql.append(" order by ec.month desc, s.code, ec.created_at desc, ec.id");
     return namedJdbcTemplate.query(sql.toString(), params, this::mapClaim);
   }
 
   public Optional<ExpenseClaimResponse> claim(long tenantId, String id) {
-    List<ExpenseClaimResponse> rows = namedJdbcTemplate.query("""
+    return claim(tenantId, id, null);
+  }
+
+  public Optional<ExpenseClaimResponse> claim(long tenantId, String id, DataScope dataScope) {
+    StringBuilder sql = new StringBuilder("""
         select ec.id, ec.store_id, s.code as store_code, s.name as store_name,
                s.brand_id, b.name as brand_name, ec.month, ec.amount, ec.category,
                ec.reason, ec.status, ec.image_url, ec.submitted_by, ec.reviewed_by,
@@ -66,13 +84,22 @@ public class ExpenseRepository {
         join store_branch s on s.id = ec.store_id and s.tenant_id = ec.tenant_id
         left join brand b on b.id = s.brand_id and b.tenant_id = s.tenant_id
         where ec.tenant_id = :tenantId and ec.id = :id
-        """,
-        new MapSqlParameterSource()
-            .addValue("tenantId", tenantId)
-            .addValue("id", id),
-        this::mapClaim
-    );
+        """);
+    MapSqlParameterSource params = new MapSqlParameterSource()
+        .addValue("tenantId", tenantId)
+        .addValue("id", id);
+    appendStoreScope(sql, params, "ec.store_id", dataScope);
+    List<ExpenseClaimResponse> rows = namedJdbcTemplate.query(sql.toString(), params, this::mapClaim);
     return rows.stream().findFirst();
+  }
+
+  public Optional<String> claimStoreId(long tenantId, String id) {
+    return jdbcTemplate.queryForList(
+        "select store_id from expense_claim where tenant_id = ? and id = ?",
+        String.class,
+        tenantId,
+        id
+    ).stream().findFirst();
   }
 
   public void upsert(long tenantId, String id, ExpenseClaimRequest request, String status, Long submittedBy) {
@@ -99,6 +126,24 @@ public class ExpenseRepository {
         reviewedBy,
         tenantId,
         id
+    );
+  }
+
+  public void markSupplemented(long tenantId, String id, long submittedBy) {
+    jdbcTemplate.update("""
+        update expense_claim set
+          status = ?,
+          submitted_by = ?,
+          reviewed_by = null,
+          reviewed_at = null,
+          updated_at = current_timestamp
+        where tenant_id = ? and id = ? and status = ?
+        """,
+        ExpenseService.STATUS_PENDING,
+        submittedBy,
+        tenantId,
+        id,
+        ExpenseService.STATUS_SUPPLEMENT
     );
   }
 
@@ -236,5 +281,23 @@ public class ExpenseRepository {
 
   private String blankToNull(String value) {
     return value == null || value.isBlank() ? null : value.trim();
+  }
+
+  private void appendStoreScope(
+      StringBuilder sql,
+      MapSqlParameterSource params,
+      String storeColumn,
+      DataScope dataScope
+  ) {
+    if (dataScope == null || dataScope.allowsAllStores()) {
+      return;
+    }
+    Collection<String> storeIds = dataScope.storeIds();
+    if (dataScope.deniesStoreAccess() || storeIds == null || storeIds.isEmpty()) {
+      sql.append(" and 1 = 0");
+      return;
+    }
+    sql.append(" and ").append(storeColumn).append(" in (:scopeStoreIds)");
+    params.addValue("scopeStoreIds", storeIds);
   }
 }

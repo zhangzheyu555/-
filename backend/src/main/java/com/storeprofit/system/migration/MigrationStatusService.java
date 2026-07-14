@@ -4,11 +4,13 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.inspection.InspectionScoringRules;
 import com.storeprofit.system.finance.FinanceRepository;
 import com.storeprofit.system.finance.ProfitEntryRequest;
 import com.storeprofit.system.organization.OrganizationRepository;
 import com.storeprofit.system.organization.StoreUpsertRequest;
 import com.storeprofit.system.platform.auth.AuthUser;
+import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.storage.StorageService;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -16,6 +18,7 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -25,10 +28,10 @@ import java.util.TreeMap;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class MigrationStatusService {
-  private static final Set<String> OWNER_ROLES = Set.of("BOSS", "ADMIN");
   private static final String STATE_NEEDS_MIGRATION = "NEEDS_STRUCTURED_MIGRATION";
   private static final String STATE_NOT_PRESENT = "NOT_PRESENT";
   private static final String ACTION_MAP_TO_STRUCTURED_TABLE = "MAP_TO_STRUCTURED_TABLE";
@@ -163,6 +166,7 @@ public class MigrationStatusService {
     );
   }
 
+  @Transactional
   public LegacyKvMigrationRunResponse legacyKvRun(AuthUser user, LegacyKvMigrationRunRequest request) {
     requireOwner(user);
     List<String> keys = normalizedLegacyRunKeys(request);
@@ -440,6 +444,16 @@ public class MigrationStatusService {
         "#64748b",
         900
     );
+    String regionCode = textOrNull(store, "regionCode", "region_code", "provinceCode", "province_code");
+    if (regionCode == null) {
+      throw new IllegalArgumentException(
+          "store " + id + " must provide explicit regionCode JINGZHOU or SHANDONG");
+    }
+    regionCode = regionCode.trim().toUpperCase();
+    if (!Set.of("JINGZHOU", "SHANDONG").contains(regionCode)) {
+      throw new IllegalArgumentException(
+          "store " + id + " has unsupported regionCode " + regionCode);
+    }
     return new StoreUpsertRequest(
         id,
         textOrDefault(store, "code", id),
@@ -449,7 +463,9 @@ public class MigrationStatusService {
         textOrNull(store, "manager"),
         textOrNull(store, "openDate", "open_date"),
         textOrNull(store, "status"),
-        textOrNull(store, "note")
+        textOrNull(store, "note"),
+        regionCode,
+        null
     );
   }
 
@@ -490,7 +506,9 @@ public class MigrationStatusService {
         skippedRecordCount++;
         continue;
       }
-      upsertSalaryRecord(user, salaryRecordId(salary, storeId, month, employeeName), storeId, month, employeeName, salary);
+      String salaryId = salaryRecordId(salary, storeId, month, employeeName);
+      upsertSalaryRecord(user, salaryId, storeId, month, employeeName, salary);
+      upsertEmployeeFromSalary(user, salaryId, storeId, month, employeeName, salary);
       migratedRecordCount++;
     }
     return new SalaryMigrationResult(migratedRecordCount, skippedRecordCount);
@@ -509,7 +527,9 @@ public class MigrationStatusService {
         skippedRecordCount++;
         continue;
       }
-      upsertExpenseClaim(user, expenseClaimId(expense, storeId), storeId, expense);
+      String expenseId = expenseClaimId(expense, storeId);
+      upsertExpenseClaim(user, expenseId, storeId, expense);
+      upsertExpenseAttachment(user, expenseId, storeId, expense);
       migratedRecordCount++;
     }
     return new ExpenseMigrationResult(migratedRecordCount, skippedRecordCount);
@@ -634,8 +654,12 @@ public class MigrationStatusService {
       String inspectionDate,
       JsonNode inspection
   ) throws JsonProcessingException {
-    BigDecimal fullScore = amountOrDefault(inspection, new BigDecimal("100"), "fullScore", "full_score");
-    BigDecimal score = inspectionScore(inspection, fullScore);
+    BigDecimal sourceFullScore = amountOrDefault(
+        inspection, InspectionScoringRules.LEGACY_MAX_SCORE, "fullScore", "full_score");
+    BigDecimal sourceScore = inspectionScore(inspection, sourceFullScore);
+    BigDecimal fullScore = InspectionScoringRules.MAX_SCORE;
+    BigDecimal score = InspectionScoringRules.normalizeScore(sourceScore, sourceFullScore);
+    boolean redLineHit = inspectionRedLineHit(inspection);
     jdbcTemplate.update("""
         insert into inspection_record(
           id, tenant_id, store_id, inspection_date, inspector, brand, full_score, score, passed,
@@ -665,7 +689,7 @@ public class MigrationStatusService {
         textOrNull(inspection, "brand"),
         fullScore,
         score,
-        inspectionPassed(inspection) ? 1 : 0,
+        InspectionScoringRules.passed(score, redLineHit) ? 1 : 0,
         jsonArrayText(inspection, "deductions"),
         jsonArrayText(inspection, "redlines"),
         jsonArrayText(inspection, "photos"),
@@ -722,9 +746,66 @@ public class MigrationStatusService {
         textOrNull(expense, "category", "cat"),
         textOrNull(expense, "reason", "note"),
         expenseStatus(expense),
-        textOrNull(expense, "imageUrl", "image_url", "img"),
+        externalImageUrl(expense),
         user.id()
     );
+  }
+
+  private void upsertEmployeeFromSalary(AuthUser user, String salaryId, String storeId, String month, String employeeName, JsonNode salary) {
+    String employeeId = "legacy-employee-" + Integer.toUnsignedString((storeId + "\u0000" + employeeName).hashCode(), 36);
+    jdbcTemplate.update("""
+        insert into employee(id, tenant_id, store_id, store_name, brand_name, name, position, base_salary, status)
+        select ?, ?, s.id, s.name, b.name, ?, ?, ?, '在职'
+        from store_branch s left join brand b on b.id = s.brand_id and b.tenant_id = s.tenant_id
+        where s.tenant_id = ? and s.id = ?
+        on duplicate key update position=values(position), base_salary=values(base_salary), updated_at=current_timestamp
+        """, employeeId, user.tenantId(), employeeName, textOrNull(salary, "position"), amount(salary, "base"),
+        user.tenantId(), storeId);
+    Integer linked = jdbcTemplate.queryForObject("""
+        select count(*) from salary_record
+        where tenant_id=? and employee_id=? and month=?
+        """, Integer.class, user.tenantId(), employeeId, month);
+    if (linked != null && linked == 0) {
+      jdbcTemplate.update("update salary_record set employee_id=? where tenant_id=? and id=?",
+          employeeId, user.tenantId(), salaryId);
+    }
+  }
+
+  private String externalImageUrl(JsonNode expense) {
+    String value = textOrNull(expense, "imageUrl", "image_url", "img");
+    if (value == null || value.startsWith("data:") || value.length() > 500) {
+      return null;
+    }
+    return value;
+  }
+
+  private void upsertExpenseAttachment(AuthUser user, String expenseId, String storeId, JsonNode expense) {
+    String value = textOrNull(expense, "img");
+    if (value == null || !value.startsWith("data:")) {
+      return;
+    }
+    int comma = value.indexOf(',');
+    if (comma < 0 || !value.substring(0, comma).contains(";base64")) {
+      throw new IllegalArgumentException("legacy expense attachment is not a valid base64 data URL");
+    }
+    String contentType = value.substring(5, value.indexOf(';'));
+    byte[] content = Base64.getDecoder().decode(value.substring(comma + 1));
+    jdbcTemplate.update("delete from warehouse_attachment where tenant_id=? and business_type='EXPENSE_CLAIM' and business_id=?",
+        user.tenantId(), expenseId);
+    jdbcTemplate.update("""
+        insert into warehouse_attachment(
+          tenant_id, store_id, business_type, business_id, file_name, content_type,
+          file_size, storage_path, content, uploaded_by
+        ) values (?, ?, 'EXPENSE_CLAIM', ?, ?, ?, ?, null, ?, ?)
+        """, user.tenantId(), storeId, expenseId, expenseId + imageExtension(contentType), contentType,
+        content.length, content, user.id());
+  }
+
+  private String imageExtension(String contentType) {
+    if ("image/png".equalsIgnoreCase(contentType)) return ".png";
+    if ("image/gif".equalsIgnoreCase(contentType)) return ".gif";
+    if ("image/webp".equalsIgnoreCase(contentType)) return ".webp";
+    return ".jpg";
   }
 
   private ProfitEntryRequest profitEntryRequest(LegacyEntryKey key, JsonNode entry) {
@@ -951,9 +1032,13 @@ public class MigrationStatusService {
     return total;
   }
 
-  private boolean inspectionPassed(JsonNode inspection) {
+  private boolean inspectionRedLineHit(JsonNode inspection) {
+    String resultCode = textOrNull(inspection, "resultCode", "result_code");
+    if ("RED_LINE_FAILED".equalsIgnoreCase(resultCode)) {
+      return true;
+    }
     JsonNode redlines = inspection.get("redlines");
-    return redlines == null || !redlines.isArray() || redlines.isEmpty();
+    return redlines != null && redlines.isArray() && !redlines.isEmpty();
   }
 
   private String jsonArrayText(JsonNode node, String fieldName) throws JsonProcessingException {
@@ -1028,8 +1113,8 @@ public class MigrationStatusService {
   }
 
   private void requireOwner(AuthUser user) {
-    if (!OWNER_ROLES.contains(user.role())) {
-      throw new BusinessException("FORBIDDEN", "仅老板和管理员可查看迁移状态", HttpStatus.FORBIDDEN);
+    if (!AccessControlService.isBoss(user)) {
+      throw new BusinessException("FORBIDDEN", "仅老板（系统管理员）可查看迁移状态", HttpStatus.FORBIDDEN);
     }
   }
 

@@ -48,8 +48,8 @@ defineProps<{
 
 .done-card p {
   margin: 0;
-  color: var(--muted);
-  font-size: 13px;
+  color: var(--ds-secondary);
+  font-size: 14px;
   line-height: 1.6;
 }
 
@@ -65,7 +65,7 @@ defineProps<{
   gap: 12px;
   padding: 14px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 8px;
   background: #fff;
 }
 
@@ -73,6 +73,7 @@ defineProps<{
   display: block;
   margin-bottom: 5px;
   font-size: 15px;
+  font-weight: 700;
 }
 
 .done-meta {
@@ -81,7 +82,8 @@ defineProps<{
   flex-wrap: wrap;
   margin-top: 10px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
 }
 
 @media (max-width: 720px) {

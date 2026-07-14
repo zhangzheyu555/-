@@ -10,6 +10,7 @@ import com.storeprofit.system.platform.auth.AuthService;
 import com.storeprofit.system.platform.auth.AuthUser;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class SalaryControllerTest {
@@ -44,6 +45,25 @@ class SalaryControllerTest {
   }
 
   @Test
+  void employeePageUsesAuthenticatedUserAndEmployeeFilters() {
+    SalaryRecordResponse pending = response("pending");
+    SalaryEmployeePageResponse page = new SalaryEmployeePageResponse(
+        List.of(pending), 1, 1, 20, 1,
+        new SalarySummaryResponse("2026-05", 1, 1, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO),
+        Map.of("PENDING_GENERATION", 1), BigDecimal.ZERO, BigDecimal.ZERO
+    );
+    when(authService.requireUser("Bearer token")).thenReturn(boss);
+    when(salaryQueryService.employeePage(boss, "2026-05", 1L, "s1", "PENDING_GENERATION", "Alice", 1, 20))
+        .thenReturn(page);
+
+    ApiResponse<SalaryEmployeePageResponse> result = controller.employeePage(
+        "Bearer token", "2026-05", 1L, "s1", "PENDING_GENERATION", "Alice", 1, 20);
+
+    assertThat(result.data()).isSameAs(page);
+    verify(salaryQueryService).employeePage(boss, "2026-05", 1L, "s1", "PENDING_GENERATION", "Alice", 1, 20);
+  }
+
+  @Test
   void createUsesAuthenticatedUserAndReturnsSavedRecord() {
     SalaryRecordRequest request = request();
     SalaryRecordResponse row = response("pay-created");
@@ -72,6 +92,22 @@ class SalaryControllerTest {
     assertThat(deleted.success()).isTrue();
     verify(salaryWorkflowService).save(boss, "pay-1", request);
     verify(salaryWorkflowService).delete(boss, "pay-1");
+  }
+
+  @Test
+  void historicalImportUsesDedicatedBossOnlyWorkflow() {
+    SalaryRecordRequest request = request();
+    SalaryRecordResponse row = response("LEGACY-salary-1");
+    when(authService.requireUser("Bearer token")).thenReturn(boss);
+    when(salaryWorkflowService.importHistorical(boss, "LEGACY-salary-1", request)).thenReturn(row);
+
+    ApiResponse<SalaryRecordResponse> result = controller.importHistorical(
+        "Bearer token", "LEGACY-salary-1", request
+    );
+
+    assertThat(result.success()).isTrue();
+    assertThat(result.data()).isSameAs(row);
+    verify(salaryWorkflowService).importHistorical(boss, "LEGACY-salary-1", request);
   }
 
   @Test
@@ -138,6 +174,7 @@ class SalaryControllerTest {
         "Barista",
         "26",
         new BigDecimal("1000.00"),
+        new BigDecimal("950.00"),
         new BigDecimal("216.00"),
         new BigDecimal("2.50"),
         new BigDecimal("218.50"),

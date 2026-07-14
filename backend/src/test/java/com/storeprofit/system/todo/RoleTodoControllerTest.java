@@ -10,6 +10,7 @@ import com.storeprofit.system.platform.auth.AuthService;
 import com.storeprofit.system.platform.auth.AuthUser;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.ResponseEntity;
 
 class RoleTodoControllerTest {
   private final AuthService authService = mock(AuthService.class);
@@ -48,11 +49,14 @@ class RoleTodoControllerTest {
     when(authService.requireUser("Bearer token")).thenReturn(boss);
     when(roleTodoService.bossDashboard(boss, query)).thenReturn(response);
 
-    ApiResponse<BossTodoDashboardResponse> result =
+    ResponseEntity<ApiResponse<BossTodoDashboardResponse>> result =
         controller.bossTodoDashboard("Bearer token", true, "done", 80, 1L, "s1");
 
-    assertThat(result.success()).isTrue();
-    assertThat(result.data()).isSameAs(response);
+    assertThat(result.getHeaders().getFirst("Deprecation")).isEqualTo("true");
+    assertThat(result.getHeaders().getFirst("Link")).isEqualTo("</api/todos>; rel=\"successor-version\"");
+    assertThat(result.getBody()).isNotNull();
+    assertThat(result.getBody().success()).isTrue();
+    assertThat(result.getBody().data()).isSameAs(response);
     verify(authService).requireUser("Bearer token");
     verify(roleTodoService).bossDashboard(boss, query);
   }
@@ -64,7 +68,7 @@ class RoleTodoControllerTest {
       when(roleTodoService.todos(boss, audience, RoleTodoQuery.defaults())).thenReturn(response(audience));
     }
 
-    assertThat(controller.bossTodos("Bearer token", null, null, null, null, null).data().roleName()).isEqualTo("老板");
+    assertThat(controller.bossTodos("Bearer token", null, null, null, null, null).data().roleName()).isEqualTo("老板（系统管理员）");
     assertThat(controller.financeTodos("Bearer token", null, null, null, null, null).data().roleName()).isEqualTo("财务");
     assertThat(controller.supervisorTodos("Bearer token", null, null, null, null, null).data().roleName()).isEqualTo("督导");
     assertThat(controller.storeManagerTodos("Bearer token", null, null, null, null, null).data().roleName()).isEqualTo("店长");

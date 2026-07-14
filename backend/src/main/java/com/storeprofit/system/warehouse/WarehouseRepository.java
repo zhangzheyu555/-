@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.Optional;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -382,6 +383,70 @@ public class WarehouseRepository {
     );
   }
 
+  public boolean subtractStoreInventoryIfEnough(
+      long tenantId,
+      String storeId,
+      long itemId,
+      BigDecimal quantity,
+      String sourceType,
+      String sourceId,
+      String note,
+      Long createdBy
+  ) {
+    BigDecimal required = amount(quantity);
+    int changed = jdbcTemplate.update("""
+        update store_inventory
+        set quantity = quantity - ?, updated_at = current_timestamp
+        where tenant_id = ? and store_id = ? and item_id = ? and quantity >= ?
+        """, required, tenantId, storeId, itemId, required);
+    if (changed != 1) {
+      return false;
+    }
+    jdbcTemplate.update("""
+        insert into store_inventory_movement(
+          tenant_id, store_id, item_id, quantity_delta, movement_type,
+          source_type, source_id, note, created_by, created_at
+        ) values (?, ?, ?, ?, 'OUT', ?, ?, ?, ?, current_timestamp)
+        """, tenantId, storeId, itemId, required.negate(), blankToNull(sourceType),
+        blankToNull(sourceId), blankToNull(note), createdBy);
+    return true;
+  }
+
+  public List<WarehouseItemResponse> items(long tenantId, long warehouseId) {
+    return jdbcTemplate.query("""
+        select i.id, i.code, i.name, i.category_id, coalesce(c.name, i.category) as category_name,
+               i.category, i.image_url, i.unit, i.purchase_unit, i.stock_unit, i.ingredient_unit,
+               i.unit_conversion_text, i.spec, i.warehouse_location, i.unit_price, i.shelf_life_days,
+               i.cups_per_unit, i.daily_usage_estimate, i.min_stock_days, i.max_stock_days,
+               coalesce(inv.min_stock_quantity, i.min_stock_quantity) as min_stock_quantity,
+               coalesce(inv.alert_enabled, i.alert_enabled) as alert_enabled,
+               coalesce(inv.expiry_alert_days, i.expiry_alert_days) as expiry_alert_days, i.active,
+               i.item_description, i.sort_order, i.item_attributes,
+               coalesce(inv.on_hand_quantity - inv.reserved_quantity, 0) as stock_quantity,
+               min(case when b.quantity > 0 then b.expiry_date else null end) as nearest_expiry_date
+        from warehouse_item i
+        left join warehouse_item_category c on c.tenant_id = i.tenant_id and c.id = i.category_id
+        left join warehouse_inventory inv
+          on inv.tenant_id = i.tenant_id and inv.item_id = i.id and inv.warehouse_id = ?
+        left join warehouse_stock_batch b
+          on b.tenant_id = i.tenant_id and b.item_id = i.id and b.warehouse_id = ?
+        where i.tenant_id = ?
+        group by i.id, i.code, i.name, i.category_id, c.name, i.category, i.image_url, i.unit,
+                 i.purchase_unit, i.stock_unit, i.ingredient_unit, i.unit_conversion_text,
+                 i.spec, i.warehouse_location, i.unit_price, i.shelf_life_days, i.cups_per_unit,
+                 i.daily_usage_estimate, i.min_stock_days, i.max_stock_days,
+                 i.min_stock_quantity, i.alert_enabled, i.expiry_alert_days,
+                 inv.min_stock_quantity, inv.alert_enabled, inv.expiry_alert_days,
+                 i.active, i.item_description, i.sort_order, i.item_attributes,
+                 inv.on_hand_quantity, inv.reserved_quantity
+        order by i.active desc, i.sort_order, category_name, i.code
+        """, this::mapItem, warehouseId, warehouseId, tenantId);
+  }
+
+  public Optional<WarehouseItemResponse> item(long tenantId, long itemId, long warehouseId) {
+    return items(tenantId, warehouseId).stream().filter(item -> item.id().equals(itemId)).findFirst();
+  }
+
   public int itemCategoryItemCount(long tenantId, long categoryId) {
     Integer count = jdbcTemplate.queryForObject(
         "select count(*) from warehouse_item where tenant_id = ? and category_id = ?",
@@ -446,12 +511,69 @@ public class WarehouseRepository {
     );
   }
 
+  public void updateAlertSettings(
+      long tenantId,
+      long warehouseId,
+      long itemId,
+      BigDecimal minStockQuantity,
+      boolean alertEnabled,
+      Integer expiryAlertDays
+  ) {
+    jdbcTemplate.update("""
+        insert into warehouse_inventory(
+          tenant_id, warehouse_id, item_id, on_hand_quantity, reserved_quantity,
+          in_transit_quantity, unit_cost, min_stock_quantity, alert_enabled,
+          expiry_alert_days, version, created_at
+        )
+        select i.tenant_id, ?, i.id, 0, 0, 0, 0,
+               i.min_stock_quantity, i.alert_enabled, i.expiry_alert_days, 0, current_timestamp
+        from warehouse_item i
+        where i.tenant_id = ? and i.id = ?
+        on duplicate key update item_id = values(item_id)
+        """, warehouseId, tenantId, itemId);
+    jdbcTemplate.update("""
+        update warehouse_inventory
+        set min_stock_quantity = ?,
+            alert_enabled = ?,
+            expiry_alert_days = ?,
+            updated_at = current_timestamp
+        where tenant_id = ? and warehouse_id = ? and item_id = ?
+        """,
+        amount(minStockQuantity),
+        alertEnabled,
+        positiveInt(expiryAlertDays, 3),
+        tenantId,
+        warehouseId,
+        itemId
+    );
+  }
+
   public void upsertBatch(long tenantId, WarehouseStockBatchRequest request) {
+    if (hasWarehouseColumn("warehouse_stock_batch")) {
+      upsertBatch(tenantId, centralWarehouseId(tenantId), request);
+      return;
+    }
     jdbcTemplate.update("""
         insert into warehouse_stock_batch(
           tenant_id, item_id, batch_no, received_date, expiry_date, quantity, unit_cost, note, created_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+        on duplicate key update
+          received_date = least(received_date, values(received_date)),
+          expiry_date = coalesce(values(expiry_date), expiry_date),
+          quantity = quantity + values(quantity),
+          unit_cost = values(unit_cost), note = values(note), updated_at = current_timestamp
+        """, tenantId, request.itemId(), request.batchNo().trim(), request.receivedDate(),
+        blankToNull(request.expiryDate()), amount(request.quantity()), amount(request.unitCost()),
+        blankToNull(request.note()));
+  }
+
+  public void upsertBatch(long tenantId, long warehouseId, WarehouseStockBatchRequest request) {
+    jdbcTemplate.update("""
+        insert into warehouse_stock_batch(
+          tenant_id, warehouse_id, item_id, batch_no, received_date, expiry_date, quantity,
+          reserved_quantity, unit_cost, note, created_at
         )
-        values (?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+        values (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, current_timestamp)
         on duplicate key update
           received_date = least(received_date, values(received_date)),
           expiry_date = coalesce(values(expiry_date), expiry_date),
@@ -461,6 +583,7 @@ public class WarehouseRepository {
           updated_at = current_timestamp
         """,
         tenantId,
+        warehouseId,
         request.itemId(),
         request.batchNo().trim(),
         request.receivedDate(),
@@ -472,17 +595,31 @@ public class WarehouseRepository {
   }
 
   public Optional<Long> batchId(long tenantId, long itemId, String batchNo) {
+    if (hasWarehouseColumn("warehouse_stock_batch")) {
+      return batchId(tenantId, centralWarehouseId(tenantId), itemId, batchNo);
+    }
+    if (batchNo == null || batchNo.isBlank()) {
+      return Optional.empty();
+    }
+    return jdbcTemplate.query("""
+        select id from warehouse_stock_batch
+        where tenant_id = ? and item_id = ? and batch_no = ? limit 1
+        """, (rs, rowNum) -> rs.getLong("id"), tenantId, itemId, batchNo.trim()).stream().findFirst();
+  }
+
+  public Optional<Long> batchId(long tenantId, long warehouseId, long itemId, String batchNo) {
     if (batchNo == null || batchNo.isBlank()) {
       return Optional.empty();
     }
     return jdbcTemplate.query("""
         select id
         from warehouse_stock_batch
-        where tenant_id = ? and item_id = ? and batch_no = ?
+        where tenant_id = ? and warehouse_id = ? and item_id = ? and batch_no = ?
         limit 1
         """,
         (rs, rowNum) -> rs.getLong("id"),
         tenantId,
+        warehouseId,
         itemId,
         batchNo.trim()
     ).stream().findFirst();
@@ -500,14 +637,43 @@ public class WarehouseRepository {
       String note,
       Long operatorId
   ) {
+    if (hasWarehouseColumn("warehouse_stock_movement")) {
+      insertMovement(tenantId, centralWarehouseId(tenantId), itemId, batchId, movementType,
+          quantityDelta, sourceType, sourceId, storeId, note, operatorId);
+      return;
+    }
     jdbcTemplate.update("""
         insert into warehouse_stock_movement(
           tenant_id, item_id, batch_id, movement_type, quantity_delta,
           source_type, source_id, store_id, note, operator_id, created_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+        """, tenantId, itemId, batchId, movementType, amount(quantityDelta), sourceType,
+        sourceId, storeId, note, operatorId);
+  }
+
+  public void insertMovement(
+      long tenantId,
+      Long warehouseId,
+      long itemId,
+      Long batchId,
+      String movementType,
+      BigDecimal quantityDelta,
+      String sourceType,
+      String sourceId,
+      String storeId,
+      String note,
+      Long operatorId
+  ) {
+    long resolvedWarehouseId = warehouseId == null ? centralWarehouseId(tenantId) : warehouseId;
+    jdbcTemplate.update("""
+        insert into warehouse_stock_movement(
+          tenant_id, warehouse_id, item_id, batch_id, movement_type, quantity_delta,
+          source_type, source_id, store_id, note, operator_id, created_at
         )
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
         """,
         tenantId,
+        resolvedWarehouseId,
         itemId,
         batchId,
         movementType,
@@ -540,18 +706,36 @@ public class WarehouseRepository {
   }
 
   public void insertRequisition(long tenantId, String id, String storeId, BigDecimal total, String note, Long submittedBy) {
+    if (hasColumn("store_requisition", "supply_warehouse_id")) {
+      insertRequisition(tenantId, id, storeId, centralWarehouseId(tenantId), total, note, submittedBy, null);
+      return;
+    }
     jdbcTemplate.update("""
         insert into store_requisition(
           id, tenant_id, store_id, status, total_amount, note, submitted_by, submitted_at
+        ) values (?, ?, ?, 'SUBMITTED', ?, ?, ?, current_timestamp)
+        """, id, tenantId, storeId, amount(total), blankToNull(note), submittedBy);
+  }
+
+  public void insertRequisition(
+      long tenantId, String id, String storeId, long supplyWarehouseId, BigDecimal total,
+      String note, Long submittedBy, String idempotencyKey
+  ) {
+    jdbcTemplate.update("""
+        insert into store_requisition(
+          id, tenant_id, store_id, supply_warehouse_id, status, total_amount, note,
+          submitted_by, submitted_at, idempotency_key
         )
-        values (?, ?, ?, 'SUBMITTED', ?, ?, ?, current_timestamp)
+        values (?, ?, ?, ?, 'SUBMITTED', ?, ?, ?, current_timestamp, ?)
         """,
         id,
         tenantId,
         storeId,
+        supplyWarehouseId,
         total.setScale(2, RoundingMode.HALF_UP),
         blankToNull(note),
-        submittedBy
+        submittedBy,
+        blankToNull(idempotencyKey)
     );
   }
 
@@ -597,27 +781,44 @@ public class WarehouseRepository {
   }
 
   public List<WarehouseRequisitionResponse> requisitions(long tenantId, String storeId) {
-    List<WarehouseRequisitionHeaderRow> headers = jdbcTemplate.query("""
+    return requisitions(tenantId, storeId, null);
+  }
+
+  public List<WarehouseRequisitionResponse> requisitions(long tenantId, String storeId, Long warehouseId) {
+    boolean facilityAware = hasColumn("store_requisition", "supply_warehouse_id");
+    String sql = """
         select r.id, r.store_id, s.name as store_name, r.status, r.total_amount, r.note,
+        """ + (facilityAware
+            ? " r.supply_warehouse_id as warehouse_id, facility.name as warehouse_name,\n"
+            : " cast(null as bigint) as warehouse_id, cast(null as varchar(160)) as warehouse_name,\n") + """
                sub.display_name as submitted_by, rev.display_name as reviewed_by, ship.display_name as shipped_by,
                rec.display_name as received_by, r.submitted_at, r.reviewed_at, r.shipped_at, r.received_at
         from store_requisition r
         join store_branch s on s.tenant_id = r.tenant_id and s.id = r.store_id
+        """ + (facilityAware
+            ? " left join warehouse_facility facility on facility.tenant_id = r.tenant_id and facility.id = r.supply_warehouse_id\n"
+            : "") + """
         left join auth_user sub on sub.tenant_id = r.tenant_id and sub.id = r.submitted_by
         left join auth_user rev on rev.tenant_id = r.tenant_id and rev.id = r.reviewed_by
         left join auth_user ship on ship.tenant_id = r.tenant_id and ship.id = r.shipped_by
         left join auth_user rec on rec.tenant_id = r.tenant_id and rec.id = r.received_by
         where r.tenant_id = ?
           and (? is null or r.store_id = ?)
+        """ + (warehouseId == null ? "" : " and r.supply_warehouse_id = ?\n") + """
         order by r.submitted_at desc
         limit 80
-        """, this::mapHeader, tenantId, blankToNull(storeId), blankToNull(storeId));
+        """;
+    List<WarehouseRequisitionHeaderRow> headers = warehouseId == null
+        ? jdbcTemplate.query(sql, this::mapHeader, tenantId, blankToNull(storeId), blankToNull(storeId))
+        : jdbcTemplate.query(sql, this::mapHeader, tenantId, blankToNull(storeId), blankToNull(storeId), warehouseId);
     ArrayList<WarehouseRequisitionResponse> rows = new ArrayList<>();
     for (WarehouseRequisitionHeaderRow header : headers) {
       rows.add(new WarehouseRequisitionResponse(
           header.id(),
           header.storeId(),
           header.storeName(),
+          header.warehouseId(),
+          header.warehouseName(),
           header.status(),
           statusLabel(header.status()),
           header.totalAmount(),
@@ -716,21 +917,44 @@ public class WarehouseRepository {
 
   public List<WarehouseStockBatchRow> positiveBatches(long tenantId, long itemId) {
     return jdbcTemplate.query("""
-        select id, item_id, batch_no, expiry_date, quantity
-        from warehouse_stock_batch
+        select id, item_id, batch_no, expiry_date, quantity from warehouse_stock_batch
         where tenant_id = ? and item_id = ? and quantity > 0
         order by received_date asc, created_at asc, id asc
         """, this::mapBatch, tenantId, itemId);
   }
 
-  public List<WarehouseStockBatchRow> positiveBatchesForUpdate(long tenantId, long itemId) {
+  public Optional<Long> requisitionWarehouseId(long tenantId, String requisitionId) {
+    return jdbcTemplate.query("""
+        select supply_warehouse_id from store_requisition
+        where tenant_id = ? and id = ? limit 1
+        """, (rs, rowNum) -> rs.getLong(1), tenantId, requisitionId).stream().findFirst();
+  }
+
+  public List<WarehouseStockBatchRow> positiveBatches(long tenantId, long warehouseId, long itemId) {
     return jdbcTemplate.query("""
         select id, item_id, batch_no, expiry_date, quantity
         from warehouse_stock_batch
+        where tenant_id = ? and warehouse_id = ? and item_id = ? and quantity > 0
+        order by received_date asc, created_at asc, id asc
+        """, this::mapBatch, tenantId, warehouseId, itemId);
+  }
+
+  public List<WarehouseStockBatchRow> positiveBatchesForUpdate(long tenantId, long itemId) {
+    return jdbcTemplate.query("""
+        select id, item_id, batch_no, expiry_date, quantity from warehouse_stock_batch
         where tenant_id = ? and item_id = ? and quantity > 0
+        order by received_date asc, created_at asc, id asc for update
+        """, this::mapBatch, tenantId, itemId);
+  }
+
+  public List<WarehouseStockBatchRow> positiveBatchesForUpdate(long tenantId, long warehouseId, long itemId) {
+    return jdbcTemplate.query("""
+        select id, item_id, batch_no, expiry_date, quantity
+        from warehouse_stock_batch
+        where tenant_id = ? and warehouse_id = ? and item_id = ? and quantity > 0
         order by received_date asc, created_at asc, id asc
         for update
-        """, this::mapBatch, tenantId, itemId);
+        """, this::mapBatch, tenantId, warehouseId, itemId);
   }
 
   public boolean reserveRequest(long tenantId, String requestType, String requestKey) {
@@ -766,15 +990,41 @@ public class WarehouseRepository {
   }
 
   public List<WarehouseStockBatchResponse> stockBatches(long tenantId) {
+    boolean facilityAware = hasWarehouseColumn("warehouse_stock_batch");
+    String sql = """
+        select b.id, b.item_id, i.name as item_name, i.unit, b.batch_no,
+               b.received_date, b.expiry_date, b.quantity, b.unit_cost, b.note, b.created_at,
+        """ + (facilityAware
+            ? " b.warehouse_id, facility.name as warehouse_name, coalesce(inv.expiry_alert_days, i.expiry_alert_days, 3) as expiry_alert_days\n"
+            : " cast(null as bigint) as warehouse_id, cast(null as varchar(160)) as warehouse_name, coalesce(i.expiry_alert_days, 3) as expiry_alert_days\n") + """
+        from warehouse_stock_batch b
+        join warehouse_item i on i.tenant_id = b.tenant_id and i.id = b.item_id
+        """ + (facilityAware
+            ? " join warehouse_facility facility on facility.tenant_id = b.tenant_id and facility.id = b.warehouse_id\n"
+                + " left join warehouse_inventory inv on inv.tenant_id = b.tenant_id and inv.warehouse_id = b.warehouse_id and inv.item_id = b.item_id\n"
+            : "") + """
+        where b.tenant_id = ?
+        order by i.sort_order, i.name, b.received_date asc, b.created_at asc, b.id asc
+        """;
+    return jdbcTemplate.query(sql, this::mapStockBatch, tenantId);
+  }
+
+  public List<WarehouseStockBatchResponse> stockBatches(long tenantId, long warehouseId) {
     return jdbcTemplate.query("""
         select b.id, b.item_id, i.name as item_name, i.unit, b.batch_no,
                b.received_date, b.expiry_date, b.quantity, b.unit_cost, b.note, b.created_at,
-               coalesce(i.expiry_alert_days, 3) as expiry_alert_days
+               b.warehouse_id, facility.name as warehouse_name,
+               coalesce(inv.expiry_alert_days, i.expiry_alert_days, 3) as expiry_alert_days
         from warehouse_stock_batch b
         join warehouse_item i on i.tenant_id = b.tenant_id and i.id = b.item_id
-        where b.tenant_id = ?
+        join warehouse_facility facility
+          on facility.tenant_id = b.tenant_id and facility.id = b.warehouse_id
+        left join warehouse_inventory inv
+          on inv.tenant_id = b.tenant_id and inv.warehouse_id = b.warehouse_id
+         and inv.item_id = b.item_id
+        where b.tenant_id = ? and b.warehouse_id = ?
         order by i.sort_order, i.name, b.received_date asc, b.created_at asc, b.id asc
-        """, this::mapStockBatch, tenantId);
+        """, this::mapStockBatch, tenantId, warehouseId);
   }
 
   public void updateBatchQuantity(long tenantId, long batchId, BigDecimal quantity) {
@@ -793,6 +1043,15 @@ public class WarehouseRepository {
     return count == null ? 0 : count;
   }
 
+  public int pendingRequisitionCount(long tenantId, Long warehouseId) {
+    Integer count = jdbcTemplate.queryForObject("""
+        select count(*) from store_requisition
+        where tenant_id = ? and status in ('SUBMITTED', 'APPROVED')
+          and (? is null or supply_warehouse_id = ?)
+        """, Integer.class, tenantId, warehouseId, warehouseId);
+    return count == null ? 0 : count;
+  }
+
   public int pendingReceiptCount(long tenantId, String storeId) {
     Integer count = jdbcTemplate.queryForObject("""
         select count(*) from warehouse_delivery_order
@@ -806,6 +1065,15 @@ public class WarehouseRepository {
         select count(*) from warehouse_purchase_order
         where tenant_id = ? and status in ('DRAFT', 'ORDERED')
         """, Integer.class, tenantId);
+    return count == null ? 0 : count;
+  }
+
+  public int pendingPurchaseCount(long tenantId, Long warehouseId) {
+    Integer count = jdbcTemplate.queryForObject("""
+        select count(*) from warehouse_purchase_order
+        where tenant_id = ? and status in ('DRAFT', 'ORDERED')
+          and (? is null or warehouse_id = ?)
+        """, Integer.class, tenantId, warehouseId, warehouseId);
     return count == null ? 0 : count;
   }
 
@@ -826,17 +1094,56 @@ public class WarehouseRepository {
       String note,
       String returnDate
   ) {
+    if (hasWarehouseColumn("warehouse_return_order")) {
+      insertReturnOrder(tenantId, centralWarehouseId(tenantId), id, returnNo, sourceRequisitionId,
+          sourceDeliveryId, returnStoreId, returnStoreName, receiveDepartment, status, totalAmount,
+          handledBy, operatorName, reason, note, returnDate);
+      return;
+    }
     jdbcTemplate.update("""
         insert into warehouse_return_order(
           id, tenant_id, return_no, source_requisition_id, source_delivery_id,
           return_store_id, return_store_name, receive_department, status,
           total_amount, handled_by, created_by, updated_by, reviewed_by,
           checked_by, reason, note, return_date, created_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+        """, id, tenantId, returnNo, blankToNull(sourceRequisitionId), blankToNull(sourceDeliveryId),
+        returnStoreId, returnStoreName, receiveDepartment, status, amount(totalAmount),
+        blankToNull(handledBy), blankToNull(operatorName), null, null, null,
+        blankToNull(reason), blankToNull(note), returnDate);
+  }
+
+  public void insertReturnOrder(
+      long tenantId,
+      Long warehouseId,
+      String id,
+      String returnNo,
+      String sourceRequisitionId,
+      String sourceDeliveryId,
+      String returnStoreId,
+      String returnStoreName,
+      String receiveDepartment,
+      String status,
+      BigDecimal totalAmount,
+      String handledBy,
+      String operatorName,
+      String reason,
+      String note,
+      String returnDate
+  ) {
+    long resolvedWarehouseId = warehouseId == null ? centralWarehouseId(tenantId) : warehouseId;
+    jdbcTemplate.update("""
+        insert into warehouse_return_order(
+          id, tenant_id, warehouse_id, return_no, source_requisition_id, source_delivery_id,
+          return_store_id, return_store_name, receive_department, status,
+          total_amount, handled_by, created_by, updated_by, reviewed_by,
+          checked_by, reason, note, return_date, created_at
         )
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
         """,
         id,
         tenantId,
+        resolvedWarehouseId,
         returnNo,
         blankToNull(sourceRequisitionId),
         blankToNull(sourceDeliveryId),
@@ -902,7 +1209,11 @@ public class WarehouseRepository {
   }
 
   public List<WarehouseReturnResponse> returns(long tenantId, String storeId) {
-    List<WarehouseReturnHeaderRow> headers = jdbcTemplate.query("""
+    return returns(tenantId, storeId, null);
+  }
+
+  public List<WarehouseReturnResponse> returns(long tenantId, String storeId, Long warehouseId) {
+    String sql = """
         select o.id, o.return_no, o.source_requisition_id, o.source_delivery_id,
                o.return_store_id, o.return_store_name,
                o.receive_department, o.status, o.total_amount, o.handled_by,
@@ -914,9 +1225,13 @@ public class WarehouseRepository {
         from warehouse_return_order o
         where o.tenant_id = ?
           and (? is null or o.return_store_id = ?)
+        """ + (warehouseId == null ? "" : " and o.warehouse_id = ?\n") + """
         order by o.return_date desc, o.created_at desc
         limit 120
-        """, this::mapReturnHeader, tenantId, blankToNull(storeId), blankToNull(storeId));
+        """;
+    List<WarehouseReturnHeaderRow> headers = warehouseId == null
+        ? jdbcTemplate.query(sql, this::mapReturnHeader, tenantId, blankToNull(storeId), blankToNull(storeId))
+        : jdbcTemplate.query(sql, this::mapReturnHeader, tenantId, blankToNull(storeId), blankToNull(storeId), warehouseId);
     ArrayList<WarehouseReturnResponse> rows = new ArrayList<>();
     for (WarehouseReturnHeaderRow header : headers) {
       rows.add(new WarehouseReturnResponse(
@@ -1131,12 +1446,56 @@ public class WarehouseRepository {
   }
 
   public void insertPurchaseOrder(long tenantId, String id, Long supplierId, BigDecimal totalAmount, String note, Long createdBy) {
+    if (hasWarehouseColumn("warehouse_purchase_order")) {
+      insertPurchaseOrder(tenantId, centralWarehouseId(tenantId), id, supplierId, totalAmount,
+          note, createdBy, null);
+      return;
+    }
     jdbcTemplate.update("""
         insert into warehouse_purchase_order(
           id, tenant_id, supplier_id, status, total_amount, note, created_by, created_at
-        )
-        values (?, ?, ?, 'ORDERED', ?, ?, ?, current_timestamp)
+        ) values (?, ?, ?, 'ORDERED', ?, ?, ?, current_timestamp)
         """, id, tenantId, supplierId, amount(totalAmount), blankToNull(note), createdBy);
+  }
+
+  public boolean activeSupplierExists(long tenantId, Long supplierId) {
+    if (supplierId == null) {
+      return true;
+    }
+    Integer count = jdbcTemplate.queryForObject("""
+        select count(*) from warehouse_supplier
+        where tenant_id = ? and id = ? and active = 1
+        """, Integer.class, tenantId, supplierId);
+    return count != null && count > 0;
+  }
+
+  public boolean insertPurchaseOrder(
+      long tenantId, long warehouseId, String id, Long supplierId, BigDecimal totalAmount,
+      String note, Long createdBy, String idempotencyKey
+  ) {
+    try {
+      jdbcTemplate.update("""
+        insert into warehouse_purchase_order(
+          id, tenant_id, warehouse_id, idempotency_key, supplier_id, status,
+          total_amount, note, created_by, created_at
+        )
+        values (?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, current_timestamp)
+        """, id, tenantId, warehouseId, blankToNull(idempotencyKey), supplierId,
+          amount(totalAmount), blankToNull(note), createdBy);
+      return true;
+    } catch (DuplicateKeyException ex) {
+      return false;
+    }
+  }
+
+  public Optional<String> purchaseOrderIdByRequestKey(long tenantId, String requestKey) {
+    if (requestKey == null || requestKey.isBlank()) {
+      return Optional.empty();
+    }
+    return jdbcTemplate.query("""
+        select id from warehouse_purchase_order
+        where tenant_id = ? and idempotency_key = ? limit 1
+        """, (rs, rowNum) -> rs.getString(1), tenantId, requestKey.trim()).stream().findFirst();
   }
 
   public void insertPurchaseOrderLine(long tenantId, String purchaseOrderId, long itemId, BigDecimal orderedQuantity, BigDecimal unitCost, String note) {
@@ -1151,7 +1510,11 @@ public class WarehouseRepository {
   }
 
   public List<WarehousePurchaseOrderResponse> purchaseOrders(long tenantId) {
-    List<WarehousePurchaseOrderHeaderRow> headers = jdbcTemplate.query("""
+    return purchaseOrders(tenantId, null);
+  }
+
+  public List<WarehousePurchaseOrderResponse> purchaseOrders(long tenantId, Long warehouseId) {
+    String sql = """
         select po.id, po.supplier_id, s.name as supplier_name, po.status, po.total_amount, po.note,
                creator.display_name as created_by, receiver.display_name as received_by, po.created_at, po.received_at
         from warehouse_purchase_order po
@@ -1159,9 +1522,13 @@ public class WarehouseRepository {
         left join auth_user creator on creator.tenant_id = po.tenant_id and creator.id = po.created_by
         left join auth_user receiver on receiver.tenant_id = po.tenant_id and receiver.id = po.received_by
         where po.tenant_id = ?
+        """ + (warehouseId == null ? "" : " and po.warehouse_id = ?\n") + """
         order by po.created_at desc
         limit 50
-        """, this::mapPurchaseHeader, tenantId);
+        """;
+    List<WarehousePurchaseOrderHeaderRow> headers = warehouseId == null
+        ? jdbcTemplate.query(sql, this::mapPurchaseHeader, tenantId)
+        : jdbcTemplate.query(sql, this::mapPurchaseHeader, tenantId, warehouseId);
     ArrayList<WarehousePurchaseOrderResponse> rows = new ArrayList<>();
     for (WarehousePurchaseOrderHeaderRow header : headers) {
       rows.add(new WarehousePurchaseOrderResponse(
@@ -1183,16 +1550,85 @@ public class WarehouseRepository {
   }
 
   public Optional<WarehousePurchaseOrderResponse> purchaseOrder(long tenantId, String id) {
-    return purchaseOrders(tenantId).stream().filter(row -> row.id().equals(id)).findFirst();
+    return jdbcTemplate.query("""
+        select po.id, po.supplier_id, s.name as supplier_name, po.status, po.total_amount, po.note,
+               creator.display_name as created_by, receiver.display_name as received_by,
+               po.created_at, po.received_at
+        from warehouse_purchase_order po
+        left join warehouse_supplier s
+          on s.tenant_id = po.tenant_id and s.id = po.supplier_id
+        left join auth_user creator
+          on creator.tenant_id = po.tenant_id and creator.id = po.created_by
+        left join auth_user receiver
+          on receiver.tenant_id = po.tenant_id and receiver.id = po.received_by
+        where po.tenant_id = ? and po.id = ?
+        limit 1
+        """, this::mapPurchaseHeader, tenantId, id).stream().findFirst()
+        .map(header -> new WarehousePurchaseOrderResponse(
+            header.id(), header.supplierId(), header.supplierName(), header.status(),
+            purchaseStatusLabel(header.status()), header.totalAmount(), header.note(),
+            header.createdBy(), header.receivedBy(), header.createdAt(), header.receivedAt(),
+            purchaseOrderLines(tenantId, header.id())));
   }
 
   public void insertDelivery(long tenantId, String id, String requisitionId, String storeId, Long shippedBy, String note) {
+    if (hasWarehouseColumn("warehouse_delivery_order")) {
+      insertDelivery(tenantId, centralWarehouseId(tenantId), id, requisitionId, storeId, shippedBy, note);
+      return;
+    }
     jdbcTemplate.update("""
         insert into warehouse_delivery_order(
           id, tenant_id, requisition_id, store_id, status, shipped_by, shipped_at, note
-        )
-        values (?, ?, ?, ?, 'SHIPPED', ?, current_timestamp, ?)
+        ) values (?, ?, ?, ?, 'SHIPPED', ?, current_timestamp, ?)
         """, id, tenantId, requisitionId, storeId, shippedBy, blankToNull(note));
+  }
+
+  public Optional<PurchaseLockRow> purchaseOrderForUpdate(long tenantId, String id) {
+    return jdbcTemplate.query("""
+        select id, warehouse_id, status from warehouse_purchase_order
+        where tenant_id = ? and id = ? for update
+        """, (rs, rowNum) -> new PurchaseLockRow(
+        rs.getString("id"), rs.getLong("warehouse_id"), rs.getString("status")), tenantId, id)
+        .stream().findFirst();
+  }
+
+  public int markPurchaseOrdered(long tenantId, String id) {
+    return jdbcTemplate.update("""
+        update warehouse_purchase_order set status = 'ORDERED', updated_at = current_timestamp
+        where tenant_id = ? and id = ? and status = 'DRAFT'
+        """, tenantId, id);
+  }
+
+  public int markPurchaseReceived(long tenantId, String id, Long userId) {
+    return jdbcTemplate.update("""
+        update warehouse_purchase_order
+        set status = 'RECEIVED', received_by = ?, received_at = current_timestamp,
+            updated_at = current_timestamp
+        where tenant_id = ? and id = ? and status = 'ORDERED'
+        """, userId, tenantId, id);
+  }
+
+  public int setPurchaseLineReceived(
+      long tenantId, String purchaseOrderId, long itemId, BigDecimal quantity
+  ) {
+    return jdbcTemplate.update("""
+        update warehouse_purchase_order_line
+        set received_quantity = ?
+        where tenant_id = ? and purchase_order_id = ? and item_id = ?
+          and ordered_quantity >= ?
+        """, amount(quantity), tenantId, purchaseOrderId, itemId, amount(quantity));
+  }
+
+  public void insertDelivery(
+      long tenantId, long warehouseId, String id, String requisitionId, String storeId,
+      Long shippedBy, String note
+  ) {
+    jdbcTemplate.update("""
+        insert into warehouse_delivery_order(
+          id, tenant_id, warehouse_id, requisition_id, store_id, status, shipped_by, shipped_at, note
+        )
+        values (?, ?, ?, ?, ?, 'SHIPPED', ?, current_timestamp, ?)
+        """, id, tenantId, warehouseId, requisitionId, storeId, shippedBy, blankToNull(note));
   }
 
   public void insertDeliveryLine(long tenantId, String deliveryId, Long requisitionLineId, long itemId, BigDecimal shippedQuantity, BigDecimal unitPrice) {
@@ -1207,7 +1643,11 @@ public class WarehouseRepository {
   }
 
   public List<WarehouseDeliveryResponse> deliveries(long tenantId, String storeId) {
-    List<WarehouseDeliveryHeaderRow> headers = jdbcTemplate.query("""
+    return deliveries(tenantId, storeId, null);
+  }
+
+  public List<WarehouseDeliveryResponse> deliveries(long tenantId, String storeId, Long warehouseId) {
+    String sql = """
         select d.id, d.requisition_id, d.store_id, s.name as store_name, d.status,
                ship.display_name as shipped_by, rec.display_name as received_by, d.shipped_at, d.received_at
         from warehouse_delivery_order d
@@ -1215,9 +1655,13 @@ public class WarehouseRepository {
         left join auth_user ship on ship.tenant_id = d.tenant_id and ship.id = d.shipped_by
         left join auth_user rec on rec.tenant_id = d.tenant_id and rec.id = d.received_by
         where d.tenant_id = ? and (? is null or d.store_id = ?)
+        """ + (warehouseId == null ? "" : " and d.warehouse_id = ?\n") + """
         order by d.shipped_at desc
         limit 80
-        """, this::mapDeliveryHeader, tenantId, blankToNull(storeId), blankToNull(storeId));
+        """;
+    List<WarehouseDeliveryHeaderRow> headers = warehouseId == null
+        ? jdbcTemplate.query(sql, this::mapDeliveryHeader, tenantId, blankToNull(storeId), blankToNull(storeId))
+        : jdbcTemplate.query(sql, this::mapDeliveryHeader, tenantId, blankToNull(storeId), blankToNull(storeId), warehouseId);
     ArrayList<WarehouseDeliveryResponse> rows = new ArrayList<>();
     for (WarehouseDeliveryHeaderRow header : headers) {
       rows.add(new WarehouseDeliveryResponse(
@@ -1282,12 +1726,30 @@ public class WarehouseRepository {
   }
 
   public void insertReceipt(long tenantId, String id, String deliveryId, String requisitionId, String storeId, Long receivedBy, String note) {
+    if (hasWarehouseColumn("store_receipt")) {
+      insertReceipt(tenantId, centralWarehouseId(tenantId), id, deliveryId, requisitionId,
+          storeId, receivedBy, note);
+      return;
+    }
     jdbcTemplate.update("""
         insert into store_receipt(
           id, tenant_id, delivery_id, requisition_id, store_id, status, received_by, received_at, note
-        )
-        values (?, ?, ?, ?, ?, 'RECEIVED', ?, current_timestamp, ?)
+        ) values (?, ?, ?, ?, ?, 'RECEIVED', ?, current_timestamp, ?)
         """, id, tenantId, deliveryId, requisitionId, storeId, receivedBy, blankToNull(note));
+  }
+
+  public void insertReceipt(
+      long tenantId, long warehouseId, String id, String deliveryId, String requisitionId,
+      String storeId, Long receivedBy, String note
+  ) {
+    jdbcTemplate.update("""
+        insert into store_receipt(
+          id, tenant_id, warehouse_id, delivery_id, requisition_id, store_id,
+          status, received_by, received_at, note
+        )
+        values (?, ?, ?, ?, ?, ?, 'RECEIVED', ?, current_timestamp, ?)
+        """, id, tenantId, warehouseId, deliveryId, requisitionId, storeId,
+        receivedBy, blankToNull(note));
   }
 
   public void insertReceiptLine(long tenantId, String receiptId, long itemId, BigDecimal receivedQuantity, String note) {
@@ -1316,19 +1778,60 @@ public class WarehouseRepository {
   }
 
   public List<WarehouseStockMovementResponse> movements(long tenantId, String storeId, int limit) {
-    return jdbcTemplate.query("""
+    return movements(tenantId, storeId, null, limit);
+  }
+
+  public List<WarehouseStockMovementResponse> movements(
+      long tenantId, String storeId, Long warehouseId, int limit
+  ) {
+    boolean facilityAware = hasWarehouseColumn("warehouse_stock_movement");
+    String sql = """
         select m.id, m.item_id, m.batch_id, i.name as item_name, m.movement_type, m.quantity_delta,
                m.source_type, m.source_id, m.store_id, s.name as store_name, m.note,
-               u.display_name as operator_name, m.created_at, b.batch_no
+               u.display_name as operator_name, m.created_at, b.batch_no,
+        """ + (facilityAware ? """
+               m.warehouse_id, facility.name as warehouse_name,
+               case when transfer_order.id is not null then transfer_order.source_warehouse_id
+                    when m.quantity_delta < 0 then m.warehouse_id else null end as source_warehouse_id,
+               case when transfer_order.id is not null then source_facility.name
+                    when m.quantity_delta < 0 then facility.name else null end as source_warehouse_name,
+               case when transfer_order.id is not null then transfer_order.target_warehouse_id
+                    when m.quantity_delta > 0 then m.warehouse_id else null end as target_warehouse_id,
+               case when transfer_order.id is not null then target_facility.name
+                    when m.quantity_delta > 0 then facility.name else null end as target_warehouse_name
+        """ : """
+               cast(null as bigint) as warehouse_id, cast(null as varchar(160)) as warehouse_name,
+               cast(null as bigint) as source_warehouse_id, cast(null as varchar(160)) as source_warehouse_name,
+               cast(null as bigint) as target_warehouse_id, cast(null as varchar(160)) as target_warehouse_name
+        """) + """
         from warehouse_stock_movement m
         join warehouse_item i on i.tenant_id = m.tenant_id and i.id = m.item_id
         left join warehouse_stock_batch b on b.tenant_id = m.tenant_id and b.id = m.batch_id
         left join store_branch s on s.tenant_id = m.tenant_id and s.id = m.store_id
         left join auth_user u on u.tenant_id = m.tenant_id and u.id = m.operator_id
+        """ + (facilityAware ? """
+        join warehouse_facility facility
+          on facility.tenant_id = m.tenant_id and facility.id = m.warehouse_id
+        left join warehouse_transfer_order transfer_order
+          on transfer_order.tenant_id = m.tenant_id
+         and m.source_type = 'WAREHOUSE_TRANSFER' and transfer_order.id = m.source_id
+        left join warehouse_facility source_facility
+          on source_facility.tenant_id = transfer_order.tenant_id
+         and source_facility.id = transfer_order.source_warehouse_id
+        left join warehouse_facility target_facility
+          on target_facility.tenant_id = transfer_order.tenant_id
+         and target_facility.id = transfer_order.target_warehouse_id
+        """ : "") + """
         where m.tenant_id = ? and (? is null or m.store_id = ?)
+        """ + (warehouseId == null ? "" : " and m.warehouse_id = ?\n") + """
         order by m.created_at desc
         limit ?
-        """, this::mapMovement, tenantId, blankToNull(storeId), blankToNull(storeId), Math.max(1, limit));
+        """;
+    return warehouseId == null
+        ? jdbcTemplate.query(sql, this::mapMovement, tenantId, blankToNull(storeId),
+            blankToNull(storeId), Math.max(1, limit))
+        : jdbcTemplate.query(sql, this::mapMovement, tenantId, blankToNull(storeId),
+            blankToNull(storeId), warehouseId, Math.max(1, limit));
   }
 
   public Optional<WarehouseReceiptPrintRow> receiptPrintRow(long tenantId, long batchId) {
@@ -1576,6 +2079,8 @@ public class WarehouseRepository {
         rs.getString("id"),
         rs.getString("store_id"),
         rs.getString("store_name"),
+        rs.getObject("warehouse_id", Long.class),
+        rs.getString("warehouse_name"),
         rs.getString("status"),
         amount(rs.getBigDecimal("total_amount")),
         rs.getString("note"),
@@ -1702,6 +2207,12 @@ public class WarehouseRepository {
         movementType,
         movementTypeLabel(movementType),
         amount(rs.getBigDecimal("quantity_delta")),
+        rs.getObject("warehouse_id", Long.class),
+        rs.getString("warehouse_name"),
+        rs.getObject("source_warehouse_id", Long.class),
+        rs.getString("source_warehouse_name"),
+        rs.getObject("target_warehouse_id", Long.class),
+        rs.getString("target_warehouse_name"),
         rs.getString("source_type"),
         rs.getString("source_id"),
         rs.getString("store_id"),
@@ -1982,6 +2493,51 @@ public class WarehouseRepository {
     return value == null ? ZERO : value.setScale(2, RoundingMode.HALF_UP);
   }
 
+  public Optional<Long> batchWarehouseId(long tenantId, long batchId) {
+    return jdbcTemplate.query("select warehouse_id from warehouse_stock_batch where tenant_id = ? and id = ?",
+        (rs, rowNum) -> rs.getLong(1), tenantId, batchId).stream().findFirst();
+  }
+
+  public Optional<Long> movementWarehouseId(long tenantId, long movementId) {
+    return jdbcTemplate.query("select warehouse_id from warehouse_stock_movement where tenant_id = ? and id = ?",
+        (rs, rowNum) -> rs.getLong(1), tenantId, movementId).stream().findFirst();
+  }
+
+  public Optional<Long> deliveryWarehouseId(long tenantId, String requisitionId) {
+    return jdbcTemplate.query("select warehouse_id from warehouse_delivery_order where tenant_id = ? and requisition_id = ? limit 1",
+        (rs, rowNum) -> rs.getLong(1), tenantId, requisitionId).stream().findFirst();
+  }
+
+  public Optional<Long> returnWarehouseId(long tenantId, String returnId) {
+    return jdbcTemplate.query("""
+        select warehouse_id from warehouse_return_order
+        where tenant_id = ? and (id = ? or return_no = ?) limit 1
+        """, (rs, rowNum) -> rs.getLong(1), tenantId, returnId, returnId).stream().findFirst();
+  }
+
+  private long centralWarehouseId(long tenantId) {
+    Long id = jdbcTemplate.query("""
+        select id from warehouse_facility
+        where tenant_id = ? and warehouse_type = 'CENTRAL' and enabled = 1
+        order by id limit 1
+        """, (rs, rowNum) -> rs.getLong(1), tenantId).stream().findFirst()
+        .orElseThrow(() -> new IllegalStateException("当前企业未配置启用的总仓"));
+    return id;
+  }
+
+  private boolean hasWarehouseColumn(String tableName) {
+    return hasColumn(tableName, "warehouse_id");
+  }
+
+  private boolean hasColumn(String tableName, String columnName) {
+    try {
+      jdbcTemplate.queryForList("select " + columnName + " from " + tableName + " where 1 = 0");
+      return true;
+    } catch (DataAccessException ex) {
+      return false;
+    }
+  }
+
   private String blankToNull(String value) {
     return value == null || value.isBlank() ? null : value.trim();
   }
@@ -1998,6 +2554,8 @@ public class WarehouseRepository {
       String id,
       String storeId,
       String storeName,
+      Long warehouseId,
+      String warehouseName,
       String status,
       BigDecimal totalAmount,
       String note,
@@ -2162,5 +2720,8 @@ public class WarehouseRepository {
       String batchNos,
       String note
   ) {
+  }
+
+  public record PurchaseLockRow(String id, long warehouseId, String status) {
   }
 }

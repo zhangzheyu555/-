@@ -41,3 +41,12 @@ test-results/
 *.backup
 store-data-backup.json
 backend/src/main/resources/static/门店数据备份.json
+
+# Local runtime process markers
+*.pid
+
+# Removed legacy HTML application and copied static assets.
+# Training images are the controlled exception used by /train-img/** at runtime.
+backend/src/main/resources/static/*
+!backend/src/main/resources/static/train-img/
+!backend/src/main/resources/static/train-img/**

@@ -12,6 +12,21 @@ public record StoreUpsertRequest(
     String manager,
     String openDate,
     String status,
-    String note
+    String note,
+    String regionCode,
+    Long supplyWarehouseId
 ) {
+  public StoreUpsertRequest(
+      String id,
+      String code,
+      String name,
+      Long brandId,
+      String area,
+      String manager,
+      String openDate,
+      String status,
+      String note
+  ) {
+    this(id, code, name, brandId, area, manager, openDate, status, note, null, null);
+  }
 }

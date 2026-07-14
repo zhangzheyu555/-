@@ -1,9 +1,11 @@
 package com.storeprofit.system.finance;
 
+import com.storeprofit.system.platform.authorization.DataScope;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -23,6 +25,16 @@ public class FinanceRepository {
   }
 
   public List<ProfitEntryResponse> entries(long tenantId, String month, Long brandId, String storeId) {
+    return entries(tenantId, month, brandId, storeId, null);
+  }
+
+  public List<ProfitEntryResponse> entries(
+      long tenantId,
+      String month,
+      Long brandId,
+      String storeId,
+      DataScope dataScope
+  ) {
     StringBuilder sql = new StringBuilder("""
         select p.id, p.store_id, s.code as store_code, s.name as store_name, s.brand_id,
                b.name as brand_name, s.area, s.manager, p.month, p.sales, p.refund, p.discount,
@@ -47,6 +59,7 @@ public class FinanceRepository {
       sql.append(" and p.store_id = :storeId");
       params.addValue("storeId", storeId);
     }
+    appendStoreScope(sql, params, "p.store_id", dataScope);
     sql.append(" order by p.month desc, net_sort desc, b.sort_order, s.code, s.id");
     String query = sql.toString().replace("net_sort", "(p.sales - p.refund - p.discount - p.material - p.packaging - p.loss - p.cost_other - p.rent - p.labor - p.utility - p.property - p.commission - p.promo - p.repair - p.equip - p.exp_other)");
     return namedJdbcTemplate.query(query, params, this::mapEntry);
@@ -55,6 +68,10 @@ public class FinanceRepository {
   public Optional<ProfitEntryResponse> entry(long tenantId, String storeId, String month) {
     List<ProfitEntryResponse> rows = entries(tenantId, month, null, storeId);
     return rows.stream().findFirst();
+  }
+
+  public Optional<ProfitEntryResponse> entry(long tenantId, String storeId, String month, DataScope dataScope) {
+    return entries(tenantId, month, null, storeId, dataScope).stream().findFirst();
   }
 
   public void upsert(long tenantId, ProfitEntryRequest request, Long userId) {
@@ -112,12 +129,19 @@ public class FinanceRepository {
   }
 
   public List<String> availableMonths(long tenantId) {
-    return jdbcTemplate.queryForList("""
+    return availableMonths(tenantId, null);
+  }
+
+  public List<String> availableMonths(long tenantId, DataScope dataScope) {
+    StringBuilder sql = new StringBuilder("""
         select distinct month
         from profit_entry
-        where tenant_id = ?
-        order by month desc
-        """, String.class, tenantId);
+        where tenant_id = :tenantId
+        """);
+    MapSqlParameterSource params = new MapSqlParameterSource("tenantId", tenantId);
+    appendStoreScope(sql, params, "store_id", dataScope);
+    sql.append(" order by month desc");
+    return namedJdbcTemplate.queryForList(sql.toString(), params, String.class);
   }
 
   public int profitCount(long tenantId) {
@@ -258,5 +282,23 @@ public class FinanceRepository {
 
   private String blankToNull(String value) {
     return value == null || value.isBlank() ? null : value;
+  }
+
+  private void appendStoreScope(
+      StringBuilder sql,
+      MapSqlParameterSource params,
+      String storeColumn,
+      DataScope dataScope
+  ) {
+    if (dataScope == null || dataScope.allowsAllStores()) {
+      return;
+    }
+    Collection<String> storeIds = dataScope.storeIds();
+    if (dataScope.deniesStoreAccess() || storeIds == null || storeIds.isEmpty()) {
+      sql.append(" and 1 = 0");
+      return;
+    }
+    sql.append(" and ").append(storeColumn).append(" in (:scopeStoreIds)");
+    params.addValue("scopeStoreIds", storeIds);
   }
 }

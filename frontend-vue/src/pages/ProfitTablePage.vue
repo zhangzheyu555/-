@@ -5,6 +5,9 @@ import { useRoute, useRouter } from 'vue-router'
 import type { ProfitEntry } from '../api/profit'
 import BrandBadge from '../components/common/BrandBadge.vue'
 import BrandSelect from '../components/common/BrandSelect.vue'
+import BusinessScopeBar from '../components/common/BusinessScopeBar.vue'
+import PageHeader from '../components/common/PageHeader.vue'
+import { useBusinessScope } from '../composables/useBusinessScope'
 import { amount, money, percent, useProfitStore } from '../stores/profit'
 import { getBrandIdLike, normalizeBrandName, STANDARD_BRANDS } from '../utils/brand'
 
@@ -17,7 +20,8 @@ const canonicalBrandNames = STANDARD_BRANDS.map((brand) => brand.name)
 const route = useRoute()
 const router = useRouter()
 const profit = useProfitStore()
-const reportMode = ref<ReportMode>(isSummaryMode(route.query.mode) ? 'summary' : 'single')
+const scope = useBusinessScope()
+const reportMode = ref<ReportMode>(scope.isStoreManager.value ? 'single' : (isSummaryMode(route.query.mode) ? 'summary' : 'single'))
 
 const selectedMonth = computed(() => String(route.query.month || profit.month || profit.summary.month || ''))
 const monthOptions = computed(() => profit.months.length ? profit.months : Array.from(new Set(profit.allEntries.map((entry) => entry.month).filter(Boolean))))
@@ -60,6 +64,7 @@ const brandOptions = computed<BrandOption[]>(() => {
   })
 })
 const selectedBrandId = computed(() => {
+  if (scope.isStoreManager.value) return scope.scopedBrandId()
   const requestedBrandId = String(route.query.brandId || '')
   if (requestedBrandId && brandOptions.value.some((brand) => brand.value === requestedBrandId)) return requestedBrandId
   if (reportMode.value === 'single') {
@@ -71,11 +76,21 @@ const selectedBrandId = computed(() => {
 })
 const storeOptions = computed(() => storesForBrand(selectedBrandId.value))
 const selectedStoreId = computed(() => {
+  if (scope.isStoreManager.value) return scope.boundStoreId.value
   const requestedStoreId = String(route.query.storeId || '')
   if (requestedStoreId && storeOptions.value.some((store) => store.storeId === requestedStoreId)) return requestedStoreId
   return reportMode.value === 'single' ? storeOptions.value[0]?.storeId || '' : requestedStoreId
 })
-const selectedStore = computed(() => storeOptions.value.find((store) => store.storeId === selectedStoreId.value) || storeOptions.value[0])
+const selectedStore = computed(() => storeOptions.value.find((store) => store.storeId === selectedStoreId.value)
+  || allStoreOptions.value.find((store) => store.storeId === selectedStoreId.value)
+  || (scope.isStoreManager.value ? {
+    storeId: scope.boundStoreId.value,
+    storeName: scope.boundStoreName.value,
+    brandName: scope.brandName.value,
+    brandKey: scope.scopedBrandId(),
+    normalizedBrandName: scope.brandName.value,
+    month: selectedMonth.value,
+  } as StoreOption : storeOptions.value[0]))
 const monthRows = computed(() => profit.allEntries.filter((entry) => !selectedMonth.value || entry.month === selectedMonth.value))
 const brandRows = computed(() => monthRows.value.filter((entry) => matchesBrand(entry, selectedBrandId.value)))
 const singleEntry = computed(() => brandRows.value.find((entry) => entry.storeId === selectedStoreId.value) || null)
@@ -84,6 +99,14 @@ const totalRow = computed(() => summarize(allRows.value))
 const visibleRows = computed(() => (reportMode.value === 'single' ? (singleEntry.value ? [singleEntry.value] : []) : allRows.value))
 
 async function refresh() {
+  if (scope.isStoreManager.value) {
+    reportMode.value = 'single'
+    profit.setFilters({
+      month: selectedMonth.value || profit.month,
+      brandId: scope.scopedBrandId(),
+      storeId: scope.boundStoreId.value,
+    })
+  }
   await profit.load()
 }
 
@@ -122,6 +145,7 @@ function selectValue(event: Event) {
 }
 
 function setMode(mode: ReportMode) {
+  if (scope.isStoreManager.value) return
   reportMode.value = mode
   const query = { ...route.query, mode } as Record<string, string | undefined>
   if (mode === 'summary') {
@@ -251,27 +275,32 @@ function exportProfitTable() {
   URL.revokeObjectURL(url)
 }
 
-onMounted(() => {
-  void refresh()
+onMounted(async () => {
+  if (scope.isStoreManager.value && (route.query.brandId || route.query.storeId || route.query.mode !== 'single')) {
+    await router.replace({ path: '/profit-table', query: { month: selectedMonth.value || undefined, mode: 'single' } })
+  }
+  await refresh()
 })
 </script>
 
 <template>
-  <section class="legacy-report-page">
-    <div class="page-head">
-      <h2>利润表</h2>
-      <div class="report-mode-seg" role="tablist" aria-label="利润表模式">
-        <button class="seg-button" :class="{ active: reportMode === 'single' }" type="button" @click="setMode('single')">单店利润表</button>
-        <button class="seg-button" :class="{ active: reportMode === 'summary' }" type="button" @click="setMode('summary')">全部门店汇总</button>
-      </div>
-    </div>
+  <section class="page-panel profit-report-page">
+    <PageHeader :title="scope.isStoreManager.value ? '本店利润表' : undefined">
+      <template #actions>
+        <div v-if="!scope.isStoreManager.value" class="report-mode-seg" role="tablist" aria-label="利润表模式">
+          <button class="seg-button" :class="{ active: reportMode === 'single' }" type="button" @click="setMode('single')">单店利润表</button>
+          <button class="seg-button" :class="{ active: reportMode === 'summary' }" type="button" @click="setMode('summary')">全部门店汇总</button>
+        </div>
+      </template>
+    </PageHeader>
 
     <div v-if="profit.error" class="error-box">{{ profit.error }}</div>
 
     <section class="report-filter-card">
       <div class="filter-left">
-        <BrandSelect :model-value="selectedBrandId" :brands="brandOptions" :allow-all="reportMode === 'summary'" @change="updateBrand" />
-        <select v-if="reportMode === 'single'" :value="selectedStoreId" aria-label="门店" @change="updateStore(selectValue($event))">
+        <BusinessScopeBar v-if="scope.isStoreManager.value" />
+        <BrandSelect v-if="!scope.isStoreManager.value" :model-value="selectedBrandId" :brands="brandOptions" :allow-all="reportMode === 'summary'" @change="updateBrand" />
+        <select v-if="!scope.isStoreManager.value && reportMode === 'single'" :value="selectedStoreId" aria-label="门店" @change="updateStore(selectValue($event))">
           <option v-if="!storeOptions.length" value="">暂无门店</option>
           <option v-for="store in storeOptions" :key="store.storeId" :value="store.storeId">
             {{ store.normalizedBrandName }} · {{ store.storeName || store.storeCode || store.storeId }}
@@ -281,7 +310,7 @@ onMounted(() => {
           <option v-for="month in monthOptions" :key="month" :value="month">{{ month }}</option>
         </select>
       </div>
-      <button class="legacy-export-button" type="button" :disabled="!visibleRows.length" @click="exportProfitTable">
+      <button class="report-export-button" type="button" :disabled="!visibleRows.length" @click="exportProfitTable">
         <Download :size="16" />
         {{ reportMode === 'single' ? '导出利润表' : '导出汇总' }}
       </button>
@@ -290,13 +319,13 @@ onMounted(() => {
     <div v-if="profit.loading && !profit.dashboard" class="empty-state">正在读取利润表...</div>
 
     <template v-else-if="reportMode === 'single'">
-      <section v-if="!singleEntry" class="legacy-report-card">
+      <section v-if="!singleEntry" class="profit-report-card">
         <div class="empty-state compact">
           <b>{{ selectedStore?.storeName || selectedStoreId }} {{ selectedMonth }} 暂无数据</b>
           去「数据录入」录入这家店这个月的数据。
         </div>
       </section>
-      <section v-else class="legacy-report-card">
+      <section v-else class="profit-report-card">
         <div class="statement-head">
           <b>{{ singleEntry.storeName || singleEntry.storeId }} · {{ selectedMonth }} 利润表</b>
           <span>单位：元</span>
@@ -336,14 +365,14 @@ onMounted(() => {
       </section>
     </template>
 
-    <section v-else class="legacy-report-card all-report-card">
+    <section v-else class="profit-report-card all-report-card">
       <div class="statement-head">
         <b>{{ selectedMonth }} · 全部门店利润汇总</b>
         <span>单位：元</span>
       </div>
       <div v-if="!allRows.length" class="empty-state compact">{{ selectedMonth }} 暂无数据，换个月份或先录入数据。</div>
-      <div v-else class="legacy-table-wrap">
-        <table class="legacy-summary-table">
+      <div v-else class="profit-table-wrap">
+        <table class="profit-summary-table">
           <thead>
             <tr>
               <th>门店</th>
@@ -382,13 +411,13 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.legacy-report-page {
+.profit-report-page {
   display: grid;
   gap: 16px;
   max-width: 1120px;
 }
 
-.legacy-report-page .page-head {
+.profit-report-page .page-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -396,7 +425,7 @@ onMounted(() => {
   margin: 0;
 }
 
-.legacy-report-page h2 {
+.profit-report-page h2 {
   margin: 0;
   font-size: 24px;
   line-height: 1.2;
@@ -425,9 +454,9 @@ onMounted(() => {
 }
 
 .seg-button.active {
-  background: linear-gradient(135deg, #ff9743 0%, #8a4b2e 100%);
+  background: var(--ds-primary-hover);
   color: #fff;
-  box-shadow: 0 10px 20px rgba(238, 126, 62, 0.18);
+  box-shadow: none;
 }
 
 .report-filter-card {
@@ -499,7 +528,7 @@ onMounted(() => {
   background: var(--primary);
 }
 
-.legacy-export-button {
+.report-export-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -515,12 +544,12 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-.legacy-export-button:disabled {
+.report-export-button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
 }
 
-.legacy-report-card {
+.profit-report-card {
   overflow-x: auto;
   padding: 18px 20px 20px;
   border: 1px solid var(--line);
@@ -593,37 +622,37 @@ onMounted(() => {
   font-weight: 900;
 }
 
-.legacy-table-wrap {
+.profit-table-wrap {
   overflow-x: auto;
 }
 
-.legacy-summary-table {
+.profit-summary-table {
   width: 100%;
   min-width: 840px;
   border-collapse: collapse;
   font-size: 13.5px;
 }
 
-.legacy-summary-table th,
-.legacy-summary-table td {
+.profit-summary-table th,
+.profit-summary-table td {
   padding: 11px 10px;
   border-bottom: 1px solid var(--line);
   text-align: left;
   vertical-align: middle;
 }
 
-.legacy-summary-table th {
+.profit-summary-table th {
   color: var(--muted);
   font-size: 12px;
   font-weight: 900;
 }
 
-.legacy-summary-table .r {
+.profit-summary-table .r {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
-.legacy-summary-table .store-name {
+.profit-summary-table .store-name {
   font-weight: 900;
 }
 
@@ -662,17 +691,17 @@ onMounted(() => {
 }
 
 @media (max-width: 720px) {
-  .legacy-report-page .page-head,
+  .profit-report-page .page-head,
   .report-filter-card,
   .filter-left,
   .report-filter-card select,
-  .legacy-export-button,
+  .report-export-button,
   .report-mode-seg {
     align-items: stretch;
     width: 100%;
   }
 
-  .legacy-report-page .page-head,
+  .profit-report-page .page-head,
   .report-filter-card,
   .filter-left {
     flex-direction: column;

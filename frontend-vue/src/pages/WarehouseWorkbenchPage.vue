@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import SecondaryNavigation from '../components/common/SecondaryNavigation.vue'
+import ActionConfirmDialog from '../components/ui/ActionConfirmDialog.vue'
 import WarehouseAlertPanel from '../components/warehouse/WarehouseAlertPanel.vue'
 import WarehouseInventoryPanel from '../components/warehouse/WarehouseInventoryPanel.vue'
 import WarehouseMaterialCatalogPanel from '../components/warehouse/WarehouseMaterialCatalogPanel.vue'
@@ -10,20 +12,46 @@ import WarehousePurchaseReceivePanel from '../components/warehouse/WarehousePurc
 import WarehouseRequisitionPanel from '../components/warehouse/WarehouseRequisitionPanel.vue'
 import WarehouseReturnPanel from '../components/warehouse/WarehouseReturnPanel.vue'
 import WarehouseStatCards from '../components/warehouse/WarehouseStatCards.vue'
+import WarehouseNetworkOverview from '../components/warehouse/WarehouseNetworkOverview.vue'
+import WarehouseTransferPanel from '../components/warehouse/WarehouseTransferPanel.vue'
 import { useWarehouseStore, type WarehouseTab } from '../stores/warehouse'
-import type { WarehouseItem, WarehouseItemPayload } from '../api/warehouse'
+import { useAuthStore } from '../stores/auth'
+import { PERMISSIONS } from '../permissions/permissions'
+import type {
+  WarehouseInfo,
+  WarehouseItem,
+  WarehouseItemPayload,
+  WarehousePurchaseOrderCreatePayload,
+  WarehousePurchaseOrderReceivePayload,
+  WarehouseTransferCreatePayload,
+} from '../api/warehouse'
 
-withDefaults(defineProps<{
+type WarehouseConfirmation =
+  | { kind: 'reject-requisition'; id: string }
+  | { kind: 'ship-requisition'; id: string }
+  | { kind: 'reject-return'; id: string }
+  | { kind: 'receive-return'; id: string }
+  | { kind: 'approve-transfer'; id: string }
+  | { kind: 'reject-transfer'; id: string }
+  | { kind: 'ship-transfer'; id: string }
+  | { kind: 'receive-transfer'; id: string }
+  | { kind: 'cancel-transfer'; id: string }
+
+const props = withDefaults(defineProps<{
   canManage?: boolean
 }>(), {
   canManage: false,
 })
 
 const warehouse = useWarehouseStore()
+const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 const editorOpen = ref(false)
 const editorItem = ref<WarehouseItem | null>(null)
+const pendingConfirmation = ref<WarehouseConfirmation | null>(null)
+const confirmationNote = ref('')
+const confirmationBusy = ref(false)
 
 const overview = computed(() => warehouse.overview)
 const items = computed(() => overview.value?.items || [])
@@ -31,18 +59,174 @@ const activeItems = computed(() => items.value.filter((item) => item.active !== 
 const requisitions = computed(() => overview.value?.requisitions || [])
 const pendingRequisitions = computed(() => requisitions.value.filter((row) => ['SUBMITTED', 'APPROVED'].includes(row.status)))
 const stockBatches = computed(() => overview.value?.stockBatches || [])
+const suppliers = computed(() => overview.value?.suppliers || [])
+const purchaseOrders = computed(() => overview.value?.purchaseOrders || [])
 const movements = computed(() => overview.value?.movements || [])
 const returns = computed(() => warehouse.returns || [])
 const alerts = computed(() => overview.value?.alerts || [])
+const accessibleWarehouses = computed(() => warehouse.warehouses.filter((row) => row.enabled !== false))
+const selectedWarehouse = computed(() => accessibleWarehouses.value.find((row) => String(row.id) === String(warehouse.selectedWarehouseId)) || null)
+const centralWarehouse = computed(() => accessibleWarehouses.value.find((row) => row.type === 'CENTRAL') || null)
+const regionalWarehouse = computed(() => accessibleWarehouses.value.find((row) => row.type === 'REGIONAL') || null)
+const isBoss = computed(() => auth.role === 'BOSS')
+const hasPermission = (permission: string) => auth.hasPermission(permission)
+const canConfigureWarehouse = computed(() => (
+  isBoss.value
+  || hasPermission(PERMISSIONS.WAREHOUSE_CONFIGURE)
+  || (props.canManage && hasPermission(PERMISSIONS.WAREHOUSE_CENTRAL_MANAGE))
+))
+const canPurchase = computed(() => Boolean(
+  centralWarehouse.value
+  && centralWarehouse.value.externalPurchaseAllowed
+  && (isBoss.value || hasPermission(PERMISSIONS.WAREHOUSE_PURCHASE) || centralWarehouse.value.canPurchase),
+))
+const canRequestTransfer = computed(() => Boolean(
+  regionalWarehouse.value
+  && (isBoss.value || hasPermission(PERMISSIONS.WAREHOUSE_TRANSFER_REQUEST) || regionalWarehouse.value.canRequestTransfer),
+))
+const canApproveTransfer = computed(() => Boolean(
+  centralWarehouse.value
+  && (isBoss.value || hasPermission(PERMISSIONS.WAREHOUSE_TRANSFER_APPROVE) || centralWarehouse.value.canApproveTransfer),
+))
+const canShipTransfer = computed(() => Boolean(
+  centralWarehouse.value
+  && (isBoss.value || hasPermission(PERMISSIONS.WAREHOUSE_TRANSFER_SHIP) || centralWarehouse.value.canShipTransfer),
+))
+const canReceiveTransfer = computed(() => Boolean(
+  regionalWarehouse.value
+  && (isBoss.value || hasPermission(PERMISSIONS.WAREHOUSE_TRANSFER_RECEIVE) || regionalWarehouse.value.canReceiveTransfer),
+))
+const canProcessRequisition = computed(() => (
+  isBoss.value
+  || hasPermission(PERMISSIONS.WAREHOUSE_REQUISITION_PROCESS)
+  || hasPermission(PERMISSIONS.WAREHOUSE_REQUISITION_REVIEW)
+))
+const showWarehouseSwitcher = computed(() => accessibleWarehouses.value.length > 1 && currentTab() !== 'overview')
+const warehouseDetailSection = computed(() => String(route.meta.warehouseSection || 'inventory'))
+const pendingTransfers = computed(() => warehouse.transfers.filter((row) => ['SUBMITTED', 'APPROVED', 'SHIPPED', 'PARTIALLY_RECEIVED'].includes(row.status)))
+const confirmationCopy = computed(() => {
+  switch (pendingConfirmation.value?.kind) {
+    case 'reject-requisition':
+      return {
+        title: '驳回叫货单',
+        message: '请输入驳回原因。',
+        confirmLabel: '确认驳回',
+        confirmVariant: 'danger' as const,
+        noteLabel: '驳回原因',
+      }
+    case 'ship-requisition':
+      return {
+        title: '确认发货',
+        message: '确认按先进先出规则发货并扣减总仓库存吗？',
+        confirmLabel: '确认发货',
+        confirmVariant: 'primary' as const,
+        noteLabel: '',
+      }
+    case 'reject-return':
+      return {
+        title: '驳回退货单',
+        message: '请输入驳回原因。',
+        confirmLabel: '确认驳回',
+        confirmVariant: 'danger' as const,
+        noteLabel: '驳回原因',
+      }
+    case 'receive-return':
+      return {
+        title: '确认退货入库',
+        message: '确认已收到门店退回商品并入库吗？',
+        confirmLabel: '确认入库',
+        confirmVariant: 'primary' as const,
+        noteLabel: '',
+      }
+    case 'approve-transfer':
+      return {
+        title: '审批调拨申请',
+        message: '确认荆州总仓接受该山东分仓补货申请吗？',
+        confirmLabel: '审批通过',
+        confirmVariant: 'primary' as const,
+        noteLabel: '审批说明（选填）',
+      }
+    case 'reject-transfer':
+      return {
+        title: '驳回调拨申请',
+        message: '请填写驳回原因，山东分仓可据此调整申请。',
+        confirmLabel: '确认驳回',
+        confirmVariant: 'danger' as const,
+        noteLabel: '驳回原因',
+      }
+    case 'ship-transfer':
+      return {
+        title: '调拨发货',
+        message: '发货后将扣减荆州总仓在库库存并形成在途库存。',
+        confirmLabel: '确认发货',
+        confirmVariant: 'primary' as const,
+        noteLabel: '发货说明（选填）',
+      }
+    case 'receive-transfer':
+      return {
+        title: '调拨收货',
+        message: '确认山东分仓已收到本次调拨商品并入库吗？',
+        confirmLabel: '确认收货',
+        confirmVariant: 'primary' as const,
+        noteLabel: '收货说明（选填）',
+      }
+    case 'cancel-transfer':
+      return {
+        title: '取消调拨单',
+        message: '确认取消该调拨单吗？已完成的库存动作不会由前端自行回退。',
+        confirmLabel: '确认取消',
+        confirmVariant: 'danger' as const,
+        noteLabel: '取消原因（选填）',
+      }
+    default:
+      return {
+        title: '',
+        message: '',
+        confirmLabel: '确认',
+        confirmVariant: 'primary' as const,
+        noteLabel: '',
+      }
+  }
+})
 
-const tabs: Array<{ key: WarehouseTab; label: string; count?: number }> = [
-  { key: 'overview', label: '仓库总览' },
-  { key: 'inventory', label: '库存物料' },
-  { key: 'requisitions', label: '门店叫货', count: pendingRequisitions.value.length },
-  { key: 'purchase', label: '采购入库' },
-  { key: 'catalog', label: '物料档案' },
-  { key: 'movements', label: '出入库记录' },
-]
+const tabs = computed<Array<{ key: string; label: string; badge?: number; to: string }>>(() => {
+  const rows: Array<{ key: string; label: string; badge?: number; to: string }> = []
+  rows.push({
+    key: 'overview',
+    label: accessibleWarehouses.value.length > 1 || isBoss.value ? '全部仓库总览' : '仓库总览',
+    to: '/warehouse',
+  })
+  if (centralWarehouse.value) rows.push({ key: 'central', label: '荆州总仓', to: '/warehouse/central' })
+  if (regionalWarehouse.value) rows.push({ key: 'shandong', label: '山东分仓', to: '/warehouse/shandong' })
+  if (canRequestTransfer.value || canApproveTransfer.value || canShipTransfer.value || canReceiveTransfer.value) {
+    rows.push({ key: 'transfers', label: '仓间调拨', badge: pendingTransfers.value.length, to: '/warehouse/transfers' })
+  }
+  rows.push({ key: 'requisitions', label: '门店叫货', badge: pendingRequisitions.value.length, to: '/warehouse/requests' })
+  if (canPurchase.value && selectedWarehouse.value?.type === 'CENTRAL') {
+    rows.push({ key: 'purchase', label: '外部采购', to: '/warehouse/purchase' })
+  }
+  rows.push({ key: 'movements', label: '出入库记录', to: '/warehouse/movements' })
+  return rows
+})
+const activeNavigationKey = computed(() => {
+  if (currentTab() !== 'warehouse') return currentTab()
+  return selectedWarehouse.value?.type === 'REGIONAL' ? 'shandong' : 'central'
+})
+
+const tabRoutes: Record<WarehouseTab, string> = {
+  overview: '/warehouse',
+  warehouse: '/warehouse/central',
+  transfers: '/warehouse/transfers',
+  inventory: '/warehouse/inventory',
+  requisitions: '/warehouse/requests',
+  purchase: '/warehouse/purchase',
+  catalog: '/warehouse/items',
+  movements: '/warehouse/movements',
+  returns: '/warehouse/returns',
+  alerts: '/warehouse/alerts',
+  receipts: '/warehouse/receipts',
+  prints: '/warehouse/receipts',
+}
 
 function routeTab() {
   const metaTab = route.meta.warehouseTab
@@ -58,18 +242,63 @@ function currentTab() {
   return warehouse.activeTab
 }
 
-function tabCount(key: WarehouseTab) {
-  if (key === 'requisitions') return pendingRequisitions.value.length
-  return undefined
-}
-
 async function setTab(tab: WarehouseTab) {
-  warehouse.setTab(tab)
   try {
-    await router.replace({ path: '/warehouse', query: tab === 'overview' ? {} : { tab } })
+    await router.push(tabRoutes[tab])
   } catch {
     // 当前路由已是目标页时无需提示。
   }
+}
+
+async function openWarehouse(target: WarehouseInfo) {
+  const path = target.type === 'REGIONAL' ? '/warehouse/shandong' : '/warehouse/central'
+  try {
+    if (String(warehouse.selectedWarehouseId) !== String(target.id)) await warehouse.selectWarehouse(target.id)
+    await router.push(path)
+  } catch {
+    // store 已保留业务错误提示。
+  }
+}
+
+async function selectWarehouse(event: Event) {
+  const warehouseId = (event.target as HTMLSelectElement).value
+  const target = accessibleWarehouses.value.find((row) => String(row.id) === warehouseId)
+  if (target) await openWarehouse(target)
+}
+
+async function syncWarehouseFromRoute() {
+  const warehouseCode = String(route.meta.warehouseCode || '')
+  if (!warehouseCode) return
+  const target = accessibleWarehouses.value.find((row) => row.code === warehouseCode)
+  if (target && String(target.id) !== String(warehouse.selectedWarehouseId)) {
+    try {
+      await warehouse.selectWarehouse(target.id)
+    } catch {
+      // 无权访问时由后端和路由守卫保持当前范围。
+    }
+  }
+}
+
+async function createTransfer(payload: WarehouseTransferCreatePayload) {
+  try {
+    await warehouse.createTransfer(payload)
+  } catch {
+    // store 已保留业务错误提示。
+  }
+}
+
+async function submitTransfer(id: string) {
+  try {
+    await warehouse.submitTransfer(id)
+  } catch {
+    // store 已保留业务错误提示。
+  }
+}
+
+function requestTransferAction(kind: WarehouseConfirmation['kind'], id: string) {
+  if (confirmationBusy.value) return
+  confirmationNote.value = kind === 'reject-transfer' ? '当前申请需要调整后重新提交' : ''
+  pendingConfirmation.value = { kind, id } as WarehouseConfirmation
 }
 
 function statusClass(severity: string) {
@@ -127,37 +356,37 @@ async function approveRequisition(id: string) {
   }
 }
 
-async function rejectRequisition(id: string) {
-  const note = window.prompt('请输入驳回原因', '库存不足或叫货信息需要重新确认')
-  if (note === null) return
+function rejectRequisition(id: string) {
+  if (confirmationBusy.value) return
+  confirmationNote.value = '库存不足或叫货信息需要重新确认'
+  pendingConfirmation.value = { kind: 'reject-requisition', id }
+}
+
+function shipRequisition(id: string) {
+  if (confirmationBusy.value) return
+  confirmationNote.value = ''
+  pendingConfirmation.value = { kind: 'ship-requisition', id }
+}
+
+async function createPurchaseOrder(payload: Omit<WarehousePurchaseOrderCreatePayload, 'warehouseId'>) {
   try {
-    await warehouse.rejectRequisition(id, note)
+    await warehouse.createPurchaseOrder(payload)
   } catch {
     // store 已保留业务错误提示。
   }
 }
 
-async function shipRequisition(id: string) {
-  if (!window.confirm('确认按先进先出规则发货并扣减总仓库存吗？')) return
+async function approvePurchaseOrder(purchaseOrderId: string) {
   try {
-    await warehouse.shipRequisition(id)
+    await warehouse.approvePurchaseOrder(purchaseOrderId)
   } catch {
     // store 已保留业务错误提示。
   }
 }
 
-async function receiveStock(payload: {
-  itemId: number
-  batchNo: string
-  receivedDate: string
-  expiryDate?: string
-  quantity: number
-  unitCost: number
-  note?: string
-  clientRequestId: string
-}) {
+async function receivePurchaseOrder(purchaseOrderId: string, payload: WarehousePurchaseOrderReceivePayload) {
   try {
-    await warehouse.receiveStock(payload)
+    await warehouse.receivePurchaseOrder(purchaseOrderId, payload)
   } catch {
     // store 已保留业务错误提示。
   }
@@ -179,22 +408,67 @@ async function approveReturn(id: string) {
   }
 }
 
-async function rejectReturn(id: string) {
-  const note = window.prompt('请输入驳回原因', '退货数量或商品状态需要重新确认')
-  if (note === null) return
-  try {
-    await warehouse.reviewReturn(id, false, note)
-  } catch {
-    // store 已保留业务错误提示。
-  }
+function rejectReturn(id: string) {
+  if (confirmationBusy.value) return
+  confirmationNote.value = '退货数量或商品状态需要重新确认'
+  pendingConfirmation.value = { kind: 'reject-return', id }
 }
 
-async function receiveReturn(id: string) {
-  if (!window.confirm('确认已收到门店退回商品并入库吗？')) return
+function receiveReturn(id: string) {
+  if (confirmationBusy.value) return
+  confirmationNote.value = ''
+  pendingConfirmation.value = { kind: 'receive-return', id }
+}
+
+function cancelWarehouseConfirmation() {
+  if (confirmationBusy.value) return
+  pendingConfirmation.value = null
+  confirmationNote.value = ''
+}
+
+async function confirmWarehouseAction() {
+  const action = pendingConfirmation.value
+  if (!action || confirmationBusy.value) return
+  confirmationBusy.value = true
   try {
-    await warehouse.receiveReturn(id, '仓库管理员确认退货入库')
+    switch (action.kind) {
+      case 'reject-requisition':
+        await warehouse.rejectRequisition(action.id, confirmationNote.value)
+        break
+      case 'ship-requisition':
+        await warehouse.shipRequisition(action.id)
+        break
+      case 'reject-return':
+        await warehouse.reviewReturn(action.id, false, confirmationNote.value)
+        break
+      case 'receive-return':
+        await warehouse.receiveReturn(action.id, '仓库管理员确认退货入库')
+        break
+      case 'approve-transfer':
+        await warehouse.reviewTransfer(action.id, true, confirmationNote.value || undefined)
+        break
+      case 'reject-transfer':
+        await warehouse.reviewTransfer(action.id, false, confirmationNote.value || undefined)
+        break
+      case 'ship-transfer':
+        await warehouse.shipTransfer(action.id, `ship-${crypto.randomUUID()}`, confirmationNote.value || undefined)
+        break
+      case 'receive-transfer':
+        await warehouse.receiveTransfer(action.id, {
+          clientRequestId: `receive-${crypto.randomUUID()}`,
+          note: confirmationNote.value || undefined,
+        })
+        break
+      case 'cancel-transfer':
+        await warehouse.cancelTransfer(action.id, `cancel-${crypto.randomUUID()}`, confirmationNote.value || undefined)
+        break
+    }
   } catch {
     // store 已保留业务错误提示。
+  } finally {
+    confirmationBusy.value = false
+    pendingConfirmation.value = null
+    confirmationNote.value = ''
   }
 }
 
@@ -235,11 +509,49 @@ watch(
   () => warehouse.setTab(routeTab()),
   { immediate: true },
 )
+watch(
+  [() => route.fullPath, () => accessibleWarehouses.value.map((row) => `${row.id}:${row.code}`).join('|')],
+  () => { void syncWarehouseFromRoute() },
+  { immediate: true },
+)
 </script>
 
 <template>
   <div class="warehouse-workbench">
+    <SecondaryNavigation
+      :items="tabs"
+      :model-value="activeNavigationKey"
+      label="仓库中心功能"
+    />
+
+    <div v-if="currentTab() !== 'overview' && selectedWarehouse" class="warehouse-context-bar">
+      <div class="warehouse-context-copy">
+        <b>{{ selectedWarehouse.name }}</b>
+          <span>{{ selectedWarehouse.code }} · {{ selectedWarehouse.type === 'CENTRAL' ? '总仓' : '区域分仓' }} · {{ selectedWarehouse.regionCode === 'JINGZHOU' ? '荆州区域' : '山东区域' }}</span>
+      </div>
+      <label v-if="showWarehouseSwitcher" class="warehouse-switcher">
+        <span>当前仓库</span>
+        <select :value="String(selectedWarehouse.id)" aria-label="当前仓库" @change="selectWarehouse">
+          <option v-for="row in accessibleWarehouses" :key="row.id" :value="String(row.id)">{{ row.name }}</option>
+        </select>
+      </label>
+      <div v-if="currentTab() === 'warehouse'" class="warehouse-context-actions">
+        <RouterLink v-if="selectedWarehouse.type === 'REGIONAL' && canRequestTransfer" class="primary-button" to="/warehouse/transfers">向荆州总仓申请补货</RouterLink>
+        <RouterLink v-if="selectedWarehouse.type === 'CENTRAL' && canPurchase" class="primary-button" to="/warehouse/purchase">外部采购入库</RouterLink>
+        <RouterLink v-if="selectedWarehouse.type === 'CENTRAL' && (canApproveTransfer || canShipTransfer)" class="ghost-button" to="/warehouse/transfers">处理分仓申请</RouterLink>
+        <RouterLink v-if="canConfigureWarehouse && warehouseDetailSection !== 'catalog'" class="ghost-button" to="/warehouse/items">物料档案</RouterLink>
+        <RouterLink v-if="warehouseDetailSection === 'catalog'" class="ghost-button" :to="selectedWarehouse.type === 'REGIONAL' ? '/warehouse/shandong' : '/warehouse/central'">返回库存</RouterLink>
+      </div>
+    </div>
+
+    <WarehouseNetworkOverview
+      v-if="currentTab() === 'overview'"
+      :warehouses="accessibleWarehouses"
+      @open="openWarehouse"
+    />
+
     <WarehouseStatCards
+      v-if="currentTab() === 'warehouse'"
       :item-count="overview?.summary.itemCount || activeItems.length"
       :stock-value="Number(overview?.summary.stockValue || 0)"
       :low-stock-count="overview?.summary.lowStockCount || 0"
@@ -247,21 +559,7 @@ watch(
       :pending-requisition-count="overview?.summary.pendingRequisitionCount || 0"
     />
 
-    <div class="warehouse-tabs" role="tablist" aria-label="仓库中心">
-      <button
-        v-for="tab in tabs"
-        :key="tab.key"
-        class="warehouse-tab"
-        :class="{ active: currentTab() === tab.key }"
-        type="button"
-        @click="setTab(tab.key)"
-      >
-        {{ tab.label }}
-        <b v-if="tabCount(tab.key)">{{ tabCount(tab.key) }}</b>
-      </button>
-    </div>
-
-    <section v-if="currentTab() === 'overview'" class="warehouse-overview-grid">
+    <section v-if="currentTab() === 'warehouse'" class="warehouse-overview-grid">
       <div class="content-card overview-card">
         <div class="table-heading">
           <div><h3>库存预警</h3></div>
@@ -294,7 +592,7 @@ watch(
     </section>
 
     <WarehouseInventoryPanel
-      v-else-if="currentTab() === 'inventory'"
+      v-if="currentTab() === 'warehouse' && warehouseDetailSection === 'inventory'"
       :items="items"
       :categories="warehouse.categories"
       :selected-category="warehouse.selectedCategory"
@@ -302,7 +600,8 @@ watch(
       :movements="movements"
       :downloading-id="warehouse.downloadingId"
       :actioning-id="warehouse.actioningId"
-      :can-manage="canManage"
+      :can-manage="canConfigureWarehouse"
+      :warehouse-name="selectedWarehouse?.name || '当前仓库'"
       @select-category="warehouse.setCategory"
       @save-category="saveCategory"
       @delete-category="deleteCategory"
@@ -312,12 +611,32 @@ watch(
       @download-movement="downloadMovement"
     />
 
+    <WarehouseTransferPanel
+      v-else-if="currentTab() === 'transfers'"
+      :transfers="warehouse.transfers"
+      :warehouses="accessibleWarehouses"
+      :items="activeItems"
+      :active-warehouse="selectedWarehouse"
+      :can-request="canRequestTransfer"
+      :can-approve="canApproveTransfer"
+      :can-ship="canShipTransfer"
+      :can-receive="canReceiveTransfer"
+      :actioning-id="warehouse.actioningId"
+      @create="createTransfer"
+      @submit="submitTransfer"
+      @approve="requestTransferAction('approve-transfer', $event)"
+      @reject="requestTransferAction('reject-transfer', $event)"
+      @ship="requestTransferAction('ship-transfer', $event)"
+      @receive="requestTransferAction('receive-transfer', $event)"
+      @cancel="requestTransferAction('cancel-transfer', $event)"
+    />
+
     <WarehouseRequisitionPanel
       v-else-if="currentTab() === 'requisitions'"
       :requisitions="requisitions"
       :actioning-id="warehouse.actioningId"
       :downloading-id="warehouse.downloadingId"
-      :can-manage="canManage"
+      :can-manage="canProcessRequisition"
       @approve="approveRequisition"
       @reject="rejectRequisition"
       @ship="shipRequisition"
@@ -325,24 +644,33 @@ watch(
     />
 
     <WarehousePurchaseReceivePanel
-      v-else-if="currentTab() === 'purchase'"
+      v-else-if="currentTab() === 'purchase' && selectedWarehouse?.type === 'CENTRAL' && canPurchase"
       :items="activeItems"
       :batches="stockBatches"
+      :suppliers="suppliers"
+      :purchase-orders="purchaseOrders"
       :actioning-id="warehouse.actioningId"
       :downloading-id="warehouse.downloadingId"
-      :can-manage="canManage"
+      :can-manage="canPurchase"
+      :warehouse-name="centralWarehouse?.name || '荆州总仓'"
       :success-message="warehouse.actionMessage"
       mode="receive"
-      @receive="receiveStock"
+      @create-order="createPurchaseOrder"
+      @approve-order="approvePurchaseOrder"
+      @receive-order="receivePurchaseOrder"
       @download-receipt="downloadReceipt"
     />
 
+    <div v-else-if="currentTab() === 'purchase'" class="content-card empty-cell">
+      当前账号没有可办理外部采购的总仓范围。山东分仓只能向荆州总仓申请调拨补货。
+    </div>
+
     <WarehouseMaterialCatalogPanel
-      v-else-if="currentTab() === 'catalog'"
+      v-else-if="currentTab() === 'warehouse' && warehouseDetailSection === 'catalog'"
       :items="items"
       :categories="warehouse.categories"
       :selected-category="warehouse.selectedCategory"
-      :can-manage="canManage"
+      :can-manage="canConfigureWarehouse"
       :actioning-id="warehouse.actioningId"
       @select-category="warehouse.setCategory"
       @save-category="saveCategory"
@@ -398,8 +726,8 @@ watch(
       :actioning-id="warehouse.actioningId"
       :downloading-id="warehouse.downloadingId"
       :can-manage="false"
+      :warehouse-name="centralWarehouse?.name || '荆州总仓'"
       mode="records"
-      @receive="receiveStock"
       @download-receipt="downloadReceipt"
     />
 
@@ -411,6 +739,19 @@ watch(
       @close="editorOpen = false"
       @save="saveItem"
     />
+
+    <ActionConfirmDialog
+      v-model="confirmationNote"
+      :open="Boolean(pendingConfirmation)"
+      :title="confirmationCopy.title"
+      :message="confirmationCopy.message"
+      :confirm-label="confirmationCopy.confirmLabel"
+      :confirm-variant="confirmationCopy.confirmVariant"
+      :note-label="confirmationCopy.noteLabel"
+      :busy="confirmationBusy"
+      @cancel="cancelWarehouseConfirmation"
+      @confirm="confirmWarehouseAction"
+    />
   </div>
 </template>
 
@@ -418,46 +759,59 @@ watch(
 .warehouse-workbench,
 .section-stack {
   display: grid;
-  gap: 14px;
+  gap: 18px;
 }
 
-.warehouse-tabs {
+.warehouse-context-bar {
   display: flex;
-  gap: 2px;
-  padding: 4px;
-  border: 1px solid #dfe7e9;
-  border-radius: 999px;
-  background: #f4f7f8;
-}
-
-.warehouse-tab {
-  display: inline-flex;
+  min-width: 0;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 34px;
-  padding: 6px 13px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: #6c7887;
-  font-weight: 800;
+  gap: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--ds-line);
+  border-radius: 8px;
+  background: var(--ds-surface);
 }
 
-.warehouse-tab.active {
-  background: #fff;
-  color: var(--primary-dark);
-  box-shadow: 0 2px 8px rgba(19, 35, 42, 0.08);
+.warehouse-context-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  margin-right: auto;
 }
 
-.warehouse-tab b {
-  min-width: 18px;
-  padding: 0 5px;
-  border-radius: 999px;
-  background: var(--primary);
-  color: #fff;
-  font-size: 11px;
-  line-height: 18px;
+.warehouse-context-copy b {
+  color: var(--ds-ink);
+  font-size: 15px;
+}
+
+.warehouse-context-copy span,
+.warehouse-switcher > span {
+  color: var(--ds-muted);
+  font-size: 12px;
+}
+
+.warehouse-switcher {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.warehouse-switcher select {
+  min-width: 150px;
+}
+
+.warehouse-context-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.warehouse-context-actions a {
+  width: auto;
+  min-height: 36px;
+  text-decoration: none;
 }
 
 .warehouse-overview-grid {
@@ -508,5 +862,23 @@ watch(
 .overview-list-row.order-row b {
   color: #d17b35;
   font-size: 12px;
+}
+
+@media (max-width: 768px) {
+  .warehouse-context-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .warehouse-switcher,
+  .warehouse-switcher select,
+  .warehouse-context-actions,
+  .warehouse-context-actions a {
+    width: 100%;
+  }
+
+  .warehouse-overview-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
