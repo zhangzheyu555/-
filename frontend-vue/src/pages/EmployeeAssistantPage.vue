@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { AlertCircle, CircleHelp, LockKeyhole, RefreshCw, Send, ShieldCheck, ThumbsDown, ThumbsUp } from 'lucide-vue-next'
-import PageHeader from '../components/common/PageHeader.vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { Clipboard, MessageSquare, RefreshCw, Send, ThumbsDown, ThumbsUp, UserRound } from 'lucide-vue-next'
 import UiButton from '../components/ui/UiButton.vue'
 import { ApiError } from '../api/http'
 import { useAuthStore } from '../stores/auth'
@@ -19,6 +18,7 @@ interface ChatTurn {
   id: number
   role: 'user' | 'assistant'
   content: string
+  renderedHtml: string
   answerSource?: EmployeeAssistantAnswerSource
   knowledgeId?: number | null
   knowledgeVersion?: number | null
@@ -28,7 +28,35 @@ interface ChatTurn {
   questionId?: number
   handoffState?: 'idle' | 'sending' | 'created' | 'failed'
   feedbackState?: 'idle' | 'helpful' | 'inaccurate' | 'sending'
+  copied?: boolean
+  deliveryState?: 'idle' | 'failed'
+  failureMessage?: string
+  customerSpeech?: string
+  speechHtml?: string
+  stepsHtml?: string
+  handoffHtml?: string
 }
+
+interface StructuredAnswer {
+  customerSpeech: string
+  speechHtml: string
+  stepsHtml: string
+  handoffHtml: string
+}
+
+const QUICK_QUESTIONS = [
+  '顾客投诉等待太久，怎么回应？',
+  '交班时需要核对哪些事项？',
+  '会员券不能使用时怎么解释？',
+  '顾客说饮品太甜，怎样礼貌处理？',
+  '如何处理顾客退款请求？',
+]
+
+const WELCOME_QUESTIONS = [
+  '顾客情绪不好时，第一句话怎么说？',
+  '顾客要求退款时，员工应怎样回应？',
+  '交班前有哪些服务事项要确认？',
+]
 
 const status = ref<EmployeeAssistantStatus | null>(null)
 const auth = useAuthStore()
@@ -39,6 +67,9 @@ const message = ref('')
 const turns = ref<ChatTurn[]>([])
 const handoffNotice = ref('')
 const sessionId = createSessionId()
+const inputRef = ref<HTMLTextAreaElement | null>(null)
+const waitingBeyondFiveSeconds = ref(false)
+let waitingTimer: ReturnType<typeof setTimeout> | undefined
 let nextTurnId = 0
 
 const serviceState = computed<EmployeeAssistantServiceState>(() => {
@@ -46,136 +77,144 @@ const serviceState = computed<EmployeeAssistantServiceState>(() => {
   if (explicitState === 'UNCONFIGURED' || explicitState === 'AUTH_FAILED' || explicitState === 'UNAVAILABLE' || explicitState === 'READY') {
     return explicitState
   }
-
-  // 兼容升级中的旧后端：只从结构化开关得出“未配置”或“就绪”，其余未知情况均按不可用处理。
-  // 不能通过中文错误文案猜测授权状态，避免把网络故障误报为配置问题。
   if (status.value?.configured === false) return 'UNCONFIGURED'
   if (status.value?.configured && status.value.enabled) return 'READY'
   return 'UNAVAILABLE'
 })
 
-const serviceCopy = computed(() => {
-  if (loading.value && !status.value) {
-    return {
-      title: '正在检查服务',
-      badge: '检查中',
-      empty: '正在检查员工服务助手，请稍候。',
-      action: '请稍候，检查完成后会显示服务状态。',
-    }
-  }
-
-  if (serviceState.value === 'UNCONFIGURED' && status.value?.canAsk) {
-    return {
-      title: '标准话术可用',
-      badge: '仅标准话术',
-      empty: '当前可查询已发布的标准话术；未命中时可转人工处理。',
-      action: '上游服务未配置时，仅提供已发布标准话术与人工转接。',
-    }
-  }
-
-  const copy: Record<EmployeeAssistantServiceState, { title: string; badge: string; empty: string; action: string }> = {
-    UNCONFIGURED: {
-      title: '服务未配置',
-      badge: '未配置',
-      empty: '当前未接入员工服务助手，不能发送问题。',
-      action: '请联系管理员配置员工助手服务，完成后点击“检查服务”。',
-    },
-    AUTH_FAILED: {
-      title: '服务授权异常',
-      badge: '授权异常',
-      empty: '员工服务助手授权未通过，暂不能发送问题。',
-      action: '请联系管理员检查员工助手服务授权，完成后点击“检查服务”。',
-    },
-    UNAVAILABLE: {
-      title: '服务暂不可用',
-      badge: '暂不可用',
-      empty: '员工服务助手暂时无法连接，不能发送问题。',
-      action: '请稍后点击“检查服务”；持续异常请联系管理员处理。',
-    },
-    READY: {
-      title: '服务已就绪',
-      badge: '已就绪',
-      empty: '输入一个服务问题，助手会给出可直接使用的中文建议。',
-      action: '仅发送通用服务问题，不要填写客户隐私、财务数据、附件或密钥。',
-    },
-  }
-  return copy[serviceState.value]
-})
-
-const isReady = computed(() => !loading.value && serviceState.value === 'READY')
 const canAsk = computed(() => !loading.value && (status.value?.canAsk ?? serviceState.value === 'READY'))
-const statusDetail = computed(() => safeStatusDetail(status.value?.message))
 const canViewDeploymentGuide = computed(() => serviceState.value === 'UNCONFIGURED' && auth.role === 'BOSS')
+const pendingUserTurn = computed(() => [...turns.value].reverse().find((turn) => turn.role === 'user'))
 
-onMounted(() => {
-  void loadStatus()
+const stateBadge = computed(() => {
+  if (loading.value && !status.value) return { text: '检查中', cls: 'badge--checking' }
+  const map: Record<string, { text: string; cls: string }> = {
+    READY: { text: '已就绪', cls: 'badge--ready' },
+    UNCONFIGURED: { text: '未配置', cls: 'badge--unconfigured' },
+    AUTH_FAILED: { text: '授权异常', cls: 'badge--auth-failed' },
+    UNAVAILABLE: { text: '暂不可用', cls: 'badge--unavailable' },
+  }
+  return map[serviceState.value] || map.UNAVAILABLE
 })
+
+const stateMessage = computed(() => {
+  if (loading.value) return '正在检查服务状态…'
+  const map: Record<string, string> = {
+    READY: '',
+    UNCONFIGURED: '服务未配置，请联系管理员。',
+    AUTH_FAILED: '授权未通过，请联系管理员检查。',
+    UNAVAILABLE: '服务暂时无法连接，请稍后重试。',
+  }
+  return map[serviceState.value] || ''
+})
+
+onMounted(() => { void loadStatus() })
+onUnmounted(() => clearWaitingTimer())
 
 async function loadStatus() {
   loading.value = true
   pageError.value = ''
-  try {
-    status.value = await getEmployeeAssistantStatus()
-  } catch (error) {
-    // 检查接口本身失败不是“未配置”。仅消费后端明确给出的安全业务码。
-    status.value = serviceStatusFromFailure(error) || unavailableStatus(error)
-  } finally {
-    loading.value = false
-  }
+  try { status.value = await getEmployeeAssistantStatus() }
+  catch (error) { status.value = serviceStatusFromFailure(error) || unavailableStatus(error) }
+  finally { loading.value = false }
 }
 
-async function send() {
-  const question = message.value.trim()
-  if (!question || sending.value || !canAsk.value) return
+function pickQuestion(question: string) {
+  message.value = question
+  nextTick(() => {
+    inputRef.value?.focus()
+    inputRef.value?.setSelectionRange(question.length, question.length)
+  })
+}
+
+async function send(retryTurn?: ChatTurn) {
+  const question = retryTurn?.content || message.value.trim()
+  if (!question || sending.value || (!canAsk.value && !retryTurn)) return
   pageError.value = ''
-  message.value = ''
-  const userTurnId = ++nextTurnId
-  turns.value.push({ id: userTurnId, role: 'user', content: question })
+  if (!retryTurn) message.value = ''
+  const userTurn = retryTurn || {
+    id: ++nextTurnId, role: 'user' as const, content: question, renderedHtml: escapeHtml(question),
+    handoffState: 'idle' as const, deliveryState: 'idle' as const,
+  }
+  if (!retryTurn) turns.value.push(userTurn)
+  userTurn.deliveryState = 'idle'
+  userTurn.failureMessage = ''
   sending.value = true
+  startWaitingTimer()
   try {
     const response = await askEmployeeAssistant({ sessionId, message: question })
     if (!response.configured) {
-      status.value = {
-        enabled: false,
-        configured: false,
-        state: 'UNCONFIGURED',
-        message: '员工服务助手未配置，请联系管理员完成服务配置。',
-      }
-      message.value = question
+      status.value = { enabled: false, configured: false, state: 'UNCONFIGURED', message: '员工服务助手未配置，请联系管理员完成服务配置。' }
+      userTurn.deliveryState = 'failed'
+      userTurn.failureMessage = '服务未配置，暂时无法生成答复。'
       return
     }
-    const answer = response.answer?.trim() || '暂未获得可用答复，请稍后再试。'
+    const raw = response.answer?.trim() || '暂未获得可用答复，请稍后再试。'
+    const structured = structureAssistantAnswer(raw, Boolean(response.needsHuman))
     turns.value.push({
-      id: ++nextTurnId,
-      role: 'assistant',
-      content: answer,
-      answerSource: response.answerSource || 'ASSISTANT',
-      knowledgeId: response.knowledgeId,
-      knowledgeVersion: response.knowledgeVersion,
-      knowledgeTitle: response.knowledgeTitle,
-      needsHuman: Boolean(response.needsHuman),
-      handoffCategory: response.handoffCategory,
-      questionId: userTurnId,
-      handoffState: 'idle',
-      feedbackState: 'idle',
+      id: ++nextTurnId, role: 'assistant', content: raw, renderedHtml: renderMarkdown(raw), ...structured,
+      answerSource: response.answerSource || 'ASSISTANT', knowledgeId: response.knowledgeId,
+      knowledgeVersion: response.knowledgeVersion, knowledgeTitle: response.knowledgeTitle,
+      needsHuman: Boolean(response.needsHuman), handoffCategory: response.handoffCategory,
+      questionId: userTurn.id, handoffState: 'idle', feedbackState: 'idle',
     })
   } catch (error) {
-    pageError.value = error instanceof Error && error.message
-      ? error.message
-      : '员工服务助手暂时无法处理，请稍后再试。'
+    const failureMessage = error instanceof Error && error.message ? error.message : '员工服务助手暂时无法处理，请稍后再试。'
+    pageError.value = failureMessage
+    userTurn.deliveryState = 'failed'
+    userTurn.failureMessage = failureMessage
     const failureStatus = serviceStatusFromFailure(error)
-    if (failureStatus) {
-      status.value = failureStatus
-      message.value = question
-    }
+    if (failureStatus) status.value = failureStatus
   } finally {
+    clearWaitingTimer()
     sending.value = false
   }
 }
 
+function submitMessage() {
+  void send()
+}
+
+function startWaitingTimer() {
+  clearWaitingTimer()
+  waitingTimer = setTimeout(() => { waitingBeyondFiveSeconds.value = true }, 5_000)
+}
+
+function clearWaitingTimer() {
+  if (waitingTimer) clearTimeout(waitingTimer)
+  waitingTimer = undefined
+  waitingBeyondFiveSeconds.value = false
+}
+
+function continueWaiting() {
+  startWaitingTimer()
+}
+
+function createPendingHandoff() {
+  if (pendingUserTurn.value) void createHandoff(pendingUserTurn.value)
+}
+
+function retryTurn(turn: ChatTurn) {
+  void send(turn)
+}
+
+function retryAssistantTurn(turn: ChatTurn) {
+  const question = turns.value.find((item) => item.id === turn.questionId && item.role === 'user')
+  if (!question) return
+  turns.value = turns.value.filter((item) => item.id !== turn.id)
+  void send(question)
+}
+
+async function copyAnswer(turn: ChatTurn) {
+  try { await navigator.clipboard.writeText(turn.customerSpeech || turn.content); turn.copied = true; setTimeout(() => { turn.copied = false }, 2000) }
+  catch { /* fallback */ }
+}
+
 async function createHandoff(turn: ChatTurn) {
   if (turn.handoffState === 'sending' || turn.handoffState === 'created') return
-  const question = turns.value.find((item) => item.id === turn.questionId && item.role === 'user')?.content
+  const question = turn.role === 'user'
+    ? turn.content
+    : turns.value.find((item) => item.id === turn.questionId && item.role === 'user')?.content
   if (!question) return
   handoffNotice.value = ''
   turn.handoffState = 'sending'
@@ -194,216 +233,342 @@ async function submitFeedback(turn: ChatTurn, helpful: boolean) {
   turn.feedbackState = 'sending'
   try {
     await submitEmployeeAssistantFeedback({
-      answerSource: turn.answerSource || 'ASSISTANT',
-      knowledgeId: turn.knowledgeId,
-      knowledgeVersion: turn.knowledgeVersion,
-      helpful,
-      reasonCode: helpful ? 'HELPFUL' : 'INACCURATE',
+      answerSource: turn.answerSource || 'ASSISTANT', knowledgeId: turn.knowledgeId,
+      knowledgeVersion: turn.knowledgeVersion, helpful, reasonCode: helpful ? 'HELPFUL' : 'INACCURATE',
     })
     turn.feedbackState = helpful ? 'helpful' : 'inaccurate'
-  } catch (error) {
-    turn.feedbackState = 'idle'
-    pageError.value = error instanceof Error ? error.message : '反馈提交失败，请稍后重试。'
-  }
+  } catch { turn.feedbackState = 'idle' }
 }
 
 function sourceLabel(source?: EmployeeAssistantAnswerSource) {
   if (source === 'KNOWLEDGE') return '标准话术'
   if (source === 'HUMAN_REQUIRED') return '需人工处理'
-  return '员工助手建议'
+  return ''
+}
+
+function onKeydown(e: KeyboardEvent) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); submitMessage() }
 }
 
 function serviceStatusFromFailure(error: unknown): EmployeeAssistantStatus | null {
   const apiError = error instanceof ApiError ? error : null
   const code = apiError?.code
-  const message = apiError?.message || '员工服务助手暂时不可用，请稍后点击“检查服务”。'
-
-  if (code === 'EMPLOYEE_ASSISTANT_NOT_CONFIGURED') {
-    return { enabled: false, configured: false, state: 'UNCONFIGURED', message }
-  }
-  if (code === 'EMPLOYEE_ASSISTANT_AUTH_FAILED' || code === 'EMPLOYEE_ASSISTANT_UPSTREAM_FORBIDDEN') {
-    return { enabled: false, configured: true, state: 'AUTH_FAILED', message }
-  }
-  if (code === 'EMPLOYEE_ASSISTANT_TIMEOUT'
-    || code === 'EMPLOYEE_ASSISTANT_UNAVAILABLE'
-    || code === 'EMPLOYEE_ASSISTANT_UPSTREAM_UNAVAILABLE'
-    || code === 'EMPLOYEE_ASSISTANT_CANCELLED'
-    || code === 'EMPLOYEE_ASSISTANT_RESPONSE_INVALID') {
-    return { enabled: false, configured: true, state: 'UNAVAILABLE', message }
-  }
+  const message = apiError?.message || '员工服务助手暂时不可用，请稍后点击"检查服务"。'
+  if (code === 'EMPLOYEE_ASSISTANT_NOT_CONFIGURED') return { enabled: false, configured: false, state: 'UNCONFIGURED', message }
+  if (code === 'EMPLOYEE_ASSISTANT_AUTH_FAILED' || code === 'EMPLOYEE_ASSISTANT_UPSTREAM_FORBIDDEN') return { enabled: false, configured: true, state: 'AUTH_FAILED', message }
+  if (code && /EMPLOYEE_ASSISTANT_(TIMEOUT|UNAVAILABLE|UPSTREAM_UNAVAILABLE|CANCELLED|RESPONSE_INVALID)/.test(code)) return { enabled: false, configured: true, state: 'UNAVAILABLE', message }
   return null
 }
 
 function unavailableStatus(error: unknown): EmployeeAssistantStatus {
-  const message = error instanceof Error && error.message
-    ? error.message
-    : '员工服务助手暂时不可用，请稍后点击“检查服务”。'
+  const message = error instanceof Error && error.message ? error.message : '员工服务助手暂时不可用，请稍后点击"检查服务"。'
   return { enabled: false, configured: true, state: 'UNAVAILABLE', message }
-}
-
-function safeStatusDetail(rawMessage?: string) {
-  const message = rawMessage?.trim() || ''
-  if (!message) return ''
-  // The backend contract already returns business-safe copy. Keep a narrow UI-side guard so an
-  // accidental endpoint, query string, token, or authorization header can never appear here.
-  if (/(https?:\/\/|[?&][^\s=&]+=[^\s]+|\b(?:bearer|token|api[ _-]?key|authorization|secret)\b|密钥|令牌|内部地址|上游地址)/i.test(message)) {
-    return '服务状态已收到，请按上方指引联系管理员处理。'
-  }
-  return message
 }
 
 function createSessionId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
   return `employee-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
+
+function escapeHtml(text: string) { return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }
+
+function renderMarkdown(raw: string): string {
+  let html = escapeHtml(raw)
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+  html = html.replace(/^[\-\*]\s+(.+)$/gm, '<li>$1</li>')
+  html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul class="md-list">$1</ul>')
+  html = html.replace(/^\d+\.\s+(.+)$/gm, '<li>$1</li>')
+  html = html.replace(/\n\n+/g, '</p><p>')
+  html = html.replace(/\n/g, '<br>')
+  if (!html.startsWith('<')) html = '<p>' + html + '</p>'
+  return html
+}
+
+function structureAssistantAnswer(raw: string, needsHuman: boolean): StructuredAnswer {
+  const sections = { speech: [] as string[], steps: [] as string[], handoff: [] as string[] }
+  const unsectioned: string[] = []
+  let current: keyof typeof sections | null = null
+  let recognizedHeading = false
+
+  for (const originalLine of raw.replace(/\r/g, '').split('\n')) {
+    const line = originalLine.trim()
+    if (!line) continue
+    const heading = line.replace(/^[#*\s]+|[:：*\s]+$/g, '')
+    if (/^(?:\d+[.、]\s*)?可以这样说/.test(heading)) {
+      current = 'speech'; recognizedHeading = true; continue
+    }
+    if (/^(?:\d+[.、]\s*)?(?:员工怎么处理|操作原则)/.test(heading)) {
+      current = 'steps'; recognizedHeading = true; continue
+    }
+    if (/^(?:\d+[.、]\s*)?(?:什么时候转人工|转人工条件)/.test(heading)) {
+      current = 'handoff'; recognizedHeading = true; continue
+    }
+    const cleaned = cleanAnswerLine(line)
+    if (!cleaned) continue
+    if (current) sections[current].push(cleaned)
+    else unsectioned.push(cleaned)
+  }
+
+  if (!recognizedHeading) {
+    const units = raw.replace(/([。！？；])/g, '$1\n').split('\n').map(cleanAnswerLine).filter(Boolean)
+    const candidates = units.length ? units : unsectioned
+    sections.speech.push(candidates[0] || '我先帮您确认处理方式，请稍等。')
+    for (const unit of candidates.slice(1)) {
+      if (isHandoffText(unit)) sections.handoff.push(unit)
+      else sections.steps.push(unit)
+    }
+  } else if (unsectioned.length) {
+    sections.speech.unshift(unsectioned[0])
+    sections.steps.push(...unsectioned.slice(1))
+  }
+
+  const customerSpeech = (sections.speech[0] || '我先帮您确认处理方式，请稍等。').slice(0, 360)
+  const steps = uniqueShortItems(sections.steps, 3)
+  const handoffs = uniqueShortItems(sections.handoff, 3)
+  if (!steps.length) steps.push('在现有业务系统内按门店规则核验，不在聊天中补充顾客或订单隐私。')
+  if (!handoffs.length) handoffs.push(needsHuman
+    ? '需要判断具体情况或无法确认门店规则时，转值班负责人。'
+    : '超出本人权限或无法确认门店规则时，转值班负责人。')
+
+  return {
+    customerSpeech,
+    speechHtml: renderMarkdown(customerSpeech),
+    stepsHtml: renderMarkdown(steps.map((item) => `- ${item}`).join('\n')),
+    handoffHtml: renderMarkdown(handoffs.map((item) => `- ${item}`).join('\n')),
+  }
+}
+
+function cleanAnswerLine(value: string) {
+  return value.replace(/^\s*(?:[-*•]|\d+[.、])\s*/, '').replace(/^['“”]|['“”]$/g, '').trim()
+}
+
+function uniqueShortItems(values: string[], limit: number) {
+  return Array.from(new Set(values.map(cleanAnswerLine).filter(Boolean))).slice(0, limit).map((item) => item.slice(0, 220))
+}
+
+function isHandoffText(value: string) {
+  return /(转人工|值班负责人|值班经理|负责人|无法确认|不能判断|不确定|超出.*权限)/.test(value)
+}
 </script>
 
 <template>
-  <section class="employee-assistant-page">
-    <PageHeader subtitle="面向员工常见问题和服务话术，与门店经营助手相互独立。">
-      <template #actions>
-        <UiButton :loading="loading" :disabled="loading" @click="loadStatus"><template #icon><RefreshCw :size="16" /></template>检查服务</UiButton>
-      </template>
-    </PageHeader>
-
-    <section
-      class="assistant-trust-card"
-      :class="[`state--${serviceState.toLowerCase()}`, { 'is-checking': loading && !status }]"
-      role="status"
-      aria-live="polite"
-      data-testid="employee-assistant-status"
-    >
-      <div class="trust-icon"><ShieldCheck v-if="isReady" :size="22" /><AlertCircle v-else :size="22" /></div>
-      <div>
-        <strong>{{ serviceCopy.title }}</strong>
-        <p id="employee-assistant-status-help">{{ serviceCopy.action }}</p>
-        <small v-if="statusDetail">{{ statusDetail }}</small>
-        <details v-if="canViewDeploymentGuide" class="deployment-guide" data-testid="employee-assistant-deployment-guide">
-          <summary>维护人员部署说明</summary>
-          <div class="deployment-guide__body">
-            <p>此页面不能配置服务。请由维护人员在启动 Java 的同一进程环境中注入变量；已经运行的 Java 不会自动读取后来新增的变量。</p>
-            <p>请选择且只选择一种模式，不能混用，也不能复用 <code>DEEPSEEK_*</code> 变量：</p>
-            <ul>
-              <li><b>REMOTE</b>：<code>EMPLOYEE_ASSISTANT_PROVIDER=REMOTE</code>、<code>EMPLOYEE_ASSISTANT_URL</code>、<code>EMPLOYEE_ASSISTANT_API_TOKEN</code></li>
-              <li><b>MODEL</b>：<code>EMPLOYEE_ASSISTANT_PROVIDER=MODEL</code>、<code>EMPLOYEE_ASSISTANT_MODEL_URL</code>、<code>EMPLOYEE_ASSISTANT_MODEL_API_KEY</code>、<code>EMPLOYEE_ASSISTANT_MODEL_NAME</code></li>
-            </ul>
-            <p>先运行 <code>scripts/verify-employee-assistant-config.ps1</code> 完成预检；获得维护授权后重启 Java 服务，再回到本页点击“检查服务”。本页不会显示或写入任何配置值。</p>
+  <div class="ea-page">
+    <header class="ea-topbar">
+      <div class="ea-topbar__left">
+        <MessageSquare :size="18" />
+        <h1 class="ea-topbar__title">员工服务助手</h1>
+        <span class="ea-badge" :class="stateBadge.cls" data-testid="employee-assistant-status">{{ stateBadge.text }}</span>
+        <span v-if="stateMessage" class="ea-topbar__hint">{{ stateMessage }}</span>
+      </div>
+      <div class="ea-topbar__right">
+        <details v-if="canViewDeploymentGuide" class="ea-deploy-guide" data-testid="employee-assistant-deployment-guide">
+          <summary>部署说明</summary>
+          <div class="ea-deploy-guide__body">
+            <p>请由维护人员使用统一安全启动器注入变量，本页不显示或写入任何配置值。</p>
           </div>
         </details>
+        <UiButton variant="ghost" size="sm" :loading="loading" @click="loadStatus"><template #icon><RefreshCw :size="15" /></template>检查</UiButton>
       </div>
-    </section>
+    </header>
 
-    <div v-if="pageError" class="error-box" role="alert">{{ pageError }}</div>
+    <div v-if="pageError" class="ea-error" role="alert">{{ pageError }}</div>
 
-    <section class="assistant-shell content-card">
-      <aside class="assistant-guide">
-        <div class="guide-mark"><CircleHelp :size="22" /></div>
-        <h2>可以问什么</h2>
-        <p>员工常见问题、服务话术、交接说明和基础流程。</p>
-        <ul>
-          <li>“顾客投诉等待太久，怎么回应？”</li>
-          <li>“交班时需要核对哪些事项？”</li>
-          <li>“会员券不能使用时怎么解释？”</li>
-        </ul>
-        <div class="privacy-note"><LockKeyhole :size="16" /><span>请勿发送客户姓名、电话、订单号、附件、门店财务或任何密钥。</span></div>
+    <div class="ea-shell">
+      <aside class="ea-sidebar">
+        <p class="ea-sidebar__label">常见问题</p>
+        <button v-for="q in QUICK_QUESTIONS" :key="q" class="ea-quick-btn" :disabled="!canAsk" @click="pickQuestion(q)">{{ q }}</button>
       </aside>
 
-      <div class="chat-panel">
-        <div class="chat-heading">
-          <div><h2>员工服务助手</h2><p>本次对话只保存在当前页面，不会写入浏览器业务数据。</p></div>
-          <span class="connection-dot" :class="`state--${serviceState.toLowerCase()}`">{{ serviceCopy.badge }}</span>
-        </div>
-        <div class="chat-history" aria-live="polite">
-          <div v-if="!turns.length" class="chat-empty"><CircleHelp :size="26" /><p>{{ serviceCopy.empty }}</p></div>
-          <article v-for="turn in turns" :key="turn.id" class="chat-bubble" :class="turn.role">
-            <span>{{ turn.role === 'user' ? '你' : '助手' }}</span>
-            <p>{{ turn.content }}</p>
-            <template v-if="turn.role === 'assistant'">
-              <div class="answer-meta"><span class="answer-source">{{ sourceLabel(turn.answerSource) }}</span><small v-if="turn.knowledgeTitle">{{ turn.knowledgeTitle }}</small></div>
-              <div class="answer-actions">
-                <UiButton v-if="turn.needsHuman" variant="secondary" :loading="turn.handoffState === 'sending'" :disabled="turn.handoffState === 'created'" @click="createHandoff(turn)">
-                  {{ turn.handoffState === 'created' ? '已转人工' : '转人工处理' }}
-                </UiButton>
-                <template v-if="turn.answerSource !== 'HUMAN_REQUIRED'">
-                  <UiButton variant="ghost" icon-only :disabled="turn.feedbackState !== 'idle'" aria-label="有帮助" @click="submitFeedback(turn, true)"><template #icon><ThumbsUp :size="16" /></template></UiButton>
-                  <UiButton variant="ghost" icon-only :disabled="turn.feedbackState !== 'idle'" aria-label="不准确" @click="submitFeedback(turn, false)"><template #icon><ThumbsDown :size="16" /></template></UiButton>
-                  <small v-if="turn.feedbackState === 'helpful'">已记录“有帮助”</small>
-                  <small v-else-if="turn.feedbackState === 'inaccurate'">已记录“不准确”</small>
-                </template>
+      <nav class="ea-quick-tags" aria-label="快捷问题">
+        <button v-for="q in QUICK_QUESTIONS" :key="q" class="ea-tag" :disabled="!canAsk" @click="pickQuestion(q)">{{ q.length > 12 ? q.slice(0, 12) + '…' : q }}</button>
+      </nav>
+
+      <div class="ea-chat">
+        <div class="ea-chat__history" aria-live="polite">
+          <div v-if="!turns.length && !sending" class="ea-empty">
+            <MessageSquare :size="28" />
+            <h2>先说好第一句话</h2>
+            <p>只描述通用服务场景，我会帮你整理可直接对顾客说的话。</p>
+            <div class="ea-empty__questions" aria-label="欢迎快捷问题">
+              <button v-for="q in WELCOME_QUESTIONS" :key="q" class="ea-empty__question" :disabled="!canAsk" @click="pickQuestion(q)">{{ q }}</button>
+            </div>
+          </div>
+
+          <article v-for="turn in turns" :key="turn.id" class="ea-msg" :class="`ea-msg--${turn.role}`">
+            <div class="ea-msg__avatar"><UserRound v-if="turn.role === 'user'" :size="16" /><MessageSquare v-else :size="16" /></div>
+            <div class="ea-msg__body">
+              <div v-if="turn.role === 'user'" class="ea-msg__text" v-html="turn.renderedHtml" />
+              <div v-else class="ea-answer">
+                <section class="ea-answer__section ea-answer__section--speech">
+                  <h3>可以这样说</h3>
+                  <div class="ea-answer__speech ea-msg__text--md" v-html="turn.speechHtml" />
+                </section>
+                <section class="ea-answer__section">
+                  <h3>员工怎么处理</h3>
+                  <div class="ea-answer__content ea-msg__text--md" v-html="turn.stepsHtml" />
+                </section>
+                <section class="ea-answer__section">
+                  <h3>什么时候转人工</h3>
+                  <div class="ea-answer__content ea-msg__text--md" v-html="turn.handoffHtml" />
+                </section>
               </div>
-            </template>
+              <div v-if="turn.role === 'user' && turn.deliveryState === 'failed'" class="ea-msg__recovery" role="status">
+                <span>{{ turn.failureMessage || '本次答复未完成。' }}</span>
+                <div class="ea-msg__acts">
+                  <UiButton variant="ghost" size="sm" @click="retryTurn(turn)"><template #icon><RefreshCw :size="14" /></template>重新发送</UiButton>
+                  <UiButton variant="secondary" size="sm" :loading="turn.handoffState === 'sending'" :disabled="turn.handoffState === 'created'" @click="createHandoff(turn)">{{ turn.handoffState === 'created' ? '已转人工' : '转人工' }}</UiButton>
+                </div>
+              </div>
+              <template v-if="turn.role === 'assistant'">
+                <div class="ea-msg__meta">
+                  <span v-if="sourceLabel(turn.answerSource)" class="ea-msg__src">{{ sourceLabel(turn.answerSource) }}</span>
+                  <small v-if="turn.knowledgeTitle">{{ turn.knowledgeTitle }}</small>
+                </div>
+                <div class="ea-msg__acts">
+                  <UiButton variant="ghost" size="sm" @click="copyAnswer(turn)"><template #icon><Clipboard :size="14" /></template>{{ turn.copied ? '已复制' : '复制话术' }}</UiButton>
+                  <UiButton v-if="turn.handoffCategory === 'UPSTREAM_TIMEOUT'" variant="ghost" size="sm" @click="retryAssistantTurn(turn)"><template #icon><RefreshCw :size="14" /></template>重新发送</UiButton>
+                  <UiButton v-if="turn.needsHuman" variant="secondary" size="sm" :loading="turn.handoffState === 'sending'" :disabled="turn.handoffState === 'created'" @click="createHandoff(turn)">{{ turn.handoffState === 'created' ? '已转人工' : '转人工处理' }}</UiButton>
+                  <UiButton variant="ghost" size="sm" icon-only :disabled="turn.feedbackState !== 'idle'" :class="{ 'ea-fb--on': turn.feedbackState === 'helpful' }" aria-label="有帮助" @click="submitFeedback(turn, true)"><template #icon><ThumbsUp :size="14" /></template></UiButton>
+                  <UiButton variant="ghost" size="sm" icon-only :disabled="turn.feedbackState !== 'idle'" :class="{ 'ea-fb--on': turn.feedbackState === 'inaccurate' }" aria-label="不准确" @click="submitFeedback(turn, false)"><template #icon><ThumbsDown :size="14" /></template></UiButton>
+                </div>
+              </template>
+            </div>
           </article>
-          <article v-if="sending" class="chat-bubble assistant pending"><span>助手</span><p>正在整理回复…</p></article>
+
+          <article v-if="sending" class="ea-msg ea-msg--assistant ea-msg--pending">
+            <div class="ea-msg__avatar"><MessageSquare :size="16" /></div>
+            <div class="ea-msg__body">
+              <p class="ea-msg__typing">正在查找标准话术<span class="ea-typing-dots" aria-hidden="true"><i></i><i></i><i></i></span></p>
+              <div v-if="waitingBeyondFiveSeconds" class="ea-waiting-slow" role="status">
+                <span>回复稍慢，仍在处理中</span>
+                <div class="ea-msg__acts">
+                  <UiButton variant="ghost" size="sm" @click="continueWaiting">继续等待</UiButton>
+                  <UiButton variant="secondary" size="sm" @click="createPendingHandoff">转人工</UiButton>
+                </div>
+              </div>
+            </div>
+          </article>
         </div>
-        <p v-if="handoffNotice" class="handoff-notice" role="status">{{ handoffNotice }}</p>
-        <form class="chat-input" @submit.prevent="send">
-          <textarea v-model="message" :disabled="!canAsk || sending" :aria-describedby="!canAsk ? 'employee-assistant-status-help' : undefined" rows="3" maxlength="800" placeholder="例如：顾客说饮品太甜，怎样礼貌处理？" />
-          <div><small>不要填写客户隐私、财务数据、附件内容或令牌。</small><UiButton variant="primary" type="submit" :loading="sending" :disabled="!canAsk || !message.trim()"><template #icon><Send :size="17" /></template>发送问题</UiButton></div>
+
+        <p v-if="handoffNotice" class="ea-handoff" role="status">{{ handoffNotice }}</p>
+
+        <form class="ea-input" @submit.prevent="submitMessage">
+          <div class="ea-input__row">
+            <textarea ref="inputRef" v-model="message" :disabled="!canAsk || sending" rows="2" maxlength="800" placeholder="例如：顾客说饮品太甜，怎样礼貌处理？" @keydown="onKeydown" />
+            <UiButton variant="primary" type="submit" :loading="sending" :disabled="!canAsk || !message.trim()" aria-label="发送"><template #icon><Send :size="17" /></template>发送</UiButton>
+          </div>
+          <p class="ea-input__hint">请勿发送顾客姓名、电话、订单号等信息 · Ctrl + Enter 发送</p>
         </form>
       </div>
-    </section>
-  </section>
+    </div>
+  </div>
 </template>
 
 <style scoped>
-.employee-assistant-page { display: grid; gap: 18px; }
-.assistant-trust-card { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 1px solid #bfe5d8; border-radius: 8px; background: #f1fbf7; }
-.assistant-trust-card.state--unconfigured { border-color: #eed9ae; background: #fff9ec; }
-.assistant-trust-card.state--auth_failed { border-color: #efc9cf; background: #fff5f5; }
-.assistant-trust-card.state--unavailable, .assistant-trust-card.is-checking { border-color: #d4dddf; background: #f7fafb; }
-.trust-icon { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 50%; background: rgba(43, 128, 99, .12); color: #207258; }
-.state--unconfigured .trust-icon { background: rgba(187, 122, 19, .12); color: #9c6310; }
-.state--auth_failed .trust-icon { background: rgba(159, 39, 52, .10); color: #9f2734; }
-.state--unavailable .trust-icon, .is-checking .trust-icon { background: rgba(77, 100, 108, .10); color: #566f6b; }
-.assistant-trust-card strong { color: var(--ds-ink); font-size: 15px; }
-.assistant-trust-card p { margin: 3px 0 0; color: var(--ds-secondary); font-size: 13px; line-height: 1.5; }
-.assistant-trust-card small { display: block; margin-top: 4px; color: var(--ds-muted); font-size: 12px; line-height: 1.45; }
-.deployment-guide { margin-top: 10px; border-top: 1px solid rgba(154, 104, 20, .24); color: #6a531e; font-size: 12px; line-height: 1.6; }
-.deployment-guide summary { padding-top: 9px; cursor: pointer; color: #765816; font-weight: 800; }
-.deployment-guide__body { display: grid; gap: 8px; padding: 8px 0 2px; }
-.deployment-guide__body p { margin: 0; color: #6a5a35; font-size: 12px; }
-.deployment-guide__body ul { display: grid; gap: 6px; margin: 0; padding-left: 18px; }
-.deployment-guide__body code { overflow-wrap: anywhere; padding: 1px 3px; border-radius: 3px; background: rgba(154, 104, 20, .08); color: #705110; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; }
-.error-box { padding: 11px 13px; border: 1px solid #efc9cf; border-radius: 8px; background: #fff5f5; color: #9f2734; font-size: 14px; font-weight: 650; }
-.assistant-shell { display: grid; grid-template-columns: minmax(230px, .52fr) minmax(0, 1.48fr); min-height: 570px; padding: 0; overflow: hidden; }
-.assistant-guide { display: grid; align-content: start; gap: 12px; padding: 28px 24px; border-right: 1px solid var(--ds-line); background: #f5faf9; }
-.guide-mark { display: grid; width: 42px; height: 42px; place-items: center; border: 1px solid #bfe0dc; border-radius: 8px; background: #e8f5f3; color: var(--ds-primary-hover); }
-.assistant-guide h2, .chat-heading h2 { margin: 0; color: var(--ds-ink); font-size: 17px; }
-.assistant-guide p, .chat-heading p { margin: 0; color: var(--ds-muted); font-size: 13px; line-height: 1.55; }
-.assistant-guide ul { display: grid; gap: 9px; margin: 4px 0; padding: 0; list-style: none; }
-.assistant-guide li { padding-left: 12px; border-left: 2px solid #a6d4cf; color: var(--ds-secondary); font-size: 13px; line-height: 1.5; }
-.privacy-note { display: flex; gap: 8px; padding-top: 13px; border-top: 1px solid var(--ds-line); color: #566f6b; font-size: 12px; line-height: 1.5; }
-.privacy-note svg { flex: 0 0 auto; margin-top: 1px; color: #38786f; }
-.chat-panel { display: grid; grid-template-rows: auto minmax(260px, 1fr) auto; min-width: 0; }
-.chat-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 24px 24px 16px; border-bottom: 1px solid var(--ds-line); }
-.chat-heading p { margin-top: 4px; }
-.connection-dot { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; padding: 5px 8px; border-radius: 999px; background: #e7f7ef; color: #237153; font-size: 11px; font-weight: 800; }
-.connection-dot::before { width: 6px; height: 6px; border-radius: 50%; background: currentColor; content: ''; }
-.connection-dot.state--unconfigured { background: #fff1db; color: #9a6814; }
-.connection-dot.state--auth_failed { background: #ffebed; color: #9f2734; }
-.connection-dot.state--unavailable { background: #edf2f3; color: #566f6b; }
-.chat-history { display: grid; align-content: start; gap: 12px; max-height: 440px; min-height: 0; padding: 22px 24px; overflow-y: auto; }
-.chat-empty { display: grid; min-height: 205px; place-content: center; justify-items: center; gap: 8px; color: var(--ds-muted); text-align: center; }
-.chat-empty p { max-width: 290px; margin: 0; font-size: 13px; line-height: 1.6; }
-.chat-bubble { display: grid; max-width: min(620px, 92%); gap: 4px; padding: 11px 13px; border-radius: 9px; background: #f2f6f5; color: var(--ds-ink); }
-.chat-bubble.user { justify-self: end; background: #e5f4f1; }
-.chat-bubble.assistant { justify-self: start; border: 1px solid var(--ds-line); background: #fff; }
-.chat-bubble.pending { color: var(--ds-muted); }
-.chat-bubble span { color: var(--ds-muted); font-size: 11px; font-weight: 800; }
-.chat-bubble p { margin: 0; white-space: pre-wrap; font-size: 14px; line-height: 1.65; }
-.answer-meta, .answer-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
-.answer-source { padding: 3px 6px; border-radius: 999px; background: #e7f4f1; color: #276b65; font-size: 11px; font-weight: 800; }
-.answer-meta small, .answer-actions small { color: var(--ds-muted); font-size: 12px; }
-.answer-actions { padding-top: 4px; }
-.answer-actions :deep(.ui-button) { min-width: auto; height: 34px; padding-inline: 11px; font-size: 13px; }
-.answer-actions :deep(.ui-button--icon-only) { width: 34px; padding: 0; }
-.handoff-notice { margin: 0; padding: 10px 24px; border-top: 1px solid var(--ds-line); background: #f1fbf7; color: #276b65; font-size: 13px; }
-.chat-input { display: grid; gap: 10px; padding: 16px 24px 22px; border-top: 1px solid var(--ds-line); background: #fbfcfc; }
-.chat-input textarea { width: 100%; min-height: 84px; resize: vertical; padding: 11px; border: 1px solid var(--ds-line); border-radius: 8px; background: #fff; color: var(--ds-ink); font: inherit; line-height: 1.5; }
-.chat-input textarea:focus { outline: 3px solid rgba(39, 107, 101, .16); border-color: var(--ds-primary); }
-.chat-input textarea:disabled { cursor: not-allowed; background: #f3f6f6; color: #71817e; }
-.chat-input > div { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
-.chat-input small { color: var(--ds-muted); font-size: 12px; line-height: 1.4; }
-@media (max-width: 820px) { .assistant-shell { grid-template-columns: 1fr; } .assistant-guide { border-right: 0; border-bottom: 1px solid var(--ds-line); } .assistant-guide ul { display: none; } }
-@media (max-width: 560px) { .assistant-trust-card, .chat-heading, .chat-input > div { align-items: flex-start; flex-direction: column; } .assistant-guide, .chat-heading, .chat-history, .chat-input { padding-left: 16px; padding-right: 16px; } .chat-input :deep(.ui-button) { width: 100%; } .connection-dot { align-self: stretch; justify-content: center; } .deployment-guide__body ul { padding-left: 16px; } }
+.ea-page { display: grid; grid-template-rows: auto auto minmax(0, 1fr); height: calc(100vh - 56px); height: calc(100dvh - 56px); min-height: 420px; overflow: hidden; background: var(--ds-bg, #fafbfc); }
+
+.ea-topbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 20px; border-bottom: 1px solid var(--ds-line, #e2e8e7); background: #fff; flex-wrap: wrap; }
+.ea-topbar__left { display: flex; align-items: center; gap: 8px; color: var(--ds-primary, #2b8063); }
+.ea-topbar__title { margin: 0; font-size: 15px; font-weight: 750; color: var(--ds-ink, #1a2825); }
+.ea-topbar__hint { font-size: 12px; color: var(--ds-muted, #6b7e7a); }
+.ea-topbar__right { display: flex; align-items: center; gap: 8px; }
+.ea-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 800; }
+.ea-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; }
+.badge--ready { background: #e7f7ef; color: #237153; } .badge--ready::before { background: #237153; }
+.badge--checking { background: #edf2f3; color: #566f6b; } .badge--checking::before { background: #566f6b; }
+.badge--unconfigured { background: #fff1db; color: #9a6814; } .badge--unconfigured::before { background: #9a6814; }
+.badge--auth-failed { background: #ffebed; color: #9f2734; } .badge--auth-failed::before { background: #9f2734; }
+.badge--unavailable { background: #edf2f3; color: #566f6b; } .badge--unavailable::before { background: #566f6b; }
+.ea-deploy-guide { font-size: 12px; color: #6a531e; }
+.ea-deploy-guide summary { cursor: pointer; font-weight: 700; color: #765816; }
+.ea-deploy-guide__body { padding: 6px 0; color: #6a5a35; }
+.ea-error { padding: 8px 20px; background: #fff5f5; border-bottom: 1px solid #efc9cf; color: #9f2734; font-size: 13px; font-weight: 650; }
+
+.ea-shell { display: grid; grid-template-columns: 260px 1fr; min-height: 0; overflow: hidden; }
+.ea-sidebar { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-right: 1px solid var(--ds-line); background: #f8fbfa; overflow-y: auto; }
+.ea-sidebar__label { margin: 0 0 4px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--ds-muted); }
+.ea-quick-btn { all: unset; display: block; padding: 8px 12px; border-radius: 6px; font-size: 13px; line-height: 1.4; color: var(--ds-secondary, #3a5a51); cursor: pointer; transition: background .12s; }
+.ea-quick-btn:hover:not(:disabled) { background: #e5f2ee; }
+.ea-quick-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+.ea-quick-tags { display: none; gap: 6px; padding: 8px 16px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--ds-line); background: #fff; }
+.ea-quick-tags::-webkit-scrollbar { display: none; }
+.ea-tag { all: unset; flex: 0 0 auto; padding: 5px 11px; border: 1px solid #bfe0dc; border-radius: 999px; font-size: 12px; color: #276b65; cursor: pointer; white-space: nowrap; transition: background .12s; }
+.ea-tag:hover:not(:disabled) { background: #e7f4f1; }
+.ea-tag:disabled { opacity: .4; }
+
+.ea-chat { display: grid; grid-template-rows: 1fr auto auto; min-width: 0; min-height: 0; overflow: hidden; }
+.ea-chat__history { overflow-y: auto; padding: 16px 20px; display: grid; align-content: start; gap: 14px; scroll-behavior: smooth; }
+.ea-empty { display: grid; place-items: center; align-content: center; gap: 10px; padding: 60px 20px; color: var(--ds-muted); text-align: center; }
+.ea-empty h2 { margin: 0; color: var(--ds-ink); font-size: 18px; letter-spacing: -.01em; }
+.ea-empty p { max-width: 280px; margin: 0; font-size: 14px; line-height: 1.6; }
+.ea-empty__questions { display: grid; gap: 7px; width: min(100%, 350px); margin-top: 6px; }
+.ea-empty__question { padding: 9px 12px; border: 1px solid #c7e3dc; border-radius: 8px; background: #fff; color: #276b65; font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.ea-empty__question:hover:not(:disabled), .ea-empty__question:focus-visible { border-color: #73b6a9; background: #eff9f5; outline: none; }
+.ea-empty__question:disabled { opacity: .45; cursor: not-allowed; }
+
+.ea-msg { display: flex; gap: 10px; max-width: min(760px, 94%); }
+.ea-msg--user { align-self: flex-end; flex-direction: row-reverse; }
+.ea-msg--assistant { align-self: flex-start; }
+.ea-msg__avatar { flex: 0 0 auto; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; }
+.ea-msg--user .ea-msg__avatar { background: #e5f4f1; color: #276b65; }
+.ea-msg--assistant .ea-msg__avatar { background: #eef5f3; color: #4a7b71; }
+.ea-msg__body { display: grid; gap: 6px; min-width: 0; }
+.ea-msg__text { padding: 10px 14px; border-radius: 10px; font-size: 14px; line-height: 1.65; word-break: break-word; }
+.ea-msg--user .ea-msg__text { background: #e5f4f1; color: var(--ds-ink); border-bottom-right-radius: 4px; }
+.ea-msg--assistant .ea-msg__text { background: #fff; border: 1px solid var(--ds-line); color: var(--ds-ink); border-bottom-left-radius: 4px; }
+.ea-msg--pending .ea-msg__text { background: #f5f8f7; color: var(--ds-muted); }
+.ea-msg__text--md :deep(strong) { font-weight: 750; }
+.ea-msg__text--md :deep(p) { margin: 0 0 6px; }
+.ea-msg__text--md :deep(p:last-child) { margin-bottom: 0; }
+.ea-msg__text--md :deep(.md-list) { margin: 4px 0; padding-left: 18px; }
+.ea-msg__text--md :deep(.md-list li) { margin-bottom: 3px; }
+.ea-msg__text--md :deep(br) { display: block; content: ''; margin-top: 4px; }
+.ea-msg__typing { margin: 0; color: var(--ds-muted); }
+.ea-typing-dots { display: inline-flex; gap: 3px; margin-left: 5px; vertical-align: middle; }
+.ea-typing-dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; animation: ea-typing 1.05s infinite ease-in-out; }
+.ea-typing-dots i:nth-child(2) { animation-delay: .15s; }
+.ea-typing-dots i:nth-child(3) { animation-delay: .3s; }
+.ea-waiting-slow, .ea-msg__recovery { display: grid; gap: 6px; padding: 8px 10px; border-left: 3px solid #e2b261; background: #fffbf3; color: #765816; font-size: 12px; line-height: 1.5; }
+.ea-msg__recovery { border-left-color: #d98791; background: #fff7f7; color: #8e3d4a; }
+.ea-msg__meta { display: flex; align-items: center; gap: 6px; padding: 0 4px; }
+.ea-msg__src { padding: 2px 7px; border-radius: 999px; background: #e7f4f1; color: #276b65; font-size: 11px; font-weight: 750; }
+.ea-msg__meta small { color: var(--ds-muted); font-size: 11px; }
+.ea-msg__acts { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 0 2px; }
+.ea-msg__acts :deep(.ui-button) { height: 30px; min-width: auto; padding-inline: 9px; font-size: 12px; }
+.ea-msg__acts :deep(.ui-button--icon-only) { width: 30px; padding: 0; }
+.ea-fb--on { color: #276b65 !important; }
+
+.ea-handoff { margin: 0; padding: 8px 20px; border-top: 1px solid var(--ds-line); background: #f1fbf7; color: #276b65; font-size: 13px; }
+
+.ea-input { padding: 12px 20px 14px; border-top: 1px solid var(--ds-line); background: #fff; }
+.ea-input__row { display: flex; align-items: flex-end; gap: 10px; }
+.ea-input textarea { flex: 1; min-height: 48px; max-height: 120px; resize: none; padding: 10px 13px; border: 1px solid var(--ds-line); border-radius: 8px; background: #fafcfb; color: var(--ds-ink); font: inherit; font-size: 14px; line-height: 1.5; }
+.ea-input textarea:focus { outline: 3px solid rgba(39,107,101,.14); border-color: var(--ds-primary); background: #fff; }
+.ea-input textarea:disabled { cursor: not-allowed; background: #f3f6f6; color: #71817e; }
+.ea-input__hint { margin: 6px 0 0; color: var(--ds-muted); font-size: 11px; line-height: 1.4; }
+
+@keyframes ea-typing { 0%, 60%, 100% { transform: translateY(0); opacity: .35; } 30% { transform: translateY(-3px); opacity: 1; } }
+
+@media (max-width: 820px) {
+  .ea-shell { grid-template-columns: 1fr; }
+  .ea-sidebar { display: none; }
+  .ea-quick-tags { display: flex; }
+  .ea-msg { max-width: 96%; }
+}
+@media (max-width: 560px) {
+  .ea-topbar { padding: 8px 14px; }
+  .ea-chat__history { padding: 12px 14px; gap: 10px; }
+  .ea-empty { padding: 32px 14px; }
+  .ea-input { padding: 10px 14px 12px; }
+  .ea-input__row { flex-direction: column; }
+  .ea-input__row :deep(.ui-button) { width: 100%; }
+}
+@media (max-width: 390px) {
+  .ea-page { min-height: 0; }
+  .ea-topbar { padding: 6px 10px; }
+  .ea-msg { max-width: 100%; }
+  .ea-chat__history { padding: 10px; }
+  .ea-input { padding: 8px 10px 10px; }
+}
 </style>

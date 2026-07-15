@@ -27,7 +27,10 @@ async function downloadCsv(path: string, params: ProfitRankingExportParams, fall
       storeId: params.storeId || undefined,
     },
   })
-  downloadBlob(response.data, decodeFilename(String(response.headers['content-disposition'] || '')) || fallbackName)
+  // The page passes the approved business scope in fallbackName. Prefer it so the
+  // downloaded filename stays aligned with the visible range even when the legacy
+  // endpoint only returns a month-level Content-Disposition filename.
+  downloadBlob(response.data, fallbackName || decodeFilename(String(response.headers['content-disposition'] || '')) || '数据导出.csv')
 }
 
 export function downloadBlob(blob: Blob, filename: string) {

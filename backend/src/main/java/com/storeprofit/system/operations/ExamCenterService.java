@@ -263,6 +263,15 @@ public class ExamCenterService {
     ExamAssignmentResponse assignment = repository.assignment(user.tenantId(), assignmentId, true)
         .orElseThrow(() -> new BusinessException("ASSIGNMENT_NOT_FOUND", "考试任务不存在", HttpStatus.NOT_FOUND));
     accessControl.requireOwnExamAssignment(user, assignment.userId(), assignmentId);
+    if (List.of("COMPLETED", "REVIEW_PENDING", "RETAKE_PENDING").contains(assignment.status())
+        && assignment.attemptId() != null) {
+      // A mobile client may retry after the first response is lost on a weak network. The
+      // assignment row is locked above, so returning its immutable latest attempt prevents a
+      // duplicate attempt and keeps the original audit entry as the only submission log.
+      return operationsRepository.examAttempt(user.tenantId(), assignment.attemptId())
+          .orElseThrow(() -> new BusinessException(
+              "ATTEMPT_NOT_FOUND", "考试已提交，但成绩记录暂不可用", HttpStatus.CONFLICT));
+    }
     if ("COMPLETED".equals(assignment.status())) {
       throw new BusinessException("EXAM_COMPLETED", "该考试已经提交，不能重复作答", HttpStatus.CONFLICT);
     }

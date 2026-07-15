@@ -122,7 +122,7 @@ function lineText(row: WarehouseReturnOrder) {
               <td colspan="7">
                 <div class="detail-panel">
                   <div class="detail-grid">
-                    <span>收货部门：{{ row.receiveDepartment || '采购' }}</span>
+                    <span>收货仓：{{ row.receiveWarehouseName || '-' }}</span>
                     <span>经手人：{{ row.handledBy || row.createdBy || '-' }}</span>
                     <span>审核人：{{ row.reviewedBy || '-' }}</span>
                     <span>核对人：{{ row.checkedBy || '-' }}</span>

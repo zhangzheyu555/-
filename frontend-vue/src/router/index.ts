@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory, type RouteLocationRaw, type RouteRecordRaw } from 'vue-router'
 import { canUseFinanceProfitImport, PERMISSIONS, type PermissionCode } from '../permissions/permissions'
-import { isBossRole } from '../permissions/roles'
+import { isBossRole, normalizeRoleCode } from '../permissions/roles'
 import { resolveAvailableWorkspace } from '../permissions/workspaces'
 import { useAuthStore } from '../stores/auth'
 
@@ -15,6 +15,8 @@ const ProfitTablePage = () => import('../pages/ProfitTablePage.vue')
 const StoreDetailPage = () => import('../pages/StoreDetailPage.vue')
 const StoreManagementPage = () => import('../pages/StoreManagementPage.vue')
 const SupervisorWorkbenchPage = () => import('../pages/SupervisorWorkbenchPage.vue')
+const InspectionRectificationPage = () => import('../pages/InspectionRectificationPage.vue')
+const InspectionReviewQueuePage = () => import('../pages/InspectionReviewQueuePage.vue')
 const AssistantPage = () => import('../pages/AssistantPage.vue')
 const EmployeeAssistantPage = () => import('../pages/EmployeeAssistantPage.vue')
 const DailyLossPage = () => import('../pages/DailyLossPage.vue')
@@ -61,11 +63,9 @@ const appChildren: RouteRecordRaw[] = [
   {
     path: 'finance/import',
     name: 'finance-profit-import',
-    component: DataEntryPage,
-    meta: permissionMeta(PERMISSIONS.FINANCE_PROFIT_IMPORT, {
-      menuKey: 'finance-profit-import',
-      title: '导入月度汇总',
-      financeImportOnly: true,
+    redirect: (to) => ({
+      path: '/data-entry',
+      query: { ...to.query, import: '1' },
     }),
   },
   { path: 'expenses', name: 'expenses', component: ExpensePage, meta: permissionMeta(PERMISSIONS.EXPENSE_READ, { menuKey: 'expenses', title: '报销栏' }) },
@@ -98,6 +98,26 @@ const appChildren: RouteRecordRaw[] = [
   { path: 'operations/inspection', name: 'inspection-manage', component: SupervisorWorkbenchPage, meta: permissionMeta(PERMISSIONS.INSPECTION_READ, { menuKey: 'inspection-management', title: '督导巡店' }) },
   { path: 'operations/inspection/tasks', name: 'inspection-tasks', component: SupervisorWorkbenchPage, meta: permissionMeta(PERMISSIONS.INSPECTION_MANAGE, { menuKey: 'inspection-management', inspectionTab: 'create', title: '发起巡检' }) },
   { path: 'operations/inspection/records', name: 'inspection-records', component: SupervisorWorkbenchPage, meta: permissionMeta(PERMISSIONS.INSPECTION_READ, { menuKey: 'inspection-records', inspectionTab: 'records', title: '巡检记录' }) },
+  {
+    path: 'store/inspection/rectifications',
+    name: 'inspection-rectifications',
+    component: InspectionRectificationPage,
+    meta: permissionMeta(PERMISSIONS.INSPECTION_READ, {
+      menuKey: 'inspection-rectifications',
+      allowedRoles: ['STORE_MANAGER'],
+      title: '巡检整改',
+    }),
+  },
+  {
+    path: 'operations/inspection/reviews',
+    name: 'inspection-review-queue',
+    component: InspectionReviewQueuePage,
+    meta: permissionMeta(PERMISSIONS.INSPECTION_MANAGE, {
+      menuKey: 'inspection-review-queue',
+      allowedRoles: ['OPERATIONS'],
+      title: '整改复核',
+    }),
+  },
   { path: 'operations/inspection/standards', name: 'inspection-standards', component: SupervisorWorkbenchPage, meta: permissionMeta(PERMISSIONS.INSPECTION_MANAGE, { menuKey: 'inspection-management', inspectionTab: 'standards', title: '稽核标准' }) },
   { path: 'operations/exams', name: 'exam-admin', component: ExamAdminWorkspace, meta: permissionMeta(PERMISSIONS.EXAM_MANAGE, { moduleKey: 'exam', menuKey: 'exam-center', title: '培训考试' }) },
   { path: 'store/exams', name: 'exam-progress', component: ExamProgressWorkspace, meta: permissionMeta(PERMISSIONS.EXAM_REPORT, { moduleKey: 'exam', menuKey: 'exam-center', title: '培训考试' }) },
@@ -129,7 +149,8 @@ const routes: RouteRecordRaw[] = [
   { path: '/inspection/tasks', redirect: '/operations/inspection/tasks' },
   { path: '/inspection/create', redirect: '/operations/inspection/tasks' },
   { path: '/inspection/records', redirect: '/operations/inspection/records' },
-  { path: '/inspection/reviews', redirect: '/operations/inspection/records' },
+  { path: '/inspection/rectifications', redirect: '/store/inspection/rectifications' },
+  { path: '/inspection/reviews', redirect: '/operations/inspection/reviews' },
   { path: '/inspection/rules', redirect: '/operations/inspection/standards' },
   { path: '/inspection/standards', redirect: '/operations/inspection/standards' },
   { path: '/finance-data-check', redirect: '/finance' },
@@ -228,6 +249,17 @@ router.beforeEach(async (to) => {
         query: { notice: 'STORE_MANAGEMENT_FORBIDDEN' },
       }
     }
+    return { name: 'no-permission', query: { from: to.fullPath } }
+  }
+
+  const allowedRoles = [...to.matched]
+    .reverse()
+    .map((record) => record.meta.allowedRoles)
+    .find((value): value is string[] => Array.isArray(value) && value.every((role) => typeof role === 'string'))
+  if (allowedRoles?.length
+      && auth.isLoggedIn
+      && !isBossRole(auth.role)
+      && !allowedRoles.some((role) => normalizeRoleCode(role) === normalizeRoleCode(auth.role))) {
     return { name: 'no-permission', query: { from: to.fullPath } }
   }
 

@@ -10,6 +10,8 @@ public record WarehouseReturnResponse(
     String sourceDeliveryId,
     String returnStoreId,
     String returnStoreName,
+    Long receiveWarehouseId,
+    String receiveWarehouseName,
     String receiveDepartment,
     String status,
     String statusLabel,

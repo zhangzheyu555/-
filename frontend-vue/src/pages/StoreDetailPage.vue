@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Download, Home, RefreshCw, X } from 'lucide-vue-next'
+import { ClipboardCheck, Download, Home, RefreshCw, X } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import { getStores, type StoreInfo } from '../api/operations'
 import { getProfitDashboard, type ProfitDashboard, type ProfitEntry } from '../api/profit'
@@ -46,6 +46,9 @@ const canSwitchStore = computed(() => (
 ))
 const canReadSalary = computed(() => auth.hasPermission(PERMISSIONS.SALARY_READ))
 const canExportFinance = computed(() => auth.hasPermission(PERMISSIONS.FINANCE_EXPORT))
+const canHandleInspectionRectification = computed(() => (
+  businessScope.isStoreManager.value && auth.hasPermission(PERMISSIONS.INSPECTION_READ)
+))
 const storeManagementAccessDenied = computed(() => (
   businessScope.isStoreManager.value && route.query.notice === 'STORE_MANAGEMENT_FORBIDDEN'
 ))
@@ -224,6 +227,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
           <button class="ghost-button" type="button" :disabled="loading" @click="loadStoreDetail">
             <RefreshCw :size="16" />刷新
           </button>
+          <RouterLink v-if="canHandleInspectionRectification" class="ghost-button inspection-rectification-link" to="/store/inspection/rectifications">
+            <ClipboardCheck :size="16" />巡检整改
+          </RouterLink>
           <button v-if="canReadSalary" class="ghost-button" type="button" :disabled="!selectedStore" @click="openSalary">员工工资表</button>
           <button v-if="canExportFinance" class="primary-button submit-inline" type="button" :disabled="!storeProfitRows.length" @click="exportStoreCsv">
             <Download :size="16" />导出该店 CSV
@@ -423,6 +429,13 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
 .store-header-actions > * {
   width: auto;
   flex: none;
+}
+
+.inspection-rectification-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
 }
 
 .store-management-access-notice {

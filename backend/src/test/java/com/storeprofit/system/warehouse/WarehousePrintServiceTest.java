@@ -58,6 +58,21 @@ class WarehousePrintServiceTest {
   }
 
   @Test
+  void returnPdfKeepsReceivingWarehouseSnapshotAfterFacilityRename() throws Exception {
+    jdbcTemplate.update("update warehouse_facility set name = '荆州运营总仓' where id = 1");
+
+    WarehouseReturnResponse historical = new WarehouseRepository(jdbcTemplate)
+        .returnOrder(1L, "PSTH1")
+        .orElseThrow();
+    WarehousePrintDocument document = service.returnPdf(warehouseManager(), "PSTH1");
+
+    assertThat(historical.receiveWarehouseName()).isEqualTo("荆州总仓");
+    assertThat(historical.receiveWarehouseName()).isNotEqualTo("荆州运营总仓");
+    assertPdfBytes(document.bytes());
+    assertThat(operationLogCount("下载配送退货单", "PSTH1")).isEqualTo(1);
+  }
+
+  @Test
   void storeManagerCanOnlyDownloadOwnStoreDelivery() {
     WarehousePrintDocument ownStore = service.deliveryPdf(storeManager(), "REQ1");
     assertThat(ownStore.filename()).contains("出库单");
@@ -106,6 +121,14 @@ class WarehousePrintServiceTest {
   private void createSchema() {
     jdbcTemplate.execute("create table auth_user(id bigint primary key, tenant_id bigint not null, display_name varchar(120))");
     jdbcTemplate.execute("create table store_branch(id varchar(64) primary key, tenant_id bigint not null, name varchar(160) not null, area varchar(160), manager varchar(120))");
+    jdbcTemplate.execute("""
+        create table warehouse_facility (
+          id bigint primary key,
+          tenant_id bigint not null,
+          code varchar(64) not null,
+          name varchar(160) not null
+        )
+        """);
     jdbcTemplate.execute("""
         create table warehouse_item_category (
           id bigint auto_increment primary key,
@@ -242,6 +265,9 @@ class WarehousePrintServiceTest {
         create table warehouse_return_order (
           id varchar(120) primary key,
           tenant_id bigint not null,
+          warehouse_id bigint not null,
+          receive_warehouse_code_snapshot varchar(64) not null,
+          receive_warehouse_name_snapshot varchar(160) not null,
           return_no varchar(120) not null,
           source_requisition_id varchar(120),
           source_delivery_id varchar(120),
@@ -307,6 +333,10 @@ class WarehousePrintServiceTest {
   private void seedData() {
     jdbcTemplate.update("insert into auth_user(id, tenant_id, display_name) values (2, 1, '仓库管理员'), (3, 1, '店长')");
     jdbcTemplate.update("insert into store_branch(id, tenant_id, name, area, manager) values ('rg1', 1, '日广店', '日广路1号', '张店长'), ('other-store', 1, '其他门店', '其他地址', '其他店长')");
+    jdbcTemplate.update("""
+        insert into warehouse_facility(id, tenant_id, code, name)
+        values (1, 1, 'JZ-CENTRAL', '荆州总仓')
+        """);
     jdbcTemplate.update("insert into warehouse_item_category(id, tenant_id, name, parent_id, sort_order, enabled) values (1, 1, '奶制品', null, 10, 1), (2, 1, '包装', null, 20, 1)");
     jdbcTemplate.update("""
         insert into warehouse_item(id, tenant_id, code, name, category_id, category, unit, purchase_unit, stock_unit, ingredient_unit, spec, unit_price, shelf_life_days, active)
@@ -353,14 +383,16 @@ class WarehousePrintServiceTest {
         """);
     jdbcTemplate.update("""
         insert into warehouse_return_order(
-          id, tenant_id, return_no, return_store_id, return_store_name, receive_department,
+          id, tenant_id, warehouse_id, receive_warehouse_code_snapshot,
+          receive_warehouse_name_snapshot, return_no, return_store_id, return_store_name,
+          receive_department,
           status, total_amount, handled_by, created_by, updated_by, reviewed_by, checked_by, note, return_date, created_at
         )
         values
-          ('PSTH1', 1, 'PSTH1', 'rg1', '日广店', '采购', 'CHECKED', 25.00,
+          ('PSTH1', 1, 1, 'JZ-CENTRAL', '荆州总仓', 'PSTH1', 'rg1', '日广店', '荆州总仓', 'CHECKED', 25.00,
            '创:仓库管理员,改:仓库管理员,审:仓库管理员,核对:仓库管理员',
            '仓库管理员', '仓库管理员', '仓库管理员', '仓库管理员', '门店退回采购', '2026-07-08', '2026-07-08 16:10:00'),
-          ('PSTH-OTHER', 1, 'PSTH-OTHER', 'other-store', '其他门店', '采购', 'CHECKED', 10.00,
+          ('PSTH-OTHER', 1, 1, 'JZ-CENTRAL', '荆州总仓', 'PSTH-OTHER', 'other-store', '其他门店', '荆州总仓', 'CHECKED', 10.00,
            '创:仓库管理员,改:仓库管理员,审:仓库管理员,核对:仓库管理员',
            '仓库管理员', '仓库管理员', '仓库管理员', '仓库管理员', '其他门店退货', '2026-07-08', '2026-07-08 16:10:00')
         """);

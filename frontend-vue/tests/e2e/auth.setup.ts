@@ -30,7 +30,6 @@ export const roles: RoleConfig[] = [
       '督导巡店',
       '门店经营助手',
       '数据录入',
-      '导入月度汇总',
       '报销栏',
       '数据导出',
       '门店管理',
@@ -47,7 +46,7 @@ export const roles: RoleConfig[] = [
     username: env.E2E_FINANCE_USERNAME || '',
     password: env.E2E_FINANCE_PASSWORD || '',
     expectedPath: '/finance',
-    expectedMenus: ['财务工作台', '报销栏', '利润表', '导入月度汇总', '员工工资', '数据导出', '门店经营助手'],
+    expectedMenus: ['财务工作台', '报销栏', '利润表', '数据录入', '员工工资', '数据导出', '门店经营助手'],
     forbiddenMenus: ['今日待办', '老板工作台', '仓库中心', '物料档案', '采购入库', '账号权限'],
     layout: 'app',
   },
@@ -191,9 +190,25 @@ export async function expectDefaultRoute(page: Page, expectedPath: string) {
 }
 
 export async function expectNoWholePageOverflow(page: Page, context: string) {
-  const sizes = await page.evaluate(() => ({
-    scrollWidth: document.documentElement.scrollWidth,
-    clientWidth: document.documentElement.clientWidth,
-  }))
-  expect(sizes.scrollWidth, `${context} should not overflow page`).toBeLessThanOrEqual(sizes.clientWidth + 1)
+  const sizes = await page.evaluate(() => {
+    const clientWidth = document.documentElement.clientWidth
+    const offenders = Array.from(document.querySelectorAll<HTMLElement>('body *'))
+      .map((element) => {
+        const rect = element.getBoundingClientRect()
+        return {
+          tag: element.tagName.toLowerCase(),
+          className: element.className,
+          left: Math.round(rect.left),
+          right: Math.round(rect.right),
+        }
+      })
+      .filter((item) => item.right > clientWidth + 1 || item.left < -1)
+      .slice(0, 8)
+    return {
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth,
+      offenders,
+    }
+  })
+  expect(sizes.scrollWidth, `${context} should not overflow page; offenders=${JSON.stringify(sizes.offenders)}`).toBeLessThanOrEqual(sizes.clientWidth + 1)
 }

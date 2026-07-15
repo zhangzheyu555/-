@@ -953,6 +953,31 @@ public class WarehouseRepository {
         """, (rs, rowNum) -> rs.getLong(1), tenantId, requisitionId).stream().findFirst();
   }
 
+  /**
+   * Resolves the immutable receiving-warehouse source for a return order. The
+   * source is always the originating requisition's supply warehouse, never a
+   * client-provided department or a fallback central warehouse.
+   */
+  public Optional<WarehouseFacilitySnapshot> receiveWarehouseForRequisition(
+      long tenantId,
+      String requisitionId
+  ) {
+    return jdbcTemplate.query("""
+        select facility.id as warehouse_id, facility.code as warehouse_code,
+               facility.name as warehouse_name
+        from store_requisition requisition
+        join warehouse_facility facility
+          on facility.tenant_id = requisition.tenant_id
+         and facility.id = requisition.supply_warehouse_id
+        where requisition.tenant_id = ? and requisition.id = ?
+        limit 1
+        """, (rs, rowNum) -> new WarehouseFacilitySnapshot(
+            rs.getLong("warehouse_id"),
+            rs.getString("warehouse_code"),
+            rs.getString("warehouse_name")
+        ), tenantId, requisitionId).stream().findFirst();
+  }
+
   public List<WarehouseStockBatchRow> positiveBatches(long tenantId, long warehouseId, long itemId) {
     return jdbcTemplate.query("""
         select id, item_id, batch_no, expiry_date, quantity
@@ -1102,13 +1127,13 @@ public class WarehouseRepository {
 
   public void insertReturnOrder(
       long tenantId,
+      WarehouseFacilitySnapshot receiveWarehouse,
       String id,
       String returnNo,
       String sourceRequisitionId,
       String sourceDeliveryId,
       String returnStoreId,
       String returnStoreName,
-      String receiveDepartment,
       String status,
       BigDecimal totalAmount,
       String handledBy,
@@ -1117,62 +1142,35 @@ public class WarehouseRepository {
       String note,
       String returnDate
   ) {
-    if (hasWarehouseColumn("warehouse_return_order")) {
-      insertReturnOrder(tenantId, centralWarehouseId(tenantId), id, returnNo, sourceRequisitionId,
-          sourceDeliveryId, returnStoreId, returnStoreName, receiveDepartment, status, totalAmount,
-          handledBy, operatorName, reason, note, returnDate);
-      return;
+    if (receiveWarehouse == null
+        || receiveWarehouse.id() <= 0
+        || receiveWarehouse.code() == null
+        || receiveWarehouse.code().isBlank()
+        || receiveWarehouse.name() == null
+        || receiveWarehouse.name().isBlank()) {
+      throw new IllegalArgumentException("配送退货单必须提供来源叫货单的有效收货仓快照");
     }
     jdbcTemplate.update("""
         insert into warehouse_return_order(
-          id, tenant_id, return_no, source_requisition_id, source_delivery_id,
-          return_store_id, return_store_name, receive_department, status,
-          total_amount, handled_by, created_by, updated_by, reviewed_by,
-          checked_by, reason, note, return_date, created_at
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
-        """, id, tenantId, returnNo, blankToNull(sourceRequisitionId), blankToNull(sourceDeliveryId),
-        returnStoreId, returnStoreName, receiveDepartment, status, amount(totalAmount),
-        blankToNull(handledBy), blankToNull(operatorName), null, null, null,
-        blankToNull(reason), blankToNull(note), returnDate);
-  }
-
-  public void insertReturnOrder(
-      long tenantId,
-      Long warehouseId,
-      String id,
-      String returnNo,
-      String sourceRequisitionId,
-      String sourceDeliveryId,
-      String returnStoreId,
-      String returnStoreName,
-      String receiveDepartment,
-      String status,
-      BigDecimal totalAmount,
-      String handledBy,
-      String operatorName,
-      String reason,
-      String note,
-      String returnDate
-  ) {
-    long resolvedWarehouseId = warehouseId == null ? centralWarehouseId(tenantId) : warehouseId;
-    jdbcTemplate.update("""
-        insert into warehouse_return_order(
-          id, tenant_id, warehouse_id, return_no, source_requisition_id, source_delivery_id,
+          id, tenant_id, warehouse_id, receive_warehouse_code_snapshot,
+          receive_warehouse_name_snapshot, return_no, source_requisition_id, source_delivery_id,
           return_store_id, return_store_name, receive_department, status,
           total_amount, handled_by, created_by, updated_by, reviewed_by,
           checked_by, reason, note, return_date, created_at
         )
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
         """,
         id,
         tenantId,
-        resolvedWarehouseId,
+        receiveWarehouse.id(),
+        receiveWarehouse.code().trim(),
+        receiveWarehouse.name().trim(),
         returnNo,
         blankToNull(sourceRequisitionId),
         blankToNull(sourceDeliveryId),
         returnStoreId,
         returnStoreName,
-        receiveDepartment,
+        receiveWarehouse.name().trim(),
         status,
         amount(totalAmount),
         blankToNull(handledBy),
@@ -1239,6 +1237,8 @@ public class WarehouseRepository {
     String sql = """
         select o.id, o.return_no, o.source_requisition_id, o.source_delivery_id,
                o.return_store_id, o.return_store_name,
+               o.warehouse_id as receive_warehouse_id,
+               o.receive_warehouse_name_snapshot as receive_warehouse_name,
                o.receive_department, o.status, o.total_amount, o.handled_by,
                o.created_by, o.updated_by, o.reviewed_by, o.checked_by,
                o.reason, o.note, o.review_note, o.received_note,
@@ -1264,6 +1264,8 @@ public class WarehouseRepository {
           header.sourceDeliveryId(),
           header.returnStoreId(),
           header.returnStoreName(),
+          header.receiveWarehouseId(),
+          header.receiveWarehouseName(),
           header.receiveDepartment(),
           header.status(),
           returnStatusLabel(header.status()),
@@ -2255,6 +2257,8 @@ public class WarehouseRepository {
         rs.getString("source_delivery_id"),
         rs.getString("return_store_id"),
         rs.getString("return_store_name"),
+        rs.getObject("receive_warehouse_id", Long.class),
+        rs.getString("receive_warehouse_name"),
         rs.getString("receive_department"),
         rs.getString("status"),
         amount(rs.getBigDecimal("total_amount")),
@@ -2627,6 +2631,8 @@ public class WarehouseRepository {
       String sourceDeliveryId,
       String returnStoreId,
       String returnStoreName,
+      Long receiveWarehouseId,
+      String receiveWarehouseName,
       String receiveDepartment,
       String status,
       BigDecimal totalAmount,
@@ -2660,6 +2666,9 @@ public class WarehouseRepository {
       String unit,
       BigDecimal unitPrice
   ) {
+  }
+
+  public record WarehouseFacilitySnapshot(long id, String code, String name) {
   }
 
   private record AlertInfo(String level, String text) {

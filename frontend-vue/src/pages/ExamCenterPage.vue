@@ -114,6 +114,8 @@ const answers = reactive<Record<number, string>>({})
 const submitting = ref(false)
 const switchCount = ref(0)
 const violated = ref(false)
+const activeQuestionIndex = ref(0)
+const examQuestionList = ref<HTMLElement | null>(null)
 
 const courseForm = reactive(emptyCourse())
 const materialForm = reactive(emptyMaterial())
@@ -512,20 +514,41 @@ async function startExam(assignment: ExamAssignment) {
     activePaper.value = await getAssignedExamPaper(assignment.id)
     activeAssignment.value = assignment
     Object.keys(answers).forEach((key) => delete answers[Number(key)])
+    activeQuestionIndex.value = 0
     switchCount.value = 0
     violated.value = false
   } catch (reason) { error.value = displayError(reason, '试卷加载失败。') }
 }
-function closeExam() { if (!submitting.value) { activeAssignment.value = null; activePaper.value = null } }
+function closeExam(force = false) {
+  if (submitting.value && !force) return
+  activeAssignment.value = null
+  activePaper.value = null
+  activeQuestionIndex.value = 0
+}
+
+function moveExamQuestion(offset: number) {
+  const total = activePaper.value?.questions.length || 0
+  if (!total) return
+  activeQuestionIndex.value = Math.min(total - 1, Math.max(0, activeQuestionIndex.value + offset))
+  void nextTick(() => {
+    examQuestionList.value?.scrollTo({ top: 0, behavior: 'auto' })
+  })
+}
+
 async function submitExam() {
   if (!activeAssignment.value || !activePaper.value) return
-  if (activePaper.value.questions.some((q) => !String(answers[q.id] || '').trim())) { error.value = '请完成全部题目后再提交。'; return }
+  const firstIncompleteQuestion = activePaper.value.questions.findIndex((q) => !String(answers[q.id] || '').trim())
+  if (firstIncompleteQuestion >= 0) {
+    activeQuestionIndex.value = firstIncompleteQuestion
+    void nextTick(() => examQuestionList.value?.scrollTo({ top: 0, behavior: 'auto' }))
+    error.value = '请完成全部题目后再提交。'
+    return
+  }
   submitting.value = true
   try {
     const result = await submitAssignedExam(activeAssignment.value.id, { violated: violated.value, answers: activePaper.value.questions.map((q) => ({ questionId: q.id, userAnswer: answers[q.id] || '' })) })
     success.value = activePaper.value.questions.some((q) => q.questionType === 'ESSAY') ? '考试已提交，主观题等待阅卷。' : `考试已提交，得分 ${formatNumber(result.score)} 分。`
-    activeAssignment.value = null
-    activePaper.value = null
+    closeExam(true)
     await loadAll()
   } catch (reason) { error.value = displayError(reason, '考试提交失败。') } finally { submitting.value = false }
 }
@@ -873,7 +896,49 @@ onBeforeUnmount(() => {
 
     <div v-if="reviewDetail" class="overlay" role="dialog" aria-modal="true" aria-label="考试阅卷" @click.self="requestCloseReview"><form class="drawer wide-drawer" @submit.prevent="completeReview"><header><div><h3>{{ reviewDetail.task.examineeName }} · 阅卷</h3><span>{{ reviewDetail.task.examTitle || reviewDetail.task.paperName }}</span></div><UiButton variant="ghost" icon-only aria-label="关闭阅卷" title="关闭" @click="requestCloseReview"><template #icon><X :size="18" /></template></UiButton></header><div class="review-answer-list"><article v-for="(item, index) in reviewDetail.answers" :key="item.answerId"><h4>{{ index + 1 }}. {{ item.questionText }} <span>{{ item.maxScore }} 分</span></h4><dl><div><dt>考生答案</dt><dd>{{ item.userAnswer || '未作答' }}</dd></div><div><dt>参考答案</dt><dd>{{ item.standardAnswer || '由阅卷人判断' }}</dd></div></dl><div class="review-score"><label>得分<input v-model.number="item.awardedScore" type="number" min="0" :max="item.maxScore" step="0.01" /></label><label>评语<input v-model.trim="item.reviewComment" /></label></div></article><label class="review-note">阅卷备注<textarea v-model.trim="reviewDetail.reviewNote" rows="3" /></label></div><ModalFooter><UiButton variant="secondary" @click="requestCloseReview">取消</UiButton><UiButton variant="primary" type="submit" :loading="saving">完成阅卷</UiButton></ModalFooter></form></div>
 
-    <div v-if="activeAssignment && activePaper" class="overlay exam-taking" role="dialog" aria-modal="true" aria-label="考试作答"><form class="take-panel" @submit.prevent="submitExam"><header><div><h3>{{ activeAssignment.examTitle }}</h3><span>{{ activePaper.paperName }} · 通过分 {{ activePaper.passScore }}</span></div><UiButton variant="ghost" icon-only aria-label="暂时退出考试" title="关闭" :disabled="submitting" @click="requestCloseExam"><template #icon><X :size="18" /></template></UiButton></header><div class="switch-warning" :class="{ danger: violated }">考试期间请勿切换页面；已切换 {{ switchCount }}/3 次。</div><div class="take-list"><fieldset v-for="(item, index) in activePaper.questions" :key="item.id"><legend>{{ index + 1 }}. {{ item.questionText }}（{{ item.score }} 分）</legend><label v-for="option in item.options" v-if="item.questionType === 'SINGLE_CHOICE'" :key="option" class="choice"><input v-model="answers[item.id]" type="radio" :name="`question-${item.id}`" :value="option" />{{ option }}</label><textarea v-else-if="item.questionType === 'ESSAY'" v-model.trim="answers[item.id]" rows="5" placeholder="请输入答案" /><input v-else v-model.trim="answers[item.id]" :type="item.questionType === 'NUMBER' ? 'number' : 'text'" placeholder="请输入答案" /></fieldset></div><ModalFooter><UiButton variant="secondary" :disabled="submitting" @click="requestCloseExam">暂不作答</UiButton><UiButton variant="primary" type="submit" :loading="submitting"><template #icon><Send :size="15" /></template>提交考试</UiButton></ModalFooter></form></div>
+    <div v-if="activeAssignment && activePaper" class="overlay exam-taking" role="dialog" aria-modal="true" aria-label="考试作答">
+      <form class="take-panel exam-answer-panel" @submit.prevent="submitExam">
+        <header>
+          <div>
+            <h3>{{ activeAssignment.examTitle }}</h3>
+            <span>{{ activePaper.paperName }} · 通过分 {{ activePaper.passScore }}</span>
+            <span class="exam-question-progress" aria-live="polite">第 {{ activeQuestionIndex + 1 }} / {{ activePaper.questions.length }} 题</span>
+          </div>
+          <UiButton variant="ghost" icon-only aria-label="暂时退出考试" title="关闭" :disabled="submitting" @click="requestCloseExam">
+            <template #icon><X :size="18" /></template>
+          </UiButton>
+        </header>
+        <div class="switch-warning" :class="{ danger: violated }">考试期间请勿切换页面；已切换 {{ switchCount }}/3 次。</div>
+        <div ref="examQuestionList" class="take-list">
+          <fieldset
+            v-for="(item, index) in activePaper.questions"
+            :key="item.id"
+            class="exam-question"
+            :class="{ 'exam-question--current': activeQuestionIndex === index }"
+          >
+            <legend>{{ index + 1 }}. {{ item.questionText }}（{{ item.score }} 分）</legend>
+            <label
+              v-for="option in item.options"
+              v-if="item.questionType === 'SINGLE_CHOICE'"
+              :key="option"
+              class="choice"
+              :class="{ 'choice--selected': answers[item.id] === option }"
+            >
+              <input v-model="answers[item.id]" type="radio" :name="`question-${item.id}`" :value="option" />
+              <span>{{ option }}</span>
+            </label>
+            <textarea v-else-if="item.questionType === 'ESSAY'" v-model.trim="answers[item.id]" rows="5" placeholder="请输入答案" />
+            <input v-else v-model.trim="answers[item.id]" :type="item.questionType === 'NUMBER' ? 'number' : 'text'" placeholder="请输入答案" />
+          </fieldset>
+        </div>
+        <ModalFooter sticky>
+          <UiButton class="exam-exit-action" variant="secondary" :disabled="submitting" @click="requestCloseExam">暂不作答</UiButton>
+          <UiButton class="exam-mobile-question-action" variant="secondary" :disabled="submitting || activeQuestionIndex === 0" @click="moveExamQuestion(-1)">上一题</UiButton>
+          <UiButton class="exam-mobile-question-action" variant="secondary" :disabled="submitting || activeQuestionIndex >= activePaper.questions.length - 1" @click="moveExamQuestion(1)">下一题</UiButton>
+          <UiButton class="exam-submit-action" variant="primary" type="submit" :loading="submitting"><template #icon><Send :size="15" /></template>提交考试</UiButton>
+        </ModalFooter>
+      </form>
+    </div>
 
     <div v-if="playingVideo" class="overlay exam-taking" role="dialog" aria-modal="true" aria-label="观看学习视频"><section class="take-panel video-panel"><header><div><h3>{{ playingVideo.title }}</h3><span>{{ playingVideo.courseTitle || playingVideo.category || '学习视频' }} · 当前进度 {{ Math.round(playingVideoPercent) }}%</span></div><UiButton variant="ghost" icon-only aria-label="关闭视频" title="关闭" @click="closeVideo"><template #icon><X :size="18" /></template></UiButton></header><div class="switch-warning" :class="{ danger: seekBlocked }">{{ seekBlocked ? '不能快进到还没看过的位置，已回到当前进度。' : '学习视频不支持快进，可回看已观看的部分；观看进度自动保存。' }}</div><video ref="playerRef" class="video-player" :src="videoBlobUrl" controls controlslist="noplaybackrate nodownload" disablePictureInPicture @loadedmetadata="handleVideoLoadedMetadata" @timeupdate="handleVideoTimeUpdate" @seeking="handleVideoSeeking" @ratechange="handleVideoRateChange" @pause="() => void flushVideoProgress()" @ended="() => void flushVideoProgress(true)" /></section></div>
 
@@ -967,7 +1032,121 @@ onBeforeUnmount(() => {
   overflow-x: auto;
 }
 
+.exam-question-progress,
+.exam-mobile-question-action {
+  display: none;
+}
+
 .progress-track{flex:1;min-width:0;height:8px;border-radius:999px;background:#e8ecef;overflow:hidden}.progress-track.big{height:12px}.progress-fill{height:100%;border-radius:999px;background:#76bdb8;transition:width .3s ease}.progress-fill.done{background:#278052}.video-summary{display:grid;grid-template-columns:auto minmax(120px,1fr) 48px;align-items:center;gap:14px;margin-bottom:18px;padding:14px;border:1px solid #dce7e5;background:#f7fbfa}.video-summary-info b,.video-summary-info span{display:block}.video-summary-info span{margin-top:3px;color:#7a8290;font-size:12px;white-space:nowrap}.video-summary-percent{color:#285f5c;font-size:18px;text-align:right}.video-group{margin-bottom:18px}.video-group h3{display:flex;align-items:center;gap:6px;margin:0 0 10px;font-size:14px}.video-group h3 span{color:#8a919c;font-size:11px;font-weight:400}.video-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.video-card{display:flex;flex-direction:column;gap:10px;padding:14px;border:1px solid #e0e4e9;border-radius:6px;background:#fff}.video-card.off{opacity:.62}.video-cover{position:relative;display:flex;align-items:center;justify-content:center;height:74px;border-radius:5px;background:linear-gradient(135deg,#e9f6f5,#d8edeb);color:#285f5c}.video-done{position:absolute;top:6px;right:6px;display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:999px;background:#278052;color:#fff;font-size:11px;font-style:normal}.video-body b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.video-body>span{display:block;margin-top:3px;color:#858c96;font-size:11px}.video-progress-row,.video-actions,.upload-progress{display:flex;align-items:center;gap:8px}.video-progress-row{margin-top:8px}.video-actions{justify-content:space-between;margin-top:auto}.video-progress-row em,.upload-progress em,.viewer-video em{min-width:34px;color:#285f5c;font-size:12px;font-style:normal;font-weight:700;text-align:right}.upload-progress{padding:0 20px 12px}.video-panel{width:min(880px,92vw)}.video-player{display:block;width:100%;max-height:min(62vh,560px);background:#000}.viewer-list{display:flex;flex-direction:column;border:1px solid #e1e5ea}.viewer-row{border-top:1px solid #e7eaee}.viewer-row:first-of-type{border-top:0}.viewer-head{width:100%;display:grid;grid-template-columns:190px minmax(0,1fr) 52px 90px;align-items:center;gap:14px;padding:12px 14px;border:0;background:#fff;cursor:pointer;text-align:left}.viewer-head:hover{background:#f7faf9}.viewer-name b,.viewer-name span{display:block}.viewer-name span{margin-top:2px;color:#858c96;font-size:11px}.viewer-percent{color:#285f5c;text-align:right}.viewer-count,.viewer-video-time{color:#7a8290;font-size:12px;text-align:right}.viewer-detail{padding:4px 14px 12px;background:#fafbfc}.viewer-video{display:grid;grid-template-columns:190px minmax(0,1fr) 52px 140px;align-items:center;gap:14px;padding:7px 0;font-size:12px}.viewer-video-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.paper-result.retake{background:#fff8e8;color:#8c6415}
+
+@media (max-width: 768px) {
+  .exam-shell :deep(.secondary-navigation__item) {
+    min-height: 44px;
+  }
+
+  .exam-taking {
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .exam-answer-panel {
+    width: 100%;
+    min-height: 100vh;
+    min-height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+
+  .exam-answer-panel header {
+    min-height: 64px;
+    padding: 0 14px;
+  }
+
+  .exam-question-progress {
+    display: block;
+    color: #285f5c !important;
+    font-weight: 700;
+  }
+
+  .exam-answer-panel .take-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 14px 14px calc(20px + env(safe-area-inset-bottom));
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .exam-answer-panel .exam-question {
+    min-inline-size: 0;
+    padding: 12px;
+  }
+
+  .exam-answer-panel .exam-question:not(.exam-question--current) {
+    display: none;
+  }
+
+  .exam-answer-panel .take-list textarea,
+  .exam-answer-panel .take-list input:not([type="radio"]) {
+    max-width: 100%;
+  }
+
+  .exam-answer-panel .choice {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 48px;
+    margin-top: 8px;
+    padding: 12px;
+    border: 1px solid #dfe3e8;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+
+  .exam-answer-panel .choice--selected {
+    border-color: #76bdb8;
+    background: #e9f6f5;
+  }
+
+  .exam-answer-panel .choice:focus-within {
+    outline: 3px solid rgba(39, 107, 101, 0.2);
+    outline-offset: 2px;
+  }
+
+  .exam-answer-panel .choice input {
+    flex: 0 0 20px;
+    width: 20px;
+    height: 20px;
+    margin: 0;
+  }
+
+  .exam-answer-panel :deep(.modal-footer) {
+    flex-shrink: 0;
+    padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+  }
+
+  .exam-answer-panel :deep(.modal-footer__actions) {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-left: 0;
+  }
+
+  .exam-mobile-question-action {
+    display: inline-flex;
+  }
+
+  .exam-answer-panel :deep(.modal-footer__actions .exam-exit-action) {
+    display: none;
+  }
+
+  .exam-answer-panel :deep(.modal-footer__actions .ui-button) {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+  }
+}
 
 @media (max-width: 640px) {
   .workspace-section {

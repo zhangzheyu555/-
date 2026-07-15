@@ -99,6 +99,7 @@ export interface StorageUpload {
 
 export interface ProfitEntryPayload {
   storeId: string
+  brandId: number
   month: string
   sales: number
   refund: number

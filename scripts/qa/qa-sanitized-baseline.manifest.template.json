@@ -1,0 +1,13 @@
+{
+  "schema": "ai-profit-os/qa-sanitized-baseline/v1",
+  "baselineId": "QA_BASELINE_YYYYMMDD",
+  "sqlPath": "C:\\Users\\<WindowsUser>\\AppData\\Local\\AI-Profit-OS\\qa-baselines\\approved-sanitized-baseline.sql",
+  "sha256": "REPLACE_WITH_APPROVED_SHA256",
+  "sanitizationAttestation": "QA-SECURITY-REVIEW-REQUIRED",
+  "fixtureBrandCode": "E2E_QA_BASELINE",
+  "expected": {
+    "requiredTables": ["auth_user", "brand", "flyway_schema_history"],
+    "minimumActiveBosses": 1,
+    "minimumBrands": 1
+  }
+}

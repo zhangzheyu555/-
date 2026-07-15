@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Properties;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.config.YamlPropertiesFactoryBean;
 import org.springframework.core.io.ClassPathResource;
@@ -38,7 +39,7 @@ class AssistantConfigurationContractTest {
   @Test
   void employeeAssistantSpringBindingsNeverReferenceOperatingAssistantSettings() {
     Constructor<?> constructor = Arrays.stream(EmployeeAssistantService.class.getConstructors())
-        .filter(candidate -> candidate.getParameterCount() == 11)
+        .filter(candidate -> candidate.isAnnotationPresent(Autowired.class))
         .findFirst()
         .orElseThrow();
 

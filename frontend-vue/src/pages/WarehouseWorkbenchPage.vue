@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import SecondaryNavigation from '../components/common/SecondaryNavigation.vue'
 import ActionConfirmDialog from '../components/ui/ActionConfirmDialog.vue'
 import WarehouseAlertPanel from '../components/warehouse/WarehouseAlertPanel.vue'
@@ -80,21 +80,24 @@ const canPurchase = computed(() => Boolean(
   && centralWarehouse.value.externalPurchaseAllowed
   && (isBoss.value || hasPermission(PERMISSIONS.WAREHOUSE_PURCHASE) || centralWarehouse.value.canPurchase),
 ))
-const canRequestTransfer = computed(() => Boolean(
-  regionalWarehouse.value
-  && (isBoss.value || hasPermission(PERMISSIONS.WAREHOUSE_TRANSFER_REQUEST) || regionalWarehouse.value.canRequestTransfer),
+const transferContext = computed(() => warehouse.transferContext)
+const hasTransferRoute = computed(() => Boolean(transferContext.value?.routes.length))
+const canCreateTransfer = computed(() => Boolean(
+  transferContext.value?.routes.some((route) => route.actions.canCreate),
 ))
-const canApproveTransfer = computed(() => Boolean(
-  centralWarehouse.value
-  && (isBoss.value || hasPermission(PERMISSIONS.WAREHOUSE_TRANSFER_APPROVE) || centralWarehouse.value.canApproveTransfer),
+const canProcessTransfer = computed(() => Boolean(
+  transferContext.value?.mode === 'PROACTIVE_ALLOCATION'
+  && transferContext.value.routes.some((route) => (
+    route.actions.canApprove || route.actions.canReject || route.actions.canShip
+  )),
 ))
-const canShipTransfer = computed(() => Boolean(
-  centralWarehouse.value
-  && (isBoss.value || hasPermission(PERMISSIONS.WAREHOUSE_TRANSFER_SHIP) || centralWarehouse.value.canShipTransfer),
-))
-const canReceiveTransfer = computed(() => Boolean(
-  regionalWarehouse.value
-  && (isBoss.value || hasPermission(PERMISSIONS.WAREHOUSE_TRANSFER_RECEIVE) || regionalWarehouse.value.canReceiveTransfer),
+const transferWorkbenchLabel = computed(() => (
+  transferContext.value?.workbenchLabel
+  || (transferContext.value?.mode === 'REQUEST_REPLENISHMENT'
+    ? '向上级总仓申请补货'
+    : transferContext.value?.mode === 'PROACTIVE_ALLOCATION'
+      ? '向分仓主动配货'
+      : '新建仓间调拨')
 ))
 const canProcessRequisition = computed(() => (
   isBoss.value
@@ -103,7 +106,13 @@ const canProcessRequisition = computed(() => (
 ))
 const showWarehouseSwitcher = computed(() => accessibleWarehouses.value.length > 1 && currentTab() !== 'overview')
 const warehouseDetailSection = computed(() => String(route.meta.warehouseSection || 'inventory'))
-const pendingTransfers = computed(() => warehouse.transfers.filter((row) => ['SUBMITTED', 'APPROVED', 'SHIPPED', 'PARTIALLY_RECEIVED'].includes(row.status)))
+const pendingTransfers = computed(() => {
+  const todos = transferContext.value?.todos
+  return Number(todos?.draft || 0)
+    + Number(todos?.pendingApproval || 0)
+    + Number(todos?.pendingShipment || 0)
+    + Number(todos?.pendingReceipt || 0)
+})
 const confirmationCopy = computed(() => {
   switch (pendingConfirmation.value?.kind) {
     case 'reject-requisition':
@@ -141,7 +150,7 @@ const confirmationCopy = computed(() => {
     case 'approve-transfer':
       return {
         title: '审批调拨申请',
-        message: '确认荆州总仓接受该山东分仓补货申请吗？',
+        message: `确认接受${transferRouteLabel(pendingConfirmation.value?.id)}调拨申请吗？`,
         confirmLabel: '审批通过',
         confirmVariant: 'primary' as const,
         noteLabel: '审批说明（选填）',
@@ -149,7 +158,7 @@ const confirmationCopy = computed(() => {
     case 'reject-transfer':
       return {
         title: '驳回调拨申请',
-        message: '请填写驳回原因，山东分仓可据此调整申请。',
+        message: `请填写驳回原因，${transferRouteLabel(pendingConfirmation.value?.id)}申请方可据此调整。`,
         confirmLabel: '确认驳回',
         confirmVariant: 'danger' as const,
         noteLabel: '驳回原因',
@@ -157,7 +166,7 @@ const confirmationCopy = computed(() => {
     case 'ship-transfer':
       return {
         title: '调拨发货',
-        message: '发货后将扣减荆州总仓在库库存并形成在途库存。',
+        message: `确认按${transferRouteLabel(pendingConfirmation.value?.id)}发货吗？发货后将扣减调出仓在库库存并形成在途库存。`,
         confirmLabel: '确认发货',
         confirmVariant: 'primary' as const,
         noteLabel: '发货说明（选填）',
@@ -165,7 +174,7 @@ const confirmationCopy = computed(() => {
     case 'receive-transfer':
       return {
         title: '调拨收货',
-        message: '确认山东分仓已收到本次调拨商品并入库吗？',
+        message: `确认${transferRouteLabel(pendingConfirmation.value?.id)}调入仓已收到本次调拨商品并入库吗？`,
         confirmLabel: '确认收货',
         confirmVariant: 'primary' as const,
         noteLabel: '收货说明（选填）',
@@ -189,8 +198,13 @@ const confirmationCopy = computed(() => {
   }
 })
 
-const tabs = computed<Array<{ key: string; label: string; badge?: number; to: string }>>(() => {
-  const rows: Array<{ key: string; label: string; badge?: number; to: string }> = []
+const transferRoute = computed<RouteLocationRaw>(() => ({
+  path: '/warehouse/transfers',
+  query: warehouse.selectedWarehouseId ? { warehouseId: String(warehouse.selectedWarehouseId) } : undefined,
+}))
+
+const tabs = computed<Array<{ key: string; label: string; badge?: number; to: RouteLocationRaw }>>(() => {
+  const rows: Array<{ key: string; label: string; badge?: number; to: RouteLocationRaw }> = []
   rows.push({
     key: 'overview',
     label: accessibleWarehouses.value.length > 1 || isBoss.value ? '全部仓库总览' : '仓库总览',
@@ -198,8 +212,8 @@ const tabs = computed<Array<{ key: string; label: string; badge?: number; to: st
   })
   if (centralWarehouse.value) rows.push({ key: 'central', label: '荆州总仓', to: '/warehouse/central' })
   if (regionalWarehouse.value) rows.push({ key: 'shandong', label: '山东分仓', to: '/warehouse/shandong' })
-  if (canRequestTransfer.value || canApproveTransfer.value || canShipTransfer.value || canReceiveTransfer.value) {
-    rows.push({ key: 'transfers', label: '仓间调拨', badge: pendingTransfers.value.length, to: '/warehouse/transfers' })
+  if (hasTransferRoute.value) {
+    rows.push({ key: 'transfers', label: '仓间调拨', badge: pendingTransfers.value, to: transferRoute.value })
   }
   rows.push({ key: 'requisitions', label: '门店叫货', badge: pendingRequisitions.value.length, to: '/warehouse/requests' })
   if (canPurchase.value && selectedWarehouse.value?.type === 'CENTRAL') {
@@ -244,7 +258,7 @@ function currentTab() {
 
 async function setTab(tab: WarehouseTab) {
   try {
-    await router.push(tabRoutes[tab])
+    await router.push(tab === 'transfers' ? transferRoute.value : tabRoutes[tab])
   } catch {
     // 当前路由已是目标页时无需提示。
   }
@@ -263,13 +277,26 @@ async function openWarehouse(target: WarehouseInfo) {
 async function selectWarehouse(event: Event) {
   const warehouseId = (event.target as HTMLSelectElement).value
   const target = accessibleWarehouses.value.find((row) => String(row.id) === warehouseId)
-  if (target) await openWarehouse(target)
+  if (!target) return
+  if (route.name === 'warehouse-transfers') {
+    await router.replace({
+      path: '/warehouse/transfers',
+      query: { ...route.query, warehouseId: String(target.id) },
+    })
+    return
+  }
+  await openWarehouse(target)
 }
 
 async function syncWarehouseFromRoute() {
-  const warehouseCode = String(route.meta.warehouseCode || '')
-  if (!warehouseCode) return
-  const target = accessibleWarehouses.value.find((row) => row.code === warehouseCode)
+  const routeWarehouseId = Array.isArray(route.query.warehouseId)
+    ? route.query.warehouseId[0]
+    : route.query.warehouseId
+  const isTransferRoute = route.name === 'warehouse-transfers'
+  const warehouseCode = isTransferRoute ? '' : String(route.meta.warehouseCode || '')
+  const target = isTransferRoute && routeWarehouseId
+    ? accessibleWarehouses.value.find((row) => String(row.id) === String(routeWarehouseId))
+    : accessibleWarehouses.value.find((row) => row.code === warehouseCode)
   if (target && String(target.id) !== String(warehouse.selectedWarehouseId)) {
     try {
       await warehouse.selectWarehouse(target.id)
@@ -277,6 +304,31 @@ async function syncWarehouseFromRoute() {
       // 无权访问时由后端和路由守卫保持当前范围。
     }
   }
+  if (!isTransferRoute || !warehouse.selectedWarehouseId) return
+  const selected = accessibleWarehouses.value.find((row) => (
+    String(row.id) === String(warehouse.selectedWarehouseId)
+  ))
+  if (!selected) return
+  if (String(routeWarehouseId || '') !== String(selected.id)) {
+    await router.replace({
+      path: '/warehouse/transfers',
+      query: { ...route.query, warehouseId: String(selected.id) },
+    })
+    return
+  }
+  try {
+    await Promise.all([
+      warehouse.loadTransfers(selected.id),
+      warehouse.loadTransferContext(selected.id),
+    ])
+  } catch {
+    // store 已保留业务错误提示。
+  }
+}
+
+function transferRouteLabel(transferId: string | undefined) {
+  const transfer = warehouse.transfers.find((row) => row.id === transferId)
+  return transfer ? `${transfer.sourceWarehouseName} → ${transfer.targetWarehouseName}` : '当前路线'
 }
 
 async function createTransfer(payload: WarehouseTransferCreatePayload) {
@@ -536,9 +588,11 @@ watch(
         </select>
       </label>
       <div v-if="currentTab() === 'warehouse'" class="warehouse-context-actions">
-        <RouterLink v-if="selectedWarehouse.type === 'REGIONAL' && canRequestTransfer" class="primary-button" to="/warehouse/transfers">向荆州总仓申请补货</RouterLink>
+        <RouterLink v-if="canCreateTransfer" class="primary-button" :to="transferRoute">
+          {{ transferWorkbenchLabel }}
+        </RouterLink>
         <RouterLink v-if="selectedWarehouse.type === 'CENTRAL' && canPurchase" class="primary-button" to="/warehouse/purchase">外部采购入库</RouterLink>
-        <RouterLink v-if="selectedWarehouse.type === 'CENTRAL' && (canApproveTransfer || canShipTransfer)" class="ghost-button" to="/warehouse/transfers">处理分仓申请</RouterLink>
+        <RouterLink v-if="canProcessTransfer" class="ghost-button" :to="transferRoute">处理调拨待办</RouterLink>
         <RouterLink v-if="canConfigureWarehouse && warehouseDetailSection !== 'catalog'" class="ghost-button" to="/warehouse/items">物料档案</RouterLink>
         <RouterLink v-if="warehouseDetailSection === 'catalog'" class="ghost-button" :to="selectedWarehouse.type === 'REGIONAL' ? '/warehouse/shandong' : '/warehouse/central'">返回库存</RouterLink>
       </div>
@@ -614,13 +668,7 @@ watch(
     <WarehouseTransferPanel
       v-else-if="currentTab() === 'transfers'"
       :transfers="warehouse.transfers"
-      :warehouses="accessibleWarehouses"
-      :items="activeItems"
-      :active-warehouse="selectedWarehouse"
-      :can-request="canRequestTransfer"
-      :can-approve="canApproveTransfer"
-      :can-ship="canShipTransfer"
-      :can-receive="canReceiveTransfer"
+      :context="warehouse.transferContext"
       :actioning-id="warehouse.actioningId"
       @create="createTransfer"
       @submit="submitTransfer"

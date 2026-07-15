@@ -971,6 +971,11 @@ onBeforeUnmount(() => {
       </template>
     </PageHeader>
 
+    <aside class="desktop-workflow-notice" role="note">
+      <strong>请在电脑端完成</strong>
+      <span>账号、权限和数据范围设置涉及高风险授权，请使用电脑端完成并仔细核对后保存。</span>
+    </aside>
+
     <div v-if="error" class="error-box">{{ error }}</div>
     <div v-if="successMessage" class="success-box">{{ successMessage }}</div>
     <div v-if="loading && !users.length" class="empty-state">正在读取账号权限...</div>
@@ -1413,6 +1418,10 @@ onBeforeUnmount(() => {
 .scope-list {
   display: grid;
   gap: 14px;
+}
+
+.desktop-workflow-notice {
+  display: none;
 }
 
 .page-actions,
@@ -1944,6 +1953,25 @@ th { color: var(--muted); font-size: 12px; font-weight: 800; }
 }
 .editor-body > label.enabled-row { display: flex; align-items: center; gap: 8px; font-weight: 600; }
 .editor-loading-note { margin: 0 18px 14px; color: var(--muted); font-size: 12px; }
+@media (max-width: 768px) {
+  .desktop-workflow-notice {
+    display: grid;
+    gap: var(--space-1);
+    padding: var(--space-3);
+    border: 1px solid #efd19f;
+    border-radius: var(--radius-md);
+    background: #fff8ed;
+    color: #73450f;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .desktop-workflow-notice strong {
+    color: #73450f;
+    font-size: 14px;
+  }
+}
+
 @media (max-width: 1100px) {
   .users-grid { grid-template-columns: 1fr; }
   .data-scope-row { grid-template-columns: 180px 210px minmax(220px, 1fr); }

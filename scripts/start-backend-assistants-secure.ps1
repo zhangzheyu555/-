@@ -340,6 +340,9 @@ function New-ChildEnvironment {
     $environment[$name] = $providerEnvironment[$name]
   }
   $providerEnvironment.Clear()
+  # Mark that variables were injected by the secure launcher through DPAPI.
+  # Without this marker the backend treats EMPLOYEE_ASSISTANT_* as untrusted (UNCONFIGURED).
+  $environment['ASSISTANT_RUNTIME_SECURED'] = 'true'
   Assert-AssistantProviderEnvironment $environment
   return $environment
 }

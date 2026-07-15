@@ -2,7 +2,6 @@ package com.storeprofit.system.inspection;
 
 import com.storeprofit.system.common.BusinessException;
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.storeprofit.system.platform.auth.AuthUser;
@@ -248,7 +247,7 @@ public class InspectionService {
 
     List<InspectionEvidenceAttachmentResponse> candidates = new ArrayList<>();
     Set<Long> handledAttachmentIds = new LinkedHashSet<>();
-    List<Map<String, Object>> storedPhotos = parseEvidencePhotos(record.photosJson());
+    List<Map<String, Object>> storedPhotos = InspectionPhotoJsonCodec.parseEvidencePhotos(record.photosJson());
     for (int photoIndex = 0; photoIndex < storedPhotos.size(); photoIndex++) {
       Map<String, Object> photo = storedPhotos.get(photoIndex);
       Long attachmentId = longValue(photo, "attachmentId", "attachment_id");
@@ -429,9 +428,10 @@ public class InspectionService {
       storage.rebindHistoricalInspectionEvidence(user, record.storeId(), record.id(), attachmentId, true);
     }
 
-    List<Map<String, Object>> photos = parseEvidencePhotos(record.photosJson());
+    List<Map<String, Object>> photos = InspectionPhotoJsonCodec.parseEvidencePhotos(record.photosJson());
     validatePhotoSourceForUpload(user, record, storage, sourcePhotoIndex);
-    bindEvidencePhotos(photos, attachmentIds, sourcePhotoIndex, uploadedFileName, uploadedContentType);
+    InspectionEvidencePhotoPolicy.bindUploadedOriginal(
+        photos, attachmentIds, sourcePhotoIndex, uploadedFileName, uploadedContentType);
     recordRepository.updateRecordPhotosJson(user.tenantId(), record.id(), toJson(photos));
 
     // Write evidence IDs through standardItemId path
@@ -557,7 +557,7 @@ public class InspectionService {
       StorageService storage
   ) {
     Set<Long> allowed = new HashSet<>();
-    for (Map<String, Object> photo : parseEvidencePhotos(record.photosJson())) {
+    for (Map<String, Object> photo : InspectionPhotoJsonCodec.parseEvidencePhotos(record.photosJson())) {
       Long attachmentId = longValue(photo, "attachmentId", "attachment_id");
       if (attachmentId != null && attachmentId > 0) {
         allowed.add(attachmentId);
@@ -609,54 +609,6 @@ public class InspectionService {
     return List.copyOf(merged);
   }
 
-  private boolean photosContainAttachmentId(List<Map<String, Object>> photos, long attachmentId) {
-    return photos.stream().anyMatch(photo -> Objects.equals(
-        longValue(photo, "attachmentId", "attachment_id"), attachmentId));
-  }
-
-  /**
-   * Associates a freshly uploaded original with the exact metadata-only photo selected by its
-   * server-issued array position.  No filename comparison is performed.  When no position is
-   * supplied the upload is a new evidence item and gets an explicit new JSON object.
-   */
-  private void bindEvidencePhotos(
-      List<Map<String, Object>> photos,
-      List<Long> attachmentIds,
-      Integer sourcePhotoIndex,
-      String uploadedFileName,
-      String uploadedContentType
-  ) {
-    if (sourcePhotoIndex != null) {
-      if (attachmentIds.size() != 1 || sourcePhotoIndex < 0 || sourcePhotoIndex >= photos.size()) {
-        throw new BusinessException(
-            "INSPECTION_EVIDENCE_SOURCE_INVALID", "待补传的历史图片已变化，请刷新后重新选择", HttpStatus.CONFLICT);
-      }
-      Map<String, Object> target = photos.get(sourcePhotoIndex);
-      target.remove("attachment_id");
-      target.put("attachmentId", attachmentIds.getFirst());
-      if (uploadedFileName != null && !uploadedFileName.isBlank()) {
-        target.put("fileName", uploadedFileName);
-      }
-      if (uploadedContentType != null && !uploadedContentType.isBlank()) {
-        target.put("contentType", uploadedContentType);
-      }
-      return;
-    }
-    for (Long attachmentId : attachmentIds) {
-      if (!photosContainAttachmentId(photos, attachmentId)) {
-        Map<String, Object> appended = new LinkedHashMap<>();
-        appended.put("attachmentId", attachmentId);
-        if (uploadedFileName != null && !uploadedFileName.isBlank()) {
-          appended.put("fileName", uploadedFileName);
-        }
-        if (uploadedContentType != null && !uploadedContentType.isBlank()) {
-          appended.put("contentType", uploadedContentType);
-        }
-        photos.add(appended);
-      }
-    }
-  }
-
   private void validatePhotoSourceForUpload(
       AuthUser user,
       InspectionRecordResponse record,
@@ -666,7 +618,7 @@ public class InspectionService {
     if (sourcePhotoIndex == null) {
       return;
     }
-    List<Map<String, Object>> photos = parseEvidencePhotos(record.photosJson());
+    List<Map<String, Object>> photos = InspectionPhotoJsonCodec.parseEvidencePhotos(record.photosJson());
     if (sourcePhotoIndex < 0 || sourcePhotoIndex >= photos.size()) {
       throw new BusinessException(
           "INSPECTION_EVIDENCE_SOURCE_INVALID", "待补传的历史图片不存在，请刷新后重新选择", HttpStatus.CONFLICT);
@@ -684,64 +636,6 @@ public class InspectionService {
         && attachment.contentType().trim().toLowerCase(java.util.Locale.ROOT).startsWith("image/")) {
       throw new BusinessException(
           "INSPECTION_EVIDENCE_SOURCE_INVALID", "该历史图片已经关联可用原图，请直接选择已有证据", HttpStatus.CONFLICT);
-    }
-  }
-
-  private List<Map<String, Object>> parseEvidencePhotos(String photosJson) {
-    if (photosJson == null || photosJson.isBlank()) {
-      return new ArrayList<>();
-    }
-    try {
-      List<Map<String, Object>> parsed = OBJECT_MAPPER.readValue(
-          photosJson, new TypeReference<List<Map<String, Object>>>() {});
-      List<Map<String, Object>> photos = new ArrayList<>();
-      for (Map<String, Object> photo : parsed == null ? List.<Map<String, Object>>of() : parsed) {
-        if (photo == null) {
-          throw new BusinessException(
-              "INSPECTION_EVIDENCE_UNLINKED", "巡检图片缺少有效附件编号和人工确认条款", HttpStatus.BAD_REQUEST);
-        }
-        photos.add(new LinkedHashMap<>(photo));
-      }
-      return photos;
-    } catch (JsonProcessingException ex) {
-      throw new BusinessException(
-          "INSPECTION_EVIDENCE_UNLINKED", "巡检图片证据无法读取，请重新选择并关联原图", HttpStatus.BAD_REQUEST);
-    }
-  }
-
-  /**
-   * New inspection persistence never accepts a display-only filename as evidence.  Every photo
-   * entry must name a positive attachment ID and that ID must occur in at least one explicit
-   * clause evidence collection.  Storage rebind validates the actual attachment, tenant/store
-   * ownership and image MIME immediately before this check in a runtime-backed service.
-   */
-  private void requireNewInspectionEvidenceLinked(
-      String photosJson,
-      List<InspectionStandardSnapshot> snapshots
-  ) {
-    List<Map<String, Object>> photos = parseEvidencePhotos(photosJson);
-    if (photos.isEmpty()) {
-      return;
-    }
-    Set<Long> manuallyLinkedAttachmentIds = new HashSet<>();
-    for (InspectionStandardSnapshot snapshot
-        : snapshots == null ? List.<InspectionStandardSnapshot>of() : snapshots) {
-      if (snapshot.photoAttachmentIds() != null) {
-        snapshot.photoAttachmentIds().stream()
-            .filter(Objects::nonNull)
-            .filter(value -> value > 0)
-            .forEach(manuallyLinkedAttachmentIds::add);
-      }
-    }
-    for (Map<String, Object> photo : photos) {
-      Long attachmentId = longValue(photo, "attachmentId", "attachment_id");
-      if (attachmentId == null || attachmentId <= 0 || !manuallyLinkedAttachmentIds.contains(attachmentId)) {
-        throw new BusinessException(
-            "INSPECTION_EVIDENCE_UNLINKED",
-            "每张巡检图片都必须绑定有效附件并至少关联一条人工确认的巡检条款",
-            HttpStatus.BAD_REQUEST
-        );
-      }
     }
   }
 
@@ -766,12 +660,12 @@ public class InspectionService {
         .scoreEvidence(user.tenantId(), record.id())
         .orElseThrow(() -> new BusinessException(
             "NOT_FOUND", "巡检记录不存在", HttpStatus.NOT_FOUND));
-    List<String> missingFields = exportScoreEvidenceMissing(evidence);
+    List<String> missingFields = InspectionScoreSnapshotValidator.missingEvidence(evidence);
     if (!missingFields.isEmpty()) {
       throw scoreRepairRequired(missingFields);
     }
 
-    Long resolvedVersionId = resolvedSnapshotVersion(evidence, missingFields);
+    Long resolvedVersionId = InspectionScoreSnapshotValidator.resolveVersionId(evidence, missingFields);
     if (!missingFields.isEmpty()) {
       throw scoreRepairRequired(missingFields);
     }
@@ -788,13 +682,13 @@ public class InspectionService {
       throw scoreRepairRequired(List.of("标准版本校验：" + validation.validationError()));
     }
 
-    ExportScoreRepair repair = calculateExportScoreRepair(
+    InspectionScoreSnapshotValidator.ScoreRepair repair = InspectionScoreSnapshotValidator.calculate(
         standards, record.itemResults(), version, missingFields);
     if (!missingFields.isEmpty()) {
       throw scoreRepairRequired(missingFields);
     }
-    if (hasCompleteStoredScore(evidence)) {
-      validateStoredScoreAgainstSnapshot(evidence, version, repair, missingFields);
+    if (InspectionScoreSnapshotValidator.hasCompleteStoredScore(evidence)) {
+      InspectionScoreSnapshotValidator.validateStoredScore(evidence, version, repair, missingFields);
       if (!missingFields.isEmpty()) {
         throw scoreRepairRequired(missingFields);
       }
@@ -819,173 +713,6 @@ public class InspectionService {
         user.tenantId(), user.id(), user.displayName(), "inspection_score_recalculated_for_export",
         record.id(), record.storeId(), record.inspectionDate(), repair.reason());
     return record(user, id);
-  }
-
-  private List<String> exportScoreEvidenceMissing(InspectionRecordRepository.ScoreEvidence evidence) {
-    List<String> missing = new ArrayList<>();
-    if (evidence.snapshotCount() <= 0) {
-      missing.add("标准快照");
-    }
-    if (evidence.snapshotCount() != evidence.snapshotStandardIdCount()) {
-      missing.add("标准快照条款ID");
-    }
-    if (evidence.snapshotVersionCount() != 1) {
-      missing.add("标准快照版本");
-    }
-    if (evidence.standardVersionId() != null
-        && evidence.snapshotStandardVersionId() != null
-        && !evidence.standardVersionId().equals(evidence.snapshotStandardVersionId())) {
-      missing.add("标准版本与快照版本一致性");
-    }
-    return missing;
-  }
-
-  private Long resolvedSnapshotVersion(
-      InspectionRecordRepository.ScoreEvidence evidence,
-      List<String> missingFields
-  ) {
-    if (evidence.standardVersionId() != null) {
-      return evidence.standardVersionId();
-    }
-    if (evidence.snapshotStandardVersionId() != null && evidence.snapshotVersionCount() == 1) {
-      return evidence.snapshotStandardVersionId();
-    }
-    missingFields.add("标准版本");
-    return null;
-  }
-
-  private boolean hasCompleteStoredScore(InspectionRecordRepository.ScoreEvidence evidence) {
-    return evidence.fullScore() != null
-        && evidence.passScore() != null
-        && evidence.score() != null
-        && evidence.standardVersionId() != null
-        && evidence.fullScore().signum() > 0
-        && evidence.passScore().signum() > 0
-        && evidence.score().signum() >= 0
-        && evidence.score().compareTo(evidence.fullScore()) <= 0;
-  }
-
-  /**
-   * A formally stored score is exportable only when the immutable clause snapshot proves the
-   * exact same result.  This is validation only: a discrepancy is reported for manual repair,
-   * never replaced with a score calculated from the current standard.
-   */
-  private void validateStoredScoreAgainstSnapshot(
-      InspectionRecordRepository.ScoreEvidence evidence,
-      InspectionStandardRepository.VersionRow version,
-      ExportScoreRepair snapshotScore,
-      List<String> missingFields
-  ) {
-    if (!Objects.equals(blankToNull(evidence.standardVersion()), blankToNull(version.version()))) {
-      missingFields.add("标准版本与版本编号一致性");
-    }
-    if (evidence.fullScore().compareTo(version.fullScore()) != 0) {
-      missingFields.add("满分与标准版本一致性");
-    }
-    if (evidence.passScore().compareTo(version.passScore()) != 0) {
-      missingFields.add("合格线与标准版本一致性");
-    }
-    if (evidence.score().compareTo(snapshotScore.score()) != 0) {
-      missingFields.add("最终得分与标准快照一致性");
-    }
-    if (evidence.passed() == null || evidence.passed() != snapshotScore.passed()
-        || !Objects.equals(blankToNull(evidence.resultCode()), blankToNull(snapshotScore.resultCode()))) {
-      missingFields.add("巡检结论与红线快照一致性");
-    }
-  }
-
-  private ExportScoreRepair calculateExportScoreRepair(
-      List<InspectionStandardItemResponse> standards,
-      List<InspectionItemResultResponse> snapshots,
-      InspectionStandardRepository.VersionRow version,
-      List<String> missingFields
-  ) {
-    if (snapshots.size() != standards.size()) {
-      missingFields.add("标准快照条款数量");
-      return ExportScoreRepair.empty();
-    }
-    Map<String, InspectionItemResultResponse> snapshotByCode = new HashMap<>();
-    for (InspectionItemResultResponse snapshot : snapshots) {
-      String code = blankToNull(snapshot.code());
-      if (code == null || snapshotByCode.put(code, snapshot) != null) {
-        missingFields.add("标准快照条款编号");
-        return ExportScoreRepair.empty();
-      }
-    }
-    BigDecimal score = ZERO_AMOUNT;
-    BigDecimal material = ZERO_AMOUNT;
-    BigDecimal hygiene = ZERO_AMOUNT;
-    BigDecimal service = ZERO_AMOUNT;
-    boolean redLineHit = false;
-    for (InspectionStandardItemResponse standard : standards) {
-      InspectionItemResultResponse snapshot = snapshotByCode.remove(standard.code());
-      if (snapshot == null) {
-        missingFields.add("标准快照条款：" + standard.code());
-        return ExportScoreRepair.empty();
-      }
-      BigDecimal maximum = standard.suggestedScore();
-      BigDecimal snapshotMaximum = snapshot.standardScore();
-      BigDecimal deduction = snapshot.deductionScore();
-      BigDecimal snapshotActual = snapshot.actualScore();
-      if (maximum == null || maximum.signum() < 0) {
-        missingFields.add("标准条款分值：" + standard.code());
-        return ExportScoreRepair.empty();
-      }
-      if (snapshotMaximum == null
-          || snapshotMaximum.signum() < 0
-          || snapshotMaximum.compareTo(maximum) != 0) {
-        missingFields.add("标准快照分值一致性：" + standard.code());
-        return ExportScoreRepair.empty();
-      }
-      if (deduction == null
-          || deduction.signum() < 0
-          || deduction.compareTo(maximum) > 0) {
-        missingFields.add("条款扣分：" + standard.code());
-        return ExportScoreRepair.empty();
-      }
-      if (deduction.signum() > 0 && !snapshot.issueFound()) {
-        missingFields.add("扣分问题状态：" + standard.code());
-        return ExportScoreRepair.empty();
-      }
-      if (deduction.signum() > 0 && blankToNull(snapshot.deductionReason()) == null) {
-        missingFields.add("扣分原因：" + standard.code());
-        return ExportScoreRepair.empty();
-      }
-      BigDecimal actual = maximum.subtract(deduction).setScale(2, RoundingMode.HALF_UP);
-      if (snapshotActual == null || snapshotActual.compareTo(actual) != 0) {
-        missingFields.add("标准快照分值一致性：" + standard.code());
-        return ExportScoreRepair.empty();
-      }
-      String bucket = category(standard.dimension());
-      if (bucket == null) {
-        missingFields.add("条款分类：" + standard.code());
-        return ExportScoreRepair.empty();
-      }
-      score = score.add(actual);
-      switch (bucket) {
-        case "MATERIAL" -> material = material.add(actual);
-        case "HYGIENE" -> hygiene = hygiene.add(actual);
-        case "SERVICE" -> service = service.add(actual);
-        default -> throw new IllegalStateException("Unexpected inspection category: " + bucket);
-      }
-      redLineHit = redLineHit || (snapshot.issueFound()
-          && "RED".equals(normalizeRiskLevel(standard.riskLevel(), standard.redLine())));
-    }
-    if (!snapshotByCode.isEmpty() || score.compareTo(version.fullScore()) > 0) {
-      missingFields.add("标准快照与标准版本一致性");
-      return ExportScoreRepair.empty();
-    }
-    String resultCode = redLineHit ? "RED_LINE_FAILED"
-        : score.compareTo(version.passScore()) >= 0 ? "PASSED" : "FAILED";
-    return new ExportScoreRepair(
-        score.setScale(2, RoundingMode.HALF_UP),
-        material.setScale(2, RoundingMode.HALF_UP),
-        hygiene.setScale(2, RoundingMode.HALF_UP),
-        service.setScale(2, RoundingMode.HALF_UP),
-        "PASSED".equals(resultCode),
-        resultCode,
-        "依据记录绑定的标准版本" + version.version() + "及完整快照重新计算；未修改原始巡检记录"
-    );
   }
 
   private InspectionScoreRepairRequiredException scoreRepairRequired(List<String> missingFields) {
@@ -1041,7 +768,8 @@ public class InspectionService {
       }
       scanned++;
       List<InspectionItemResultResponse> snapshots = recordRepository.snapshotItems(user.tenantId(), record.id());
-      HistoricalRepairCalculation calculation = calculateHistoricalRepair(standards, snapshots, active);
+      InspectionHistoricalRepairCalculator.Calculation calculation = InspectionHistoricalRepairCalculator.calculate(
+          standards, snapshots, active);
       InspectionResultRepairWrite repair = repairWrite(user, record, active, snapshots.size(), calculation);
       if (!recordRepository.insertRepairAudit(user.tenantId(), record.id(), repair)) {
         skipped++;
@@ -1071,13 +799,14 @@ public class InspectionService {
   @Transactional
   public InspectionRecordResponse save(AuthUser user, String id, InspectionRecordRequest request) {
     requireInspectionManage(user);
-    boolean creating = id == null || id.isBlank();
-    if (id != null && !id.isBlank()) {
-      recordRepository.record(user.tenantId(), id).ifPresent(existing -> {
-        requireInspectionStoreAccess(user, existing.storeId(), "修改巡检记录");
-        requireUnrepairedRecord(user.tenantId(), existing.id(), "修改");
-      });
-    }
+    Optional<InspectionRecordResponse> existing = id == null || id.isBlank()
+        ? Optional.empty()
+        : recordRepository.record(user.tenantId(), id.trim());
+    boolean creating = existing.isEmpty();
+    existing.ifPresent(record -> {
+      requireInspectionStoreAccess(user, record.storeId(), "修改巡检记录");
+      requireUnrepairedRecord(user.tenantId(), record.id(), "修改");
+    });
     CalculatedInspection calculated = calculateInspection(user, id, request);
     InspectionRecordRequest normalized = calculated.request();
     requireInspectionStoreAccess(user, normalized.storeId(), "保存巡检记录");
@@ -1085,7 +814,7 @@ public class InspectionService {
       throw new BusinessException("STORE_NOT_FOUND", "Store does not exist in current tenant", HttpStatus.BAD_REQUEST);
     }
     // Reject display-only and unassociated photo JSON before any inspection row/snapshot write.
-    requireNewInspectionEvidenceLinked(normalized.photosJson(), calculated.snapshots());
+    InspectionEvidencePhotoPolicy.requireAllPhotosLinked(normalized.photosJson(), calculated.snapshots());
     if (!calculated.attachmentIds().isEmpty() && storageService == null) {
       throw new BusinessException(
           "INSPECTION_EVIDENCE_UNLINKED",
@@ -1137,7 +866,7 @@ public class InspectionService {
 
     List<Map<String, Object>> photos = new ArrayList<>();
     Map<String, Map<String, Object>> terminalExistingDecisions = new HashMap<>();
-    for (Map<String, Object> existingPhoto : parseDetectionPhotos(existing.photosJson())) {
+    for (Map<String, Object> existingPhoto : InspectionPhotoJsonCodec.parseDetectionPhotos(existing.photosJson())) {
       Map<String, Object> existingDetection = detectionNode(existingPhoto);
       String existingKey = textValue(existingDetection, "detectionKey", "detection_key");
       String existingStatus = decisionStatus(existingDetection);
@@ -1631,7 +1360,7 @@ public class InspectionService {
   private DetectionDocument requireDetection(String photosJson, String detectionKey) {
     String key = requireText(
         detectionKey, "INSPECTION_DETECTION_KEY_REQUIRED", "识别结果编号不能为空");
-    List<Map<String, Object>> photos = parseDetectionPhotos(photosJson);
+    List<Map<String, Object>> photos = InspectionPhotoJsonCodec.parseDetectionPhotos(photosJson);
     for (Map<String, Object> photo : photos) {
       Map<String, Object> node = detectionNode(photo);
       if (key.equals(textValue(node, "detectionKey", "detection_key"))) {
@@ -1640,20 +1369,6 @@ public class InspectionService {
     }
     throw new BusinessException(
         "INSPECTION_DETECTION_NOT_FOUND", "没有找到对应的图片识别结果", HttpStatus.NOT_FOUND);
-  }
-
-  private List<Map<String, Object>> parseDetectionPhotos(String photosJson) {
-    if (photosJson == null || photosJson.isBlank()) {
-      return new ArrayList<>();
-    }
-    try {
-      List<Map<String, Object>> photos = OBJECT_MAPPER.readValue(
-          photosJson, new TypeReference<List<Map<String, Object>>>() {});
-      return new ArrayList<>(photos == null ? List.of() : photos);
-    } catch (JsonProcessingException ex) {
-      throw new BusinessException(
-          "BAD_DETECTION_RESULTS", "巡检识别结果无法读取", HttpStatus.CONFLICT);
-    }
   }
 
   @SuppressWarnings("unchecked")
@@ -2200,8 +1915,8 @@ public class InspectionService {
       InspectionRecordRequest normalized = normalizeRequest(request);
       return new CalculatedInspection(
           normalized,
-          standardSnapshots(normalized),
-          attachmentIdsFromPhotosJson(normalized.photosJson()),
+          InspectionLegacySnapshotParser.parse(normalized),
+          InspectionPhotoJsonCodec.attachmentIds(normalized.photosJson()),
           List.of()
       );
     }
@@ -2255,7 +1970,7 @@ public class InspectionService {
     List<Map<String, Object>> deductions = new ArrayList<>();
     List<Map<String, Object>> redlines = new ArrayList<>();
     List<Map<String, Object>> photos = new ArrayList<>();
-    Set<Long> attachmentIds = new HashSet<>(attachmentIdsFromPhotosJson(request.photosJson()));
+    Set<Long> attachmentIds = new HashSet<>(InspectionPhotoJsonCodec.attachmentIds(request.photosJson()));
 
     for (InspectionStandardItemResponse standard : standards) {
       InspectionItemResultRequest result = resultByItemId.remove(standard.id());
@@ -2376,7 +2091,7 @@ public class InspectionService {
     if (photosJson == null || photosJson.isBlank()) {
       return new DraftDetectionApplication(List.of(), List.of(), Map.of());
     }
-    List<Map<String, Object>> photos = parseDetectionPhotos(photosJson);
+    List<Map<String, Object>> photos = InspectionPhotoJsonCodec.parseDetectionPhotos(photosJson);
     List<DetectionAudit> audits = new ArrayList<>();
     Map<Long, BigDecimal> confirmedDeductions = new HashMap<>();
     Set<String> appliedKeys = new HashSet<>();
@@ -2550,76 +2265,12 @@ public class InspectionService {
     return detail;
   }
 
-  private HistoricalRepairCalculation calculateHistoricalRepair(
-      List<InspectionStandardItemResponse> standards,
-      List<InspectionItemResultResponse> snapshots,
-      InspectionStandardRepository.VersionRow active
-  ) {
-    if (snapshots.size() != standards.size()) {
-      return HistoricalRepairCalculation.manual(
-          "原巡检条款快照不完整：应为" + standards.size() + "条，实际为" + snapshots.size() + "条");
-    }
-    Map<String, InspectionItemResultResponse> snapshotByCode = new HashMap<>();
-    for (InspectionItemResultResponse snapshot : snapshots) {
-      String code = blankToNull(snapshot.code());
-      if (code == null || snapshotByCode.put(code, snapshot) != null) {
-        return HistoricalRepairCalculation.manual("原巡检条款快照缺少唯一条款编号，禁止猜测匹配关系");
-      }
-    }
-    BigDecimal score = ZERO_AMOUNT;
-    BigDecimal materialScore = ZERO_AMOUNT;
-    BigDecimal hygieneScore = ZERO_AMOUNT;
-    BigDecimal serviceScore = ZERO_AMOUNT;
-    boolean redLineHit = false;
-    for (InspectionStandardItemResponse standard : standards) {
-      InspectionItemResultResponse snapshot = snapshotByCode.remove(standard.code());
-      if (snapshot == null) {
-        return HistoricalRepairCalculation.manual("原巡检快照缺少修正版条款：" + standard.code());
-      }
-      BigDecimal maximum = amountOrDefault(standard.suggestedScore(), BigDecimal.ZERO);
-      BigDecimal deduction = amountOrDefault(snapshot.deductionScore(), BigDecimal.ZERO);
-      if (deduction.signum() < 0) {
-        return HistoricalRepairCalculation.manual("原巡检快照存在负扣分：" + standard.code());
-      }
-      BigDecimal actual = maximum.subtract(deduction).max(BigDecimal.ZERO)
-          .setScale(2, RoundingMode.HALF_UP);
-      score = score.add(actual);
-      String repairCategory = category(standard.dimension());
-      if (repairCategory == null) {
-        return HistoricalRepairCalculation.manual(
-            "修正版条款分类无法识别，禁止自动重算：" + standard.code());
-      }
-      switch (repairCategory) {
-        case "MATERIAL" -> materialScore = materialScore.add(actual);
-        case "HYGIENE" -> hygieneScore = hygieneScore.add(actual);
-        case "SERVICE" -> serviceScore = serviceScore.add(actual);
-        default -> throw new IllegalStateException("Unexpected inspection category: " + repairCategory);
-      }
-      redLineHit = redLineHit
-          || ("RED".equals(normalizeRiskLevel(standard.riskLevel(), standard.redLine()))
-              && snapshot.issueFound());
-    }
-    if (!snapshotByCode.isEmpty()) {
-      return HistoricalRepairCalculation.manual("原巡检快照包含修正版中不存在的条款，禁止自动重算");
-    }
-    score = score.setScale(2, RoundingMode.HALF_UP);
-    String resultCode = InspectionScoringRules.resultCode(score, redLineHit);
-    return HistoricalRepairCalculation.recalculated(
-        score,
-        materialScore.setScale(2, RoundingMode.HALF_UP),
-        hygieneScore.setScale(2, RoundingMode.HALF_UP),
-        serviceScore.setScale(2, RoundingMode.HALF_UP),
-        resultCode,
-        "依据修正版" + active.version() + "及105条完整历史快照重新计算"
-    );
-  }
-
   private InspectionResultRepairWrite repairWrite(
       AuthUser user,
       InspectionRecordResponse record,
       InspectionStandardRepository.VersionRow active,
       int snapshotItemCount,
-      HistoricalRepairCalculation calculation
+      InspectionHistoricalRepairCalculator.Calculation calculation
   ) {
     return new InspectionResultRepairWrite(
         record.standardVersionId(),
@@ -2659,37 +2310,6 @@ public class InspectionService {
       throw new BusinessException("BAD_ATTACHMENT_ID", "巡检照片编号不正确", HttpStatus.BAD_REQUEST);
     }
     return ids;
-  }
-
-  private Set<Long> attachmentIdsFromPhotosJson(String photosJson) {
-    if (photosJson == null || photosJson.isBlank()) {
-      return Set.of();
-    }
-    try {
-      JsonNode root = OBJECT_MAPPER.readTree(photosJson);
-      if (!root.isArray()) {
-        return Set.of();
-      }
-      Set<Long> ids = new HashSet<>();
-      for (JsonNode photo : root) {
-        if (!photo.isObject()) {
-          continue;
-        }
-        JsonNode attachmentId = photo.has("attachmentId")
-            ? photo.get("attachmentId") : photo.get("attachment_id");
-        if (attachmentId == null || attachmentId.isNull()) {
-          continue;
-        }
-        if (!attachmentId.isIntegralNumber() || attachmentId.longValue() <= 0) {
-          throw new BusinessException(
-              "BAD_ATTACHMENT_ID", "巡检照片编号必须是正整数", HttpStatus.BAD_REQUEST);
-        }
-        ids.add(attachmentId.longValue());
-      }
-      return Set.copyOf(ids);
-    } catch (JsonProcessingException ex) {
-      throw new BusinessException("BAD_JSON", "photosJson must be a JSON array", HttpStatus.BAD_REQUEST);
-    }
   }
 
   private String normalizeRiskLevel(String value, boolean redLine) {
@@ -2740,46 +2360,6 @@ public class InspectionService {
       List<DetectionAudit> audits,
       Map<Long, BigDecimal> confirmedDeductions
   ) {}
-
-  private record HistoricalRepairCalculation(
-      boolean manualReview,
-      BigDecimal score,
-      BigDecimal materialScore,
-      BigDecimal hygieneScore,
-      BigDecimal serviceScore,
-      String resultCode,
-      String reason
-  ) {
-    private static HistoricalRepairCalculation manual(String reason) {
-      return new HistoricalRepairCalculation(true, null, null, null, null, null, reason);
-    }
-
-    private static HistoricalRepairCalculation recalculated(
-        BigDecimal score,
-        BigDecimal materialScore,
-        BigDecimal hygieneScore,
-        BigDecimal serviceScore,
-        String resultCode,
-        String reason
-    ) {
-      return new HistoricalRepairCalculation(
-          false, score, materialScore, hygieneScore, serviceScore, resultCode, reason);
-    }
-  }
-
-  private record ExportScoreRepair(
-      BigDecimal score,
-      BigDecimal materialScore,
-      BigDecimal hygieneScore,
-      BigDecimal serviceScore,
-      boolean passed,
-      String resultCode,
-      String reason
-  ) {
-    private static ExportScoreRepair empty() {
-      return new ExportScoreRepair(null, null, null, null, false, null, null);
-    }
-  }
 
   private static final BigDecimal ZERO_AMOUNT = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
 
@@ -3396,108 +2976,6 @@ public class InspectionService {
     } catch (NumberFormatException ex) {
       return null;
     }
-  }
-
-  private List<InspectionStandardSnapshot> standardSnapshots(InspectionRecordRequest request) {
-    List<InspectionStandardSnapshot> snapshots = new ArrayList<>();
-    appendStandardSnapshots(snapshots, request == null ? null : request.deductionsJson(), false);
-    appendStandardSnapshots(snapshots, request == null ? null : request.redlinesJson(), true);
-    return snapshots;
-  }
-
-  private void appendStandardSnapshots(
-      List<InspectionStandardSnapshot> snapshots,
-      String rawJson,
-      boolean forceRedLine
-  ) {
-    if (rawJson == null || rawJson.isBlank()) {
-      return;
-    }
-    try {
-      JsonNode root = OBJECT_MAPPER.readTree(rawJson);
-      if (root == null || !root.isArray()) {
-        return;
-      }
-      for (JsonNode node : root) {
-        if (node == null || !node.isObject()) {
-          continue;
-        }
-        Long standardId = nodeLong(node, "standard_id", "standardId");
-        String title = nodeText(node, "standard_title", "standardTitle", "item", "title", "deduction_content");
-        if (standardId == null && (title == null || title.isBlank())) {
-          continue;
-        }
-        boolean redLine = forceRedLine || nodeBoolean(node, "red_line", "redline", "redLine");
-        snapshots.add(new InspectionStandardSnapshot(
-            standardId,
-            nodeText(node, "standard_version", "standardVersion"),
-            nodeText(node, "dimension", "dim", "deduction_project", "project"),
-            title,
-            nodeText(node, "standard_description", "standardDescription", "method"),
-            nodeDecimal(node, "suggested_score", "suggestedScore", "score"),
-            nodeDecimal(node, "actual_deduction_score", "actualDeductionScore", "deduction_score", "deductionScore", "deduct"),
-            redLine,
-            nodeText(node, "problem_description", "problemDescription", "issue", "description"),
-            snapshots.size() + 1
-        ));
-      }
-    } catch (JsonProcessingException ignored) {
-      // Existing records may contain legacy free-form JSON. Keep the original JSON without creating a malformed snapshot row.
-    }
-  }
-
-  private String nodeText(JsonNode node, String... names) {
-    for (String name : names) {
-      JsonNode value = node.get(name);
-      if (value != null && !value.isNull()) {
-        String text = value.asText("").trim();
-        if (!text.isBlank()) {
-          return text;
-        }
-      }
-    }
-    return null;
-  }
-
-  private Long nodeLong(JsonNode node, String... names) {
-    String value = nodeText(node, names);
-    if (value == null) {
-      return null;
-    }
-    try {
-      return Long.parseLong(value);
-    } catch (NumberFormatException ignored) {
-      return null;
-    }
-  }
-
-  private BigDecimal nodeDecimal(JsonNode node, String... names) {
-    String value = nodeText(node, names);
-    if (value == null) {
-      return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
-    }
-    try {
-      return new BigDecimal(value).setScale(2, RoundingMode.HALF_UP);
-    } catch (NumberFormatException ignored) {
-      return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
-    }
-  }
-
-  private boolean nodeBoolean(JsonNode node, String... names) {
-    for (String name : names) {
-      JsonNode value = node.get(name);
-      if (value == null || value.isNull()) {
-        continue;
-      }
-      if (value.isBoolean()) {
-        return value.booleanValue();
-      }
-      String text = value.asText("").trim();
-      if ("1".equals(text) || "yes".equalsIgnoreCase(text) || "true".equalsIgnoreCase(text)) {
-        return true;
-      }
-    }
-    return false;
   }
 
   private String blankToNull(String value) {

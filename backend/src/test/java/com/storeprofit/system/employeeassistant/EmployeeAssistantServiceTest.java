@@ -356,7 +356,9 @@ class EmployeeAssistantServiceTest {
         Duration.ofSeconds(2),
         new ObjectMapper(),
         auditRepository,
-        HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(1)).build()
+        HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(1)).build(),
+        null,
+        true
     );
 
     assertThat(service.health(user()).state()).isEqualTo(EmployeeAssistantState.READY);
@@ -471,6 +473,80 @@ class EmployeeAssistantServiceTest {
   }
 
   @Test
+  void refundQuestionUsesTheFixedPrivacySafeHandoffReplyWithoutCallingProvider() throws Exception {
+    AtomicInteger calls = new AtomicInteger();
+    startServer(exchange -> {
+      calls.incrementAndGet();
+      respond(exchange, 200, "{\"answer\":\"should not be used\"}");
+    });
+    EmployeeAssistantService service = service(baseUrl(), "test-token", mock(AuditRepository.class));
+
+    EmployeeAssistantChatResponse response = service.chat(user(),
+        new EmployeeAssistantChatRequest(null, "顾客申请退款时，员工应该怎么回复？"));
+
+    assertThat(response.answerSource()).isEqualTo(EmployeeAssistantAnswerSource.HUMAN_REQUIRED);
+    assertThat(response.needsHuman()).isTrue();
+    assertThat(response.handoffCategory()).isEqualTo("REFUND_REVIEW");
+    assertThat(response.answer()).contains("现有业务系统内按门店规则核验", "值班负责人")
+        .doesNotContain("请提供", "请发送", "请上传");
+    assertThat(calls).hasValue(0);
+  }
+
+  @Test
+  void unsafeProviderOutputIsReplacedWithAPrivacySafeHandoffReply() throws Exception {
+    startServer(exchange -> respond(exchange, 200,
+        "{\"answer\":\"请提供顾客姓名、电话、订单号、金额和支付凭证\",\"needs_human\":false}"));
+    EmployeeAssistantService service = service(baseUrl(), "test-token", mock(AuditRepository.class));
+
+    EmployeeAssistantChatResponse response = service.chat(user(),
+        new EmployeeAssistantChatRequest(null, "顾客投诉等待太久，怎么回复？"));
+
+    assertThat(response.answerSource()).isEqualTo(EmployeeAssistantAnswerSource.HUMAN_REQUIRED);
+    assertThat(response.needsHuman()).isTrue();
+    assertThat(response.handoffCategory()).isEqualTo("OUTPUT_SAFETY");
+    assertThat(response.answer()).contains("不要在聊天中补充顾客或订单信息", "转值班负责人")
+        .doesNotContain("请提供顾客姓名");
+  }
+
+  @Test
+  void lowRiskProviderAnswerIsCachedByStoreScopeAndKnowledgeVersion() throws Exception {
+    AtomicInteger calls = new AtomicInteger();
+    startServer(exchange -> {
+      calls.incrementAndGet();
+      respond(exchange, 200, "{\"answer\":\"先致歉并说明会立即跟进。\",\"needs_human\":false}");
+    });
+    EmployeeAssistantService service = service(baseUrl(), "test-token", mock(AuditRepository.class));
+    EmployeeAssistantChatRequest request = new EmployeeAssistantChatRequest(null, "顾客投诉等待太久，怎么回应？");
+
+    EmployeeAssistantChatResponse first = service.chat(user(), request);
+    EmployeeAssistantChatResponse second = service.chat(user(), request);
+
+    assertThat(first.answer()).isEqualTo(second.answer());
+    assertThat(calls).hasValue(1);
+  }
+
+  @Test
+  void providerTimeoutReturnsAReusableSafeHandoffReply() throws Exception {
+    startServer(exchange -> {
+      try {
+        Thread.sleep(250);
+      } catch (InterruptedException ex) {
+        Thread.currentThread().interrupt();
+      }
+      respond(exchange, 200, "{\"answer\":\"late\"}");
+    });
+    EmployeeAssistantService service = service(baseUrl(), "test-token", mock(AuditRepository.class), Duration.ofMillis(50));
+
+    EmployeeAssistantChatResponse response = service.chat(user(),
+        new EmployeeAssistantChatRequest(null, "顾客投诉等待太久，怎么回应？"));
+
+    assertThat(response.answerSource()).isEqualTo(EmployeeAssistantAnswerSource.HUMAN_REQUIRED);
+    assertThat(response.needsHuman()).isTrue();
+    assertThat(response.handoffCategory()).isEqualTo("UPSTREAM_TIMEOUT");
+    assertThat(response.answer()).contains("转值班负责人", "不要在聊天中补充顾客或订单信息");
+  }
+
+  @Test
   void providerFallbackReceivesAtMostThreePublishedKnowledgeSnippets() throws Exception {
     AtomicReference<String> requestBody = new AtomicReference<>();
     startServer(exchange -> {
@@ -521,7 +597,7 @@ class EmployeeAssistantServiceTest {
     ));
     EmployeeAssistantService service = new EmployeeAssistantService(
         "", "", "", "", "", "", Duration.ofSeconds(1), Duration.ofSeconds(2),
-        new ObjectMapper(), mock(AuditRepository.class), HttpClient.newHttpClient(), knowledgeRepository);
+        new ObjectMapper(), mock(AuditRepository.class), HttpClient.newHttpClient(), knowledgeRepository, false);
 
     EmployeeAssistantStatusResponse status = service.health(user());
 
@@ -531,7 +607,7 @@ class EmployeeAssistantServiceTest {
   }
 
   private EmployeeAssistantService service(String url, String token, AuditRepository auditRepository) {
-    return service(url, token, auditRepository, Duration.ofSeconds(2));
+    return service(url, token, auditRepository, Duration.ofSeconds(2), true);
   }
 
   private EmployeeAssistantService service(
@@ -540,14 +616,25 @@ class EmployeeAssistantServiceTest {
       AuditRepository auditRepository,
       Duration timeout
   ) {
+    return service(url, token, auditRepository, timeout, true);
+  }
+
+  private EmployeeAssistantService service(
+      String url,
+      String token,
+      AuditRepository auditRepository,
+      Duration timeout,
+      boolean runtimeSecured
+  ) {
     return new EmployeeAssistantService(
-        url,
-        token,
+        "REMOTE", url, token, "", "", "",
         Duration.ofSeconds(1),
         timeout,
         new ObjectMapper(),
         auditRepository,
-        HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(1)).build()
+        HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(1)).build(),
+        null,
+        runtimeSecured
     );
   }
 
@@ -560,7 +647,7 @@ class EmployeeAssistantServiceTest {
     return new EmployeeAssistantService(
         "REMOTE", url, token, "", "", "", Duration.ofSeconds(1), Duration.ofSeconds(2),
         new ObjectMapper(), auditRepository, HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(1)).build(),
-        knowledgeRepository
+        knowledgeRepository, true
     );
   }
 

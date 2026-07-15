@@ -163,6 +163,15 @@ public class FinanceRepository {
     return count != null && count > 0;
   }
 
+  public Optional<Long> storeBrandId(long tenantId, String storeId) {
+    return jdbcTemplate.query(
+        "select brand_id from store_branch where tenant_id = ? and id = ?",
+        (rs, rowNum) -> rs.getObject("brand_id", Long.class),
+        tenantId,
+        storeId
+    ).stream().filter(java.util.Objects::nonNull).findFirst();
+  }
+
   public boolean entryExists(long tenantId, String storeId, String month) {
     Integer count = jdbcTemplate.queryForObject(
         "select count(*) from profit_entry where tenant_id = ? and store_id = ? and month = ?",

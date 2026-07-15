@@ -1,0 +1,72 @@
+{
+  "batchId": "E2E_YYYYMMDD_RC_01",
+  "brandCode": "E2E_QA_BASELINE",
+  "stores": [
+    {
+      "id": "E2E_YYYYMMDD_STORE_A",
+      "code": "E2E_YYYYMMDD_STORE_A",
+      "name": "E2E_YYYYMMDD_门店A",
+      "area": "QA",
+      "openDate": "2026-01-01",
+      "regionCode": "JINGZHOU"
+    },
+    {
+      "id": "E2E_YYYYMMDD_STORE_B",
+      "code": "E2E_YYYYMMDD_STORE_B",
+      "name": "E2E_YYYYMMDD_门店B",
+      "area": "QA",
+      "openDate": "2026-01-01",
+      "regionCode": "SHANDONG"
+    }
+  ],
+  "accounts": [
+    {
+      "username": "e2e_yyyymmdd_boss",
+      "displayName": "E2E_YYYYMMDD_BOSS",
+      "role": "BOSS",
+      "storeId": null,
+      "storeScope": [],
+      "passwordEnvironmentName": "QA_E2E_BOSS_PASSWORD"
+    },
+    {
+      "username": "e2e_yyyymmdd_finance",
+      "displayName": "E2E_YYYYMMDD_FINANCE",
+      "role": "FINANCE",
+      "storeId": null,
+      "storeScope": ["E2E_YYYYMMDD_STORE_A", "E2E_YYYYMMDD_STORE_B"],
+      "passwordEnvironmentName": "QA_E2E_FINANCE_PASSWORD"
+    },
+    {
+      "username": "e2e_yyyymmdd_warehouse",
+      "displayName": "E2E_YYYYMMDD_WAREHOUSE",
+      "role": "WAREHOUSE",
+      "storeId": null,
+      "storeScope": ["E2E_YYYYMMDD_STORE_A", "E2E_YYYYMMDD_STORE_B"],
+      "passwordEnvironmentName": "QA_E2E_WAREHOUSE_PASSWORD"
+    },
+    {
+      "username": "e2e_yyyymmdd_store_manager",
+      "displayName": "E2E_YYYYMMDD_STORE_MANAGER",
+      "role": "STORE_MANAGER",
+      "storeId": "E2E_YYYYMMDD_STORE_A",
+      "storeScope": ["E2E_YYYYMMDD_STORE_A"],
+      "passwordEnvironmentName": "QA_E2E_STORE_MANAGER_PASSWORD"
+    },
+    {
+      "username": "e2e_yyyymmdd_operations",
+      "displayName": "E2E_YYYYMMDD_OPERATIONS",
+      "role": "OPERATIONS",
+      "storeId": null,
+      "storeScope": ["E2E_YYYYMMDD_STORE_A", "E2E_YYYYMMDD_STORE_B"],
+      "passwordEnvironmentName": "QA_E2E_OPERATIONS_PASSWORD"
+    },
+    {
+      "username": "e2e_yyyymmdd_employee",
+      "displayName": "E2E_YYYYMMDD_EMPLOYEE",
+      "role": "EMPLOYEE",
+      "storeId": null,
+      "storeScope": [],
+      "passwordEnvironmentName": "QA_E2E_EMPLOYEE_PASSWORD"
+    }
+  ]
+}

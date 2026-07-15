@@ -73,6 +73,15 @@ public class WarehouseController {
     return ApiResponse.ok(warehouseNetworkService.transfers(authService.requireUser(authorization), warehouseId));
   }
 
+  @GetMapping("/transfers/context")
+  public ApiResponse<WarehouseTransferContextResponse> transferContext(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @RequestParam(value = "warehouseId", required = false) Long warehouseId
+  ) {
+    return ApiResponse.ok(warehouseNetworkService.transferContext(
+        authService.requireUser(authorization), warehouseId));
+  }
+
   @GetMapping("/transfers/{id}")
   public ApiResponse<WarehouseTransferResponse> transfer(
       @RequestHeader(value = "Authorization", required = false) String authorization,

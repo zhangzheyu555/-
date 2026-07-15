@@ -493,7 +493,7 @@ class WarehouseServiceTest {
         new WarehouseReturnRequest(
             "rg1",
             ownSource.id(),
-            "仓库",
+            "伪造收货部门",
             "包装破损",
             "门店退回仓库",
             "2026-07-08",
@@ -536,6 +536,9 @@ class WarehouseServiceTest {
 
     assertThat(ownStoreReturn.returnNo()).startsWith("PSTH");
     assertThat(ownStoreReturn.sourceRequisitionId()).isEqualTo(ownSource.id());
+    assertThat(ownStoreReturn.receiveWarehouseId()).isEqualTo(1L);
+    assertThat(ownStoreReturn.receiveWarehouseName()).isEqualTo("荆州总仓");
+    assertThat(ownStoreReturn.receiveDepartment()).isEqualTo("荆州总仓");
     assertThat(ownStoreReturn.statusLabel()).isEqualTo("已提交");
     assertThat(ownStoreReturn.totalAmount()).isEqualByComparingTo("0.00");
     assertThat(jdbcTemplate.queryForObject(
@@ -543,6 +546,15 @@ class WarehouseServiceTest {
         BigDecimal.class,
         ownStoreReturn.id()
     )).isEqualByComparingTo("176.00");
+    assertThat(jdbcTemplate.queryForMap("""
+        select warehouse_id, receive_warehouse_code_snapshot, receive_warehouse_name_snapshot,
+               receive_department
+        from warehouse_return_order where id = ?
+        """, ownStoreReturn.id()))
+        .containsEntry("warehouse_id", 1L)
+        .containsEntry("receive_warehouse_code_snapshot", "JZ-CENTRAL")
+        .containsEntry("receive_warehouse_name_snapshot", "荆州总仓")
+        .containsEntry("receive_department", "荆州总仓");
     assertThat(ownStoreReturn.lines()).hasSize(1);
     assertThat(ownStoreReturn.lines().get(0).batchNo()).isEqualTo("B001");
     assertThat(ownStoreReturn.attachmentCount()).isEqualTo(1);
@@ -911,6 +923,16 @@ class WarehouseServiceTest {
         )
         """);
     jdbcTemplate.execute("""
+        create table warehouse_facility (
+          id bigint primary key,
+          tenant_id bigint not null,
+          code varchar(64) not null,
+          name varchar(160) not null,
+          warehouse_type varchar(32) not null,
+          enabled tinyint(1) not null default 1
+        )
+        """);
+    jdbcTemplate.execute("""
         create table warehouse_item_category (
           id bigint auto_increment primary key,
           tenant_id bigint not null,
@@ -1018,6 +1040,8 @@ class WarehouseServiceTest {
           id varchar(120) primary key,
           tenant_id bigint not null,
           store_id varchar(64) not null,
+          supply_warehouse_id bigint null,
+          idempotency_key varchar(120) null,
           status varchar(40) not null default 'SUBMITTED',
           total_amount decimal(14,2) not null default 0,
           note text,
@@ -1061,6 +1085,9 @@ class WarehouseServiceTest {
         create table warehouse_return_order (
           id varchar(120) primary key,
           tenant_id bigint not null,
+          warehouse_id bigint not null,
+          receive_warehouse_code_snapshot varchar(64) not null,
+          receive_warehouse_name_snapshot varchar(160) not null,
           return_no varchar(120) not null,
           source_requisition_id varchar(120),
           source_delivery_id varchar(120),
@@ -1127,6 +1154,10 @@ class WarehouseServiceTest {
   private void seedData() {
     jdbcTemplate.update("insert into auth_user(id, tenant_id, display_name) values (2, 1, '仓库管理员'), (3, 1, '店长'), (4, 1, '其他门店店长')");
     jdbcTemplate.update("insert into store_branch(id, tenant_id, name) values ('rg1', 1, '日广店'), ('other-store', 1, '其他门店')");
+    jdbcTemplate.update("""
+        insert into warehouse_facility(id, tenant_id, code, name, warehouse_type, enabled)
+        values (1, 1, 'JZ-CENTRAL', '荆州总仓', 'CENTRAL', 1)
+        """);
     jdbcTemplate.update("insert into warehouse_item_category(id, tenant_id, name, parent_id, sort_order, enabled) values (1, 1, '奶制品', null, 10, 1)");
     jdbcTemplate.update("""
         insert into warehouse_item(

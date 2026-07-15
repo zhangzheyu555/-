@@ -1,4 +1,6 @@
-# Vue3 前端迁移设计 v1
+# Vue3 前端迁移设计 v1（历史归档）
+
+> 状态：已归档（2026-07-15）。本文记录早期从旧静态页迁移到 Vue3 的决策，当中的“旧系统仍是主线”“8080/index.html 可作为业务入口”等描述已经失效，不能用于开发或发布。当前唯一正式前端是 `frontend-vue`；部署请使用 [Vue3 生产部署说明](./vue3-production-deployment.md) 和 [Vue3 Nginx 配置](./nginx-vue3-ai-profit-os.conf)。
 
 项目：AI Profit OS / 多门店经营异常处理系统
 

@@ -111,9 +111,7 @@ public class TrainingVideoService {
   }
 
   public VideoContentResponse content(AuthUser user, long videoId, String rangeHeader) {
-    accessControl.requireExamRead(user);
-    VideoRow video = requireVideo(user, videoId);
-    if (!video.enabled() && !canManage(user)) throw notFound("VIDEO_NOT_FOUND", "培训视频不存在");
+    VideoRow video = requireContentAccess(user, videoId);
     ByteRange range = parseRange(rangeHeader, video.fileSize());
     int length = Math.toIntExact(range.end() - range.start() + 1);
     TrainingVideoContent content = storageService.trainingVideoContent(
@@ -123,6 +121,17 @@ public class TrainingVideoService {
     return new VideoContentResponse(
         video.fileName(), video.contentType(), content.fileSize(), content.start(), content.end(),
         range.partial(), content.content());
+  }
+
+  public void authorizeContent(AuthUser user, long videoId) {
+    requireContentAccess(user, videoId);
+  }
+
+  private VideoRow requireContentAccess(AuthUser user, long videoId) {
+    accessControl.requireExamRead(user);
+    VideoRow video = requireVideo(user, videoId);
+    if (!video.enabled() && !canManage(user)) throw notFound("VIDEO_NOT_FOUND", "培训视频不存在");
+    return video;
   }
 
   @Transactional

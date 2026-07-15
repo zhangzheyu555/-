@@ -79,6 +79,28 @@ app:
     webhook-max-payload-bytes: ${ELEME_WEBHOOK_MAX_PAYLOAD_BYTES:1048576}
   auth:
     token-ttl-hours: 12
+  training:
+    video-playback-ticket-ttl-seconds: ${TRAINING_VIDEO_PLAYBACK_TICKET_TTL_SECONDS:1800}
+    # 开发和单实例默认使用本地短期票据。预发布/生产多实例必须显式开启，并且
+    # 只允许通过标准 Spring Redis 环境变量（例如 SPRING_DATA_REDIS_HOST）连接共享存储。
+    # 开启后 Redis 未配置或不可连接会拒绝应用启动，绝不回退到本地内存。
+    require-shared-video-tickets: ${MOBILE_REQUIRE_SHARED_VIDEO_TICKETS:false}
+  mobile:
+    version:
+      android:
+        current-version: ${MOBILE_ANDROID_CURRENT_VERSION:0.1.0}
+        minimum-version: ${MOBILE_ANDROID_MINIMUM_VERSION:0.1.0}
+        update-available: ${MOBILE_ANDROID_UPDATE_AVAILABLE:false}
+        force-update: ${MOBILE_ANDROID_FORCE_UPDATE:false}
+        download-url: ${MOBILE_ANDROID_DOWNLOAD_URL:}
+        message: ${MOBILE_ANDROID_UPDATE_MESSAGE:当前已是可用版本}
+      ios:
+        current-version: ${MOBILE_IOS_CURRENT_VERSION:0.1.0}
+        minimum-version: ${MOBILE_IOS_MINIMUM_VERSION:0.1.0}
+        update-available: ${MOBILE_IOS_UPDATE_AVAILABLE:false}
+        force-update: ${MOBILE_IOS_FORCE_UPDATE:false}
+        download-url: ${MOBILE_IOS_DOWNLOAD_URL:}
+        message: ${MOBILE_IOS_UPDATE_MESSAGE:当前已是可用版本}
   storage:
     expense-supplements-root: ${APP_EXPENSE_SUPPLEMENT_STORAGE_ROOT:./expense-supplements}
   exception:
@@ -138,13 +160,16 @@ app:
     # 留空即为未配置；生产环境不提供 localhost 或任何默认上游地址。
     upstream-url: ${EMPLOYEE_ASSISTANT_URL:}
     api-token: ${EMPLOYEE_ASSISTANT_API_TOKEN:}
-    connect-timeout: ${EMPLOYEE_ASSISTANT_CONNECT_TIMEOUT:5s}
-    timeout: ${EMPLOYEE_ASSISTANT_TIMEOUT:15s}
+    # 生产启动时会进一步钳制为连接 2-3 秒、总请求 8-10 秒，避免慢上游占用员工操作。
+    connect-timeout: ${EMPLOYEE_ASSISTANT_CONNECT_TIMEOUT:3s}
+    timeout: ${EMPLOYEE_ASSISTANT_TIMEOUT:10s}
     # REMOTE 为独立员工助手上游；MODEL 仅使用下列独立员工模型变量，绝不复用 DEEPSEEK_*。
     provider: ${EMPLOYEE_ASSISTANT_PROVIDER:}
     model-url: ${EMPLOYEE_ASSISTANT_MODEL_URL:}
     model-api-key: ${EMPLOYEE_ASSISTANT_MODEL_API_KEY:}
     model-name: ${EMPLOYEE_ASSISTANT_MODEL_NAME:}
+    # 仅由统一安全启动器注入；手工 java -jar 不会设置此标记，员工助手将拒绝就绪。
+    runtime-secured: ${ASSISTANT_RUNTIME_SECURED:false}
 
 logging:
   level:

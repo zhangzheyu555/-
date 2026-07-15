@@ -1,5 +1,5 @@
 import { canUseFinanceProfitImport, hasPermission, PERMISSIONS, type PermissionCode } from './permissions'
-import { isBossRole } from './roles'
+import { isBossRole, normalizeRoleCode } from './roles'
 
 export type MenuIconKey =
   | 'assistant'
@@ -26,6 +26,8 @@ export interface PermissionMenuItem {
   alternativePermissions?: PermissionCode[]
   bossOnly?: boolean
   financeOrBossOnly?: boolean
+  /** 仅用于菜单收敛；路由和后端仍会分别做角色、权限和数据范围校验。 */
+  allowedRoles?: readonly string[]
   workspacePath?: string
   requiredDataScope?: {
     domain: string
@@ -59,14 +61,6 @@ export const MENU_GROUP_CONFIG: PermissionMenuGroup[] = [
       { key: 'profit-overview', label: '利润概览', to: '/profit', icon: 'profit', requiredPermission: PERMISSIONS.FINANCE_PROFIT_READ },
       { key: 'profit-table', label: '利润表', to: '/profit-table', icon: 'profit', requiredPermission: PERMISSIONS.FINANCE_PROFIT_READ },
       { key: 'data-entry', label: '数据录入', to: '/data-entry', icon: 'profit', requiredPermission: PERMISSIONS.FINANCE_PROFIT_WRITE },
-      {
-        key: 'finance-profit-import',
-        label: '导入月度汇总',
-        to: '/finance/import',
-        icon: 'profit',
-        requiredPermission: PERMISSIONS.FINANCE_PROFIT_IMPORT,
-        financeOrBossOnly: true,
-      },
       { key: 'expenses', label: '报销栏', to: '/expenses', icon: 'expense', requiredPermission: PERMISSIONS.EXPENSE_READ },
       {
         label: '员工工资',
@@ -135,6 +129,24 @@ export const MENU_GROUP_CONFIG: PermissionMenuGroup[] = [
         requiredDataScope: { domain: 'INSPECTION', modes: ['OWN_STORE'] },
       },
       {
+        label: '巡检整改',
+        key: 'inspection-rectifications',
+        to: '/store/inspection/rectifications',
+        icon: 'inspection',
+        requiredPermission: PERMISSIONS.INSPECTION_READ,
+        allowedRoles: ['STORE_MANAGER'],
+        requiredDataScope: { domain: 'INSPECTION', modes: ['OWN_STORE'] },
+      },
+      {
+        label: '整改复核',
+        key: 'inspection-review-queue',
+        to: '/operations/inspection/reviews',
+        icon: 'inspection',
+        requiredPermission: PERMISSIONS.INSPECTION_MANAGE,
+        allowedRoles: ['OPERATIONS'],
+        requiredDataScope: { domain: 'INSPECTION', modes: ['ALL', 'STORE_LIST'] },
+      },
+      {
         label: '培训考试',
         key: 'exam-center',
         to: '/exam-center',
@@ -178,6 +190,9 @@ export function resolveUtilityMenuItems(subject: MenuSubject) {
 function canShow(item: PermissionMenuItem, subject: MenuSubject) {
   if (item.bossOnly && !isBossRole(subject.role)) return false
   if (item.financeOrBossOnly && !canUseFinanceProfitImport(subject.role, subject.permissions)) return false
+  if (item.allowedRoles?.length
+    && !isBossRole(subject.role)
+    && !item.allowedRoles.some((role) => normalizeRoleCode(role) === normalizeRoleCode(subject.role))) return false
   const canAccess = hasPermission(subject.role, subject.permissions, item.requiredPermission)
     || item.alternativePermissions?.some((permission) => hasPermission(subject.role, subject.permissions, permission))
   if (!canAccess) return false

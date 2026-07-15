@@ -213,6 +213,44 @@ public class AccessControlService {
     requirePermission(user, PermissionCodes.INSPECTION_MANAGE, "处理巡检数据");
   }
 
+  /**
+   * A rectification is submitted by the store manager responsible for the bound store.  Keep the
+   * rule role-bound even if a stale personal ALLOW grants TODO_TRANSITION to another role.
+   */
+  public void requireInspectionRectificationSubmit(AuthUser user) {
+    requirePermission(user, PermissionCodes.TODO_TRANSITION, "提交巡检整改");
+    if (isBoss(user) || hasAnyRole(user, "STORE_MANAGER")) {
+      return;
+    }
+    deny(
+        user,
+        "提交巡检整改",
+        "API",
+        PermissionCodes.TODO_TRANSITION,
+        null,
+        "巡检整改只能由店长提交"
+    );
+  }
+
+  /**
+   * Supervisors are represented by the canonical OPERATIONS role in the current role catalog.
+   * Review remains separate from a store manager's submit permission.
+   */
+  public void requireInspectionRectificationReview(AuthUser user) {
+    requireInspectionManage(user);
+    if (isBoss(user) || hasAnyRole(user, "OPERATIONS")) {
+      return;
+    }
+    deny(
+        user,
+        "复核巡检整改",
+        "API",
+        PermissionCodes.INSPECTION_MANAGE,
+        null,
+        "巡检整改复核仅限运营或督导角色"
+    );
+  }
+
   public void requirePlatformAccess(AuthUser user) {
     requirePlatformRead(user);
   }

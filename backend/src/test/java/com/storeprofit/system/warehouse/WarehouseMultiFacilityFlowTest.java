@@ -21,6 +21,7 @@ import com.storeprofit.system.platform.authorization.BusinessScopeResolver;
 import com.storeprofit.system.platform.authorization.DataScope;
 import com.storeprofit.system.platform.authorization.DataScopeDomains;
 import com.storeprofit.system.platform.authorization.DataScopeModes;
+import com.storeprofit.system.platform.authorization.PermissionCodes;
 import java.lang.reflect.RecordComponent;
 import java.math.BigDecimal;
 import java.util.Arrays;
@@ -370,6 +371,50 @@ class WarehouseMultiFacilityFlowTest {
   }
 
   @Test
+  void routeDisableDoesNotBreakAuthorizedIdempotentReplayButBlocksNewActions() {
+    allowTransferActions(regionalManager);
+    WarehouseTransferCreateRequest createRequest = new WarehouseTransferCreateRequest(
+        centralWarehouseId,
+        regionalWarehouseId,
+        List.of(new WarehouseTransferLineRequest(itemId, BigDecimal.ONE, "幂等路线停用测试")),
+        "幂等重试",
+        "route-disable-create");
+    WarehouseTransferResponse draft = networkService.create(regionalManager, createRequest);
+    WarehouseTransferResponse submitted = networkService.submit(
+        regionalManager, draft.id(), new WarehouseTransferActionRequest("route-disable-submit", "首次提交"));
+    jdbc.update("""
+        update warehouse_transfer_route set enabled = 0
+        where tenant_id = 1 and source_warehouse_id = ? and target_warehouse_id = ?
+        """, centralWarehouseId, regionalWarehouseId);
+
+    WarehouseTransferResponse duplicateCreate = networkService.create(regionalManager, createRequest);
+    WarehouseTransferResponse duplicateSubmit = networkService.submit(
+        regionalManager, draft.id(), new WarehouseTransferActionRequest("route-disable-submit", "安全重试"));
+    assertThat(duplicateCreate.id()).isEqualTo(draft.id());
+    assertThat(duplicateCreate.status()).isEqualTo("SUBMITTED");
+    assertThat(duplicateSubmit.status()).isEqualTo("SUBMITTED");
+    assertThat(jdbc.queryForObject("""
+        select count(*) from warehouse_transfer_action
+        where tenant_id = 1 and transfer_order_id = ? and action_type = 'SUBMIT'
+        """, Integer.class, draft.id())).isOne();
+
+    assertThatThrownBy(() -> networkService.submit(
+        regionalManager, draft.id(), new WarehouseTransferActionRequest("route-disable-new", "新动作")))
+        .isInstanceOfSatisfying(BusinessException.class,
+            error -> assertThat(error.getCode()).isEqualTo("WAREHOUSE_ROUTE_FORBIDDEN"));
+
+    AuthUser outOfScopeUser = user(7104L, "other-warehouse", "越权仓管", "WAREHOUSE", null);
+    when(accessControl.dataScope(outOfScopeUser, DataScopeDomains.WAREHOUSE))
+        .thenReturn(warehouseScope(centralWarehouseId));
+    assertThatThrownBy(() -> networkService.submit(
+        outOfScopeUser, draft.id(), new WarehouseTransferActionRequest("route-disable-submit", "越权重试")))
+        .isInstanceOfSatisfying(BusinessException.class,
+            error -> assertThat(error.getCode()).isEqualTo("FORBIDDEN"));
+
+    assertThat(submitted.status()).isEqualTo("SUBMITTED");
+  }
+
+  @Test
   void concurrentApprovalUsesRowLocksAndCannotOverReserveOrGoNegative() throws Exception {
     WarehouseTransferResponse first = createAndSubmitTransfer("concurrent-transfer-1", "80.00");
     WarehouseTransferResponse second = createAndSubmitTransfer("concurrent-transfer-2", "80.00");
@@ -425,6 +470,258 @@ class WarehouseMultiFacilityFlowTest {
         regionalManager, centralWarehouseId, "越权查看荆州总仓"))
         .isInstanceOf(BusinessException.class)
         .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
+  }
+
+  @Test
+  void regionalTransferContextLocksTheParentRouteAndUsesSourceAvailability() {
+    allowTransferActions(regionalManager);
+
+    WarehouseTransferResponse draft = networkService.create(
+        regionalManager,
+        new WarehouseTransferCreateRequest(
+            centralWarehouseId,
+            regionalWarehouseId,
+            List.of(new WarehouseTransferLineRequest(itemId, BigDecimal.ONE, "山东补货")),
+            "山东分仓补货草稿",
+            "context-regional-draft"));
+
+    WarehouseTransferContextResponse context = networkService.transferContext(
+        regionalManager, regionalWarehouseId);
+
+    assertThat(context.mode()).isEqualTo("REQUEST_REPLENISHMENT");
+    assertThat(context.currentWarehouse().id()).isEqualTo(regionalWarehouseId);
+    assertThat(context.workbenchLabel()).isEqualTo("向上级总仓申请补货");
+    assertThat(context.routes()).singleElement().satisfies(route -> {
+      assertThat(route.formAction()).isEqualTo("REQUEST_REPLENISHMENT");
+      assertThat(route.sourceWarehouse().id()).isEqualTo(centralWarehouseId);
+      assertThat(route.targetWarehouse().id()).isEqualTo(regionalWarehouseId);
+      assertThat(route.actions().canCreate()).isTrue();
+      assertThat(route.actions().canSubmit()).isTrue();
+      assertThat(route.actions().canCancel()).isTrue();
+      assertThat(route.actions().canApprove()).isFalse();
+      assertThat(route.actions().canShip()).isFalse();
+      assertThat(route.actions().canReceive()).isTrue();
+      assertThat(route.materials()).anySatisfy(material -> {
+        assertThat(material.itemId()).isEqualTo(itemId);
+        assertThat(material.availableQuantity()).isGreaterThan(BigDecimal.ZERO);
+        assertThat(material.shortageMessage()).isNull();
+      });
+    });
+    assertThat(context.todos().draft()).isOne();
+    assertThat(context.todos().pendingApproval()).isZero();
+
+    networkService.submit(regionalManager, draft.id(),
+        new WarehouseTransferActionRequest("context-regional-submit", "提交补货申请"));
+    allowTransferActions(centralManager);
+    WarehouseTransferContextResponse centralContext = networkService.transferContext(
+        centralManager, centralWarehouseId);
+    assertThat(centralContext.todos().pendingApproval()).isOne();
+  }
+
+  @Test
+  void centralContextRequiresBothScopesToCreateButKeepsSourceSideActions() {
+    allowTransferActions(centralManager);
+
+    WarehouseTransferContextResponse sourceOnly = networkService.transferContext(
+        centralManager, centralWarehouseId);
+
+    assertThat(sourceOnly.mode()).isEqualTo("PROACTIVE_ALLOCATION");
+    assertThat(sourceOnly.routes()).singleElement().satisfies(route -> {
+      assertThat(route.sourceWarehouse().id()).isEqualTo(centralWarehouseId);
+      assertThat(route.targetWarehouse().id()).isEqualTo(regionalWarehouseId);
+      assertThat(route.actions().canCreate()).isFalse();
+      assertThat(route.actions().canSubmit()).isFalse();
+      assertThat(route.actions().canCancel()).isFalse();
+      assertThat(route.actions().canApprove()).isTrue();
+      assertThat(route.actions().canShip()).isTrue();
+      assertThat(route.actions().canReceive()).isFalse();
+      assertThat(route.materials()).isEmpty();
+    });
+    assertThatThrownBy(() -> networkService.create(
+        centralManager,
+        new WarehouseTransferCreateRequest(
+            centralWarehouseId,
+            regionalWarehouseId,
+            List.of(new WarehouseTransferLineRequest(itemId, BigDecimal.ONE, "越权主动配货")),
+            "仅总仓范围不能选分仓",
+            "context-central-source-only")))
+        .isInstanceOfSatisfying(BusinessException.class,
+            error -> assertThat(error.getCode()).isEqualTo("FORBIDDEN"));
+
+    when(accessControl.dataScope(centralManager, DataScopeDomains.WAREHOUSE))
+        .thenReturn(warehouseScope(centralWarehouseId, regionalWarehouseId));
+    WarehouseTransferContextResponse bothEndpoints = networkService.transferContext(
+        centralManager, centralWarehouseId);
+
+    assertThat(bothEndpoints.routes()).singleElement().satisfies(route -> {
+      assertThat(route.formAction()).isEqualTo("PROACTIVE_ALLOCATION");
+      assertThat(route.actions().canCreate()).isTrue();
+      assertThat(route.actions().canSubmit()).isTrue();
+      assertThat(route.actions().canApprove()).isTrue();
+      assertThat(route.actions().canShip()).isTrue();
+      assertThat(route.actions().canReceive()).isFalse();
+    });
+    WarehouseTransferResponse proactivelyCreated = networkService.create(
+        centralManager,
+        new WarehouseTransferCreateRequest(
+            centralWarehouseId,
+            regionalWarehouseId,
+            List.of(new WarehouseTransferLineRequest(itemId, BigDecimal.ONE, "总仓主动配货")),
+            "总仓主动配货",
+            "context-central-proactive"));
+    assertThat(proactivelyCreated.sourceWarehouseId()).isEqualTo(centralWarehouseId);
+    assertThat(proactivelyCreated.targetWarehouseId()).isEqualTo(regionalWarehouseId);
+  }
+
+  @Test
+  void contextAndMutationsRejectDisabledNonDirectReverseAndPeerRoutes() {
+    allowTransferActions(regionalManager);
+    jdbc.update("""
+        update warehouse_transfer_route set enabled = 0
+        where tenant_id = 1 and source_warehouse_id = ? and target_warehouse_id = ?
+        """, centralWarehouseId, regionalWarehouseId);
+
+    WarehouseTransferContextResponse disabled = networkService.transferContext(
+        regionalManager, regionalWarehouseId);
+    assertThat(disabled.mode()).isEqualTo("NONE");
+    assertThat(disabled.routes()).isEmpty();
+    assertThatThrownBy(() -> networkService.create(
+        regionalManager,
+        new WarehouseTransferCreateRequest(
+            centralWarehouseId,
+            regionalWarehouseId,
+            List.of(new WarehouseTransferLineRequest(itemId, BigDecimal.ONE, "禁用路线")),
+            "路线已禁用",
+            "context-disabled-route")))
+        .isInstanceOfSatisfying(BusinessException.class,
+            error -> assertThat(error.getCode()).isEqualTo("WAREHOUSE_ROUTE_FORBIDDEN"));
+
+    jdbc.update("""
+        update warehouse_transfer_route set enabled = 1
+        where tenant_id = 1 and source_warehouse_id = ? and target_warehouse_id = ?
+        """, centralWarehouseId, regionalWarehouseId);
+    long otherCentralId = insertFacility("OTHER-CENTRAL", "其他总仓", "CENTRAL", null);
+    long nonDirectRegionalId = insertFacility(
+        "OTHER-REGIONAL", "非直属分仓", "REGIONAL", otherCentralId);
+    long siblingRegionalId = insertFacility(
+        "SIBLING-REGIONAL", "同级分仓", "REGIONAL", centralWarehouseId);
+    jdbc.update("""
+        insert into warehouse_transfer_route(
+          tenant_id, source_warehouse_id, target_warehouse_id, enabled, created_at
+        ) values (1, ?, ?, 1, current_timestamp)
+        """, centralWarehouseId, nonDirectRegionalId);
+    jdbc.update("""
+        insert into warehouse_transfer_route(
+          tenant_id, source_warehouse_id, target_warehouse_id, enabled, created_at
+        ) values (1, ?, ?, 1, current_timestamp)
+        """, regionalWarehouseId, centralWarehouseId);
+    jdbc.update("""
+        insert into warehouse_transfer_route(
+          tenant_id, source_warehouse_id, target_warehouse_id, enabled, created_at
+        ) values (1, ?, ?, 1, current_timestamp)
+        """, regionalWarehouseId, siblingRegionalId);
+
+    allowTransferActions(centralManager);
+    when(accessControl.dataScope(centralManager, DataScopeDomains.WAREHOUSE))
+        .thenReturn(warehouseScope(
+            centralWarehouseId, regionalWarehouseId, nonDirectRegionalId, siblingRegionalId));
+    WarehouseTransferContextResponse central = networkService.transferContext(
+        centralManager, centralWarehouseId);
+    assertThat(central.routes()).extracting(route -> route.targetWarehouse().id())
+        .contains(regionalWarehouseId)
+        .doesNotContain(nonDirectRegionalId);
+    assertThatThrownBy(() -> networkService.create(
+        centralManager,
+        new WarehouseTransferCreateRequest(
+            centralWarehouseId,
+            nonDirectRegionalId,
+            List.of(new WarehouseTransferLineRequest(itemId, BigDecimal.ONE, "非直属分仓")),
+            "不得跨级调拨",
+            "context-non-direct")))
+        .isInstanceOfSatisfying(BusinessException.class,
+            error -> assertThat(error.getCode()).isEqualTo("FORBIDDEN"));
+
+    allowTransferActions(regionalManager);
+    when(accessControl.dataScope(regionalManager, DataScopeDomains.WAREHOUSE))
+        .thenReturn(warehouseScope(
+            regionalWarehouseId, centralWarehouseId, siblingRegionalId, nonDirectRegionalId));
+    assertThatThrownBy(() -> networkService.create(
+        regionalManager,
+        new WarehouseTransferCreateRequest(
+            regionalWarehouseId,
+            centralWarehouseId,
+            List.of(new WarehouseTransferLineRequest(itemId, BigDecimal.ONE, "反向调拨")),
+            "分仓不得反向补货",
+            "context-reverse")))
+        .isInstanceOfSatisfying(BusinessException.class,
+            error -> assertThat(error.getCode()).isEqualTo("FORBIDDEN"));
+    assertThatThrownBy(() -> networkService.create(
+        regionalManager,
+        new WarehouseTransferCreateRequest(
+            regionalWarehouseId,
+            siblingRegionalId,
+            List.of(new WarehouseTransferLineRequest(itemId, BigDecimal.ONE, "同级互调")),
+            "分仓不得互调",
+            "context-peer")))
+        .isInstanceOfSatisfying(BusinessException.class,
+            error -> assertThat(error.getCode()).isEqualTo("FORBIDDEN"));
+
+    String reverseReview = insertTransferOrder(
+        "invalid-reverse-review", regionalWarehouseId, centralWarehouseId, "SUBMITTED");
+    String peerShip = insertTransferOrder(
+        "invalid-peer-ship", regionalWarehouseId, siblingRegionalId, "APPROVED");
+    String peerReceive = insertTransferOrder(
+        "invalid-peer-receive", regionalWarehouseId, siblingRegionalId, "SHIPPED");
+    assertThatThrownBy(() -> networkService.review(
+        regionalManager, reverseReview, new WarehouseTransferReviewRequest(true, "不得审批反向路线")))
+        .isInstanceOfSatisfying(BusinessException.class,
+            error -> assertThat(error.getCode()).isEqualTo("FORBIDDEN"));
+    assertThatThrownBy(() -> networkService.ship(
+        regionalManager, peerShip, new WarehouseTransferActionRequest("invalid-peer-ship", "不得发货")))
+        .isInstanceOfSatisfying(BusinessException.class,
+            error -> assertThat(error.getCode()).isEqualTo("FORBIDDEN"));
+    assertThatThrownBy(() -> networkService.receive(
+        regionalManager, peerReceive, WarehouseTransferReceiveRequest.empty()))
+        .isInstanceOfSatisfying(BusinessException.class,
+            error -> assertThat(error.getCode()).isEqualTo("FORBIDDEN"));
+  }
+
+  @Test
+  void contextRejectsCrossScopeWarehouseAndWarnsWhenSourceStockIsEmpty() {
+    assertThatThrownBy(() -> networkService.transferContext(regionalManager, centralWarehouseId))
+        .isInstanceOfSatisfying(BusinessException.class,
+            error -> assertThat(error.getCode()).isEqualTo("FORBIDDEN"));
+
+    allowTransferActions(regionalManager);
+    allowTransferActions(centralManager);
+    WarehouseTransferResponse draft = networkService.create(
+        regionalManager,
+        new WarehouseTransferCreateRequest(
+            centralWarehouseId,
+            regionalWarehouseId,
+            List.of(new WarehouseTransferLineRequest(itemId, BigDecimal.ONE, "库存不足测试")),
+            "库存不足",
+            "context-stock-insufficient"));
+    networkService.submit(regionalManager, draft.id(),
+        new WarehouseTransferActionRequest("context-stock-insufficient-submit", "提交"));
+    jdbc.update("""
+        update warehouse_inventory
+        set on_hand_quantity = 0, reserved_quantity = 0, version = version + 1
+        where tenant_id = 1 and warehouse_id = ? and item_id = ?
+        """, centralWarehouseId, itemId);
+
+    WarehouseTransferContextResponse context = networkService.transferContext(
+        regionalManager, regionalWarehouseId);
+    assertThat(context.routes()).singleElement().satisfies(route ->
+        assertThat(route.materials()).anySatisfy(material -> {
+          assertThat(material.itemId()).isEqualTo(itemId);
+          assertThat(material.availableQuantity()).isEqualByComparingTo("0.00");
+          assertThat(material.shortageMessage()).isEqualTo("当前可发数量为 0，库存不足");
+        }));
+    assertThatThrownBy(() -> networkService.review(
+        centralManager, draft.id(), new WarehouseTransferReviewRequest(true, "仍由后端校验库存")))
+        .isInstanceOfSatisfying(BusinessException.class,
+            error -> assertThat(error.getCode()).isEqualTo("WAREHOUSE_STOCK_INSUFFICIENT"));
   }
 
   private WarehouseTransferResponse createAndSubmitTransfer(String key, String quantity) {
@@ -501,11 +798,43 @@ class WarehouseMultiFacilityFlowTest {
         """, BigDecimal.class, requestedItemId);
   }
 
-  private DataScope warehouseScope(long warehouseId) {
+  private long insertFacility(String code, String name, String type, Long parentWarehouseId) {
+    jdbc.update("""
+        insert into warehouse_facility(
+          tenant_id, code, name, warehouse_type, region_code, parent_warehouse_id,
+          external_purchase_allowed, store_supply_allowed, enabled, created_at
+        ) values (1, ?, ?, ?, 'SHANDONG', ?, 0, 1, 1, current_timestamp)
+        """, code, name, type, parentWarehouseId);
+    return facilityId(code);
+  }
+
+  private String insertTransferOrder(
+      String id,
+      long sourceWarehouseId,
+      long targetWarehouseId,
+      String status
+  ) {
+    jdbc.update("""
+        insert into warehouse_transfer_order(
+          id, tenant_id, transfer_no, source_warehouse_id, target_warehouse_id,
+          status, idempotency_key, total_amount, version, created_at
+        ) values (?, 1, ?, ?, ?, ?, ?, 0, 0, current_timestamp)
+        """, id, "TEST-" + id, sourceWarehouseId, targetWarehouseId, status, id + "-key");
+    return id;
+  }
+
+  private void allowTransferActions(AuthUser user) {
+    when(accessControl.hasPermission(user, PermissionCodes.WAREHOUSE_TRANSFER_REQUEST)).thenReturn(true);
+    when(accessControl.hasPermission(user, PermissionCodes.WAREHOUSE_TRANSFER_APPROVE)).thenReturn(true);
+    when(accessControl.hasPermission(user, PermissionCodes.WAREHOUSE_TRANSFER_SHIP)).thenReturn(true);
+    when(accessControl.hasPermission(user, PermissionCodes.WAREHOUSE_TRANSFER_RECEIVE)).thenReturn(true);
+  }
+
+  private DataScope warehouseScope(long... warehouseIds) {
     return new DataScope(
         DataScopeModes.WAREHOUSE_LIST,
         List.of(),
-        List.of(Long.toString(warehouseId)));
+        Arrays.stream(warehouseIds).mapToObj(Long::toString).toList());
   }
 
   private AuthUser user(long id, String username, String displayName, String role, String storeId) {

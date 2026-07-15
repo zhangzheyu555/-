@@ -1,0 +1,104 @@
+import { defineStore } from 'pinia'
+import { currentSession, login as loginApi, logout as logoutApi } from '@/api/auth'
+import { ApiError } from '@/api/client'
+import { clearSessionToken, readSessionToken, writeSessionToken } from '@/platform/session'
+import type { LoginRequest, SessionDataScope, SessionUser } from '@/types/auth'
+
+const NONE_SCOPE: SessionDataScope = { mode: 'NONE', storeIds: [], warehouseIds: [] }
+
+function normalizeCode(value: string): string {
+  return value.trim().toLowerCase()
+}
+
+export const useSessionStore = defineStore('mobile-session', {
+  state: () => ({
+    token: readSessionToken(),
+    user: null as SessionUser | null,
+    restoring: false,
+    submitting: false,
+    initialized: false,
+    error: '',
+  }),
+  getters: {
+    isAuthenticated: (state) => Boolean(state.token && state.user),
+    hasPermission: (state) => (permission: string) => {
+      const expected = normalizeCode(permission)
+      return Boolean(expected && state.user?.permissions.some((item) => normalizeCode(item) === expected))
+    },
+    hasAnyPermission(): (permissions: string[]) => boolean {
+      return (permissions) => permissions.some((permission) => this.hasPermission(permission))
+    },
+    dataScope: (state) => (domain: string): SessionDataScope => (
+      state.user?.dataScopes[domain.trim().toUpperCase()] || NONE_SCOPE
+    ),
+    scopeLabel(): string {
+      const scope = this.dataScope('STORE')
+      if (scope.mode === 'ALL') return '全部门店'
+      if (scope.mode === 'OWN_STORE') return this.user?.boundStoreName || '本人所属门店'
+      if (scope.storeIds.length) return `${scope.storeIds.length} 家门店`
+      return '未配置门店范围'
+    },
+  },
+  actions: {
+    async restore(): Promise<boolean> {
+      if (this.restoring) return this.isAuthenticated
+      this.token = readSessionToken()
+      this.initialized = true
+      if (!this.token) {
+        this.user = null
+        return false
+      }
+      this.restoring = true
+      this.error = ''
+      try {
+        this.user = await currentSession()
+        return true
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 401) this.clear()
+        else this.error = error instanceof Error ? error.message : '会话校验失败，请检查网络后重试'
+        return false
+      } finally {
+        this.restoring = false
+      }
+    },
+    async login(request: LoginRequest): Promise<void> {
+      this.submitting = true
+      this.error = ''
+      try {
+        const response = await loginApi(request)
+        const token = response.token?.trim()
+        if (!token) throw new Error('登录返回的会话凭据不完整')
+        writeSessionToken(token)
+        this.token = token
+        // 登录响应与 /me 使用同一 SessionUser 契约；再次读取可捕获即时权限版本变化。
+        this.user = await currentSession()
+        this.initialized = true
+      } catch (error) {
+        this.clear()
+        this.error = error instanceof Error ? error.message : '登录失败，请稍后重试'
+        throw error
+      } finally {
+        this.submitting = false
+      }
+    },
+    async logout(): Promise<void> {
+      this.submitting = true
+      try {
+        if (this.token) await logoutApi()
+      } catch {
+        // 服务暂时不可达时也必须结束本机会话；后端 Token 会在有效期结束后失效。
+      } finally {
+        this.clear()
+        this.submitting = false
+      }
+    },
+    clear(): void {
+      clearSessionToken()
+      this.token = ''
+      this.user = null
+      this.error = ''
+      this.initialized = true
+    },
+  },
+})
+

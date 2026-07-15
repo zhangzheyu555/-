@@ -16,7 +16,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.regex.Pattern;
+import java.util.logging.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -45,6 +48,13 @@ public class EmployeeAssistantService {
       "(?:(?:顾客|客户|收货人|联系人)(?:姓名|名字)?[：:]\\s*[\\p{IsHan}]{2,4}|(?:顾客|客户)(?:叫|名为|是|为)\\s*[\\p{IsHan}]{2,4})");
   private static final Pattern ORDER_OR_ADDRESS_REFERENCE = Pattern.compile(
       "(?i)(?:订单(?:号|编号)?|取餐码|小票号)[：:#\\s]*[A-Z0-9-]{4,}|(?:收货地址|配送地址|家庭住址|详细地址)[：:]");
+  private static final Pattern REFUND_QUESTION = Pattern.compile("(?i)(退款|退货|退钱|退费|退款申请)");
+  private static final Pattern UNSAFE_OUTPUT_PRIVACY_REQUEST = Pattern.compile(
+      "(?s)(?:请|麻烦|需要|提供|发送|告知|填写|上传|补充).{0,16}(?:顾客|客户)?.{0,8}"
+          + "(?:姓名|电话|手机号|订单号|订单编号|金额|地址|支付凭证|付款凭证|附件|身份证|身份信息)");
+  private static final Duration ANSWER_CACHE_TTL = Duration.ofMinutes(5);
+  private static final int ANSWER_CACHE_MAX_ENTRIES = 512;
+  private static final Logger LOGGER = Logger.getLogger(EmployeeAssistantService.class.getName());
   private static final List<RiskRule> HUMAN_HANDOFF_RULES = List.of(
       new RiskRule("COMPLAINT_ESCALATION", Pattern.compile("(?i)(投诉.*(?:升级|监管|媒体)|12315|市场监管)")),
       new RiskRule("FOOD_SAFETY", Pattern.compile("(?i)(食品安全|食物中毒|异物|变质|过敏)")),
@@ -61,32 +71,37 @@ public class EmployeeAssistantService {
   private final boolean localMode;
   private final LocalEmployeeAssistantResponder localResponder;
   private final EmployeeAssistantKnowledgeRepository knowledgeRepository;
+  private final boolean runtimeSecured;
+  private final ConcurrentMap<AnswerCacheKey, CachedAnswer> answerCache = new ConcurrentHashMap<>();
 
   /** Compatibility constructor for Spring proxy creation. */
   EmployeeAssistantService() {
     this("", "", "", "", "", "", Duration.ofSeconds(5), Duration.ofSeconds(15),
-        new ObjectMapper(), null, HttpClient.newHttpClient(), null);
+        new ObjectMapper(), null, HttpClient.newHttpClient(), null, false);
   }
 
   @Autowired
   public EmployeeAssistantService(
       @Value("${app.employee-assistant.upstream-url:}") String upstreamUrl,
       @Value("${app.employee-assistant.api-token:}") String apiToken,
-      @Value("${app.employee-assistant.connect-timeout:5s}") Duration connectTimeout,
-      @Value("${app.employee-assistant.timeout:15s}") Duration timeout,
+      @Value("${app.employee-assistant.connect-timeout:3s}") Duration connectTimeout,
+      @Value("${app.employee-assistant.timeout:10s}") Duration timeout,
       @Value("${app.employee-assistant.provider:}") String providerName,
       @Value("${app.employee-assistant.model-url:}") String modelUrl,
       @Value("${app.employee-assistant.model-api-key:}") String modelApiKey,
       @Value("${app.employee-assistant.model-name:}") String modelName,
+      @Value("${app.employee-assistant.runtime-secured:false}") boolean runtimeSecured,
       ObjectMapper objectMapper,
       AuditRepository auditRepository,
       EmployeeAssistantKnowledgeRepository knowledgeRepository
   ) {
-    this(providerName, upstreamUrl, apiToken, modelUrl, modelApiKey, modelName, connectTimeout, timeout,
+    this(providerName, upstreamUrl, apiToken, modelUrl, modelApiKey, modelName,
+        bounded(connectTimeout, Duration.ofSeconds(2), Duration.ofSeconds(3)),
+        bounded(timeout, Duration.ofSeconds(8), Duration.ofSeconds(10)),
         objectMapper, auditRepository, HttpClient.newBuilder()
-            .connectTimeout(nonZero(connectTimeout, Duration.ofSeconds(5)))
+            .connectTimeout(bounded(connectTimeout, Duration.ofSeconds(2), Duration.ofSeconds(3)))
             .followRedirects(HttpClient.Redirect.NEVER)
-            .build(), knowledgeRepository);
+            .build(), knowledgeRepository, runtimeSecured);
   }
 
   EmployeeAssistantService(
@@ -99,7 +114,7 @@ public class EmployeeAssistantService {
       HttpClient httpClient
   ) {
     this("REMOTE", upstreamUrl, apiToken, "", "", "", connectTimeout, timeout, objectMapper,
-        auditRepository, httpClient, null);
+        auditRepository, httpClient, null, false);
   }
 
   EmployeeAssistantService(
@@ -116,7 +131,7 @@ public class EmployeeAssistantService {
       HttpClient httpClient
   ) {
     this(providerName, upstreamUrl, apiToken, modelUrl, modelApiKey, modelName, connectTimeout, timeout,
-        objectMapper, auditRepository, httpClient, null);
+        objectMapper, auditRepository, httpClient, null, false);
   }
 
   EmployeeAssistantService(
@@ -131,13 +146,15 @@ public class EmployeeAssistantService {
       ObjectMapper objectMapper,
       AuditRepository auditRepository,
       HttpClient httpClient,
-      EmployeeAssistantKnowledgeRepository knowledgeRepository
+      EmployeeAssistantKnowledgeRepository knowledgeRepository,
+      boolean runtimeSecured
   ) {
     this.timeout = nonZero(timeout, Duration.ofSeconds(15));
     this.objectMapper = objectMapper;
     this.auditRepository = auditRepository;
     this.httpClient = httpClient;
     this.knowledgeRepository = knowledgeRepository;
+    this.runtimeSecured = runtimeSecured;
     this.localMode = isValidLocalMode(
         providerName, upstreamUrl, apiToken, modelUrl, modelApiKey, modelName);
     this.localResponder = new LocalEmployeeAssistantResponder();
@@ -156,10 +173,15 @@ public class EmployeeAssistantService {
         status = status(EmployeeAssistantState.READY, "员工服务助手已就绪（本地安全话术）", knowledgeAvailable);
         return status;
       }
-      if (!provider.configured()) {
-        String message = knowledgeAvailable
-            ? "上游服务未配置，仍可查询已发布的标准话术"
-            : "员工服务助手未配置";
+      if (!provider.configured() || !runtimeSecured) {
+        String message;
+        if (!runtimeSecured && provider.configured()) {
+          message = "员工服务助手未通过安全启动器注入，请联系管理员使用统一安全启动器重启服务";
+        } else {
+          message = knowledgeAvailable
+              ? "上游服务未配置，仍可查询已发布的标准话术"
+              : "员工服务助手未配置";
+        }
         status = status(EmployeeAssistantState.UNCONFIGURED, message, knowledgeAvailable);
         return status;
       }
@@ -189,10 +211,15 @@ public class EmployeeAssistantService {
     String outcome = "REJECTED";
     boolean inputRedacted = false;
     String requestId = UUID.randomUUID().toString();
+    ChatTiming timing = new ChatTiming();
     try {
       SanitizedMessage sanitized = sanitize(request == null ? null : request.message());
       inputRedacted = sanitized.redacted();
       String conversationId = normalizeConversationId(request == null ? null : request.sessionId());
+      if (isRefundQuestion(sanitized.value())) {
+        outcome = "HUMAN_REQUIRED_REFUND";
+        return refundResponse(requestId, conversationId);
+      }
       String handoffCategory = mandatoryHandoffCategory(sanitized.value());
       if (handoffCategory != null) {
         outcome = "HUMAN_REQUIRED_" + handoffCategory;
@@ -200,12 +227,15 @@ public class EmployeeAssistantService {
             conversationId, true, EmployeeAssistantAnswerSource.HUMAN_REQUIRED, null, null, null, handoffCategory);
       }
 
-      List<KnowledgeCandidate> matches = knowledgeMatches(user.tenantId(), sanitized.value());
+      long knowledgeStarted = System.nanoTime();
+      KnowledgeLookup knowledgeLookup = knowledgeLookup(user.tenantId(), sanitized.value());
+      timing.knowledgeMillis = elapsedMillis(knowledgeStarted);
+      List<KnowledgeCandidate> matches = knowledgeLookup.matches();
       KnowledgeCandidate direct = matches.stream().filter(KnowledgeCandidate::highConfidence).findFirst().orElse(null);
       if (direct != null) {
         outcome = "SUCCESS_KNOWLEDGE";
         EmployeeAssistantKnowledgeRepository.KnowledgeRow knowledge = direct.knowledge();
-        return response(knowledge.standardAnswer(), requestId, conversationId, false,
+        return controlledAnswer(knowledge.standardAnswer(), requestId, conversationId, false,
             EmployeeAssistantAnswerSource.KNOWLEDGE, knowledge.id(), knowledge.currentVersion(), knowledge.title(), null);
       }
 
@@ -222,26 +252,47 @@ public class EmployeeAssistantService {
         throw safeFailure("EMPLOYEE_ASSISTANT_NOT_CONFIGURED", "员工服务助手未配置，且未匹配已发布标准话术，请联系管理员",
             HttpStatus.SERVICE_UNAVAILABLE);
       }
+      if (!runtimeSecured) {
+        outcome = "NOT_SECURED";
+        throw safeFailure("EMPLOYEE_ASSISTANT_NOT_CONFIGURED",
+            "员工服务助手未通过安全启动器注入，请联系管理员使用统一安全启动器重启服务",
+            HttpStatus.SERVICE_UNAVAILABLE);
+      }
+      AnswerCacheKey cacheKey = cacheKey(user, sanitized.value(), knowledgeLookup.versionKey(), inputRedacted);
+      CachedAnswer cachedAnswer = cacheKey == null ? null : answerCache.get(cacheKey);
+      if (cachedAnswer != null && !cachedAnswer.isExpired()) {
+        outcome = "SUCCESS_CACHE";
+        return response(cachedAnswer.answer(), requestId, conversationId, false,
+            EmployeeAssistantAnswerSource.ASSISTANT, null, null, null, null);
+      }
+      if (cachedAnswer != null) answerCache.remove(cacheKey, cachedAnswer);
       List<EmployeeAssistantKnowledgeSnippet> snippets = matches.stream().limit(3)
           .map(candidate -> snippet(candidate.knowledge()))
           .filter(Objects::nonNull)
           .toList();
-      HttpResponse<String> providerResponse = httpClient.send(
-          provider.chatRequest(sanitized.value(), conversationId, snippets, timeout, objectMapper),
-          HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+      HttpResponse<String> providerResponse;
+      long modelStarted = System.nanoTime();
+      try {
+        providerResponse = httpClient.send(
+            provider.chatRequest(sanitized.value(), conversationId, snippets, timeout, objectMapper),
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+      } finally {
+        timing.modelMillis = elapsedMillis(modelStarted);
+      }
       if (!isSuccess(providerResponse.statusCode())) {
         outcome = statusOutcome(providerResponse.statusCode());
         throw upstreamFailure(providerResponse.statusCode());
       }
       EmployeeAssistantChatResponse result = controlledResponse(providerResponse.body(), requestId, conversationId);
+      if (cacheKey != null && !result.needsHuman()) cache(cacheKey, result.answer());
       outcome = "SUCCESS_ASSISTANT";
       return result;
     } catch (BusinessException ex) {
       if ("REJECTED".equals(outcome)) outcome = "REJECTED_" + ex.getCode();
       throw ex;
     } catch (HttpTimeoutException ex) {
-      outcome = "UPSTREAM_TIMEOUT";
-      throw safeFailure("EMPLOYEE_ASSISTANT_TIMEOUT", "员工服务助手响应超时，请稍后重试或转人工处理", HttpStatus.GATEWAY_TIMEOUT);
+      outcome = "HUMAN_REQUIRED_TIMEOUT";
+      return timeoutResponse(requestId, request == null ? null : request.sessionId());
     } catch (InterruptedException ex) {
       Thread.currentThread().interrupt();
       outcome = "CANCELLED";
@@ -250,7 +301,9 @@ public class EmployeeAssistantService {
       outcome = "UPSTREAM_UNAVAILABLE";
       throw safeFailure("EMPLOYEE_ASSISTANT_UNAVAILABLE", "员工服务助手暂时不可用，请稍后重试或转人工处理", HttpStatus.BAD_GATEWAY);
     } finally {
-      writeAudit(user, requestId, outcome, inputRedacted);
+      timing.totalMillis = elapsedMillis(timing.startedAt);
+      writeAudit(user, requestId, outcome, inputRedacted, timing);
+      logMetrics(outcome, timing);
     }
   }
 
@@ -272,13 +325,58 @@ public class EmployeeAssistantService {
         throw safeFailure("EMPLOYEE_ASSISTANT_RESPONSE_INVALID", "员工服务助手返回内容无效，请稍后重试或转人工处理", HttpStatus.BAD_GATEWAY);
       }
       if (answer.length() > 8_000) answer = answer.substring(0, 8_000);
-      return response(answer, requestId, conversationId, result.needsHuman(), EmployeeAssistantAnswerSource.ASSISTANT,
+      return controlledAnswer(answer, requestId, conversationId, result.needsHuman(), EmployeeAssistantAnswerSource.ASSISTANT,
           null, null, null, result.needsHuman() ? "PROVIDER_ESCALATION" : null);
     } catch (BusinessException ex) {
       throw ex;
     } catch (IOException ex) {
       throw safeFailure("EMPLOYEE_ASSISTANT_RESPONSE_INVALID", "员工服务助手返回内容无效，请稍后重试或转人工处理", HttpStatus.BAD_GATEWAY);
     }
+  }
+
+  private EmployeeAssistantChatResponse controlledAnswer(
+      String answer,
+      String requestId,
+      String conversationId,
+      boolean needsHuman,
+      EmployeeAssistantAnswerSource source,
+      Long knowledgeId,
+      Integer knowledgeVersion,
+      String knowledgeTitle,
+      String handoffCategory
+  ) {
+    if (UNSAFE_OUTPUT_PRIVACY_REQUEST.matcher(answer == null ? "" : answer).find()) {
+      return response("请先安抚顾客，并在现有业务系统内按门店规则核验；不要在聊天中补充顾客或订单信息。\n\n"
+              + "操作原则：\n- 不索要或发送顾客姓名、电话、订单号、金额、地址、支付凭证、附件或身份信息。\n"
+              + "- 仅在现有业务系统内按门店规则核验。\n"
+              + "转人工条件：需要查询具体订单、身份或支付信息，或无法确认处理规则时，转值班负责人。",
+          requestId, conversationId, true, EmployeeAssistantAnswerSource.HUMAN_REQUIRED,
+          null, null, null, "OUTPUT_SAFETY");
+    }
+    return response(answer, requestId, conversationId, needsHuman, source, knowledgeId, knowledgeVersion,
+        knowledgeTitle, handoffCategory);
+  }
+
+  private EmployeeAssistantChatResponse refundResponse(String requestId, String conversationId) {
+    return response("很抱歉给您带来不便，我会马上在现有业务系统内按门店规则核验并协助跟进。\n\n"
+            + "操作原则：\n- 不在聊天中索要或发送顾客姓名、电话、订单号、金额、地址、支付凭证、附件或身份信息。\n"
+            + "- 仅在现有业务系统内按门店规则核验，不承诺退款金额或到账时间。\n"
+            + "- 不自行判断具体订单是否符合退款条件。\n"
+            + "转人工条件：无法确认门店规则、顾客对处理有异议，或需要判断具体订单时，立即转值班负责人。",
+        requestId, conversationId, true, EmployeeAssistantAnswerSource.HUMAN_REQUIRED,
+        null, null, null, "REFUND_REVIEW");
+  }
+
+  private EmployeeAssistantChatResponse timeoutResponse(String requestId, String suppliedConversationId) {
+    String conversationId;
+    try {
+      conversationId = normalizeConversationId(suppliedConversationId);
+    } catch (BusinessException ex) {
+      conversationId = UUID.randomUUID().toString();
+    }
+    return response("当前未能及时取得标准话术，请先安抚顾客并转值班负责人继续处理；不要在聊天中补充顾客或订单信息。",
+        requestId, conversationId, true, EmployeeAssistantAnswerSource.HUMAN_REQUIRED,
+        null, null, null, "UPSTREAM_TIMEOUT");
   }
 
   private EmployeeAssistantChatResponse response(
@@ -316,25 +414,32 @@ public class EmployeeAssistantService {
     return new SanitizedMessage(redacted, !message.equals(redacted));
   }
 
-  private List<KnowledgeCandidate> knowledgeMatches(long tenantId, String sanitizedQuestion) {
-    if (knowledgeRepository == null) return List.of();
+  private KnowledgeLookup knowledgeLookup(long tenantId, String sanitizedQuestion) {
+    if (knowledgeRepository == null) return new KnowledgeLookup(List.of(), "none");
     String normalizedQuestion = normalizedForMatch(sanitizedQuestion);
-    if (normalizedQuestion.isBlank()) return List.of();
+    if (normalizedQuestion.isBlank()) return new KnowledgeLookup(List.of(), "none");
     try {
-      return knowledgeRepository.publishedKnowledge(tenantId).stream()
+      List<EmployeeAssistantKnowledgeRepository.KnowledgeRow> published = knowledgeRepository.publishedKnowledge(tenantId);
+      List<EmployeeAssistantKnowledgeRepository.KnowledgeRow> safeKnowledge = published.stream()
           // Published knowledge predates the outbound safety boundary in some deployments.
           // Treat any unsafe legacy row as unavailable instead of returning or forwarding it.
           .filter(knowledge -> isSafeKnowledgeContent(
               knowledge.category(), knowledge.title(), knowledge.keywords(), knowledge.standardAnswer()))
+          .toList();
+      String versionKey = Integer.toHexString(safeKnowledge.stream()
+          .map(knowledge -> knowledge.id() + ":" + knowledge.currentVersion())
+          .sorted().reduce("", (left, right) -> left + "|" + right).hashCode());
+      List<KnowledgeCandidate> matches = safeKnowledge.stream()
           .map(knowledge -> score(knowledge, normalizedQuestion))
           .filter(candidate -> candidate.score() > 0)
           .sorted(Comparator.comparingInt(KnowledgeCandidate::score).reversed()
               .thenComparing(candidate -> candidate.knowledge().id()))
           .limit(3)
           .toList();
+      return new KnowledgeLookup(matches, versionKey);
     } catch (RuntimeException ex) {
       // Provider availability must not turn a transient knowledge lookup error into a data leak.
-      return List.of();
+      return new KnowledgeLookup(List.of(), "lookup-unavailable");
     }
   }
 
@@ -413,10 +518,47 @@ public class EmployeeAssistantService {
     return statusCode == 401 || statusCode == 403 ? "UPSTREAM_AUTH_FAILED" : "UPSTREAM_UNAVAILABLE";
   }
 
-  private void writeAudit(AuthUser user, String requestId, String outcome, boolean inputRedacted) {
+  private AnswerCacheKey cacheKey(AuthUser user, String sanitizedQuestion, String knowledgeVersion,
+      boolean inputRedacted) {
+    if (user == null || inputRedacted || !isCacheableQuestion(sanitizedQuestion)) return null;
+    String storeScope = user.storeId() == null || user.storeId().isBlank() ? "ALL" : user.storeId().trim();
+    // The question itself is never retained as a cache key; only a hash of a low-risk normalized question is used.
+    return new AnswerCacheKey(user.tenantId(), storeScope, knowledgeVersion, Integer.toHexString(
+        normalizedForMatch(sanitizedQuestion).hashCode()));
+  }
+
+  private boolean isCacheableQuestion(String question) {
+    return question != null
+        && !question.isBlank()
+        && !isRefundQuestion(question)
+        && mandatoryHandoffCategory(question) == null
+        && !UNSAFE_OUTPUT_PRIVACY_REQUEST.matcher(question).find();
+  }
+
+  private void cache(AnswerCacheKey key, String answer) {
+    if (answerCache.size() >= ANSWER_CACHE_MAX_ENTRIES) answerCache.clear();
+    answerCache.put(key, new CachedAnswer(answer, System.nanoTime() + ANSWER_CACHE_TTL.toNanos()));
+  }
+
+  private boolean isRefundQuestion(String question) {
+    return REFUND_QUESTION.matcher(question == null ? "" : question).find();
+  }
+
+  private void writeAudit(AuthUser user, String requestId, String outcome, boolean inputRedacted, ChatTiming timing) {
     if (auditRepository == null) return;
     auditRepository.writeLog(user, new AuditLogRequest("employee_assistant.chat", "employee_assistant", requestId,
-        null, null, "result=" + outcome + "; input_redacted=" + inputRedacted, null, null));
+        null, null, "result=" + outcome + "; input_redacted=" + inputRedacted
+            + "; knowledge_ms=" + timing.knowledgeMillis
+            + "; model_ms=" + timing.modelMillis
+            + "; total_ms=" + timing.totalMillis, null, null));
+  }
+
+  private void logMetrics(String outcome, ChatTiming timing) {
+    // Safe structured operational metrics: no question text, credentials, upstream address or user data is logged.
+    LOGGER.info(() -> "employee_assistant_metric outcome=" + outcome
+        + " knowledge_ms=" + timing.knowledgeMillis
+        + " model_ms=" + timing.modelMillis
+        + " total_ms=" + timing.totalMillis);
   }
 
   private void writeHealthAudit(AuthUser user, String requestId, EmployeeAssistantStatusResponse status) {
@@ -440,6 +582,16 @@ public class EmployeeAssistantService {
 
   private static Duration nonZero(Duration value, Duration fallback) {
     return value == null || value.isZero() || value.isNegative() ? fallback : value;
+  }
+
+  private static Duration bounded(Duration value, Duration minimum, Duration maximum) {
+    Duration normalized = nonZero(value, maximum);
+    if (normalized.compareTo(minimum) < 0) return minimum;
+    return normalized.compareTo(maximum) > 0 ? maximum : normalized;
+  }
+
+  private static long elapsedMillis(long startedAt) {
+    return Duration.ofNanos(System.nanoTime() - startedAt).toMillis();
   }
 
   private static BusinessException safeFailure(String code, String message, HttpStatus status) {
@@ -538,7 +690,8 @@ public class EmployeeAssistantService {
         || BANK_CARD_NUMBER.matcher(value).find()
         || EMAIL_ADDRESS.matcher(value).find()
         || CUSTOMER_NAME_REFERENCE.matcher(value).find()
-        || ORDER_OR_ADDRESS_REFERENCE.matcher(value).find()) {
+        || ORDER_OR_ADDRESS_REFERENCE.matcher(value).find()
+        || UNSAFE_OUTPUT_PRIVACY_REQUEST.matcher(value).find()) {
       return "PRIVACY";
     }
     return null;
@@ -552,5 +705,24 @@ public class EmployeeAssistantService {
 
   private record KnowledgeCandidate(EmployeeAssistantKnowledgeRepository.KnowledgeRow knowledge, int score,
                                     boolean highConfidence) {
+  }
+
+  private record KnowledgeLookup(List<KnowledgeCandidate> matches, String versionKey) {
+  }
+
+  private record AnswerCacheKey(long tenantId, String storeScope, String knowledgeVersion, String questionHash) {
+  }
+
+  private record CachedAnswer(String answer, long expiresAtNanos) {
+    boolean isExpired() {
+      return System.nanoTime() >= expiresAtNanos;
+    }
+  }
+
+  private static final class ChatTiming {
+    private final long startedAt = System.nanoTime();
+    private long knowledgeMillis;
+    private long modelMillis;
+    private long totalMillis;
   }
 }

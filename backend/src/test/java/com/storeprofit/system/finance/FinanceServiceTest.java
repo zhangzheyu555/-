@@ -20,6 +20,7 @@ import com.storeprofit.system.platform.authorization.DataScopeModes;
 import com.storeprofit.system.platform.authorization.DataScopeService;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class FinanceServiceTest {
@@ -56,22 +57,42 @@ class FinanceServiceTest {
   }
 
   @Test
-  void storeManagerCanStillSaveManualEntryForOwnStore() {
+  void financeCanSaveManualEntryForSelectedStoreAndBrand() {
     ProfitEntryRequest request = new ProfitEntryRequest(
         "rg1", "2026-07", new BigDecimal("100"), BigDecimal.ZERO, BigDecimal.ZERO,
         BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
         BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
         BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
-        BigDecimal.ZERO, "本店手工录入"
+        BigDecimal.ZERO, "财务手工录入", 1L
     );
     when(financeRepository.storeExists(1L, "rg1")).thenReturn(true);
+    when(financeRepository.storeBrandId(1L, "rg1")).thenReturn(Optional.of(1L));
 
-    service.save(storeManager, request);
+    service.save(finance, request);
 
-    verify(accessControl).requireFinanceWrite(storeManager);
-    verify(accessControl, never()).requireFinanceImport(storeManager);
-    verify(financeRepository).upsert(eq(1L), any(ProfitEntryRequest.class), eq(3L));
-    verify(financeRepository).logSave(1L, 3L, "店长·荆州之星店", "rg1", "2026-07");
+    verify(accessControl).requireFinanceWrite(finance);
+    verify(accessControl, never()).requireFinanceImport(finance);
+    verify(financeRepository).upsert(eq(1L), any(ProfitEntryRequest.class), eq(2L));
+    verify(financeRepository).logSave(1L, 2L, "Finance", "rg1", "2026-07");
+  }
+
+  @Test
+  void forgedBrandCannotSaveEntryForStoreOwnedByAnotherBrand() {
+    ProfitEntryRequest request = new ProfitEntryRequest(
+        "rg1", "2026-07", new BigDecimal("100"), BigDecimal.ZERO, BigDecimal.ZERO,
+        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+        BigDecimal.ZERO, "伪造跨品牌录入", 2L
+    );
+    when(financeRepository.storeExists(1L, "rg1")).thenReturn(true);
+    when(financeRepository.storeBrandId(1L, "rg1")).thenReturn(Optional.of(1L));
+
+    assertThatThrownBy(() -> service.save(finance, request))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("STORE_BRAND_MISMATCH"));
+
+    verify(financeRepository, never()).upsert(eq(1L), any(ProfitEntryRequest.class), eq(2L));
   }
 
   @Test

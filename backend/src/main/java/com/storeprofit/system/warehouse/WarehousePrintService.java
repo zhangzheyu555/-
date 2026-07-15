@@ -142,6 +142,12 @@ public class WarehousePrintService {
         : requirePrintStoreDocument(user,
             warehouseRepository.returnWarehouseId(user.tenantId(), returnId),
             order.returnStoreId(), "下载该配送退货单");
+    if (order.receiveWarehouseName() == null || order.receiveWarehouseName().isBlank()) {
+      throw new BusinessException(
+          "RETURN_RECEIVE_WAREHOUSE_SNAPSHOT_MISSING",
+          "配送退货单缺少收货仓历史快照，不能打印",
+          HttpStatus.CONFLICT);
+    }
     byte[] bytes = pdfRenderer.returnOrder(central ? order : safeReturn(order));
     warehouseRepository.logAction(
         user.tenantId(),
@@ -294,6 +300,8 @@ public class WarehousePrintService {
         row.sourceDeliveryId(),
         row.returnStoreId(),
         row.returnStoreName(),
+        row.receiveWarehouseId(),
+        row.receiveWarehouseName(),
         row.receiveDepartment(),
         row.status(),
         row.statusLabel(),

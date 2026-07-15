@@ -217,6 +217,23 @@ public class RoleTodoService {
     requireCompletionActor(user, audience);
     String normalizedTodoId = requireText(todoId, "BAD_TODO", "Todo id is required");
     RoleTodoItemResponse visibleTodo = requireVisibleTodo(user, audience, normalizedTodoId);
+    if (isInspectionTodo(visibleTodo)) {
+      actionRepository.saveOperationLog(new RoleTodoOperationLogRecord(
+          user.tenantId(),
+          user.id(),
+          user.displayName(),
+          "inspection_rectification_legacy_completion_rejected",
+          "inspection_rectification",
+          visibleTodo.sourceRecordId(),
+          visibleTodo.storeId(),
+          visibleTodo.month(),
+          "Inspection rectification must use the evidence and review workflow"
+      ));
+      throw new BusinessException(
+          "INSPECTION_RECTIFICATION_WORKFLOW_REQUIRED",
+          "巡检整改需先上传现场证据并提交运营复核，不能通过通用待办直接完成",
+          HttpStatus.CONFLICT);
+    }
     validateSourceReadyForManualCompletion(user, audience, normalizedTodoId);
     String note = requireText(request == null ? null : request.note(), "BAD_NOTE", "Processing note is required");
     RoleTodoActionResultResponse result = saveCompletion(user, visibleTodo, normalizedTodoId, "RESOLVE", note, request);

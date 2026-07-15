@@ -10,6 +10,7 @@ import {
   getWarehouseReturns,
   getWarehouseItemCategories,
   getWarehouseOverview,
+  getWarehouseTransferContext,
   getWarehouseTransfers,
   getWarehouses,
   receiveWarehouseTransfer,
@@ -35,16 +36,22 @@ import {
   type WarehousePurchaseOrderReceivePayload,
   type WarehouseReturnOrder,
   type WarehouseTransfer,
+  type WarehouseTransferContext,
   type WarehouseTransferCreatePayload,
 } from '../api/warehouse'
 
 export type WarehouseTab = 'overview' | 'warehouse' | 'transfers' | 'requisitions' | 'inventory' | 'purchase' | 'catalog' | 'alerts' | 'returns' | 'movements' | 'receipts' | 'prints'
+
+function sameWarehouseId(left: string | number | undefined, right: string | number | undefined) {
+  return String(left || '') === String(right || '')
+}
 
 export const useWarehouseStore = defineStore('warehouse', {
   state: () => ({
     overview: null as WarehouseOverview | null,
     warehouses: [] as WarehouseInfo[],
     transfers: [] as WarehouseTransfer[],
+    transferContext: null as WarehouseTransferContext | null,
     selectedWarehouseId: '' as string | number,
     categories: [] as WarehouseItemCategory[],
     returns: [] as WarehouseReturnOrder[],
@@ -65,15 +72,21 @@ export const useWarehouseStore = defineStore('warehouse', {
       this.warehouses = rows
       if (!rows.some((row) => String(row.id) === String(this.selectedWarehouseId))) {
         this.selectedWarehouseId = rows.find((row) => row.code === 'JZ-CENTRAL')?.id || rows[0]?.id || ''
+        this.transferContext = null
       }
       return rows
     },
     async loadOverview(warehouseId?: string | number) {
+      const selectedId = warehouseId || this.selectedWarehouseId || undefined
       this.loading = true
       this.error = ''
       try {
-        this.overview = await getWarehouseOverview(warehouseId || this.selectedWarehouseId || undefined)
+        const overview = await getWarehouseOverview(selectedId)
+        if (!selectedId || sameWarehouseId(selectedId, this.selectedWarehouseId)) {
+          this.overview = overview
+        }
       } catch (error) {
+        if (selectedId && !sameWarehouseId(selectedId, this.selectedWarehouseId)) return
         this.error = error instanceof Error ? error.message : '仓库数据加载失败'
         throw error
       } finally {
@@ -81,10 +94,33 @@ export const useWarehouseStore = defineStore('warehouse', {
       }
     },
     async loadTransfers(warehouseId?: string | number) {
+      const selectedId = warehouseId || this.selectedWarehouseId || undefined
       try {
-        this.transfers = await getWarehouseTransfers(warehouseId || this.selectedWarehouseId || undefined)
+        const transfers = await getWarehouseTransfers(selectedId)
+        if (!selectedId || sameWarehouseId(selectedId, this.selectedWarehouseId)) {
+          this.transfers = transfers
+        }
       } catch (error) {
+        if (selectedId && !sameWarehouseId(selectedId, this.selectedWarehouseId)) return
         this.error = error instanceof Error ? error.message : '仓间调拨加载失败'
+        throw error
+      }
+    },
+    async loadTransferContext(warehouseId?: string | number) {
+      const selectedId = warehouseId || this.selectedWarehouseId
+      if (!selectedId) {
+        this.transferContext = null
+        return
+      }
+      try {
+        const context = await getWarehouseTransferContext(selectedId)
+        if (sameWarehouseId(selectedId, this.selectedWarehouseId)) {
+          this.transferContext = context
+        }
+      } catch (error) {
+        if (!sameWarehouseId(selectedId, this.selectedWarehouseId)) return
+        this.transferContext = null
+        this.error = error instanceof Error ? error.message : '调拨工作台加载失败'
         throw error
       }
     },
@@ -117,6 +153,7 @@ export const useWarehouseStore = defineStore('warehouse', {
         this.loadCategories(),
         this.loadReturns(),
         this.loadTransfers(this.selectedWarehouseId),
+        this.loadTransferContext(this.selectedWarehouseId),
       ])
     },
     async selectWarehouse(warehouseId: string | number) {
@@ -125,7 +162,12 @@ export const useWarehouseStore = defineStore('warehouse', {
         throw new Error('当前账号无权访问该仓库')
       }
       this.selectedWarehouseId = selected.id
-      await Promise.all([this.loadOverview(selected.id), this.loadTransfers(selected.id)])
+      this.transferContext = null
+      await Promise.all([
+        this.loadOverview(selected.id),
+        this.loadTransfers(selected.id),
+        this.loadTransferContext(selected.id),
+      ])
     },
     setTab(tab: string | null | undefined) {
       const normalized = String(tab || 'overview') as WarehouseTab
@@ -269,7 +311,7 @@ export const useWarehouseStore = defineStore('warehouse', {
     async submitTransfer(id: string) {
       await this.runAction(`transfer:submit:${id}`, async () => {
         await submitWarehouseTransfer(id)
-        this.actionMessage = '调拨申请已提交荆州总仓'
+        this.actionMessage = '调拨申请已提交'
       })
     },
     async reviewTransfer(id: string, approved: boolean, note?: string) {
@@ -376,6 +418,7 @@ export const useWarehouseStore = defineStore('warehouse', {
       this.overview = null
       this.warehouses = []
       this.transfers = []
+      this.transferContext = null
       this.selectedWarehouseId = ''
       this.categories = []
       this.returns = []

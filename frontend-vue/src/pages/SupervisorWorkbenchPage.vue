@@ -1,9 +1,22 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { AlertTriangle, CheckCircle2, Download, ImagePlus, Link2, LoaderCircle, Plus, RefreshCw, RotateCw, Sparkles, Trash2, Upload, XCircle } from 'lucide-vue-next'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { AlertTriangle, CheckCircle2, ImagePlus, RefreshCw, XCircle } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import PageHeader from '../components/common/PageHeader.vue'
 import InspectionHistoricalEvidenceDialog from '../components/inspection/InspectionHistoricalEvidenceDialog.vue'
+import InspectionHistoricalEvidencePanel from '../components/inspection/InspectionHistoricalEvidencePanel.vue'
+import InspectionRecordDetailSummary from '../components/inspection/InspectionRecordDetailSummary.vue'
+import InspectionStandardReadinessNotice from '../components/inspection/InspectionStandardReadinessNotice.vue'
+import InspectionPhotoDetectionList from '../components/inspection/InspectionPhotoDetectionList.vue'
+import InspectionScoreSummary from '../components/inspection/InspectionScoreSummary.vue'
+import InspectionClauseEditor from '../components/inspection/InspectionClauseEditor.vue'
+import InspectionDeductionRecords from '../components/inspection/InspectionDeductionRecords.vue'
+import InspectionManualDeductionForm from '../components/inspection/InspectionManualDeductionForm.vue'
+import InspectionDraftActions from '../components/inspection/InspectionDraftActions.vue'
+import InspectionRecordSnapshotTable from '../components/inspection/InspectionRecordSnapshotTable.vue'
+import InspectionStandardCatalog from '../components/inspection/InspectionStandardCatalog.vue'
+import InspectionRecordList from '../components/inspection/InspectionRecordList.vue'
+import InspectionRecordMetrics from '../components/inspection/InspectionRecordMetrics.vue'
 import {
   confirmInspectionDetection,
   confirmInspectionDetectionSuggestion,
@@ -34,74 +47,39 @@ import { canAccessRoles } from '../permissions/roles'
 import { useAuthStore } from '../stores/auth'
 import {
   emptyInspectionStandard,
-  getInspectionDimensions,
-  inspectionStandardStats,
   toInspectionStandardSet,
-  type InspectionStandardClause,
   type InspectionStandardSet,
 } from '../data/inspectionStandards'
-import { formatScore, inspectionScoreView, INSPECTION_MAX_SCORE, INSPECTION_PASS_SCORE } from '../utils/inspectionScore'
+import { formatScore, inspectionScoreView, INSPECTION_MAX_SCORE } from '../utils/inspectionScore'
+import {
+  useInspectionDraft,
+  type InspectionDeductionDetail,
+  type InspectionDraftPhoto,
+} from '../composables/useInspectionDraft'
+import {
+  compareInspectionRecords as compareInspectionRecord,
+  currentInspectionMonth as currentMonth,
+  inspectionBrandMeta as brandMeta,
+  inspectionCategoryCodeForDimension as categoryCodeForDimension,
+  inspectionItemDeduction as itemDeduction,
+  inspectionItemNeedsRectification as itemNeedsRectification,
+  isInspectionItemAfterPhotoSelected as itemAfterPhotoSelected,
+  isInspectionItemPhotoSelected as itemPhotoSelected,
+  normalizeInspectionBrandName as normalizeBrandName,
+  normalizeInspectionItemScore as normalizeItemScore,
+  roundInspectionScore as roundScore,
+  safeInspectionNumber as safeNumber,
+  todayInspectionDate as todayDate,
+  toggleInspectionItemAfterPhoto as toggleAfterPhoto,
+  toggleInspectionItemPhoto as toggleItemPhoto,
+  toggleInspectionRedLineIssue as toggleRedLineIssue,
+} from '../utils/inspectionDraft'
 
 type InspectionTab = 'records' | 'create' | 'standards'
 
-interface BrandOption {
-  name: string
-  color: string
-  soft: string
-}
-
-interface DraftPhoto {
-  attachmentId?: number
-  /** Historical photosJson position, supplied by the backend-safe detail payload. */
-  sourcePhotoIndex?: number
-  fileName: string
-  sourceFile?: File
-  url?: string
-  previewUrl?: string
-  contentType?: string
-  fileSize?: number
-  detectionStatus: 'detecting' | 'success' | 'failed'
-  detectionError?: string
-  detection?: InspectionDetectionResult
-  reviewStatus: 'pending' | 'accepted' | 'dismissed'
-  modelLinkedClauseId?: number
-  modelAddedPhotoLink?: boolean
-}
-
-type PersistedDraftPhoto = DraftPhoto & { attachmentId: number }
-
-interface DeductionDetail {
-  id?: string
-  standardId?: string
-  standardTitle?: string
-  standardDescription?: string
-  suggestedScore?: number
-  dim?: string
-  categoryCode?: InspectionCategoryCode
-  code?: string
-  item?: string
-  issue?: string
-  deduct?: number
-  requirement?: string
-  redline?: boolean
-  method?: string
-  sourceImageId?: string
-  modelAssisted?: boolean
-  modelConfidence?: number
-  photoAttachmentIds?: number[]
-  responsiblePerson?: string
-  rectificationDeadline?: string
-  rectificationStatus?: string
-  reviewResult?: string
-}
-
-interface DeductionForm {
-  dimension: string
-  clauseKey: string
-  manualItem: string
-  deduct: number | null
-  issue: string
-}
+type DraftPhoto = InspectionDraftPhoto
+type PersistedDraftPhoto = InspectionDraftPhoto & { attachmentId: number }
+type DeductionDetail = InspectionDeductionDetail
 
 type DetailPhotoLoadStatus = 'loading' | 'ready' | 'forbidden' | 'missing' | 'failed'
 
@@ -114,13 +92,6 @@ interface DetailPhotoPreview {
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
-
-const canonicalBrandNames = ['茹菓', '霸王茶姬', '瑞幸咖啡']
-const brandPalette: Record<string, { color: string; soft: string }> = {
-  茹菓: { color: '#76bdb8', soft: '#e9f6f5' },
-  霸王茶姬: { color: '#9c2f3e', soft: '#fff0f2' },
-  瑞幸咖啡: { color: '#2458c7', soft: '#edf4ff' },
-}
 
 const activeTab = ref<InspectionTab>('records')
 const records = ref<InspectionRecord[]>([])
@@ -160,7 +131,6 @@ const historicalEvidenceDialog = ref<{
 } | null>(null)
 const filterBrand = ref('')
 const filterMonth = ref('')
-const standardDimension = ref('')
 const inspectionStandard = ref<InspectionStandardSet>(emptyInspectionStandard)
 
 const canManageInspection = computed(() => auth.hasPermission(PERMISSIONS.INSPECTION_MANAGE))
@@ -179,39 +149,52 @@ const tabs = computed<Array<{ id: InspectionTab; label: string; to: string }>>((
     : []),
 ])
 
-const draft = reactive({
-  standardVersionId: undefined as number | undefined,
-  standardVersion: '',
-  brandName: '茹菓',
-  storeId: '',
-  inspectionDate: todayDate(),
-  inspector: '',
-  fullScore: INSPECTION_MAX_SCORE,
-  note: '',
-  photos: [] as DraftPhoto[],
-  deductions: [] as DeductionDetail[],
-  redlines: [] as DeductionDetail[],
-  itemResults: [] as InspectionItemResult[],
-})
-
-const deductionForm = reactive<DeductionForm>({
-  dimension: '',
-  clauseKey: '',
-  manualItem: '',
-  deduct: null,
-  issue: '',
-})
-
-const brandOptions = computed<BrandOption[]>(() => {
-  const names = new Set<string>()
-  canonicalBrandNames.forEach((name) => names.add(name))
-  backendBrands.value.forEach((brand) => names.add(normalizeBrandName(brand.name)))
-  stores.value.forEach((store) => names.add(normalizeBrandName(store.brandName)))
-  records.value.forEach((record) => names.add(recordBrandName(record)))
-  return Array.from(names)
-    .filter((name) => canonicalBrandNames.includes(name))
-    .sort((a, b) => canonicalBrandNames.indexOf(a) - canonicalBrandNames.indexOf(b))
-    .map((name) => ({ name, ...(brandPalette[name] || { color: '#64748b', soft: '#f1f5f9' }) }))
+const {
+  draft,
+  deductionForm,
+  brandOptions,
+  createStoreOptions,
+  globalStandard,
+  globalStandardStats,
+  draftDimensions,
+  clausesForDimension,
+  selectedClause,
+  hasGlobalStandard,
+  standardReady,
+  passLine,
+  invalidStandardDiagnostics,
+  categoryScores,
+  manualCurrentScore,
+  deductionTotal,
+  redLineHit,
+  yellowRiskCount,
+  recognitionReady,
+  scoreDisplay,
+  inspectionResultText,
+  scoreTone,
+  saveBlockedReason,
+  draftRows,
+  ensureDraftStore,
+  ensureDeductionForm,
+  ensureDraftItemResults,
+  fillDeductionFromClause,
+  handleDraftBrandChange,
+  resetDraft,
+  draftItemsForCategory,
+  manualCategoryScore,
+} = useInspectionDraft({
+  records,
+  stores,
+  backendBrands,
+  inspectionStandard,
+  filterBrand,
+  detectionKey,
+  detectionClauseId,
+  releaseDraftPhotos: () => releaseDraftPhotos(),
+  resetDraftReviewState: () => {
+    draftReviewBusyKeys.value = []
+    clearDraftReviewTimers()
+  },
 })
 
 const monthOptions = computed(() => {
@@ -247,12 +230,6 @@ const summary = computed(() => {
   return { total, monthCount, averageScore, invalidScoreCount, redlineCount }
 })
 
-const createStoreOptions = computed(() => {
-  return stores.value
-    .filter((store) => normalizeBrandName(store.brandName) === draft.brandName)
-    .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'))
-})
-
 const selectedRecord = computed(() => {
   if (!selectedRecordId.value) return null
   return detailRecord.value && String(detailRecord.value.id) === selectedRecordId.value
@@ -260,256 +237,20 @@ const selectedRecord = computed(() => {
     : null
 })
 
-const globalStandard = computed(() => inspectionStandard.value)
-const globalStandardStats = computed(() => inspectionStandardStats(globalStandard.value))
-const draftDimensions = computed(() => getInspectionDimensions(globalStandard.value))
-const clausesForDimension = computed(() => {
-  return globalStandard.value.groups.find((group) => group.dim === deductionForm.dimension)?.items || []
-})
-const selectedClause = computed(() => clausesForDimension.value[Number(deductionForm.clauseKey)] || null)
-const hasGlobalStandard = computed(() => globalStandard.value.groups.length > 0 || globalStandard.value.redlines.length > 0)
-const standardReady = computed(() => (
-  hasGlobalStandard.value
-  && globalStandard.value.valid
-  && globalStandard.value.saveAllowed
-  && !globalStandard.value.validationError
-))
-const passLine = computed(() => globalStandard.value.passScore || INSPECTION_PASS_SCORE)
-const invalidStandardDiagnostics = computed(() => globalStandard.value.diagnostics.filter((item) => !item.valid))
-
-const acceptedModelDeductionByClause = computed(() => {
-  const result = new Map<number, number>()
-  const seenDetectionKeys = new Set<string>()
-  draft.photos.forEach((photo) => {
-    if (photo.reviewStatus !== 'accepted' || !photo.detection) return
-    const key = detectionKey(photo.detection)
-    const clauseId = detectionClauseId(photo.detection)
-    const confirmed = Math.abs(safeNumber(photo.detection.confirmedDeduction))
-    if (!key || seenDetectionKeys.has(key) || !clauseId || confirmed <= 0) return
-    seenDetectionKeys.add(key)
-    result.set(clauseId, Math.max(result.get(clauseId) || 0, confirmed))
-  })
-  return result
-})
-
-const categoryScores = computed(() => {
-  return globalStandard.value.groups.map((group) => {
-    const itemScore = draft.itemResults
-      .filter((item) => item.categoryCode === group.categoryCode)
-      .reduce((sum, item) => {
-        const actualScore = safeNumber(item.actualScore)
-        const existingDeduction = Math.max(0, safeNumber(item.standardScore) - actualScore)
-        const modelDeduction = acceptedModelDeductionByClause.value.get(item.standardItemId) || 0
-        const previewAdjustment = Math.max(0, modelDeduction - existingDeduction)
-        // The authoritative rule deduction can exceed one clause's nominal score.
-        // Keep the negative clause contribution here and clamp only the category total.
-        return sum + actualScore - previewAdjustment
-      }, 0)
-    const additionalDeduction = draft.deductions
-      .filter((item) => (item.categoryCode || categoryCodeForDimension(item.dim)) === group.categoryCode && !item.standardId)
-      .reduce((sum, item) => sum + safeNumber(item.deduct), 0)
-    return {
-      code: group.categoryCode,
-      name: group.dim,
-      fullScore: group.fullScore,
-      score: Math.max(0, roundScore(itemScore - additionalDeduction)),
-    }
-  })
-})
-
-const manualCurrentScore = computed(() => roundScore(globalStandard.value.groups.reduce((sum, group) => {
-  const itemScore = draft.itemResults
-    .filter((item) => item.categoryCode === group.categoryCode)
-    .reduce((categorySum, item) => categorySum + safeNumber(item.actualScore), 0)
-  const additionalDeduction = draft.deductions
-    .filter((item) => (item.categoryCode || categoryCodeForDimension(item.dim)) === group.categoryCode && !item.standardId)
-    .reduce((categorySum, item) => categorySum + safeNumber(item.deduct), 0)
-  return sum + Math.max(0, itemScore - additionalDeduction)
-}, 0)))
-
-const currentScore = computed(() => roundScore(categoryScores.value.reduce((sum, category) => sum + category.score, 0)))
-const deductionTotal = computed(() => Math.max(0, roundScore(INSPECTION_MAX_SCORE - currentScore.value)))
-const redLineHit = computed(() => draft.itemResults.some((item) => (
-  item.riskLevel === 'RED' && Boolean(item.issueFound)
-)) || draft.redlines.length > 0)
-const yellowRiskCount = computed(() => draft.itemResults.filter((item) => (
-  item.riskLevel === 'YELLOW' && safeNumber(item.actualScore) < safeNumber(item.standardScore)
-)).length)
-const detectingPhotoCount = computed(() => draft.photos.filter((photo) => photo.detectionStatus === 'detecting').length)
-const failedPhotoCount = computed(() => draft.photos.filter((photo) => photo.detectionStatus === 'failed').length)
-const pendingReviewCount = computed(() => draft.photos.filter((photo) => photo.detectionStatus === 'success' && photo.reviewStatus === 'pending').length)
-const recognitionReady = computed(() => (
-  draft.photos.length > 0
-  && detectingPhotoCount.value === 0
-  && failedPhotoCount.value === 0
-  && pendingReviewCount.value === 0
-))
-const scoreDisplay = computed(() => recognitionReady.value ? String(currentScore.value) : '—')
-const inspectionResultText = computed(() => {
-  if (!draft.photos.length || detectingPhotoCount.value > 0) return '待识别'
-  if (failedPhotoCount.value > 0) return '识别服务不可用'
-  if (pendingReviewCount.value > 0) return '待人工确认'
-  if (redLineHit.value) return '不合格（命中红线）'
-  return currentScore.value >= passLine.value ? '合格' : '不合格'
-})
-const scoreTone = computed(() => {
-  if (!recognitionReady.value) return 'pending'
-  if (redLineHit.value || currentScore.value < passLine.value) return 'bad'
-  if (yellowRiskCount.value > 0) return 'warn'
-  return 'good'
-})
 const detectionServiceUp = computed(() => detectionService.value?.status === 'UP')
 const detectionServiceMessage = computed(() => {
   if (checkingDetectionService.value) return '正在检查识别服务...'
   if (detectionServiceUp.value) return '识别服务正常，模型已就绪'
   return detectionService.value?.message || '尚未检查识别服务'
 })
-const saveBlockedReason = computed(() => {
-  if (!standardReady.value) return hasGlobalStandard.value
-    ? '当前标准未通过校验，请刷新标准后再保存'
-    : '最新巡检标准尚未加载完成'
-  if (!draft.itemResults.length) return '最新巡检条款尚未初始化'
-  if (!draft.photos.length) return '请先上传现场照片并完成识别'
-  if (detectingPhotoCount.value > 0) return `还有 ${detectingPhotoCount.value} 张照片正在识别`
-  if (failedPhotoCount.value > 0) return `有 ${failedPhotoCount.value} 张照片识别失败，请重试或移除`
-  if (pendingReviewCount.value > 0) return `还有 ${pendingReviewCount.value} 张照片等待督导确认`
-  const associatedIds = new Set(draft.itemResults.flatMap((item) => [
-    ...item.photoAttachmentIds,
-    ...(item.beforePhotoAttachmentIds || []),
-    ...(item.afterPhotoAttachmentIds || []),
-  ]))
-  const unlinkedCount = draft.photos.filter((photo) => !photo.attachmentId || !associatedIds.has(photo.attachmentId)).length
-  if (unlinkedCount > 0) return `还有 ${unlinkedCount} 张照片未关联具体检查条款`
-  return ''
-})
-
-const draftRows = computed(() => [
-  ...draft.deductions.map((item, index) => ({ kind: 'deduction' as const, index, item })),
-  ...draft.redlines.map((item, index) => ({ kind: 'redline' as const, index, item })),
-])
-
 const selectedStandard = computed(() => globalStandard.value)
 const selectedStandardStats = computed(() => globalStandardStats.value)
-const selectedStandardGroups = computed(() => {
-  const groups = selectedStandard.value.groups
-  if (!standardDimension.value) return groups
-  return groups.filter((group) => group.dim === standardDimension.value)
-})
-
-function todayDate() {
-  const now = new Date()
-  const year = now.getFullYear()
-  const month = String(now.getMonth() + 1).padStart(2, '0')
-  const day = String(now.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-function currentMonth() {
-  return todayDate().slice(0, 7)
-}
-
-function normalizeBrandName(name?: string) {
-  const value = String(name || '').trim()
-  if (!value) return ''
-  if (value.includes('茹菓') || value.includes('茹果') || value.includes('苹果')) return '茹菓'
-  if (value.includes('霸王')) return '霸王茶姬'
-  if (value.includes('瑞幸')) return '瑞幸咖啡'
-  return value
-}
-
-function safeNumber(value: unknown) {
-  const numberValue = Number(value)
-  return Number.isFinite(numberValue) ? numberValue : 0
-}
-
-function roundScore(value: number) {
-  return Math.round(value * 100) / 100
-}
-
-function categoryCodeForDimension(value?: string): InspectionCategoryCode {
-  const text = String(value || '')
-  if (text.includes('卫生')) return 'HYGIENE'
-  if (text.includes('服务')) return 'SERVICE'
-  return 'MATERIAL'
-}
-
-function itemDeduction(item: InspectionItemResult) {
-  const deductionScore = Number(item.deductionScore)
-  if (Number.isFinite(deductionScore) && deductionScore >= 0) {
-    return roundScore(deductionScore)
-  }
-  return Math.max(0, roundScore(safeNumber(item.standardScore) - safeNumber(item.actualScore)))
-}
-
-function itemNeedsRectification(item: InspectionItemResult) {
-  return Boolean(item.issueFound) || itemDeduction(item) > 0 || Boolean(item.deductionReason?.trim())
-}
-
-function normalizeItemScore(item: InspectionItemResult) {
-  const standardScore = Math.max(0, safeNumber(item.standardScore))
-  item.actualScore = Math.max(0, Math.min(standardScore, roundScore(safeNumber(item.actualScore))))
-  item.redLineHit = item.riskLevel === 'RED' && Boolean(item.issueFound)
-  if (!itemNeedsRectification(item)) {
-    item.deductionReason = ''
-    item.responsiblePerson = ''
-    item.rectificationDeadline = ''
-    item.rectificationStatus = '无需整改'
-    item.reviewResult = ''
-  } else if (!item.rectificationStatus || item.rectificationStatus === '无需整改') {
-    item.rectificationStatus = '待整改'
-  }
-}
-
-function toggleRedLineIssue(item: InspectionItemResult, checked: boolean) {
-  item.issueFound = checked
-  item.redLineHit = checked
-  if (!checked) item.deductionReason = ''
-  normalizeItemScore(item)
-}
-
-function itemPhotoSelected(item: InspectionItemResult, attachmentId?: number) {
-  return Boolean(attachmentId && item.photoAttachmentIds.includes(attachmentId))
-}
-
-function draftItemsForCategory(categoryCode: InspectionCategoryCode) {
-  return draft.itemResults.filter((item) => item.categoryCode === categoryCode)
-}
-
-function toggleItemPhoto(item: InspectionItemResult, attachmentId: number | undefined, checked: boolean) {
-  if (!attachmentId) return
-  item.photoAttachmentIds = checked
-    ? Array.from(new Set([...item.photoAttachmentIds, attachmentId]))
-    : item.photoAttachmentIds.filter((id) => id !== attachmentId)
-  item.beforePhotoAttachmentIds = [...item.photoAttachmentIds]
-}
-
-function itemAfterPhotoSelected(item: InspectionItemResult, attachmentId?: number) {
-  return Boolean(attachmentId && item.afterPhotoAttachmentIds?.includes(attachmentId))
-}
-
-function toggleAfterPhoto(item: InspectionItemResult, attachmentId: number | undefined, checked: boolean) {
-  if (!attachmentId) return
-  const current = item.afterPhotoAttachmentIds || []
-  item.afterPhotoAttachmentIds = checked
-    ? Array.from(new Set([...current, attachmentId]))
-    : current.filter((id) => id !== attachmentId)
-}
-
 function recordStore(record: InspectionRecord) {
   return stores.value.find((store) => store.id === record.storeId)
 }
 
 function recordBrandName(record: InspectionRecord) {
   return normalizeBrandName(record.brandName || record.brand || recordStore(record)?.brandName)
-}
-
-function brandMeta(name?: string) {
-  const normalized = normalizeBrandName(name)
-  return brandPalette[normalized] || { color: '#64748b', soft: '#f1f5f9' }
-}
-
-function compareInspectionRecord(a: InspectionRecord, b: InspectionRecord) {
-  return (b.inspectionDate || '').localeCompare(a.inspectionDate || '') || String(b.id || '').localeCompare(String(a.id || ''))
 }
 
 function tabFromRoute(): InspectionTab {
@@ -676,34 +417,6 @@ async function refresh() {
   }
 }
 
-function ensureDraftStore() {
-  if (!brandOptions.value.find((brand) => brand.name === draft.brandName)) {
-    draft.brandName = brandOptions.value[0]?.name || '茹菓'
-  }
-  const options = createStoreOptions.value
-  if (!options.find((store) => store.id === draft.storeId)) {
-    draft.storeId = options[0]?.id || ''
-  }
-}
-
-function ensureDeductionForm() {
-  const dimensions = draftDimensions.value
-  if (!dimensions.includes(deductionForm.dimension)) {
-    deductionForm.dimension = dimensions[0] || ''
-  }
-  const clauses = clausesForDimension.value
-  if (clauses.length) {
-    const clauseIndex = Number(deductionForm.clauseKey)
-    if (!Number.isInteger(clauseIndex) || clauseIndex < 0 || clauseIndex >= clauses.length) {
-      deductionForm.clauseKey = '0'
-    }
-    fillDeductionFromClause()
-  } else {
-    deductionForm.clauseKey = ''
-    if (!deductionForm.deduct || deductionForm.deduct <= 0) deductionForm.deduct = 1
-  }
-}
-
 async function refreshStandard() {
   refreshingStandard.value = true
   errorMessage.value = ''
@@ -720,82 +433,6 @@ async function refreshStandard() {
   } finally {
     refreshingStandard.value = false
   }
-}
-
-function ensureDraftItemResults(force = false) {
-  if (!hasGlobalStandard.value) {
-    draft.itemResults = []
-    draft.standardVersionId = globalStandard.value.standardVersionId
-    draft.standardVersion = globalStandard.value.version
-    return
-  }
-  const clauses = globalStandard.value.groups.flatMap((group) => group.items)
-  const sameVersion = draft.standardVersionId === globalStandard.value.standardVersionId
-    && draft.standardVersion === globalStandard.value.version
-  const sameItems = draft.itemResults.length === clauses.length
-    && clauses.every((clause) => draft.itemResults.some((item) => item.standardItemId === clause.id))
-  if (!force && sameVersion && sameItems) return
-
-  draft.standardVersionId = globalStandard.value.standardVersionId
-  draft.standardVersion = globalStandard.value.version
-  draft.fullScore = INSPECTION_MAX_SCORE
-  draft.itemResults = clauses.map((clause) => ({
-    standardItemId: clause.id,
-    code: clause.code,
-    dimension: clause.categoryName,
-    categoryCode: clause.categoryCode,
-    categoryName: clause.categoryName,
-    title: clause.item,
-    description: clause.description,
-    checkMethod: clause.method,
-    standardScore: clause.score,
-    actualScore: clause.score,
-    deductionReason: '',
-    riskLevel: clause.riskLevel,
-    issueFound: false,
-    redLineHit: false,
-    photoAttachmentIds: [],
-    beforePhotoAttachmentIds: [],
-    afterPhotoAttachmentIds: [],
-    responsiblePerson: '',
-    rectificationDeadline: '',
-    rectificationStatus: '待整改',
-    reviewResult: '',
-  }))
-}
-
-function fillDeductionFromClause() {
-  if (!selectedClause.value) return
-  deductionForm.deduct = selectedClause.value.score || 1
-}
-
-function handleDraftBrandChange() {
-  draft.storeId = ''
-  ensureDraftStore()
-  ensureDeductionForm()
-}
-
-function resetDraft() {
-  const nextBrand = filterBrand.value || draft.brandName || brandOptions.value[0]?.name || '茹菓'
-  draft.brandName = nextBrand
-  draft.storeId = ''
-  draft.inspectionDate = todayDate()
-  draft.inspector = ''
-  draft.fullScore = INSPECTION_MAX_SCORE
-  draft.note = ''
-  releaseDraftPhotos()
-  draft.photos = []
-  draft.deductions = []
-  draft.redlines = []
-  draft.itemResults = []
-  draftReviewBusyKeys.value = []
-  clearDraftReviewTimers()
-  deductionForm.manualItem = ''
-  deductionForm.issue = ''
-  deductionForm.deduct = null
-  ensureDraftStore()
-  ensureDeductionForm()
-  ensureDraftItemResults(true)
 }
 
 function clearDraftReviewTimers() {
@@ -919,6 +556,22 @@ function recordPhotoIsExplicitlyLinked(record: InspectionRecord, photo: DraftPho
   return Boolean(attachmentId && recordItemResults(record).some((item) => (
     numberArray(item.photoAttachmentIds).includes(attachmentId)
   )))
+}
+
+function currentRecordPhotoIsExplicitlyLinked(photo: DraftPhoto) {
+  const record = selectedRecord.value
+  return Boolean(record && recordPhotoIsExplicitlyLinked(record, photo))
+}
+
+function canConfirmCurrentRecordAiDecision(photo: DraftPhoto) {
+  const record = selectedRecord.value
+  return Boolean(
+    record
+    && canManageInspection.value
+    && !hasRepairMarker(record)
+    && detectionDecisionStatus(photo.detection) === 'PENDING'
+    && detectionClauseId(photo.detection),
+  )
 }
 
 function evidenceCandidateForHistoricalPhoto(photo: DraftPhoto) {
@@ -1701,7 +1354,11 @@ function addDeduction() {
     return
   }
 
-  const target = clause ? draft.itemResults.find((item) => item.standardItemId === clause.id) : undefined
+  if (!clause) {
+    errorMessage.value = '请从最新稽核标准中选择具体条款。'
+    return
+  }
+  const target = draft.itemResults.find((item) => item.standardItemId === clause.id)
   if (!target) {
     errorMessage.value = '请从最新稽核标准中选择具体条款。'
     return
@@ -1815,18 +1472,6 @@ async function submitRecord() {
   } finally {
     saving.value = false
   }
-}
-
-function manualCategoryScore(code: InspectionCategoryCode) {
-  const group = globalStandard.value.groups.find((item) => item.categoryCode === code)
-  if (!group) return 0
-  const itemScore = draft.itemResults
-    .filter((item) => item.categoryCode === code)
-    .reduce((sum, item) => sum + safeNumber(item.actualScore), 0)
-  const additionalDeduction = draft.deductions
-    .filter((item) => (item.categoryCode || categoryCodeForDimension(item.dim)) === code && !item.standardId)
-    .reduce((sum, item) => sum + safeNumber(item.deduct), 0)
-  return Math.max(0, roundScore(itemScore - additionalDeduction))
 }
 
 function toDetectionBindingResult(photo: DraftPhoto): Record<string, unknown> {
@@ -2024,49 +1669,35 @@ onUnmounted(() => {
     <div v-if="actionMessage" class="success-box">{{ actionMessage }}</div>
 
     <div v-if="activeTab === 'records'" class="inspection-records-view">
-      <div class="inspection-metrics">
-        <div class="content-card inspection-metric">
-          <span class="lab">巡检总次数</span>
-          <b class="val">{{ summary.total }}</b>
-        </div>
-        <div class="content-card inspection-metric">
-          <span class="lab">本月巡检</span>
-          <b class="val">{{ summary.monthCount }}</b>
-        </div>
-        <div class="content-card inspection-metric">
-          <span class="lab">平均得分</span>
-          <b class="val">{{ summary.averageScore === null ? '—' : formatScore(summary.averageScore) }}<small> / {{ INSPECTION_MAX_SCORE }}</small></b>
-          <small v-if="summary.invalidScoreCount" class="metric-warning">{{ summary.invalidScoreCount }} 条评分数据待修复</small>
-        </div>
-        <div class="content-card inspection-metric">
-          <span class="lab">红线门店次数</span>
-          <b class="val red">{{ summary.redlineCount }}</b>
-        </div>
-      </div>
+      <InspectionRecordMetrics
+        :total="summary.total"
+        :month-count="summary.monthCount"
+        :average-score="summary.averageScore"
+        :invalid-score-count="summary.invalidScoreCount"
+        :redline-count="summary.redlineCount"
+        :max-score="INSPECTION_MAX_SCORE"
+        :format-score="formatScore"
+      />
 
-      <div class="inspection-filter-row">
-        <div class="inspection-brand-filter" aria-label="品牌筛选">
-          <button type="button" class="inspection-filter-chip" :class="{ on: !filterBrand }" @click="setBrandFilter('')">
-            全部品牌
-          </button>
-          <button
-            v-for="brand in brandOptions"
-            :key="brand.name"
-            type="button"
-            class="inspection-filter-chip"
-            :class="{ on: filterBrand === brand.name }"
-            :style="{ '--brand-color': brand.color, '--brand-soft': brand.soft }"
-            @click="setBrandFilter(brand.name)"
-          >
-            {{ brand.name }}
-          </button>
-        </div>
-        <select class="inspection-month-select" aria-label="月份筛选" :value="filterMonth" @change="setMonthFilter(($event.target as HTMLSelectElement).value)">
-          <option value="">全部月份</option>
-          <option v-for="month in monthOptions" :key="month" :value="month">{{ month.slice(0, 4) }}年{{ month.slice(5) }}月</option>
-        </select>
-      </div>
 
+      <InspectionRecordList
+        :brand-options="brandOptions"
+        :month-options="monthOptions"
+        :filter-brand="filterBrand"
+        :filter-month="filterMonth"
+        :selected-record-id="selectedRecordId"
+        :records="filteredRecords"
+        :loading="loading"
+        :record-brand-name="recordBrandName"
+        :brand-meta="brandMeta"
+        :record-score="recordScore"
+        :result-is-failed="resultIsFailed"
+        :result-label="resultLabel"
+        :deduction-count="deductionCount"
+        @update:brand="setBrandFilter"
+        @update:month="setMonthFilter"
+        @select="openRecordDetail"
+      >
       <section v-if="selectedRecordId && detailLoading" class="content-card inspection-detail-card">
         <div class="empty-state">正在读取巡检详情...</div>
       </section>
@@ -2080,213 +1711,79 @@ onUnmounted(() => {
       </section>
 
       <section v-else-if="selectedRecord" class="content-card inspection-detail-card">
-        <div class="inspection-detail-head">
-          <div>
-            <span class="inspection-section-title">巡检详情</span>
-            <h3>{{ selectedRecord.storeName || selectedRecord.storeId }}</h3>
-          </div>
-          <div class="inspection-detail-actions">
-            <button
-              v-if="canSupplementHistoricalEvidence"
-              class="secondary-button"
-              type="button"
-              @click="openHistoricalEvidenceDialog()"
-            ><ImagePlus :size="16" />补传并关联证据</button>
-            <button class="primary-button" type="button" :disabled="exportingRecordId === String(selectedRecord.id)" @click="exportRecord(selectedRecord)">
-              <Download :size="16" />{{ exportingRecordId === String(selectedRecord.id) ? '正在生成...' : '导出Excel' }}
-            </button>
-            <button class="secondary-button" type="button" @click="closeRecordDetail">返回巡检记录</button>
-          </div>
-        </div>
-        <div class="inspection-detail-grid">
-          <div><span>门店</span><b>{{ selectedRecord.storeName || selectedRecord.storeId }}</b></div>
-          <div><span>品牌</span><b>{{ recordBrandName(selectedRecord) || '—' }}</b></div>
-          <div><span>巡检日期</span><b>{{ selectedRecord.inspectionDate || '—' }}</b></div>
-          <div><span>督导</span><b>{{ selectedRecord.inspector || '—' }}</b></div>
-          <div><span>标准版本</span><b>{{ recordStandardVersion(selectedRecord) }}</b></div>
-          <div><span>满分 / 合格线</span><b>{{ formatScore(recordScore(selectedRecord).maxScore) }} / {{ formatScore(recordScore(selectedRecord).passScore) }}</b></div>
-          <div><span>得分</span><b :class="{ danger: resultIsFailed(selectedRecord) }">{{ recordScore(selectedRecord).scoreText }}</b></div>
-          <div><span>结果</span><b :class="{ danger: resultIsFailed(selectedRecord) }">{{ resultLabel(selectedRecord) }}</b></div>
-          <div><span>红线 / 黄线</span><b>{{ recordRedLineCount(selectedRecord) }} / {{ recordYellowLineCount(selectedRecord) }}</b></div>
-          <div><span>历史处理状态</span><b><span class="repair-status" :class="repairStatusTone(selectedRecord)">{{ repairStatusLabel(selectedRecord) }}</span></b></div>
-          <template v-if="hasCategoryScores(selectedRecord)">
-            <div><span>物料</span><b>{{ recordCategoryScore(selectedRecord, 'MATERIAL') }} / 37</b></div>
-            <div><span>卫生</span><b>{{ recordCategoryScore(selectedRecord, 'HYGIENE') }} / 63</b></div>
-            <div><span>服务</span><b>{{ recordCategoryScore(selectedRecord, 'SERVICE') }} / 100</b></div>
-          </template>
-          <div v-if="hasMigrationAudit(selectedRecord)"><span>历史迁移审计</span><b>{{ migrationAuditText(selectedRecord) }}</b></div>
-          <div v-if="requiresManualReview(selectedRecord)"><span>自动修复</span><b class="danger">快照不完整，待人工复核</b></div>
-        </div>
-        <p v-if="!recordScore(selectedRecord).valid" class="inspection-repair-note danger">评分数据待修复：{{ recordScore(selectedRecord).error }}</p>
-        <p v-if="selectedRecord.repairReason" class="inspection-repair-note">修复说明：{{ selectedRecord.repairReason }}</p>
-        <div class="inspection-detail-section">
-          <h4>扣分项明细</h4>
-          <div v-if="!recordItemResults(selectedRecord).some((item) => itemDeduction(item) > 0)" class="empty-state compact">暂无扣分项。</div>
-          <ul v-else class="inspection-detail-list">
-            <li v-for="item in recordItemResults(selectedRecord).filter((row) => itemDeduction(row) > 0)" :key="item.standardItemId">
-              {{ item.categoryName || item.dimension }} · {{ item.code || '未编号' }} {{ item.title }}：扣 {{ itemDeduction(item) }} 分；{{ item.deductionReason || '未填写扣分原因' }}
-            </li>
-          </ul>
-        </div>
-        <div class="inspection-detail-section">
-          <h4>{{ recordSnapshotHeading(selectedRecord) }}</h4>
-          <div v-if="!recordItemResults(selectedRecord).length" class="empty-state compact">{{ recordSnapshotEmptyText(selectedRecord) }}</div>
-          <div v-else class="inspection-table-wrap">
-            <table class="inspection-table snapshot-table">
-              <thead><tr><th>条款</th><th class="r">标准分</th><th class="r">实得分</th><th class="r">实际扣分</th><th>扣分原因</th><th>现场证据</th><th>状态</th></tr></thead>
-              <tbody>
-                <tr v-for="item in recordItemResults(selectedRecord)" :key="`snapshot-${item.standardItemId}`">
-                  <td class="snapshot-clause">
-                    <b>{{ item.title || item.description || '—' }}</b>
-                    <small>{{ item.categoryName || item.dimension || '未分类' }} · {{ item.code || '未编号' }} · {{ riskLabel(item.riskLevel) }}</small>
-                  </td>
-                  <td class="r">{{ formatScore(item.standardScore) }}</td>
-                  <td class="r snapshot-actual-score">实得 {{ formatScore(item.actualScore) }} / {{ formatScore(item.standardScore) }}</td>
-                  <td class="r"><span :class="{ 'snapshot-deducted': itemDeduction(item) > 0 }">{{ itemDeduction(item) > 0 ? `扣 ${formatScore(itemDeduction(item))} 分` : '未扣分' }}</span></td>
-                  <td>{{ item.deductionReason || '—' }}</td>
-                  <td>
-                    <div v-if="recordClausePhotos(selectedRecord, item).length" class="inspection-evidence-list">
-                      <article v-for="photo in recordClausePhotos(selectedRecord, item)" :key="`${item.standardItemId}-${photo.attachmentId || photo.fileName}`" class="inspection-evidence-item">
-                        <button
-                          class="inspection-evidence-thumb"
-                          type="button"
-                          :disabled="detailPhotoState(photo).status !== 'ready'"
-                          :aria-label="`预览 ${photo.fileName || '现场证据'}`"
-                          @click="openDetailPhotoPreview(photo, $event)"
-                        >
-                          <img
-                            v-if="detailPhotoState(photo).status === 'ready' && detailPhotoState(photo).url"
-                            :src="detailPhotoState(photo).url"
-                            :alt="`${photo.fileName || '现场证据'} 缩略图`"
-                            @error="markDetailPhotoFailed(photo)"
-                          />
-                          <LoaderCircle v-else-if="detailPhotoState(photo).status === 'loading'" class="spin" :size="18" />
-                          <XCircle v-else :size="18" />
-                        </button>
-                        <span>
-                          <b :title="photo.fileName">{{ photo.fileName || '现场照片' }}</b>
-                          <small v-if="detailPhotoMessage(photo)" :class="`evidence-${detailPhotoState(photo).status}`">{{ detailPhotoMessage(photo) }}</small>
-                        </span>
-                        <button
-                          v-if="['failed', 'missing'].includes(detailPhotoState(photo).status) && photo.attachmentId"
-                          class="evidence-retry"
-                          type="button"
-                          @click="retryDetailPhoto(photo)"
-                        >重试</button>
-                      </article>
-                    </div>
-                    <small v-else class="evidence-unlinked">未关联证据</small>
-                  </td>
-                  <td><span class="evidence-status" :class="{ effective: itemDeduction(item) > 0, pending: clauseEvidenceStatus(selectedRecord, item).includes('未计分'), unlinked: clauseEvidenceStatus(selectedRecord, item) === '未关联证据' }">{{ clauseEvidenceStatus(selectedRecord, item) }}</span></td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-        <div v-if="recordUnlinkedPhotos(selectedRecord).length" class="inspection-detail-section">
-          <h4>未关联现场证据</h4>
-          <p class="inspection-evidence-note">以下图片未在任何条款的图片关联中出现，系统不会自动归因或影响扣分；请由老板或督导人工选择历史条款。</p>
-          <div class="inspection-evidence-list unlinked-evidence-list">
-            <article v-for="photo in recordUnlinkedPhotos(selectedRecord)" :key="`unlinked-${photo.attachmentId || photo.fileName}`" class="inspection-evidence-item">
-              <span class="inspection-evidence-thumb" :aria-label="`${photo.fileName || '未关联证据'} 尚未关联历史条款，不能预览原图`">
-                <XCircle :size="18" />
-              </span>
-              <span><b>{{ photo.fileName || '现场照片' }}</b><small class="evidence-unlinked">{{ unlinkedPhotoMessage(photo) }}</small></span>
-              <button
-                v-if="canSupplementHistoricalEvidence"
-                class="evidence-associate"
-                type="button"
-                :disabled="detailEvidenceCandidatesLoading"
-                @click="openHistoricalEvidenceDialog(photo)"
-              >
-                <Link2 v-if="hasValidUnlinkedHistoricalEvidence(photo)" :size="14" />
-                <ImagePlus v-else :size="14" />
-                {{ detailEvidenceCandidatesLoading ? '正在核验证据' : unlinkedEvidenceActionLabel(photo) }}
-              </button>
-              <span v-else class="evidence-status unlinked">{{ unlinkedPhotoMessage(photo) }}</span>
-            </article>
-          </div>
-        </div>
-        <div v-if="recordPendingAiPhotos(selectedRecord).length" class="inspection-detail-section">
-          <h4>AI 待确认识别结果（不计分）</h4>
-          <p class="inspection-evidence-note">AI 建议独立展示；未匹配或待确认的结果不会写入本次得分、扣分明细或历史快照。</p>
-          <div class="inspection-detail-detections">
-            <article v-for="photo in recordPendingAiPhotos(selectedRecord)" :key="`ai-${detectionKey(photo.detection) || photo.attachmentId || photo.fileName}`" class="inspection-detail-detection ai-pending-card">
-              <button v-if="recordPhotoIsExplicitlyLinked(selectedRecord, photo)" class="inspection-evidence-thumb" type="button" :disabled="detailPhotoState(photo).status !== 'ready'" :aria-label="`预览 ${photo.fileName || 'AI识别图片'}`" @click="openDetailPhotoPreview(photo, $event)">
-                <img v-if="detailPhotoState(photo).status === 'ready' && detailPhotoState(photo).url" :src="detailPhotoState(photo).url" :alt="`${photo.fileName || 'AI识别图片'} 缩略图`" @error="markDetailPhotoFailed(photo)" />
-                <LoaderCircle v-else-if="detailPhotoState(photo).status === 'loading'" class="spin" :size="18" />
-                <XCircle v-else :size="18" />
-              </button>
-              <span v-else class="inspection-evidence-thumb" :aria-label="`${photo.fileName || 'AI识别图片'} 尚未关联历史条款，不能预览原图`"><XCircle :size="18" /></span>
-              <div>
-                <span>模型识别结果 · {{ photo.fileName || '现场图片' }}</span>
-                <b>{{ detectionClauseLabel(photo.detection) }}</b>
-                <small>{{ detectionCount(photo.detection) ? `识别到 ${detectionCount(photo.detection)} 个疑似问题` : '未识别到明确问题' }} · 置信度 {{ confidenceText(detectionConfidence(photo.detection)) }}</small>
-                <small class="inspection-model-only-hint">{{ photoAiStatus(photo) }}</small>
-                <small v-if="recordPhotoIsExplicitlyLinked(selectedRecord, photo) && detailPhotoMessage(photo)" :class="`evidence-${detailPhotoState(photo).status}`">{{ detailPhotoMessage(photo) }}</small>
-                <small v-else-if="!recordPhotoIsExplicitlyLinked(selectedRecord, photo)" class="evidence-unlinked">待人工关联历史条款，不能预览原图</small>
-              </div>
-              <div class="inspection-detail-decision">
-                <span class="decision-pending">{{ photoAiStatus(photo) }}</span>
-                <button
-                  v-if="canManageInspection && !hasRepairMarker(selectedRecord) && detectionDecisionStatus(photo.detection) === 'PENDING'"
-                  class="primary-button"
-                  type="button"
-                  :disabled="!detectionClauseId(photo.detection) || isPersistedDecisionBusy(detectionKey(photo.detection))"
-                  @click="decidePersistedDetection(photo, 'confirm')"
-                >人工确认并计分</button>
-              </div>
-            </article>
-          </div>
-        </div>
+        <InspectionRecordDetailSummary
+          :record="selectedRecord"
+          :can-supplement="canSupplementHistoricalEvidence"
+          :exporting="exportingRecordId === String(selectedRecord.id)"
+          :brand-name="recordBrandName"
+          :standard-version="recordStandardVersion"
+          :score="recordScore"
+          :format-score="formatScore"
+          :result-is-failed="resultIsFailed"
+          :result-label="resultLabel"
+          :red-line-count="recordRedLineCount"
+          :yellow-line-count="recordYellowLineCount"
+          :repair-status-label="repairStatusLabel"
+          :repair-status-tone="repairStatusTone"
+          :has-category-scores="hasCategoryScores"
+          :category-score="recordCategoryScore"
+          :has-migration-audit="hasMigrationAudit"
+          :migration-audit-text="migrationAuditText"
+          :requires-manual-review="requiresManualReview"
+          :deduction-items="recordItemResults(selectedRecord).filter((item) => itemDeduction(item) > 0)"
+          :item-deduction="itemDeduction"
+          @supplement="openHistoricalEvidenceDialog()"
+          @export="exportRecord(selectedRecord)"
+          @close="closeRecordDetail"
+        />
+        <InspectionRecordSnapshotTable
+          :record="selectedRecord"
+          :items="recordItemResults(selectedRecord)"
+          :heading="recordSnapshotHeading(selectedRecord)"
+          :empty-text="recordSnapshotEmptyText(selectedRecord)"
+          :format-score="formatScore"
+          :item-deduction="itemDeduction"
+          :risk-label="riskLabel"
+          :clause-photos="recordClausePhotos"
+          :clause-evidence-status="clauseEvidenceStatus"
+          :photo-state="detailPhotoState"
+          :photo-message="detailPhotoMessage"
+          @preview="openDetailPhotoPreview"
+          @retry="retryDetailPhoto"
+          @image-error="markDetailPhotoFailed"
+        />
+        <InspectionHistoricalEvidencePanel
+          :unlinked-photos="recordUnlinkedPhotos(selectedRecord)"
+          :pending-ai-photos="recordPendingAiPhotos(selectedRecord)"
+          :can-supplement="canSupplementHistoricalEvidence"
+          :candidates-loading="detailEvidenceCandidatesLoading"
+          :is-explicitly-linked="currentRecordPhotoIsExplicitlyLinked"
+          :has-valid-historical-evidence="hasValidUnlinkedHistoricalEvidence"
+          :action-label="unlinkedEvidenceActionLabel"
+          :unlinked-message="unlinkedPhotoMessage"
+          :photo-state="detailPhotoState"
+          :photo-message="detailPhotoMessage"
+          :ai-status="photoAiStatus"
+          :detection-key="detectionKey"
+          :detection-clause-label="detectionClauseLabel"
+          :detection-count="detectionCount"
+          :detection-confidence-text="(photo) => confidenceText(detectionConfidence(photo))"
+          :can-confirm-ai-decision="canConfirmCurrentRecordAiDecision"
+          :is-ai-decision-busy="(photo) => isPersistedDecisionBusy(detectionKey(photo.detection))"
+          @supplement="openHistoricalEvidenceDialog"
+          @preview="openDetailPhotoPreview"
+          @retry="retryDetailPhoto"
+          @image-error="markDetailPhotoFailed"
+          @confirm-ai-decision="(photo) => decidePersistedDetection(photo, 'confirm')"
+        />
         <div class="inspection-detail-section">
           <h4>整改要求</h4>
           <p>{{ selectedRecord.note || (!hasRepairMarker(selectedRecord) ? deductionDetails(selectedRecord)[0]?.requirement : '') || '暂无整改要求。' }}</p>
         </div>
       </section>
 
-      <section v-else class="content-card inspection-table-card">
-        <div class="inspection-table-head">
-          <span class="inspection-section-title">
-            {{ filterBrand || filterMonth ? `筛选后 ${filteredRecords.length} 次` : `共 ${filteredRecords.length} 次巡检` }}
-          </span>
-        </div>
-        <div v-if="loading && !records.length" class="empty-state">正在读取巡检记录...</div>
-        <div v-else-if="!filteredRecords.length" class="empty-state">
-          <b>{{ filterBrand || filterMonth ? '当前筛选下没有巡检记录' : '暂无巡检记录' }}</b>
-        </div>
-        <div v-else class="inspection-table-wrap">
-          <table class="inspection-table">
-            <thead>
-              <tr>
-                <th>日期</th>
-                <th>门店</th>
-                <th>品牌</th>
-                <th>督导</th>
-                <th class="r">得分</th>
-                <th>结果</th>
-                <th class="r">扣分项</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="record in filteredRecords" :key="record.id" class="clickable-row" @click="openRecordDetail(String(record.id))">
-                <td>{{ record.inspectionDate || '—' }}</td>
-                <td><b>{{ record.storeName || record.storeId }}</b></td>
-                <td>
-                  <span class="brand-pill" :style="{ background: brandMeta(recordBrandName(record)).soft, color: brandMeta(recordBrandName(record)).color }">
-                    <span class="dotc" :style="{ background: brandMeta(recordBrandName(record)).color }" />
-                    {{ recordBrandName(record) || '—' }}
-                  </span>
-                </td>
-                <td>{{ record.inspector || '—' }}</td>
-                <td class="r score-cell" :class="{ danger: resultIsFailed(record) }" :title="recordScore(record).error">{{ recordScore(record).scoreText }}</td>
-                <td><span class="result-text" :class="{ danger: resultIsFailed(record) }">{{ resultLabel(record) }}</span></td>
-                <td class="r muted-cell">{{ deductionCount(record) }}项</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+      </InspectionRecordList>
+
     </div>
 
     <div v-else-if="activeTab === 'create'" class="inspection-create-view">
@@ -2323,21 +1820,15 @@ onUnmounted(() => {
             <span>满分基准</span>
               <input :value="INSPECTION_MAX_SCORE" type="number" readonly aria-readonly="true" />
           </label>
-          <div class="inspection-standard-note" :class="{ muted: standardReady, invalid: hasGlobalStandard && !standardReady }">
-            <div>
-              <span v-if="standardReady">{{ globalStandard.title }} {{ globalStandard.version }} · 105条（物料40 / 卫生47 / 服务18） · {{ globalStandardStats.fullScore }}分（满分200） · 合格线{{ globalStandardStats.passScore }}分 · 红线 {{ globalStandardStats.redlineCount }} 条 · 黄线 {{ globalStandardStats.yellowLineCount }} 条</span>
-              <span v-else-if="globalStandard.validationError" class="danger">当前标准未通过校验，只能只读查看，不能保存巡检。</span>
-              <span v-else>暂无稽核标准</span>
-            </div>
-            <button class="secondary-button" type="button" :disabled="refreshingStandard" @click="refreshStandard">
-              <RefreshCw :size="15" />{{ refreshingStandard ? '刷新中...' : '刷新标准' }}
-            </button>
-          </div>
-          <ul v-if="hasGlobalStandard && !standardReady" class="inspection-standard-diagnostics compact">
-            <li v-for="item in invalidStandardDiagnostics" :key="`${item.categoryCode || item.categoryName}-${item.message}`">
-              <b>{{ item.categoryName }}</b><span>{{ item.message }}</span>
-            </li>
-          </ul>
+          <InspectionStandardReadinessNotice
+            :standard="globalStandard"
+            :stats="globalStandardStats"
+            :ready="standardReady"
+            :has-standard="hasGlobalStandard"
+            :diagnostics="invalidStandardDiagnostics"
+            :refreshing="refreshingStandard"
+            @refresh="refreshStandard"
+          />
         </div>
       </section>
 
@@ -2360,456 +1851,100 @@ onUnmounted(() => {
             </label>
           </div>
         </div>
-        <div v-if="!draft.photos.length" class="inspection-detection-empty">
-          <Sparkles :size="22" />
-          <div>
-            <b>待识别</b>
-            <span>选择现场照片后，系统会先保存附件，再调用本地模型生成标注图和扣分建议。</span>
-          </div>
-        </div>
-        <div v-else class="inspection-detection-list" aria-live="polite">
-          <article v-for="(photo, index) in draft.photos" :key="photo.attachmentId || photo.url || photo.fileName" class="inspection-detection-item">
-            <header>
-              <div>
-                <b>{{ photo.fileName || '现场照片' }}</b>
-                <a :href="photoHref(photo)" target="_blank" rel="noreferrer">查看原图</a>
-              </div>
-              <button class="icon-button" type="button" aria-label="移除照片" @click="removePhoto(index)"><Trash2 :size="14" /></button>
-            </header>
-
-            <div v-if="photo.detectionStatus === 'detecting'" class="inspection-detection-progress">
-              <LoaderCircle :size="20" class="spin" />
-              <div><b>模型识别中</b><span>正在生成标注图片和问题建议，请稍候。</span></div>
-            </div>
-
-            <div v-else-if="photo.detectionStatus === 'failed'" class="inspection-detection-failed">
-              <XCircle :size="20" />
-              <div><b>识别服务不可用</b><span>{{ photo.detectionError || '本次识别失败，不能按合格处理。' }}</span></div>
-              <button class="secondary-button" type="button" @click="retryPhotoDetection(photo)"><RotateCw :size="15" />重新识别</button>
-            </div>
-
-            <div v-else-if="photo.detection" class="inspection-detection-result">
-              <div class="inspection-detection-preview">
-                <img v-if="photo.detection.annotated_image" :src="photo.detection.annotated_image" :alt="`${photo.fileName} 模型标注结果`" />
-                <div v-else class="inspection-preview-missing">模型未返回标注图</div>
-              </div>
-              <div class="inspection-detection-content">
-                <div class="inspection-model-summary">
-                  <span class="detection-count" :class="{ clear: detectionCount(photo.detection) === 0 }">
-                    {{ detectionCount(photo.detection) ? `发现 ${detectionCount(photo.detection)} 个疑似问题` : '未识别到明显问题' }}
-                  </span>
-                  <span>模型结论：{{ photo.detection.auto_status || photo.detection.review_status || '待人工确认' }}</span>
-                </div>
-                <div v-if="detectionCount(photo.detection)" class="inspection-detection-rule">
-                  <div class="inspection-clause-match" :class="{ unmatched: !detectionClauseId(photo.detection) }">
-                    <span>匹配正式条款</span>
-                    <b>{{ detectionClauseLabel(photo.detection) }}</b>
-                  </div>
-                  <dl class="inspection-deduction-metrics">
-                    <div><dt>200分制建议扣分</dt><dd>{{ detectionClauseId(photo.detection) ? `${formatScore(detectionFinalDeduction(photo.detection))} 分` : '待匹配' }}</dd></div>
-                    <div><dt>识别置信度</dt><dd>{{ confidenceText(detectionConfidence(photo.detection)) }}</dd></div>
-                  </dl>
-                  <p class="inspection-model-only-hint">模型仅建议；最终扣分由服务端按正式条款规则计算，需督导确认。</p>
-                </div>
-                <ul v-if="photo.detection.detections?.length" class="inspection-model-issues">
-                  <li v-for="(item, detectionIndex) in photo.detection.detections" :key="`${item.class_name}-${detectionIndex}`">
-                    <b>{{ detectionLabel(item) }}</b>
-                    <span>置信度 {{ confidenceText(item.confidence) }}</span>
-                    <span>{{ item.on_floor ? '地面区域' : item.class_name === 'corner_dust' ? '边角区域' : '现场区域' }}</span>
-                  </li>
-                </ul>
-                <p v-if="photo.detection.deduction_content" class="inspection-model-advice">{{ photo.detection.deduction_content }}</p>
-                <div class="inspection-review-actions">
-                  <span v-if="photo.reviewStatus === 'pending'" class="review-pending">模型结果仅供参考，请督导确认</span>
-                  <span v-else-if="photo.reviewStatus === 'accepted'" class="review-confirmed"><CheckCircle2 :size="15" />督导已确认，保存后按条款扣分</span>
-                  <span v-else class="review-dismissed"><CheckCircle2 :size="15" />督导已确认无问题</span>
-                  <button
-                    v-if="detectionCount(photo.detection) > 0 && photo.reviewStatus === 'pending'"
-                    class="primary-button"
-                    type="button"
-                    :disabled="!detectionClauseId(photo.detection) || isDraftReviewBusy(photo) || saving"
-                    :title="detectionClauseId(photo.detection) ? '确认后将在保存时由服务端计算扣分' : '尚未匹配正式条款，不能直接确认'"
-                    @click="confirmModelIssue(photo)"
-                  >
-                    确认问题并加入扣分
-                  </button>
-                  <button v-if="photo.reviewStatus === 'pending'" class="secondary-button" type="button" :disabled="isDraftReviewBusy(photo) || saving" @click="dismissModelIssue(photo)">
-                    {{ detectionCount(photo.detection) > 0 ? '人工确认无问题' : '确认未发现问题' }}
-                  </button>
-                  <button v-else class="secondary-button" type="button" :disabled="isDraftReviewBusy(photo) || saving" @click="undoModelReview(photo)">
-                    撤销本次确认
-                  </button>
-                </div>
-              </div>
-            </div>
-          </article>
-        </div>
-        <div v-if="draft.photos.length" class="inspection-assistant-note">
-          <AlertTriangle :size="15" />模型仅提供疑似问题；确认请求不会提交前端计算的最终扣分，正式分值由服务端按条款规则生成。
-        </div>
+        <InspectionPhotoDetectionList
+          :photos="draft.photos"
+          :saving="saving"
+          :photo-href="photoHref"
+          :detection-count="detectionCount"
+          :detection-clause-id="detectionClauseId"
+          :detection-clause-label="detectionClauseLabel"
+          :detection-final-deduction="detectionFinalDeduction"
+          :detection-confidence="detectionConfidence"
+          :confidence-text="confidenceText"
+          :detection-label="detectionLabel"
+          :format-score="formatScore"
+          :review-busy="isDraftReviewBusy"
+          @remove="removePhoto"
+          @retry="retryPhotoDetection"
+          @confirm="confirmModelIssue"
+          @dismiss="dismissModelIssue"
+          @undo="undoModelReview"
+        />
       </section>
 
-      <section class="content-card inspection-score-bar">
-        <div v-for="category in categoryScores" :key="category.code" class="category-score">
-          <span>{{ category.name }}得分</span>
-          <b>{{ category.score }}<small> 分（满分{{ category.fullScore }}）</small></b>
-        </div>
-        <div>
-          <span>总分</span>
-          <b :class="scoreTone">{{ scoreDisplay }}<small v-if="recognitionReady"> / {{ INSPECTION_MAX_SCORE }}</small></b>
-        </div>
-        <div>
-          <span>扣分合计</span>
-          <b :class="recognitionReady ? 'bad' : 'pending'">{{ recognitionReady ? `-${deductionTotal}` : '—' }}</b>
-        </div>
-        <div>
-          <span>结果</span>
-          <b :class="scoreTone">{{ inspectionResultText }}</b>
-          <small>合格线 {{ passLine }} 分，最终以保存后服务端判定为准</small>
-        </div>
-        <div v-if="yellowRiskCount" class="yellow-risk-summary">
-          <span>黄线风险</span>
-          <b>{{ yellowRiskCount }} 项</b>
-          <small>黄线仅扣分，不触发一票否决</small>
-        </div>
-        <button class="primary-button save-button" type="button" :disabled="saving || uploading || Boolean(saveBlockedReason)" :title="saveBlockedReason" @click="submitRecord">
-          <Upload :size="16" />
-          {{ saving ? '保存中...' : '保存巡检' }}
-        </button>
-        <small v-if="saveBlockedReason" class="inspection-save-hint">{{ saveBlockedReason }}</small>
-      </section>
+      <InspectionScoreSummary
+        :category-scores="categoryScores"
+        :score-tone="scoreTone"
+        :score-display="scoreDisplay"
+        :recognition-ready="recognitionReady"
+        :deduction-total="deductionTotal"
+        :result-text="inspectionResultText"
+        :pass-line="passLine"
+        :yellow-risk-count="yellowRiskCount"
+        :saving="saving"
+        :uploading="uploading"
+        :save-blocked-reason="saveBlockedReason"
+        @save="submitRecord"
+      />
 
-      <section
-        v-for="group in globalStandard.groups"
-        :key="group.categoryCode"
-        class="content-card inspection-item-results-card"
-        :class="{ 'is-readonly': !standardReady }"
-        :data-category="group.categoryCode"
-      >
-        <div class="inspection-card-title inspection-category-head">
-          <div>
-            <span class="inspection-section-title">{{ group.dim }}标准</span>
-            <h3>{{ group.items.length }} 条完整检查项</h3>
-          </div>
-          <strong>{{ categoryScores.find((item) => item.code === group.categoryCode)?.score || 0 }} / {{ group.fullScore }} 分（200分制）</strong>
-        </div>
-        <div class="inspection-table-wrap">
-          <table class="inspection-table inspection-item-table">
-            <thead>
-              <tr>
-                <th>条款编号</th>
-                <th>检查内容 / 方法</th>
-                <th>风险</th>
-                <th class="r">标准分</th>
-                <th>实际分</th>
-                <th>扣分原因</th>
-                <th>现场照片</th>
-              </tr>
-            </thead>
-            <tbody>
-              <template v-for="item in draftItemsForCategory(group.categoryCode)" :key="item.standardItemId">
-                <tr :class="[`risk-${String(item.riskLevel || 'NORMAL').toLowerCase()}`, { deducted: itemDeduction(item) > 0 || item.issueFound }]">
-                  <td><b>{{ item.code || '—' }}</b></td>
-                  <td>
-                    <b>{{ item.title }}</b>
-                    <small v-if="item.checkMethod">检查方法：{{ item.checkMethod }}</small>
-                  </td>
-                  <td><span class="risk-chip" :class="String(item.riskLevel || 'NORMAL').toLowerCase()">{{ riskLabel(item.riskLevel) }}</span></td>
-                  <td class="r">{{ safeNumber(item.standardScore) }}</td>
-                  <td>
-                    <label v-if="item.riskLevel === 'RED'" class="redline-found-toggle">
-                      <input type="checkbox" :checked="item.issueFound" :disabled="!standardReady" @change="toggleRedLineIssue(item, ($event.target as HTMLInputElement).checked)" />
-                      {{ item.issueFound ? '发现问题' : '未命中' }}
-                    </label>
-                    <input
-                      v-else
-                      v-model.number="item.actualScore"
-                      class="item-score-input"
-                      type="number"
-                      min="0"
-                      :max="safeNumber(item.standardScore)"
-                      step="0.01"
-                      :aria-label="`${item.code || item.title}实际分`"
-                      :data-standard-code="item.code"
-                      :disabled="!standardReady"
-                      @change="normalizeItemScore(item)"
-                    />
-                    <small v-if="itemDeduction(item) > 0" class="deduction-value">扣 {{ itemDeduction(item) }} 分</small>
-                  </td>
-                  <td>
-                    <input
-                      v-model.trim="item.deductionReason"
-                      class="item-reason-input"
-                      :class="{ invalid: (item.issueFound || itemDeduction(item) > 0) && !item.deductionReason?.trim() }"
-                      :placeholder="item.issueFound || itemDeduction(item) > 0 ? '必填：写清现场问题' : '无扣分'"
-                      :aria-label="`${item.code || item.title}扣分原因`"
-                      :disabled="!standardReady"
-                      @blur="normalizeItemScore(item)"
-                    />
-                  </td>
-                  <td>
-                    <div v-if="draft.photos.some((photo) => photo.attachmentId)" class="item-photo-options">
-                      <label v-for="photo in draft.photos.filter((row) => row.attachmentId)" :key="photo.attachmentId">
-                        <input
-                          type="checkbox"
-                          :checked="itemPhotoSelected(item, photo.attachmentId)"
-                          :disabled="!standardReady"
-                          @change="toggleItemPhoto(item, photo.attachmentId, ($event.target as HTMLInputElement).checked)"
-                        />
-                        问题：{{ photo.fileName }}
-                      </label>
-                      <label v-for="photo in draft.photos.filter((row) => row.attachmentId)" :key="`after-${photo.attachmentId}`">
-                        <input
-                          type="checkbox"
-                          :checked="itemAfterPhotoSelected(item, photo.attachmentId)"
-                          :disabled="!standardReady"
-                          @change="toggleAfterPhoto(item, photo.attachmentId, ($event.target as HTMLInputElement).checked)"
-                        />
-                        整改后：{{ photo.fileName }}
-                      </label>
-                    </div>
-                    <small v-else>未关联照片</small>
-                  </td>
-                </tr>
-                <tr v-if="itemNeedsRectification(item)" class="inspection-rectification-row">
-                  <td colspan="7">
-                    <div class="inspection-rectification-fields">
-                      <label><span>负责人</span><input v-model.trim="item.responsiblePerson" :disabled="!standardReady" placeholder="整改负责人" /></label>
-                      <label><span>整改期限</span><input v-model="item.rectificationDeadline" :disabled="!standardReady" type="date" /></label>
-                      <label>
-                        <span>整改状态</span>
-                        <select v-model="item.rectificationStatus" :disabled="!standardReady">
-                          <option value="待整改">待整改</option>
-                          <option value="整改中">整改中</option>
-                          <option value="待复核">待复核</option>
-                          <option value="已完成">已完成</option>
-                        </select>
-                      </label>
-                      <label><span>复核结果</span><input v-model.trim="item.reviewResult" :disabled="!standardReady" placeholder="待复核或填写结果" /></label>
-                    </div>
-                  </td>
-                </tr>
-              </template>
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <InspectionClauseEditor
+        :groups="globalStandard.groups"
+        :category-scores="categoryScores"
+        :photos="draft.photos"
+        :standard-ready="standardReady"
+        :items-for-category="draftItemsForCategory"
+        :safe-number="safeNumber"
+        :risk-label="riskLabel"
+        :item-deduction="itemDeduction"
+        :item-needs-rectification="itemNeedsRectification"
+        :item-photo-selected="itemPhotoSelected"
+        :item-after-photo-selected="itemAfterPhotoSelected"
+        @toggle-redline="toggleRedLineIssue"
+        @normalize-score="normalizeItemScore"
+        @toggle-photo="toggleItemPhoto"
+        @toggle-after-photo="toggleAfterPhoto"
+      />
 
-      <section class="content-card inspection-deduction-card">
-        <div class="inspection-card-title">
-          <div>
-            <span class="inspection-section-title">人工 / 模型调整记录（{{ draftRows.length }}）</span>
-            <h3>已应用到完整条款的扣分</h3>
-          </div>
-        </div>
-        <div v-if="!draftRows.length" class="empty-state compact">
-          暂无扣分项。
-        </div>
-        <div v-else class="inspection-table-wrap">
-          <table class="inspection-table deduction-table">
-            <thead>
-              <tr>
-                <th>维度</th>
-                <th>检查条款</th>
-                <th class="r">扣分</th>
-                <th>问题描述</th>
-                <th>是否红线项</th>
-                <th class="r">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in draftRows" :key="row.item.id || `${row.kind}-${row.index}`">
-                <td>{{ row.item.dim || '—' }}</td>
-                <td>
-                  <b>{{ row.item.code ? `${row.item.code} ` : '' }}{{ row.item.item || '现场问题' }}</b>
-                  <small v-if="row.item.method">{{ row.item.method }}</small>
-                </td>
-                <td class="r">{{ row.item.redline ? '—' : `${safeNumber(row.item.deduct)}分` }}</td>
-                <td>{{ row.item.issue || '—' }}</td>
-                <td><span class="result-text" :class="{ danger: row.item.redline }">{{ row.item.redline ? '是' : '否' }}</span></td>
-                <td class="r">
-                  <button class="icon-button" type="button" aria-label="删除扣分项" @click="removeDraftRow(row.kind, row.index)">
-                    <Trash2 :size="15" />
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <InspectionDeductionRecords
+        :rows="draftRows"
+        :safe-number="safeNumber"
+        @remove="removeDraftRow"
+      />
 
-      <section class="content-card inspection-add-card">
-        <div class="inspection-card-title">
-          <div>
-            <span class="inspection-section-title">添加扣分项</span>
-            <h3>把现场问题记清楚</h3>
-          </div>
-        </div>
-        <div class="inspection-add-form">
-          <label>
-            <span>维度</span>
-            <select v-model="deductionForm.dimension">
-              <option v-for="dimension in draftDimensions" :key="dimension" :value="dimension">{{ dimension }}</option>
-            </select>
-          </label>
-          <label v-if="clausesForDimension.length">
-            <span>检查条款</span>
-            <select v-model="deductionForm.clauseKey">
-              <option v-for="(clause, index) in clausesForDimension" :key="`${clause.code}-${index}`" :value="String(index)">
-                {{ clause.code ? `${clause.code} ` : '' }}{{ clause.item }}（建议{{ clause.score }}分）
-              </option>
-            </select>
-          </label>
-          <label v-else>
-            <span>检查条款</span>
-            <input v-model.trim="deductionForm.manualItem" placeholder="例如：吧台地面有水渍" />
-          </label>
-          <label>
-            <span>扣分</span>
-            <input v-model.number="deductionForm.deduct" type="number" min="1" :max="draft.fullScore" placeholder="填写扣分" />
-          </label>
-          <label class="wide">
-            <span>问题描述</span>
-            <input v-model.trim="deductionForm.issue" placeholder="写给门店看的问题，例如：开封物料未贴时效标签" />
-          </label>
-          <button class="primary-button add-button" type="button" :disabled="!standardReady" @click="addDeduction">
-            <Plus :size="16" />
-            添加
-          </button>
-        </div>
-      </section>
 
-      <section class="content-card inspection-note-card">
-        <label>
-          <span>整改要求 / 备注</span>
-          <textarea v-model.trim="draft.note" rows="3" placeholder="写清楚整改要求、责任人或复查时间" />
-        </label>
-        <div class="inspection-form-actions">
-          <button class="secondary-button" type="button" @click="resetDraft">清空表单</button>
-          <button class="primary-button" type="button" :disabled="saving || uploading || Boolean(saveBlockedReason)" :title="saveBlockedReason" @click="submitRecord">{{ saving ? '保存中...' : '保存巡检' }}</button>
-        </div>
-      </section>
+      <InspectionManualDeductionForm
+        :form="deductionForm"
+        :dimensions="draftDimensions"
+        :clauses="clausesForDimension"
+        :full-score="draft.fullScore"
+        :standard-ready="standardReady"
+        @add="addDeduction"
+      />
+
+
+      <InspectionDraftActions
+        :note="draft.note"
+        :saving="saving"
+        :uploading="uploading"
+        :save-blocked-reason="saveBlockedReason"
+        @update:note="draft.note = $event"
+        @reset="resetDraft"
+        @save="submitRecord"
+      />
+
     </div>
 
-    <div v-else class="inspection-standards-view">
-      <section class="content-card inspection-standard-summary">
-        <div>
-          <span>标准版本</span>
-          <b>{{ selectedStandard.version || '未启用' }}</b>
-        </div>
-        <div>
-          <span>红线项</span>
-          <b>{{ selectedStandardStats.redlineCount }} 条</b>
-        </div>
-        <div>
-          <span>黄线项</span>
-          <b>{{ selectedStandardStats.yellowLineCount }} 条</b>
-        </div>
-        <div>
-          <span>评分条款</span>
-          <b>{{ selectedStandardStats.clauseCount }} 条</b>
-        </div>
-        <div>
-          <span>满分基准</span>
-          <b>{{ selectedStandardStats.fullScore }} 分</b>
-        </div>
-        <div>
-          <span>合格线</span>
-          <b>{{ selectedStandardStats.passScore }} 分</b>
-        </div>
-      </section>
+    <InspectionStandardCatalog
+      :standard="selectedStandard"
+      :stats="selectedStandardStats"
+      :has-standard="hasGlobalStandard"
+      :diagnostics="invalidStandardDiagnostics"
+      :refreshing="refreshingStandard"
+      :safe-number="safeNumber"
+      :risk-label="riskLabel"
+      @refresh="refreshStandard"
+    />
 
-      <section v-if="selectedStandard.validationError" class="content-card inspection-standard-error" role="alert">
-        <div class="inspection-standard-error-head">
-          <div>
-            <b>标准校验未通过，以下条款仅供核对</b>
-            <span>系统不会隐藏原始条款，也不会允许用错误标准保存新巡检。</span>
-          </div>
-          <button class="secondary-button" type="button" :disabled="refreshingStandard" @click="refreshStandard">
-            <RefreshCw :size="15" />{{ refreshingStandard ? '刷新中...' : '刷新标准' }}
-          </button>
-        </div>
-        <ul class="inspection-standard-diagnostics">
-          <li v-for="item in invalidStandardDiagnostics" :key="`${item.categoryCode || item.categoryName}-${item.message}`">
-            <b>{{ item.categoryName }}</b>
-            <span>{{ item.message }}</span>
-          </li>
-        </ul>
-      </section>
-
-      <section v-if="hasGlobalStandard" class="inspection-standard-category-audit" aria-label="标准分类核对">
-        <article
-          v-for="item in selectedStandardStats.categoryStats"
-          :key="item.categoryCode"
-          :class="{ invalid: item.actualCount !== item.expectedCount || item.actualScore !== item.expectedScore }"
-        >
-          <div><b>{{ item.categoryName }}</b><span>{{ item.actualCount }} 条 / {{ item.actualScore }} 分</span></div>
-          <small>权威标准：{{ item.expectedCount }} 条 / {{ item.expectedScore }} 分</small>
-        </article>
-      </section>
-
-      <section v-if="!hasGlobalStandard" class="content-card">
-        <div class="empty-state">
-          <b>暂无稽核标准</b>
-          <button class="secondary-button" type="button" :disabled="refreshingStandard" @click="refreshStandard">
-            <RefreshCw :size="15" />{{ refreshingStandard ? '刷新中...' : '刷新标准' }}
-          </button>
-        </div>
-      </section>
-
-      <template v-if="hasGlobalStandard">
-        <section class="content-card inspection-standard-groups">
-          <div class="inspection-card-title">
-            <div>
-              <span class="inspection-section-title">完整评分条款</span>
-              <h3>按物料、卫生、服务查看</h3>
-            </div>
-          </div>
-          <div class="dimension-filter">
-            <button type="button" :class="{ on: !standardDimension }" @click="standardDimension = ''">全部维度</button>
-            <button
-              v-for="group in selectedStandard.groups"
-              :key="group.dim"
-              type="button"
-              :class="{ on: standardDimension === group.dim }"
-              @click="standardDimension = group.dim"
-            >
-              {{ group.dim }}
-            </button>
-          </div>
-          <div class="standard-group-stack">
-            <div v-for="group in selectedStandardGroups" :key="group.dim" class="standard-group">
-              <div class="standard-group-head">
-                <h4>{{ group.dim }}</h4>
-                <span>{{ group.items.length }} 条 · 合计 {{ group.items.reduce((sum: number, item: InspectionStandardClause) => sum + safeNumber(item.score), 0) }} 分</span>
-              </div>
-              <div class="inspection-table-wrap">
-                <table class="inspection-table standards-table" :aria-label="`${group.dim}标准条款`">
-                  <thead>
-                    <tr>
-                      <th>条款编号</th>
-                      <th>条款标题</th>
-                      <th>判定说明</th>
-                      <th class="r">标准分</th>
-                      <th>风险级别</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="(clause, index) in group.items" :key="`${group.dim}-${clause.code}-${index}`" :class="`risk-${clause.riskLevel.toLowerCase()}`">
-                      <td class="muted-cell">{{ clause.code || '—' }}</td>
-                      <td><b>{{ clause.item }}</b></td>
-                      <td>{{ clause.method || '—' }}</td>
-                      <td class="r">{{ clause.score }}分</td>
-                      <td><span class="risk-chip" :class="clause.riskLevel.toLowerCase()">{{ riskLabel(clause.riskLevel) }}</span></td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        </section>
-      </template>
-    </div>
   </section>
 
   <Teleport to="body">
@@ -3075,7 +2210,6 @@ onUnmounted(() => {
   text-align: left;
 }
 
-.inspection-detail-head,
 .inspection-card-title,
 .standard-group-head {
   display: flex;
@@ -3093,73 +2227,18 @@ onUnmounted(() => {
 }
 
 .inspection-card-title h3,
-.inspection-detail-head h3,
 .standard-group-head h4 {
   margin: 0;
   font-size: 18px;
   font-weight: 900;
 }
 
-.inspection-detail-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 10px;
-  margin-bottom: 14px;
-}
-
-.inspection-detail-grid div {
-  min-height: 66px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: #fafbfc;
-}
-
-.inspection-detail-grid span,
 .inspection-score-bar span,
 .inspection-standard-summary span {
   display: block;
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
-}
-
-.inspection-detail-grid b {
-  display: block;
-  margin-top: 4px;
-  color: var(--ink);
-  font-size: 14px;
-}
-
-.repair-status {
-  display: inline-flex !important;
-  align-items: center;
-  min-height: 24px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--ds-surface-muted);
-  color: var(--ds-secondary) !important;
-  font-size: 12px !important;
-}
-
-.repair-status.repaired {
-  background: var(--ds-success-soft);
-  color: var(--good) !important;
-}
-
-.repair-status.review {
-  background: var(--ds-warning-soft);
-  color: #77440d !important;
-}
-
-.inspection-repair-note {
-  margin: -2px 0 14px;
-  padding: 9px 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--ds-surface-muted);
-  color: var(--ds-secondary);
-  line-height: 1.55;
 }
 
 .inspection-detail-section {
@@ -3180,12 +2259,6 @@ onUnmounted(() => {
   margin: 0;
   color: var(--muted);
   white-space: pre-wrap;
-}
-
-.inspection-detail-list {
-  margin: 0;
-  padding-left: 18px;
-  color: var(--ink);
 }
 
 .inspection-photo-list,
@@ -3379,328 +2452,6 @@ onUnmounted(() => {
   border-color: rgba(220, 53, 69, 0.3);
   background: var(--ds-danger-soft);
   color: var(--bad);
-}
-
-.inspection-detection-empty,
-.inspection-detection-progress,
-.inspection-detection-failed,
-.inspection-assistant-note {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px;
-  border-radius: 8px;
-}
-
-.inspection-detection-empty {
-  border: 1px dashed var(--ds-line-strong);
-  background: #fff;
-  color: var(--primary-dark);
-}
-
-.inspection-detection-empty b,
-.inspection-detection-empty span,
-.inspection-detection-progress b,
-.inspection-detection-progress span,
-.inspection-detection-failed b,
-.inspection-detection-failed span {
-  display: block;
-}
-
-.inspection-detection-empty span,
-.inspection-detection-progress span,
-.inspection-detection-failed span {
-  margin-top: 3px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.inspection-detection-list {
-  display: grid;
-  gap: 12px;
-}
-
-.inspection-detection-item {
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: #fff;
-}
-
-.inspection-detection-item > header {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--line);
-}
-
-.inspection-detection-item > header > div {
-  min-width: 0;
-}
-
-.inspection-detection-item > header b {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.inspection-detection-item > header a {
-  color: var(--primary-dark);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.inspection-detection-progress,
-.inspection-detection-failed {
-  min-height: 88px;
-  border-radius: 0;
-}
-
-.inspection-detection-progress {
-  color: var(--primary-dark);
-}
-
-.inspection-detection-failed {
-  background: var(--ds-danger-soft);
-  color: var(--bad);
-}
-
-.inspection-detection-failed > div {
-  min-width: 0;
-  flex: 1;
-}
-
-.spin {
-  animation: inspection-spin 0.9s linear infinite;
-}
-
-@keyframes inspection-spin {
-  to { transform: rotate(360deg); }
-}
-
-.inspection-detection-result {
-  display: grid;
-  grid-template-columns: minmax(260px, 0.9fr) minmax(320px, 1.1fr);
-  min-width: 0;
-}
-
-.inspection-detection-preview {
-  min-height: 250px;
-  background: #edf2f1;
-}
-
-.inspection-detection-preview img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  min-height: 250px;
-  max-height: 420px;
-  object-fit: contain;
-}
-
-.inspection-preview-missing {
-  display: grid;
-  min-height: 250px;
-  place-items: center;
-  color: var(--muted);
-}
-
-.inspection-detection-content {
-  min-width: 0;
-  padding: 14px;
-}
-
-.inspection-model-summary {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.inspection-model-summary span,
-.inspection-model-issues li {
-  padding: 5px 8px;
-  border-radius: 6px;
-  background: var(--ds-surface-muted);
-  color: var(--ds-secondary);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.inspection-model-summary .detection-count {
-  background: var(--ds-warning-soft);
-  color: var(--warn);
-}
-
-.inspection-model-summary .detection-count.clear {
-  background: var(--ds-success-soft);
-  color: var(--good);
-}
-
-.inspection-detection-rule {
-  display: grid;
-  gap: 10px;
-  margin-top: 12px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fbfdfd;
-}
-
-.inspection-clause-match {
-  display: grid;
-  gap: 3px;
-}
-
-.inspection-clause-match span,
-.inspection-deduction-metrics dt {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.inspection-clause-match b {
-  color: var(--ink);
-  font-size: 14px;
-}
-
-.inspection-clause-match.unmatched b {
-  color: var(--bad);
-}
-
-.inspection-deduction-metrics {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  margin: 0;
-}
-
-.inspection-deduction-metrics > div {
-  min-width: 0;
-  padding: 8px;
-  border-radius: 6px;
-  background: var(--ds-surface-muted);
-}
-
-.inspection-deduction-metrics dt,
-.inspection-deduction-metrics dd {
-  margin: 0;
-}
-
-.inspection-deduction-metrics dd {
-  margin-top: 4px;
-  color: var(--ink);
-  font-weight: 900;
-  font-variant-numeric: tabular-nums;
-}
-
-.inspection-model-only-hint {
-  margin: 0;
-  color: #77440d;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.inspection-model-issues {
-  display: grid;
-  gap: 6px;
-  margin: 12px 0;
-  padding: 0;
-  list-style: none;
-}
-
-.inspection-model-issues li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.inspection-model-issues li b {
-  color: var(--ink);
-}
-
-.inspection-model-advice {
-  margin: 12px 0;
-  color: var(--ink);
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-}
-
-.inspection-review-actions {
-  justify-content: flex-start;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
-}
-
-.inspection-review-actions > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  margin-right: auto;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.review-pending { color: var(--warn); }
-.review-confirmed { color: var(--bad); }
-.review-dismissed { color: var(--good); }
-
-.inspection-assistant-note {
-  margin-top: 12px;
-  background: var(--ds-warning-soft);
-  color: #77440d;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.inspection-detail-detections {
-  display: grid;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.inspection-detail-detection {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fbfdfd;
-}
-
-.inspection-detail-detection > div:first-child {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-}
-
-.inspection-detail-detection span,
-.inspection-detail-detection small {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.inspection-detail-decision {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 8px;
-}
-
-.inspection-detail-decision .decision-confirmed { color: var(--bad); }
-.inspection-detail-decision .decision-revoked { color: var(--good); }
-
-@media (max-width: 860px) {
-  .inspection-deduction-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .inspection-detail-detection { align-items: flex-start; flex-direction: column; }
-  .ai-pending-card { grid-template-columns: 50px minmax(0, 1fr); }
-  .ai-pending-card .inspection-detail-decision { grid-column: 1 / -1; }
 }
 
 .pending {
@@ -3913,198 +2664,6 @@ onUnmounted(() => {
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
-}
-
-.snapshot-table {
-  min-width: 1240px;
-}
-
-.snapshot-clause {
-  min-width: 180px;
-}
-
-.snapshot-clause b,
-.snapshot-clause small {
-  display: block;
-}
-
-.snapshot-clause small {
-  margin-top: 3px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.snapshot-actual-score,
-.snapshot-deducted {
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.snapshot-deducted {
-  color: var(--bad);
-  font-weight: 800;
-}
-
-.inspection-evidence-list {
-  display: grid;
-  min-width: 210px;
-  gap: 7px;
-}
-
-.inspection-evidence-item {
-  display: grid;
-  grid-template-columns: 50px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 7px;
-  min-height: 54px;
-  padding: 5px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: #fff;
-}
-
-.inspection-evidence-thumb {
-  display: grid;
-  width: 50px;
-  height: 42px;
-  place-items: center;
-  overflow: hidden;
-  padding: 0;
-  border: 0;
-  border-radius: 5px;
-  background: var(--ds-surface-muted);
-  color: var(--muted);
-}
-
-.inspection-evidence-thumb:not(:disabled):hover,
-.inspection-evidence-thumb:not(:disabled):focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
-}
-
-.inspection-evidence-thumb:disabled {
-  cursor: default;
-  opacity: 1;
-}
-
-.inspection-evidence-thumb img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.inspection-evidence-item > span {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.inspection-evidence-item b,
-.inspection-evidence-item small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.inspection-evidence-item b {
-  font-size: 12px;
-}
-
-.inspection-evidence-item small,
-.inspection-evidence-note {
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.inspection-evidence-item .evidence-forbidden,
-.inspection-evidence-item .evidence-missing,
-.inspection-evidence-item .evidence-failed {
-  color: var(--bad);
-}
-
-.evidence-retry {
-  min-height: 28px;
-  padding: 0 6px;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--primary-dark);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.evidence-retry:hover,
-.evidence-retry:focus-visible {
-  background: var(--primary-soft);
-}
-
-.evidence-associate {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  min-height: 28px;
-  padding: 0 7px;
-  border: 1px solid var(--primary);
-  border-radius: 5px;
-  background: var(--primary-soft);
-  color: var(--primary-dark);
-  font-size: 12px;
-  font-weight: 800;
-  white-space: nowrap;
-}
-
-.evidence-associate:hover,
-.evidence-associate:focus-visible {
-  background: #d8efed;
-}
-
-.evidence-unlinked {
-  color: var(--warn);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.evidence-status {
-  display: inline-flex;
-  max-width: 230px;
-  padding: 4px 7px;
-  border-radius: 5px;
-  background: var(--ds-surface-muted);
-  color: var(--ds-secondary);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.45;
-}
-
-.evidence-status.effective {
-  background: var(--ds-danger-soft);
-  color: var(--bad);
-}
-
-.evidence-status.pending,
-.evidence-status.unlinked {
-  background: var(--ds-warning-soft);
-  color: #77440d;
-}
-
-.inspection-evidence-note {
-  margin: -2px 0 10px;
-}
-
-.unlinked-evidence-list {
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-}
-
-.unlinked-evidence-list .evidence-status {
-  justify-self: end;
-}
-
-.ai-pending-card {
-  display: grid;
-  grid-template-columns: 50px minmax(0, 1fr) auto;
 }
 
 .inspection-image-preview-backdrop {
@@ -4348,7 +2907,6 @@ onUnmounted(() => {
 
   .inspection-create-form,
   .inspection-add-form,
-  .inspection-detail-grid,
   .inspection-score-bar,
   .inspection-standard-summary,
   .inspection-standard-category-audit {
@@ -4389,7 +2947,6 @@ onUnmounted(() => {
   }
 
   .inspection-card-title,
-  .inspection-detail-head,
   .standard-group-head,
   .inspection-standard-error-head,
   .inspection-standard-note {

@@ -404,25 +404,25 @@ class RoleTodoServiceTest {
   }
 
   @Test
-  void completedInspectionTodoUsesRectificationFinishedTitle() {
-    service.resolve(
+  void inspectionTodoCannotBeResolvedThroughTheGenericTodoEndpointAndTheRejectionIsAudited() {
+    assertThatThrownBy(() -> service.resolve(
         storeManager(),
         RoleTodoAudience.STORE_MANAGER,
         "inspection-insp-s1",
-        new RoleTodoCompletionRequest("整改照片已提交，督导确认通过", List.of())
-    );
+        new RoleTodoCompletionRequest("整改照片已提交", List.of())
+    ))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode())
+            .isEqualTo("INSPECTION_RECTIFICATION_WORKFLOW_REQUIRED"));
 
-    RoleTodoResponse response =
-        service.todos(storeManager(), RoleTodoAudience.STORE_MANAGER, new RoleTodoQuery(true, "DONE", 50, null, null));
-
-    assertThat(response.items()).filteredOn(item -> "inspection-insp-s1".equals(item.id()))
-        .singleElement()
-        .satisfies(item -> {
-          assertThat(item.title()).isEqualTo("巡店整改已完成：One");
-          assertThat(item.title()).doesNotContain("巡店未通过");
-          assertThat(item.status()).isEqualTo("DONE");
-          assertThat(item.processStatus()).isEqualTo("整改照片已提交，督导确认通过");
-        });
+    assertThat(jdbcTemplate.queryForObject(
+        "select count(*) from todo_action where todo_id = 'inspection-insp-s1' and status = 'DONE'",
+        Integer.class)).isZero();
+    assertThat(jdbcTemplate.queryForObject("""
+        select count(*) from operation_log
+        where action = 'inspection_rectification_legacy_completion_rejected'
+          and target_id = 'insp-s1' and store_id = 's1'
+        """, Integer.class)).isEqualTo(1);
   }
 
   @Test
@@ -709,18 +709,12 @@ class RoleTodoServiceTest {
   }
 
   @Test
-  void resolvingTodoPreservesInspectionRawOutcomeAndWritesCompletionAction() {
+  void resolvingNonInspectionTodoDoesNotChangeInspectionRawOutcome() {
     service.resolve(
         finance(),
         RoleTodoAudience.FINANCE,
         "expense-exp-s1",
         new RoleTodoCompletionRequest("财务已核对金额和凭证，报销事项完成", List.of())
-    );
-    service.resolve(
-        supervisor(),
-        RoleTodoAudience.SUPERVISOR,
-        "inspection-insp-s1",
-        new RoleTodoCompletionRequest("门店已整改，督导复查通过", List.of())
     );
     assertThat(jdbcTemplate.queryForObject(
         "select status from expense_claim where id = 'exp-s1'",
@@ -733,7 +727,7 @@ class RoleTodoServiceTest {
     assertThat(jdbcTemplate.queryForObject(
         "select count(*) from todo_action where todo_id = 'inspection-insp-s1' and status = 'DONE'",
         Integer.class
-    )).isEqualTo(1);
+    )).isZero();
   }
 
   @Test

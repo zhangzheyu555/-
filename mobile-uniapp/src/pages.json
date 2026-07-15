@@ -1,0 +1,49 @@
+{
+  "pages": [
+    { "path": "pages/login/index", "style": { "navigationStyle": "custom" } },
+    { "path": "pages/home/index", "style": { "navigationBarTitleText": "工作台", "enablePullDownRefresh": true } },
+    { "path": "pages/todo/index", "style": { "navigationBarTitleText": "待办", "enablePullDownRefresh": true } },
+    { "path": "pages/apps/index", "style": { "navigationBarTitleText": "应用", "enablePullDownRefresh": true } },
+    { "path": "pages/profile/index", "style": { "navigationBarTitleText": "我的" } }
+  ],
+  "subPackages": [
+    { "root": "pkg-store", "pages": [
+      { "path": "inventory/index", "style": { "navigationBarTitleText": "门店库存", "enablePullDownRefresh": true } },
+      { "path": "requisition/index", "style": { "navigationBarTitleText": "叫货与收货", "enablePullDownRefresh": true } }
+    ] },
+    { "root": "pkg-warehouse", "pages": [
+      { "path": "index", "style": { "navigationBarTitleText": "仓库待办", "enablePullDownRefresh": true } }
+    ] },
+    { "root": "pkg-inspection", "pages": [
+      { "path": "inspection/index", "style": { "navigationBarTitleText": "移动巡检", "enablePullDownRefresh": true } },
+      { "path": "rectification/index", "style": { "navigationBarTitleText": "整改与复核", "enablePullDownRefresh": true } }
+    ], "preloadRule": { "pages/apps/index": { "network": "wifi", "packages": ["pkg-inspection"] } } },
+    { "root": "pkg-learning", "pages": [
+      { "path": "learning/index", "style": { "navigationBarTitleText": "培训视频", "enablePullDownRefresh": true } },
+      { "path": "exam/index", "style": { "navigationBarTitleText": "考试中心", "enablePullDownRefresh": true } },
+      { "path": "assistant/index", "style": { "navigationBarTitleText": "员工服务助手" } }
+    ] },
+    { "root": "pkg-summary", "pages": [
+      { "path": "index", "style": { "navigationBarTitleText": "经营只读摘要", "enablePullDownRefresh": true } }
+    ] }
+  ],
+  "tabBar": {
+    "color": "#718078",
+    "selectedColor": "#1f6741",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "white",
+    "list": [
+      { "pagePath": "pages/home/index", "text": "工作台" },
+      { "pagePath": "pages/todo/index", "text": "待办" },
+      { "pagePath": "pages/apps/index", "text": "应用" },
+      { "pagePath": "pages/profile/index", "text": "我的" }
+    ]
+  },
+  "globalStyle": {
+    "navigationBarTextStyle": "white",
+    "navigationBarTitleText": "AI Profit OS",
+    "navigationBarBackgroundColor": "#173028",
+    "backgroundColor": "#F2F6F4",
+    "backgroundTextStyle": "dark"
+  }
+}

@@ -27,7 +27,29 @@ function lineText(row: WarehouseRequisition) {
         <span>仓库已发货后，店长在这里确认本店已收到商品。</span>
       </div>
     </div>
-    <div class="table-wrap">
+    <div class="pending-receipt-card-list" aria-label="待确认收货列表">
+      <article v-for="row in requisitions" :key="row.id" class="pending-receipt-card">
+        <dl>
+          <div>
+            <dt>单号</dt>
+            <dd><b>{{ row.id }}</b></dd>
+          </div>
+          <div>
+            <dt>商品</dt>
+            <dd>{{ lineText(row) }}</dd>
+          </div>
+          <div>
+            <dt>发货时间</dt>
+            <dd>{{ row.shippedAt || '-' }}</dd>
+          </div>
+        </dl>
+        <button class="mini-button primary" type="button" :disabled="receivingId === row.id" @click="emit('receive', row.id)">
+          {{ receivingId === row.id ? '确认中...' : '确认已收货' }}
+        </button>
+      </article>
+      <p v-if="!requisitions.length" class="empty-cell">当前没有待确认收货的叫货单。</p>
+    </div>
+    <div class="table-wrap pending-receipt-table-wrap">
       <table>
         <thead>
           <tr>
@@ -56,3 +78,66 @@ function lineText(row: WarehouseRequisition) {
     </div>
   </div>
 </template>
+
+<style scoped>
+.pending-receipt-card-list {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .pending-receipt-table-wrap {
+    display: none;
+  }
+
+  .pending-receipt-card-list {
+    display: grid;
+    gap: 12px;
+  }
+
+  .pending-receipt-card {
+    display: grid;
+    gap: 14px;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #fff;
+  }
+
+  .pending-receipt-card dl {
+    display: grid;
+    gap: 10px;
+    margin: 0;
+  }
+
+  .pending-receipt-card dl > div {
+    display: grid;
+    grid-template-columns: 76px minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+  }
+
+  .pending-receipt-card dt {
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  .pending-receipt-card dd {
+    min-width: 0;
+    margin: 0;
+    color: var(--ink);
+    overflow-wrap: anywhere;
+  }
+
+  .pending-receipt-card .mini-button {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .pending-receipt-card-list > .empty-cell {
+    margin: 0;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+  }
+}
+</style>

@@ -1,0 +1,37 @@
+# QA is deliberately opt-in through SPRING_PROFILES_ACTIVE=qa. Database connection
+# values remain environment-only; this file must never contain credentials or a real URL.
+server:
+  tomcat:
+    # Playback tickets travel in the video stream query string; QA must not emit access-log URLs.
+    accesslog:
+      enabled: false
+
+app:
+  environment: QA
+  seed:
+    demo-enabled: false
+    legacy-employee-enabled: false
+  bootstrap:
+    default-users-enabled: false
+    store-manager-accounts-enabled: false
+  assistant:
+    deepseek:
+      enabled: false
+  employee-assistant:
+    provider: ""
+    upstream-url: ""
+    api-token: ""
+    model-url: ""
+    model-api-key: ""
+
+spring:
+  mvc:
+    # Do not include request parameters or headers in framework diagnostics.
+    log-request-details: false
+  flyway:
+    baseline-on-migrate: false
+    clean-disabled: true
+    out-of-order: false
+    validate-on-migrate: true
+  main:
+    banner-mode: "off"

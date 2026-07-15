@@ -99,6 +99,7 @@ const selectedMonth = ref(new Date().toISOString().slice(0, 7))
 const error = ref('')
 const success = ref('')
 const saving = ref(false)
+const refreshing = ref(false)
 const loadingEntry = ref(false)
 const loadingHistory = ref(false)
 const historyRows = ref<ProfitEntry[]>([])
@@ -137,15 +138,8 @@ const selectedStore = computed(() => stores.value.find((store) => store.id === s
 const importTargetStoreId = computed(() => scope.scopedStoreId(selectedStoreId.value))
 const canSave = computed(() => auth.hasPermission(PERMISSIONS.FINANCE_PROFIT_WRITE))
 const canImportMonthlySummary = computed(() => canUseFinanceProfitImport(auth.role, auth.permissions))
-const isFinanceImportRoute = computed(() => route.name === 'finance-profit-import')
-const pageTitle = computed(() => (
-  isFinanceImportRoute.value ? '导入月度汇总' : '数据录入'
-))
-const pageSubtitle = computed(() => {
-  if (isFinanceImportRoute.value) return '上传单店单月汇总，校验通过并确认后写入经营数据。'
-  if (scope.isStoreManager.value) return '仅可手工录入本人负责门店的月度经营数据。'
-  return ''
-})
+const pageTitle = '数据录入'
+const pageSubtitle = '一次只录入一个门店、一个月份的经营数据。'
 const historyPreview = computed(() => historyRows.value.slice(0, 5))
 const historyPageCount = computed(() => Math.max(1, Math.ceil(historyRows.value.length / HISTORY_PAGE_SIZE)))
 const pagedHistory = computed(() => {
@@ -364,7 +358,24 @@ async function loadHistory() {
   }
 }
 
-async function load() {
+function synchronizeBrandAndStore() {
+  const currentStore = stores.value.find((store) => store.id === selectedStoreId.value)
+  if (currentStore) selectedBrandId.value = String(currentStore.brandId)
+
+  const brandExists = brands.value.some((brand) => String(brand.id) === selectedBrandId.value)
+  if (!brandExists) {
+    selectedBrandId.value = currentStore
+      ? String(currentStore.brandId)
+      : String(brands.value[0]?.id || '')
+  }
+
+  const availableStores = filterStoresByBrand(stores.value, selectedBrandId.value)
+  if (!availableStores.some((store) => store.id === selectedStoreId.value)) {
+    selectedStoreId.value = availableStores[0]?.id || ''
+  }
+}
+
+async function load(showRefreshFeedback = false) {
   error.value = ''
   success.value = ''
   try {
@@ -375,18 +386,15 @@ async function load() {
       brands.value = scope.brandId.value && scope.brandName.value
         ? [{ id: scope.brandId.value, code: String(scope.brandId.value), name: scope.brandName.value }]
         : []
-      profit.setFilters({ month: selectedMonth.value, brandId: selectedBrandId.value, storeId: selectedStoreId.value })
-      await profit.load()
     } else {
-      await Promise.all([
-        profit.load(),
-        getBrands().then((rows) => { brands.value = rows }),
-        getStores().then((rows) => { stores.value = rows }),
-      ])
+      const [brandRows, storeRows] = await Promise.all([getBrands(), getStores()])
+      brands.value = brandRows
+      stores.value = storeRows
     }
-    selectedMonth.value = profit.summary.month || selectedMonth.value
-    if (!selectedStoreId.value) selectedStoreId.value = filteredStores.value[0]?.id || ''
-    if (!isFinanceImportRoute.value) await Promise.all([loadCurrentEntry(), loadHistory()])
+    synchronizeBrandAndStore()
+    profit.setFilters({ month: selectedMonth.value, brandId: selectedBrandId.value, storeId: selectedStoreId.value })
+    await Promise.all([profit.load(), loadCurrentEntry(), loadHistory()])
+    if (showRefreshFeedback) success.value = '数据已刷新。'
   } catch (loadError) {
     error.value = displayError(loadError, '数据录入页面加载失败，请刷新后重试。')
   }
@@ -408,11 +416,18 @@ async function save() {
     error.value = '请选择月份后再保存。'
     return
   }
+  const store = stores.value.find((item) => item.id === storeId) || managerStore.value
+  const brandId = Number(selectedBrandId.value)
+  if (!store || !brandId || Number(store.brandId) !== brandId) {
+    error.value = '所选品牌与门店不一致，请重新选择后再保存。'
+    return
+  }
   if (!validateAmounts()) return
   saving.value = true
   try {
     await saveProfitEntry({
       storeId,
+      brandId,
       month: selectedMonth.value,
       sales: num(draft.value.sales),
       refund: num(draft.value.refund),
@@ -512,13 +527,30 @@ function requestStoreChange(event: Event) {
   if (value === selectedStoreId.value) return
   runAfterDirtyCheck('切换门店将放弃当前尚未保存的录入内容。', () => {
     selectedStoreId.value = value
+    const store = stores.value.find((item) => item.id === value)
+    if (store) selectedBrandId.value = String(store.brandId)
   })
 }
 
 function refreshEntry() {
-  runAfterDirtyCheck('刷新数据将放弃当前尚未保存的录入内容。', () => {
-    void load()
+  runAfterDirtyCheck('刷新将放弃未保存修改，是否继续？', () => {
+    void (async () => {
+      refreshing.value = true
+      try {
+        await load(true)
+      } finally {
+        refreshing.value = false
+      }
+    })()
   })
+}
+
+function closeImportDrawer() {
+  importDrawerOpen.value = false
+  if (route.query.import !== '1') return
+  const query = { ...route.query }
+  delete query.import
+  void router.replace({ path: '/data-entry', query })
 }
 
 function goImportStatus() {
@@ -535,13 +567,10 @@ function goImportStatus() {
 }
 
 async function onImportSaved(saved: number) {
-  importDrawerOpen.value = false
-  success.value = `已导入 ${saved} 条经营数据。`
-  if (isFinanceImportRoute.value) {
-    await profit.load()
-    return
-  }
+  closeImportDrawer()
+  profit.setFilters({ month: selectedMonth.value, brandId: selectedBrandId.value, storeId: selectedStoreId.value })
   await Promise.all([profit.load(), loadCurrentEntry(), loadHistory()])
+  success.value = `已导入 ${saved} 条经营数据，当前门店和月份已刷新。`
 }
 
 function goProfitTable() {
@@ -583,7 +612,7 @@ onMounted(async () => {
     error.value = '经营数据导入仅限财务或老板处理。'
     return
   }
-  if (isFinanceImportRoute.value) goImportStatus()
+  if (route.query.import === '1') goImportStatus()
 })
 onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
 
@@ -600,9 +629,12 @@ onBeforeRouteLeave(() => {
 
 watch([selectedStoreId, selectedMonth], () => {
   success.value = ''
-  if (isFinanceImportRoute.value) return
   void loadCurrentEntry()
   void loadHistory()
+})
+
+watch(() => route.query.import, (value) => {
+  if (value === '1') goImportStatus()
 })
 
 watch(
@@ -619,19 +651,24 @@ watch(
     <PageHeader :title="pageTitle" :subtitle="pageSubtitle">
       <template #actions>
         <div class="entry-toolbar__actions">
-          <span v-if="!isFinanceImportRoute && isDirty" class="entry-dirty" role="status"><i aria-hidden="true" />尚未保存</span>
-          <button class="tool-icon-button" type="button" title="刷新数据" aria-label="刷新数据" :disabled="loadingEntry || saving" @click="refreshEntry">
-            <RefreshCw :size="17" />
+          <span v-if="isDirty" class="entry-dirty" role="status"><i aria-hidden="true" />尚未保存</span>
+          <button class="tool-icon-button" type="button" title="刷新数据" aria-label="刷新数据" :disabled="refreshing || loadingEntry || saving" @click="refreshEntry">
+            <RefreshCw :size="17" :class="{ 'is-spinning': refreshing }" />
           </button>
           <button v-if="canImportMonthlySummary" class="tool-button" type="button" @click="goImportStatus">
             <FileSpreadsheet :size="16" />导入月度汇总
           </button>
-          <button v-if="!isFinanceImportRoute" class="save-button" type="button" :disabled="!canSave || saving" :title="canSave ? '保存当前门店和月份的经营数据' : '当前角色没有保存权限'" @click="save">
+          <button class="save-button" type="button" :disabled="!canSave || saving" :title="canSave ? '保存当前门店和月份的经营数据' : '当前角色没有保存权限'" @click="save">
             <Save :size="16" />{{ saving ? '保存中' : '保存' }}
           </button>
         </div>
       </template>
     </PageHeader>
+
+    <aside class="desktop-workflow-notice" role="note">
+      <strong>请在电脑端完成</strong>
+      <span>财务数据录入、月度导入与覆盖确认需要核对门店、月份和多项金额，请使用电脑端完成。</span>
+    </aside>
 
     <div class="entry-toolbar" aria-label="数据录入筛选条件">
       <div class="entry-toolbar__fields">
@@ -645,6 +682,7 @@ watch(
             :key="`brand-${filterRenderKey}`"
             :model-value="selectedBrandId"
             :brands="brands"
+            :allow-all="false"
             @update:model-value="requestBrandChange"
           />
         </label>
@@ -672,23 +710,11 @@ watch(
       :store-id="importTargetStoreId"
       :store-name="selectedStore?.name"
       :month="selectedMonth"
-      @close="importDrawerOpen = false"
+      @close="closeImportDrawer"
       @saved="onImportSaved"
     />
 
-    <section v-if="isFinanceImportRoute" class="import-route-guidance" aria-labelledby="import-route-guidance-title">
-      <div>
-        <h2 id="import-route-guidance-title">导入范围</h2>
-        <p>一次只处理一个门店、一个月份的月度汇总。上传后将先校验门店、月份、字段和已有记录，再由财务确认是否写入。</p>
-      </div>
-      <ol>
-        <li>选择要处理的门店和月份</li>
-        <li>上传 Excel 或 CSV 并查看识别结果</li>
-        <li>核对覆盖摘要后确认导入</li>
-      </ol>
-    </section>
-
-    <div v-else class="entry-workspace">
+    <div class="entry-workspace">
       <form class="entry-sheet" novalidate @submit.prevent="save">
         <section class="entry-section">
           <div class="entry-section__head">
@@ -875,7 +901,7 @@ watch(
     </div>
 
     <Teleport to="body">
-      <div v-if="!isFinanceImportRoute && historyDrawerOpen" class="history-drawer-backdrop" @click.self="historyDrawerOpen = false">
+      <div v-if="historyDrawerOpen" class="history-drawer-backdrop" @click.self="historyDrawerOpen = false">
         <section class="history-drawer" role="dialog" aria-modal="true" aria-labelledby="history-drawer-title">
           <header class="history-drawer__head">
             <div>
@@ -938,71 +964,15 @@ watch(
   color: var(--entry-ink);
 }
 
+.desktop-workflow-notice {
+  display: none;
+}
+
 .entry-toolbar {
   padding: 16px;
   border: 1px solid var(--entry-line);
   border-radius: var(--entry-radius);
   background: var(--entry-surface);
-}
-
-.import-route-guidance {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.7fr);
-  align-items: start;
-  gap: 24px;
-  padding: 24px;
-  border: 1px solid var(--entry-line);
-  border-radius: var(--entry-radius);
-  background: var(--entry-surface);
-}
-
-.import-route-guidance h2 {
-  margin: 0;
-  color: var(--entry-ink);
-  font-size: 16px;
-  font-weight: 700;
-}
-
-.import-route-guidance p {
-  max-width: 680px;
-  margin: 8px 0 0;
-  color: var(--entry-muted);
-  font-size: 14px;
-  line-height: 1.65;
-}
-
-.import-route-guidance ol {
-  display: grid;
-  gap: 10px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  counter-reset: import-step;
-}
-
-.import-route-guidance li {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--entry-ink);
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.import-route-guidance li::before {
-  display: inline-flex;
-  width: 22px;
-  height: 22px;
-  flex: 0 0 22px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: var(--entry-primary-soft);
-  color: var(--entry-primary);
-  content: counter(import-step);
-  counter-increment: import-step;
-  font-size: 12px;
-  font-weight: 700;
 }
 
 .entry-toolbar__fields {
@@ -1148,6 +1118,14 @@ watch(
   height: 40px;
   padding: 0;
   border-radius: var(--entry-radius);
+}
+
+.tool-icon-button .is-spinning {
+  animation: entry-refresh-spin 0.8s linear infinite;
+}
+
+@keyframes entry-refresh-spin {
+  to { transform: rotate(360deg); }
 }
 
 .tool-button,
@@ -1741,8 +1719,7 @@ watch(
   }
 
   .entry-toolbar__fields,
-  .entry-summary-column,
-  .import-route-guidance {
+  .entry-summary-column {
     grid-template-columns: 1fr;
   }
 
@@ -1783,6 +1760,25 @@ watch(
 
   .history-drawer__row em {
     display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .desktop-workflow-notice {
+    display: grid;
+    gap: var(--space-1);
+    padding: var(--space-3);
+    border: 1px solid #efd19f;
+    border-radius: var(--entry-radius);
+    background: #fff8ed;
+    color: #73450f;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .desktop-workflow-notice strong {
+    color: #73450f;
+    font-size: 14px;
   }
 }
 

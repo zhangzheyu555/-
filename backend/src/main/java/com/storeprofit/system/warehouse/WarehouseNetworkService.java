@@ -6,6 +6,7 @@ import com.storeprofit.system.platform.auth.AuthUser;
 import com.storeprofit.system.warehouse.WarehouseTopologyRepository.BatchRow;
 import com.storeprofit.system.warehouse.WarehouseTopologyRepository.FacilityRow;
 import com.storeprofit.system.warehouse.WarehouseTopologyRepository.InventoryRow;
+import com.storeprofit.system.warehouse.WarehouseTopologyRepository.TransferMaterialRow;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
@@ -48,6 +49,34 @@ public class WarehouseNetworkService {
     return topology.visibleFacilities(user);
   }
 
+  /**
+   * Returns a server-authoritative transfer workbench context for one selected warehouse.
+   * Availability is intentionally non-locking; create/review/ship still perform transactional
+   * topology, idempotency and inventory checks.
+   */
+  public WarehouseTransferContextResponse transferContext(AuthUser user, Long warehouseId) {
+    WarehouseTopologyService.TransferContext context = topology.resolveTransferContext(user, warehouseId);
+    List<WarehouseTransferContextResponse.Route> routes = context.routes().stream()
+        .map(route -> new WarehouseTransferContextResponse.Route(
+            ref(route.sourceWarehouse()),
+            ref(route.targetWarehouse()),
+            route.formAction(),
+            route.workbenchLabel(),
+            actions(route.actions()),
+            route.actions().canCreate()
+                ? transferMaterials(user.tenantId(), route.sourceWarehouse().id())
+                : List.of()
+        ))
+        .toList();
+    return new WarehouseTransferContextResponse(
+        ref(context.currentWarehouse()),
+        context.mode(),
+        context.workbenchLabel(),
+        routes,
+        transferTodos(user, context.currentWarehouse().id(), context.routes())
+    );
+  }
+
   public List<WarehouseTransferResponse> transfers(AuthUser user, Long warehouseId) {
     // Transfer responses include inventory cost. Store read permission is intentionally insufficient.
     accessControl.requireWarehouseRead(user);
@@ -77,7 +106,7 @@ public class WarehouseNetworkService {
     String clientRequestId = requiredKey(request.clientRequestId());
     FacilityRow source = requireFacility(user.tenantId(), request.sourceWarehouseId());
     FacilityRow target = requireFacility(user.tenantId(), request.targetWarehouseId());
-    topology.requireTransferRequest(user, source, target);
+    topology.requireTransferRequestAuthorization(user, source, target);
 
     var duplicate = repository.transferByCreateKey(user.tenantId(), clientRequestId);
     if (duplicate.isPresent()) {
@@ -88,6 +117,7 @@ public class WarehouseNetworkService {
       }
       return existing;
     }
+    topology.requireTransferRoute(user, source, target, "创建仓间调拨");
 
     if (request.lines() == null || request.lines().isEmpty()) {
       throw badRequest("TRANSFER_LINES_REQUIRED", "请至少添加一项调拨物料");
@@ -124,11 +154,12 @@ public class WarehouseNetworkService {
     WarehouseTransferResponse current = requireTransfer(user.tenantId(), transferId, true);
     FacilityRow source = requireFacility(user.tenantId(), current.sourceWarehouseId());
     FacilityRow target = requireFacility(user.tenantId(), current.targetWarehouseId());
-    topology.requireTransferRequest(user, source, target);
+    topology.requireTransferRequestAuthorization(user, source, target);
     String key = actionKey(transferId, "SUBMIT", request == null ? null : request.clientRequestId());
     if (isRepeatedAction(user.tenantId(), transferId, "SUBMIT", key)) {
       return requireTransfer(user.tenantId(), transferId, false);
     }
+    topology.requireTransferRoute(user, source, target, "提交仓间调拨");
     if (!"DRAFT".equals(current.status())) {
       throw statusConflict("只有草稿调拨单可以提交");
     }
@@ -143,13 +174,14 @@ public class WarehouseNetworkService {
     WarehouseTransferResponse current = requireTransfer(user.tenantId(), transferId, true);
     FacilityRow source = requireFacility(user.tenantId(), current.sourceWarehouseId());
     FacilityRow target = requireFacility(user.tenantId(), current.targetWarehouseId());
-    topology.requireTransferApprove(user, source, target);
+    topology.requireTransferApproveAuthorization(user, source, target);
     boolean approved = Boolean.TRUE.equals(request.approved());
     String action = approved ? "APPROVE" : "REJECT";
     String key = actionKey(transferId, action, null);
     if (isRepeatedAction(user.tenantId(), transferId, action, key)) {
       return requireTransfer(user.tenantId(), transferId, false);
     }
+    topology.requireTransferRoute(user, source, target, "审批仓间调拨");
     if (!"SUBMITTED".equals(current.status())) {
       throw statusConflict("只有已提交的调拨单可以审批");
     }
@@ -195,11 +227,12 @@ public class WarehouseNetworkService {
     WarehouseTransferResponse current = requireTransfer(user.tenantId(), transferId, true);
     FacilityRow source = requireFacility(user.tenantId(), current.sourceWarehouseId());
     FacilityRow target = requireFacility(user.tenantId(), current.targetWarehouseId());
-    topology.requireTransferShip(user, source, target);
+    topology.requireTransferShipAuthorization(user, source, target);
     String key = actionKey(transferId, "SHIP", request == null ? null : request.clientRequestId());
     if (isRepeatedAction(user.tenantId(), transferId, "SHIP", key)) {
       return requireTransfer(user.tenantId(), transferId, false);
     }
+    topology.requireTransferRoute(user, source, target, "仓间调拨发货");
     if (!"APPROVED".equals(current.status())) {
       throw statusConflict("只有已批准的调拨单可以发货");
     }
@@ -246,25 +279,26 @@ public class WarehouseNetworkService {
     WarehouseTransferResponse current = requireTransfer(user.tenantId(), transferId, true);
     FacilityRow source = requireFacility(user.tenantId(), current.sourceWarehouseId());
     FacilityRow target = requireFacility(user.tenantId(), current.targetWarehouseId());
-    topology.requireTransferReceive(user, source, target);
+    topology.requireTransferReceiveAuthorization(user, source, target);
     if ("RECEIVED".equals(current.status())) {
       return current;
     }
     if (!List.of("SHIPPED", "PARTIALLY_RECEIVED").contains(current.status())) {
       throw statusConflict("只有运输中的调拨单可以确认收货");
     }
+    String suppliedKey = request == null ? null : request.clientRequestId();
+    String key = actionKey(transferId, "RECEIVE", suppliedKey);
+    if (isRepeatedAction(user.tenantId(), transferId, "RECEIVE", key)) {
+      return requireTransfer(user.tenantId(), transferId, false);
+    }
+    topology.requireTransferRoute(user, source, target, "确认仓间调拨收货");
     Map<Long, BigDecimal> requested = receiveQuantities(current, request);
     boolean partial = requested.entrySet().stream().anyMatch(entry -> {
       WarehouseTransferLineResponse line = line(current, entry.getKey());
       return entry.getValue().compareTo(line.inTransitQuantity()) < 0;
     });
-    String suppliedKey = request == null ? null : request.clientRequestId();
     if (partial && (suppliedKey == null || suppliedKey.isBlank())) {
       throw badRequest("IDEMPOTENCY_KEY_REQUIRED", "部分收货必须提供请求编号");
-    }
-    String key = actionKey(transferId, "RECEIVE", suppliedKey);
-    if (isRepeatedAction(user.tenantId(), transferId, "RECEIVE", key)) {
-      return requireTransfer(user.tenantId(), transferId, false);
     }
 
     Map<Long, BigDecimal> remainingAfter = new HashMap<>();
@@ -312,7 +346,7 @@ public class WarehouseNetworkService {
     WarehouseTransferResponse current = requireTransfer(user.tenantId(), transferId, true);
     FacilityRow source = requireFacility(user.tenantId(), current.sourceWarehouseId());
     FacilityRow target = requireFacility(user.tenantId(), current.targetWarehouseId());
-    topology.requireTransferRequest(user, source, target);
+    topology.requireTransferRequestAuthorization(user, source, target);
     if ("CANCELLED".equals(current.status())) {
       return current;
     }
@@ -320,6 +354,7 @@ public class WarehouseNetworkService {
     if (isRepeatedAction(user.tenantId(), transferId, "CANCEL", key)) {
       return requireTransfer(user.tenantId(), transferId, false);
     }
+    topology.requireTransferRoute(user, source, target, "取消仓间调拨");
     if (!List.of("DRAFT", "SUBMITTED", "APPROVED").contains(current.status())) {
       throw statusConflict("当前调拨状态不能取消");
     }
@@ -372,6 +407,94 @@ public class WarehouseNetworkService {
       throw conflict("WAREHOUSE_BATCH_STOCK_INCONSISTENT", line.itemName() + "批次库存与库存汇总不一致");
     }
     return value.divide(quantity, 4, RoundingMode.HALF_UP);
+  }
+
+  private WarehouseTransferContextResponse.WarehouseRef ref(FacilityRow facility) {
+    return new WarehouseTransferContextResponse.WarehouseRef(
+        facility.id(), facility.code(), facility.name());
+  }
+
+  private WarehouseTransferContextResponse.Actions actions(
+      WarehouseTopologyService.TransferActions actions
+  ) {
+    return new WarehouseTransferContextResponse.Actions(
+        actions.canCreate(),
+        actions.canSubmit(),
+        actions.canApprove(),
+        actions.canReject(),
+        actions.canShip(),
+        actions.canReceive(),
+        actions.canCancel()
+    );
+  }
+
+  private List<WarehouseTransferContextResponse.Material> transferMaterials(
+      long tenantId,
+      long sourceWarehouseId
+  ) {
+    return repository.transferMaterials(tenantId, sourceWarehouseId).stream()
+        .map(this::material)
+        .toList();
+  }
+
+  private WarehouseTransferContextResponse.Material material(TransferMaterialRow row) {
+    String shortageMessage = row.availableQuantity().signum() <= 0
+        ? "当前可发数量为 0，库存不足"
+        : null;
+    return new WarehouseTransferContextResponse.Material(
+        row.itemId(), row.itemName(), row.itemCode(), row.unit(), row.availableQuantity(), shortageMessage);
+  }
+
+  private WarehouseTransferContextResponse.Todos transferTodos(
+      AuthUser user,
+      long currentWarehouseId,
+      List<WarehouseTopologyService.TransferRoute> effectiveRoutes
+  ) {
+    int draft = 0;
+    int pendingApproval = 0;
+    int pendingShipment = 0;
+    int pendingReceipt = 0;
+    int completed = 0;
+    for (WarehouseTransferResponse transfer : repository.transfers(user.tenantId())) {
+      boolean source = transfer.sourceWarehouseId() == currentWarehouseId;
+      boolean target = transfer.targetWarehouseId() == currentWarehouseId;
+      if (!source && !target) {
+        continue;
+      }
+      WarehouseTopologyService.TransferRoute route = effectiveRoutes.stream()
+          .filter(candidate -> candidate.sourceWarehouse().id() == transfer.sourceWarehouseId()
+              && candidate.targetWarehouse().id() == transfer.targetWarehouseId())
+          .findFirst()
+          .orElse(null);
+      switch (transfer.status()) {
+        case "DRAFT" -> {
+          if (route != null && route.actions().canSubmit()) {
+            draft++;
+          }
+        }
+        case "SUBMITTED" -> {
+          if (source && route != null && route.actions().canApprove()) {
+            pendingApproval++;
+          }
+        }
+        case "APPROVED" -> {
+          if (source && route != null && route.actions().canShip()) {
+            pendingShipment++;
+          }
+        }
+        case "SHIPPED", "PARTIALLY_RECEIVED" -> {
+          if (target && route != null && route.actions().canReceive()) {
+            pendingReceipt++;
+          }
+        }
+        case "RECEIVED" -> completed++;
+        default -> {
+          // Rejected and cancelled transfers are history, not current workbench todos.
+        }
+      }
+    }
+    return new WarehouseTransferContextResponse.Todos(
+        draft, pendingApproval, pendingShipment, pendingReceipt, completed);
   }
 
   private BigDecimal consumeReservedBatches(

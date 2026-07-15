@@ -10,9 +10,10 @@
    - 虚拟环境放在仓库外，避免 PyTorch 在 Windows 深层目录中触发路径过长错误
    - 以后每次双击直接启动，几秒就好
 3. 看到 `Uvicorn running on http://127.0.0.1:8000` 即成功，**这个窗口别关**
-4. 再启动 Java 后端（backend 目录，需要 JDK21+Maven，没装 MySQL 就用：
-   `mvn spring-boot:run -Dspring-boot.run.profiles=local`）
-5. 浏览器打开 `http://127.0.0.1:8080/index.html` → 督导巡店 → 发起巡检 → 拖入照片
+4. 启动 Java 后端，并按项目的环境变量配置连接隔离 MySQL；不要使用旧 HTML 或浏览器本地数据作为正式入口。
+5. 启动 Vue3 前端：进入 `frontend-vue` 后执行 `npm run dev`；登录后打开“督导巡店 → 发起巡检”（开发环境默认地址为 `http://127.0.0.1:5173/operations/inspection/tasks`）。
+
+生产部署以 [Vue3 生产部署说明](../docs/vue3-production-deployment.md) 和 [Vue3 Nginx 配置](../docs/nginx-vue3-ai-profit-os.conf) 为准；本识别服务只提供受后端保护的识别能力，不能直接作为业务系统入口。
 
 > 以上步骤可以直接把本 README 丢给 Codex/AI 助手让它代劳。
 

@@ -20,9 +20,23 @@ export default defineConfig({
     video: 'off',
   },
   projects: [
+    // Keep the existing project id for CI and local command compatibility.
+    // It is the Desktop Chrome release profile.
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'iphone-390',
+      use: { ...devices['iPhone 13'] },
+    },
+    {
+      name: 'android-412',
+      use: { ...devices['Pixel 7'] },
+    },
+    {
+      name: 'ipad-768',
+      use: { ...devices['iPad Mini'] },
     },
   ],
 })

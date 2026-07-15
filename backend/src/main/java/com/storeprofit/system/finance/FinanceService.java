@@ -133,6 +133,13 @@ public class FinanceService {
     if (!financeRepository.storeExists(user.tenantId(), targetStoreId)) {
       throw new BusinessException("STORE_NOT_FOUND", "门店不存在或不属于当前企业，不能保存利润数据", HttpStatus.BAD_REQUEST);
     }
+    Long actualBrandId = financeRepository.storeBrandId(user.tenantId(), targetStoreId)
+        .orElseThrow(() -> new BusinessException(
+            "STORE_BRAND_REQUIRED", "门店尚未归属有效品牌，不能保存经营数据", HttpStatus.BAD_REQUEST));
+    if (request.brandId() != null && !actualBrandId.equals(request.brandId())) {
+      throw new BusinessException(
+          "STORE_BRAND_MISMATCH", "所选品牌与门店归属不一致，不能保存经营数据", HttpStatus.BAD_REQUEST);
+    }
     ProfitEntryRequest normalized = new ProfitEntryRequest(
         targetStoreId,
         normalizeMonth(request.month()),
@@ -152,7 +159,8 @@ public class FinanceService {
         request.repair(),
         request.equip(),
         request.expOther(),
-        request.note()
+        request.note(),
+        actualBrandId
     );
     financeRepository.upsert(user.tenantId(), normalized, user.id());
     financeRepository.logSave(user.tenantId(), user.id(), user.displayName(), normalized.storeId(), normalized.month());

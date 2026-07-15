@@ -82,6 +82,26 @@ public class WarehouseTopologyRepository {
     return count != null && count > 0;
   }
 
+  /**
+   * Read-time material availability for a transfer source warehouse. This deliberately does not
+   * lock inventory: the result is only a workbench hint and the approval transaction locks and
+   * rechecks the same inventory rows before reserving stock.
+   */
+  public List<TransferMaterialRow> transferMaterials(long tenantId, long sourceWarehouseId) {
+    return jdbcTemplate.query("""
+        select i.id as item_id, i.code, i.name, coalesce(i.stock_unit, i.unit, '件') as unit,
+               coalesce(inventory.on_hand_quantity, 0) - coalesce(inventory.reserved_quantity, 0)
+                 as available_quantity
+        from warehouse_item i
+        left join warehouse_inventory inventory
+          on inventory.tenant_id = i.tenant_id
+         and inventory.warehouse_id = ?
+         and inventory.item_id = i.id
+        where i.tenant_id = ? and i.active = 1
+        order by i.sort_order, i.code, i.id
+        """, this::mapTransferMaterial, sourceWarehouseId, tenantId);
+  }
+
   public List<WarehouseTransferResponse> transfers(long tenantId) {
     List<TransferHeaderRow> headers = jdbcTemplate.query("""
         select t.id, t.transfer_no, t.status, t.source_warehouse_id, source.name as source_name,
@@ -104,11 +124,42 @@ public class WarehouseTopologyRepository {
         where t.tenant_id = ?
         order by t.created_at desc, t.id desc
         """, this::mapTransferHeader, tenantId);
+    // Batch-fetch all lines in a single query instead of N+1 per header
+    java.util.Map<String, java.util.List<WarehouseTransferLineResponse>> linesByTransfer =
+        batchTransferLines(tenantId);
     ArrayList<WarehouseTransferResponse> rows = new ArrayList<>();
     for (TransferHeaderRow header : headers) {
-      rows.add(toResponse(header, transferLines(tenantId, header.id())));
+      rows.add(toResponse(header,
+          linesByTransfer.getOrDefault(header.id(), java.util.List.of())));
     }
     return List.copyOf(rows);
+  }
+
+  /**
+   * Returns ALL transfer lines for a tenant in a single query, keyed by transfer_order_id.
+   * Eliminates the N+1 query problem in {@link #transfers(long)}.
+   */
+  private java.util.Map<String, java.util.List<WarehouseTransferLineResponse>> batchTransferLines(
+      long tenantId
+  ) {
+    List<TransferLineRow> rows = jdbcTemplate.query("""
+        select l.transfer_order_id, l.id, l.item_id, i.name as item_name,
+               coalesce(i.stock_unit, i.unit, '件') as unit,
+               l.requested_quantity, l.approved_quantity, l.reserved_quantity,
+               l.shipped_quantity, l.received_quantity, l.in_transit_quantity,
+               l.unit_cost, l.amount, l.note
+        from warehouse_transfer_line l
+        join warehouse_item i on i.tenant_id = l.tenant_id and i.id = l.item_id
+        where l.tenant_id = ?
+        order by l.transfer_order_id, l.id
+        """, this::mapTransferLineRow, tenantId);
+    java.util.Map<String, java.util.List<WarehouseTransferLineResponse>> result =
+        new java.util.LinkedHashMap<>();
+    for (TransferLineRow row : rows) {
+      result.computeIfAbsent(row.transferOrderId, k -> new java.util.ArrayList<>())
+          .add(row.line);
+    }
+    return result;
   }
 
   public Optional<WarehouseTransferResponse> transfer(long tenantId, String transferId) {
@@ -486,6 +537,16 @@ public class WarehouseTopologyRepository {
     );
   }
 
+  private TransferMaterialRow mapTransferMaterial(ResultSet rs, int rowNum) throws SQLException {
+    return new TransferMaterialRow(
+        rs.getLong("item_id"),
+        rs.getString("code"),
+        rs.getString("name"),
+        rs.getString("unit"),
+        amount(rs.getBigDecimal("available_quantity"))
+    );
+  }
+
   private StoreSupplyRow mapStoreSupply(ResultSet rs, int rowNum) throws SQLException {
     Long warehouseId = rs.getObject("warehouse_id", Long.class);
     FacilityRow facility = warehouseId == null ? null : new FacilityRow(
@@ -499,6 +560,11 @@ public class WarehouseTopologyRepository {
         rs.getString("store_id"), rs.getString("store_name"), rs.getString("store_status"),
         rs.getString("region_code"), facility
     );
+  }
+
+  private TransferLineRow mapTransferLineRow(ResultSet rs, int rowNum) throws SQLException {
+    return new TransferLineRow(
+        rs.getString("transfer_order_id"), mapTransferLine(rs, rowNum));
   }
 
   private TransferHeaderRow mapTransferHeader(ResultSet rs, int rowNum) throws SQLException {
@@ -597,6 +663,21 @@ public class WarehouseTopologyRepository {
       String status,
       String regionCode,
       FacilityRow warehouse
+  ) {
+  }
+
+  public record TransferMaterialRow(
+      long itemId,
+      String itemCode,
+      String itemName,
+      String unit,
+      BigDecimal availableQuantity
+  ) {
+  }
+
+  private record TransferLineRow(
+      String transferOrderId,
+      WarehouseTransferLineResponse line
   ) {
   }
 

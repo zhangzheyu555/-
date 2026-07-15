@@ -65,9 +65,17 @@ function fileSize(value?: number) {
 </script>
 
 <template>
-  <div class="attachment-uploader">
-    <label class="upload-button">
-      <input type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" multiple :disabled="uploading" @change="onFileChange" />
+  <div class="attachment-uploader" :aria-busy="uploading">
+    <label class="upload-button" :class="{ 'upload-button--busy': uploading }">
+      <input
+        type="file"
+        accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
+        capture="environment"
+        multiple
+        :disabled="uploading"
+        aria-label="上传巡检图片或附件"
+        @change="onFileChange"
+      />
       <Upload :size="16" />
       {{ uploading ? '正在上传...' : '上传图片/附件' }}
     </label>
@@ -91,22 +99,41 @@ function fileSize(value?: number) {
 }
 
 .upload-button {
+  position: relative;
   width: fit-content;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-height: 38px;
+  min-height: 44px;
   padding: 8px 12px;
   border: 1px solid var(--primary);
   border-radius: 10px;
   background: var(--primary-soft);
   color: var(--primary-dark);
   font-weight: 900;
+  cursor: pointer;
 }
 
 .upload-button input {
-  display: none;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.upload-button:focus-within {
+  outline: 3px solid rgba(39, 107, 101, 0.22);
+  outline-offset: 2px;
+}
+
+.upload-button--busy {
+  cursor: wait;
 }
 
 .attachment-list {
@@ -140,10 +167,11 @@ function fileSize(value?: number) {
 
 .icon-button {
   display: inline-flex;
+  flex: 0 0 44px;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 44px;
+  height: 44px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;

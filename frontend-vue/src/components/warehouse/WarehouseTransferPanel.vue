@@ -1,25 +1,22 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { Plus, Trash2 } from 'lucide-vue-next'
 import StatusBadge from '../common/StatusBadge.vue'
-import type { WarehouseInfo, WarehouseItem, WarehouseTransfer, WarehouseTransferCreatePayload } from '../../api/warehouse'
+import type {
+  WarehouseTransfer,
+  WarehouseTransferContext,
+  WarehouseTransferCreatePayload,
+  WarehouseTransferMaterial,
+  WarehouseTransferRoute,
+  WarehouseTransferRouteActions,
+} from '../../api/warehouse'
 
 const props = withDefaults(defineProps<{
   transfers: WarehouseTransfer[]
-  warehouses: WarehouseInfo[]
-  items: WarehouseItem[]
-  activeWarehouse?: WarehouseInfo | null
-  canRequest?: boolean
-  canApprove?: boolean
-  canShip?: boolean
-  canReceive?: boolean
+  context?: WarehouseTransferContext | null
   actioningId?: string
 }>(), {
-  activeWarehouse: null,
-  canRequest: false,
-  canApprove: false,
-  canShip: false,
-  canReceive: false,
+  context: null,
   actioningId: '',
 })
 
@@ -39,17 +36,83 @@ interface DraftLine {
   note: string
 }
 
+type TransferAction = keyof WarehouseTransferRouteActions
+
 const draft = reactive({ note: '', lines: [] as DraftLine[] })
 const expandedId = ref('')
-const centralWarehouse = computed(() => props.warehouses.find((warehouse) => warehouse.type === 'CENTRAL') || null)
-const targetWarehouse = computed(() => (
-  props.activeWarehouse?.type === 'REGIONAL'
-    ? props.activeWarehouse
-    : props.warehouses.find((warehouse) => warehouse.type === 'REGIONAL') || null
+const selectedRouteKey = ref('')
+const routes = computed(() => props.context?.routes || [])
+const createRoutes = computed(() => (
+  props.context?.mode === 'NONE' ? [] : routes.value.filter((route) => route.actions.canCreate)
 ))
-const sourceWarehouseId = computed(() => centralWarehouse.value?.id || targetWarehouse.value?.parentWarehouseId || null)
-const sourceWarehouseName = computed(() => centralWarehouse.value?.name || targetWarehouse.value?.parentWarehouseName || '荆州总仓')
-const activeItems = computed(() => props.items.filter((item) => item.active !== false))
+const activeRoute = computed(() => (
+  createRoutes.value.find((route) => routeKey(route) === selectedRouteKey.value)
+  || createRoutes.value[0]
+  || null
+))
+const isProactiveAllocation = computed(() => props.context?.mode === 'PROACTIVE_ALLOCATION')
+const visibleTransfers = computed(() => {
+  const warehouseId = props.context?.currentWarehouse?.id
+  if (warehouseId === undefined || warehouseId === null) return props.transfers
+  return props.transfers.filter((row) => (
+    String(row.sourceWarehouseId) === String(warehouseId)
+    || String(row.targetWarehouseId) === String(warehouseId)
+  ))
+})
+const formTitle = computed(() => (
+  activeRoute.value?.workbenchLabel
+  || props.context?.workbenchLabel
+  || (isProactiveAllocation.value ? '向分仓主动配货' : '向上级总仓申请补货')
+))
+const formHint = computed(() => (
+  isProactiveAllocation.value
+    ? '调出仓固定为当前总仓；请选择后端授权的直属分仓后填写配货明细。'
+    : '来源和目标仓由后端有效路线固定，提交后由上级仓审批和发货。'
+))
+const listHint = computed(() => (
+  isProactiveAllocation.value
+    ? '当前总仓视角：处理待审批、待发货，并可主动向直属分仓配货。'
+    : '当前分仓视角：跟进草稿、待收货和已完成调拨。'
+))
+const todoCards = computed(() => {
+  const todos = props.context?.todos || {}
+  if (isProactiveAllocation.value) {
+    return [
+      { key: 'draft', label: '主动配货草稿', value: todos.draft || 0 },
+      { key: 'pending-approval', label: '待审批', value: todos.pendingApproval || 0 },
+      { key: 'pending-shipment', label: '待发货', value: todos.pendingShipment || 0 },
+    ]
+  }
+  return [
+    { key: 'draft', label: '草稿', value: todos.draft || 0 },
+    { key: 'pending-receipt', label: '待收货', value: todos.pendingReceipt || 0 },
+    { key: 'completed', label: '已完成', value: todos.completed || 0 },
+  ]
+})
+
+watch(
+  () => createRoutes.value.map((route) => routeKey(route)).join('|'),
+  () => {
+    if (!createRoutes.value.some((route) => routeKey(route) === selectedRouteKey.value)) {
+      selectedRouteKey.value = createRoutes.value[0] ? routeKey(createRoutes.value[0]) : ''
+      resetDraft()
+    }
+  },
+  { immediate: true },
+)
+
+watch(selectedRouteKey, (current, previous) => {
+  if (previous && current !== previous) resetDraft()
+})
+
+function routeKey(route: WarehouseTransferRoute) {
+  return `${route.sourceWarehouse.id}:${route.targetWarehouse.id}`
+}
+
+function resetDraft() {
+  draft.note = ''
+  draft.lines.splice(0)
+}
 
 function addLine() {
   draft.lines.push({ itemId: 0, quantity: 1, note: '' })
@@ -59,8 +122,20 @@ function removeLine(index: number) {
   draft.lines.splice(index, 1)
 }
 
+function materialFor(line: DraftLine): WarehouseTransferMaterial | null {
+  return activeRoute.value?.materials.find((item) => item.itemId === Number(line.itemId)) || null
+}
+
+function shortageFor(line: DraftLine) {
+  const material = materialFor(line)
+  if (!material) return line.itemId ? '该物料不在当前有效调拨路线内，请重新选择。' : ''
+  if (Number(line.quantity) <= Number(material.availableQuantity)) return ''
+  return material.shortageMessage || `当前可发数量为 ${qty(material.availableQuantity, material.unit)}，请调整数量或等待补货。`
+}
+
 function createDraft() {
-  if (!sourceWarehouseId.value || !targetWarehouse.value) return
+  const route = activeRoute.value
+  if (!route || !route.actions.canCreate) return
   const lines = draft.lines
     .filter((line) => line.itemId && Number(line.quantity) > 0)
     .map((line) => ({
@@ -70,21 +145,44 @@ function createDraft() {
     }))
   if (!lines.length) return
   emit('create', {
-    sourceWarehouseId: sourceWarehouseId.value,
-    targetWarehouseId: targetWarehouse.value.id,
+    sourceWarehouseId: route.sourceWarehouse.id,
+    targetWarehouseId: route.targetWarehouse.id,
     lines,
     note: draft.note.trim() || undefined,
     clientRequestId: `transfer-${crypto.randomUUID().replace(/-/g, '')}`,
   })
-  draft.note = ''
-  draft.lines.splice(0)
+  resetDraft()
+}
+
+function routeFor(row: WarehouseTransfer) {
+  return routes.value.find((route) => (
+    String(route.sourceWarehouse.id) === String(row.sourceWarehouseId)
+    && String(route.targetWarehouse.id) === String(row.targetWarehouseId)
+  )) || null
+}
+
+function canAction(row: WarehouseTransfer, action: TransferAction) {
+  const mode = props.context?.mode
+  const allowedByWorkbench = mode === 'PROACTIVE_ALLOCATION'
+    ? ['canCreate', 'canSubmit', 'canCancel', 'canApprove', 'canReject', 'canShip'].includes(action)
+    : mode === 'REQUEST_REPLENISHMENT'
+      ? ['canCreate', 'canSubmit', 'canReceive', 'canCancel'].includes(action)
+      : false
+  return allowedByWorkbench && Boolean(routeFor(row)?.actions[action])
+}
+
+function isMyTodo(row: WarehouseTransfer) {
+  return (row.status === 'DRAFT' && canAction(row, 'canSubmit'))
+    || (row.status === 'SUBMITTED' && (canAction(row, 'canApprove') || canAction(row, 'canReject')))
+    || (row.status === 'APPROVED' && canAction(row, 'canShip'))
+    || (['SHIPPED', 'PARTIALLY_RECEIVED'].includes(row.status) && canAction(row, 'canReceive'))
 }
 
 function statusLabel(row: WarehouseTransfer) {
   const labels: Record<string, string> = {
     DRAFT: '草稿',
-    SUBMITTED: '待荆州审批',
-    APPROVED: '待荆州发货',
+    SUBMITTED: '待审批',
+    APPROVED: '待发货',
     REJECTED: '已驳回',
     SHIPPED: '在途',
     PARTIALLY_RECEIVED: '部分收货',
@@ -113,13 +211,48 @@ function detailText(row: WarehouseTransfer) {
 
 <template>
   <div class="transfer-stack">
-    <form v-if="canRequest" class="content-card transfer-form" @submit.prevent="createDraft">
+    <section v-if="context" class="content-card transfer-todos" aria-label="调拨待办">
+      <div class="table-heading">
+        <div>
+          <h3>当前仓库待办</h3>
+          <span>{{ listHint }}</span>
+        </div>
+      </div>
+      <div class="transfer-todo-grid">
+        <div v-for="todo in todoCards" :key="todo.key" class="transfer-todo-card">
+          <span>{{ todo.label }}</span>
+          <b>{{ todo.value }}</b>
+        </div>
+      </div>
+    </section>
+
+    <form v-if="activeRoute && activeRoute.actions.canCreate" class="content-card transfer-form" @submit.prevent="createDraft">
       <div class="table-heading transfer-heading">
         <div>
-          <h3>向荆州总仓申请补货</h3>
-          <span>{{ sourceWarehouseName }} → {{ targetWarehouse?.name || '山东分仓' }}，路线由系统固定。</span>
+          <h3>{{ formTitle }}</h3>
+          <span>{{ formHint }}</span>
         </div>
         <button class="mini-button" type="button" @click="addLine"><Plus :size="15" />增加物料</button>
+      </div>
+      <div class="transfer-route-fields" aria-label="调拨路线">
+        <label>
+          调出仓
+          <input :value="activeRoute.sourceWarehouse.name" readonly aria-label="调出仓" />
+        </label>
+        <span class="route-arrow" aria-hidden="true">→</span>
+        <label>
+          调入仓
+          <select
+            v-if="isProactiveAllocation"
+            v-model="selectedRouteKey"
+            aria-label="调入仓"
+          >
+            <option v-for="route in createRoutes" :key="routeKey(route)" :value="routeKey(route)">
+              {{ route.targetWarehouse.name }}
+            </option>
+          </select>
+          <input v-else :value="activeRoute.targetWarehouse.name" readonly aria-label="调入仓" />
+        </label>
       </div>
       <div v-if="draft.lines.length" class="transfer-lines">
         <div v-for="(line, index) in draft.lines" :key="index" class="transfer-line">
@@ -127,11 +260,17 @@ function detailText(row: WarehouseTransfer) {
             物料
             <select v-model.number="line.itemId" required aria-label="调拨物料">
               <option :value="0" disabled>请选择物料</option>
-              <option v-for="item in activeItems" :key="item.id" :value="item.id">{{ item.name }} · {{ item.code }}</option>
+              <option v-for="item in activeRoute.materials" :key="item.itemId" :value="item.itemId">
+                {{ item.itemName }}{{ item.itemCode ? ` · ${item.itemCode}` : '' }} · 可发 {{ qty(item.availableQuantity, item.unit) }}
+              </option>
             </select>
+            <small v-if="materialFor(line)" :class="{ 'stock-shortage': shortageFor(line) }">
+              实时可发 {{ qty(materialFor(line)?.availableQuantity, materialFor(line)?.unit) }}
+            </small>
+            <small v-if="shortageFor(line)" class="stock-shortage">{{ shortageFor(line) }}</small>
           </label>
           <label>
-            申请数量
+            {{ isProactiveAllocation ? '配货数量' : '申请数量' }}
             <input v-model.number="line.quantity" type="number" min="0.01" step="0.01" required aria-label="调拨数量" />
           </label>
           <label>
@@ -141,14 +280,18 @@ function detailText(row: WarehouseTransfer) {
           <button class="icon-button remove-line" type="button" aria-label="删除调拨物料" @click="removeLine(index)"><Trash2 :size="15" /></button>
         </div>
       </div>
-      <div v-else class="inline-empty">点击“增加物料”填写山东分仓补货需求。</div>
-      <label class="transfer-note">申请说明<input v-model="draft.note" placeholder="补货原因或到货要求（选填）" /></label>
+      <div v-else class="inline-empty">点击“增加物料”填写当前有效路线的调拨明细。</div>
+      <label class="transfer-note">调拨说明<input v-model="draft.note" placeholder="补货原因、配货说明或到货要求（选填）" /></label>
       <button class="primary-button transfer-submit" type="submit" :disabled="!draft.lines.length || Boolean(actioningId)">保存调拨草稿</button>
     </form>
 
+    <section v-else-if="context && context.mode !== 'NONE'" class="content-card inline-empty">
+      当前账号可以查看该仓库调拨记录，但没有可新建的有效调拨路线。
+    </section>
+
     <section class="content-card transfer-list">
       <div class="table-heading">
-        <div><h3>仓间调拨</h3><span>山东申请，荆州审批发货，山东确认收货。</span></div>
+        <div><h3>仓间调拨</h3><span>{{ context ? listHint : '正在读取当前仓库的调拨上下文。' }}</span></div>
       </div>
       <div class="table-wrap">
         <table>
@@ -164,9 +307,13 @@ function detailText(row: WarehouseTransfer) {
             </tr>
           </thead>
           <tbody>
-            <template v-for="row in transfers" :key="row.id">
+            <template v-for="row in visibleTransfers" :key="row.id">
               <tr>
-                <td><b>{{ row.transferNo || row.id }}</b><small>{{ row.note || '内部调拨' }}</small></td>
+                <td>
+                  <b>{{ row.transferNo || row.id }}</b>
+                  <small>{{ row.note || '内部调拨' }}</small>
+                  <small v-if="isMyTodo(row)" class="my-todo">本人待办</small>
+                </td>
                 <td>{{ row.sourceWarehouseName }}</td>
                 <td>{{ row.targetWarehouseName }}</td>
                 <td class="line-summary">{{ detailText(row) }}</td>
@@ -175,12 +322,12 @@ function detailText(row: WarehouseTransfer) {
                 <td>
                   <div class="row-actions">
                     <button class="mini-button" type="button" @click="expandedId = expandedId === row.id ? '' : row.id">{{ expandedId === row.id ? '收起' : '明细' }}</button>
-                    <button v-if="canRequest && row.status === 'DRAFT'" class="mini-button primary" type="button" :disabled="Boolean(actioningId)" @click="emit('submit', row.id)">提交</button>
-                    <button v-if="canApprove && row.status === 'SUBMITTED'" class="mini-button primary" type="button" :disabled="Boolean(actioningId)" @click="emit('approve', row.id)">审批通过</button>
-                    <button v-if="canApprove && row.status === 'SUBMITTED'" class="mini-button" type="button" :disabled="Boolean(actioningId)" @click="emit('reject', row.id)">驳回</button>
-                    <button v-if="canShip && row.status === 'APPROVED'" class="mini-button primary" type="button" :disabled="Boolean(actioningId)" @click="emit('ship', row.id)">发货</button>
-                    <button v-if="canReceive && (row.status === 'SHIPPED' || row.status === 'PARTIALLY_RECEIVED')" class="mini-button primary" type="button" :disabled="Boolean(actioningId)" @click="emit('receive', row.id)">确认收货</button>
-                    <button v-if="canRequest && (row.status === 'DRAFT' || row.status === 'SUBMITTED')" class="mini-button" type="button" :disabled="Boolean(actioningId)" @click="emit('cancel', row.id)">取消</button>
+                    <button v-if="canAction(row, 'canSubmit') && row.status === 'DRAFT'" class="mini-button primary" type="button" :disabled="Boolean(actioningId)" @click="emit('submit', row.id)">提交</button>
+                    <button v-if="canAction(row, 'canApprove') && row.status === 'SUBMITTED'" class="mini-button primary" type="button" :disabled="Boolean(actioningId)" @click="emit('approve', row.id)">审批通过</button>
+                    <button v-if="canAction(row, 'canReject') && row.status === 'SUBMITTED'" class="mini-button" type="button" :disabled="Boolean(actioningId)" @click="emit('reject', row.id)">驳回</button>
+                    <button v-if="canAction(row, 'canShip') && row.status === 'APPROVED'" class="mini-button primary" type="button" :disabled="Boolean(actioningId)" @click="emit('ship', row.id)">发货</button>
+                    <button v-if="canAction(row, 'canReceive') && (row.status === 'SHIPPED' || row.status === 'PARTIALLY_RECEIVED')" class="mini-button primary" type="button" :disabled="Boolean(actioningId)" @click="emit('receive', row.id)">确认收货</button>
+                    <button v-if="canAction(row, 'canCancel') && (row.status === 'DRAFT' || row.status === 'SUBMITTED')" class="mini-button" type="button" :disabled="Boolean(actioningId)" @click="emit('cancel', row.id)">取消</button>
                   </div>
                 </td>
               </tr>
@@ -198,7 +345,7 @@ function detailText(row: WarehouseTransfer) {
                 </td>
               </tr>
             </template>
-            <tr v-if="!transfers.length"><td colspan="7" class="empty-cell">暂无仓间调拨单。</td></tr>
+            <tr v-if="!visibleTransfers.length"><td colspan="7" class="empty-cell">当前仓库暂无仓间调拨单。</td></tr>
           </tbody>
         </table>
       </div>
@@ -215,6 +362,62 @@ function detailText(row: WarehouseTransfer) {
 
 .transfer-heading {
   align-items: center;
+}
+
+.transfer-todos,
+.transfer-route-fields {
+  display: grid;
+  gap: 12px;
+}
+
+.transfer-todo-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.transfer-todo-card {
+  display: grid;
+  gap: 3px;
+  padding: 11px 12px;
+  border: 1px solid var(--ds-line);
+  border-radius: 7px;
+  background: var(--ds-surface-muted);
+}
+
+.transfer-todo-card span {
+  color: var(--ds-muted);
+  font-size: 12px;
+}
+
+.transfer-todo-card b {
+  color: var(--ds-ink);
+  font-size: 22px;
+}
+
+.transfer-route-fields {
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: end;
+  padding: 11px;
+  border: 1px solid var(--ds-line);
+  border-radius: 7px;
+  background: var(--ds-surface-muted);
+}
+
+.transfer-route-fields label {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  color: var(--ds-secondary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.route-arrow {
+  padding: 0 2px 9px;
+  color: var(--ds-primary-hover);
+  font-size: 22px;
+  font-weight: 800;
 }
 
 .transfer-lines {
@@ -243,6 +446,17 @@ function detailText(row: WarehouseTransfer) {
   font-weight: 700;
 }
 
+.transfer-line small {
+  color: var(--ds-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.transfer-line .stock-shortage {
+  color: var(--ds-danger, #b94a48);
+  font-weight: 700;
+}
+
 .remove-line {
   min-width: 36px;
   min-height: 36px;
@@ -267,6 +481,11 @@ td small {
   display: block;
   margin-top: 3px;
   color: var(--ds-muted);
+}
+
+td .my-todo {
+  color: var(--ds-primary-hover);
+  font-weight: 800;
 }
 
 .row-actions {
@@ -297,8 +516,17 @@ td small {
 
 @media (max-width: 820px) {
   .transfer-line,
-  .transfer-detail > div {
+  .transfer-detail > div,
+  .transfer-route-fields {
     grid-template-columns: 1fr;
+  }
+
+  .transfer-todo-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .route-arrow {
+    display: none;
   }
 
   .remove-line {

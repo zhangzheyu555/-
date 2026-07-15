@@ -155,19 +155,23 @@ defineExpose({ addItem })
     </div>
 
     <div class="requisition-lines">
-      <div v-for="(line, index) in lines" :key="line.itemId" class="requisition-line">
-        <div>
-          <b>{{ itemFor(line)?.name || '已删除物料' }}</b>
-          <small>{{ itemFor(line)?.code }} · 供货仓可配 {{ qty(itemFor(line)?.warehouseAvailableQuantity, itemFor(line)?.stockUnit || itemFor(line)?.unit) }}</small>
-        </div>
-        <div class="quantity-editor">
-          <button class="icon-button" type="button" title="减少数量" @click="changeQuantity(line, -1)"><Minus :size="15" /></button>
-          <input v-model.number="line.requestedQuantity" type="number" min="0.01" step="0.01" />
-          <button class="icon-button" type="button" title="增加数量" @click="changeQuantity(line, 1)"><Plus :size="15" /></button>
-          <span>{{ itemFor(line)?.stockUnit || itemFor(line)?.unit }}</span>
-        </div>
-        <input v-model="line.note" maxlength="500" placeholder="单项备注" />
-        <button class="icon-button danger" type="button" title="删除物料" @click="removeLine(index)"><Trash2 :size="16" /></button>
+        <div v-for="(line, index) in lines" :key="line.itemId" class="requisition-line">
+          <div>
+            <b>{{ itemFor(line)?.name || '已删除物料' }}</b>
+            <small class="line-stock-hint">{{ itemFor(line)?.code }} · 供货仓可配 {{ qty(itemFor(line)?.warehouseAvailableQuantity, itemFor(line)?.stockUnit || itemFor(line)?.unit) }}</small>
+          </div>
+          <div class="quantity-editor">
+            <span class="quantity-label">叫货数量</span>
+            <button class="icon-button" type="button" title="减少数量" :aria-label="`减少 ${itemFor(line)?.name || '物料'} 的叫货数量`" @click="changeQuantity(line, -1)"><Minus :size="15" /></button>
+            <input v-model.number="line.requestedQuantity" type="number" min="0.01" step="0.01" :aria-label="`${itemFor(line)?.name || '物料'} 的叫货数量`" />
+            <button class="icon-button" type="button" title="增加数量" :aria-label="`增加 ${itemFor(line)?.name || '物料'} 的叫货数量`" @click="changeQuantity(line, 1)"><Plus :size="15" /></button>
+            <span class="quantity-unit">{{ itemFor(line)?.stockUnit || itemFor(line)?.unit }}</span>
+          </div>
+          <label class="line-note-field">
+            <span>单项备注</span>
+            <input v-model="line.note" maxlength="500" placeholder="单项备注" :aria-label="`${itemFor(line)?.name || '物料'} 的单项备注`" />
+          </label>
+          <button class="icon-button danger" type="button" title="删除物料" :aria-label="`删除 ${itemFor(line)?.name || '物料'}`" @click="removeLine(index)"><Trash2 :size="16" /></button>
       </div>
       <div v-if="!lines.length" class="empty-state compact">请先添加需要叫货的物料。</div>
     </div>
@@ -252,8 +256,14 @@ input {
   color: var(--muted);
 }
 
+.quantity-label,
+.line-note-field > span {
+  display: none;
+}
+
 .quantity-editor {
   display: grid;
+  min-width: 0;
   grid-template-columns: 28px minmax(0, 1fr) 28px auto;
   align-items: center;
   gap: 4px;
@@ -262,6 +272,15 @@ input {
 .quantity-editor span {
   color: var(--muted);
   font-size: 12px;
+}
+
+.quantity-unit {
+  white-space: nowrap;
+}
+
+.line-note-field {
+  display: grid;
+  min-width: 0;
 }
 
 .icon-button {
@@ -291,5 +310,105 @@ input {
 .submit-requisition {
   justify-self: end;
   min-width: 150px;
+}
+
+@media (max-width: 768px) {
+  .requisition-add-row {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .requisition-add-row select,
+  .requisition-add-row input,
+  .form-note input,
+  .quantity-editor input,
+  .line-note-field input {
+    min-height: 44px;
+  }
+
+  .add-line-button,
+  .submit-requisition {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .submit-requisition {
+    justify-self: stretch;
+  }
+
+  .requisition-lines {
+    display: grid;
+    gap: 10px;
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+
+  .requisition-line {
+    grid-template-columns: minmax(0, 1fr) 44px;
+    grid-template-areas:
+      'item delete'
+      'quantity quantity'
+      'note note';
+    gap: 12px;
+    align-items: start;
+    padding: 14px;
+    border: 1px solid #e4ecef;
+    border-radius: 10px;
+    background: #fff;
+  }
+
+  .requisition-line:last-child {
+    border-bottom: 1px solid #e4ecef;
+  }
+
+  .requisition-line > div:first-child {
+    grid-area: item;
+    min-width: 0;
+  }
+
+  .requisition-line b,
+  .requisition-line small {
+    overflow-wrap: anywhere;
+  }
+
+  .quantity-editor {
+    grid-area: quantity;
+    grid-template-columns: 44px minmax(0, 1fr) 44px auto;
+    grid-template-rows: auto 44px;
+    align-items: center;
+    gap: 6px 8px;
+  }
+
+  .quantity-label {
+    display: block;
+    grid-column: 1 / -1;
+    color: #475569;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .quantity-editor .icon-button,
+  .requisition-line > .icon-button.danger {
+    width: 44px;
+    height: 44px;
+  }
+
+  .line-note-field {
+    grid-area: note;
+    min-width: 0;
+    gap: 6px;
+  }
+
+  .line-note-field > span {
+    display: block;
+    color: #475569;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .requisition-line > .icon-button.danger {
+    grid-area: delete;
+  }
 }
 </style>

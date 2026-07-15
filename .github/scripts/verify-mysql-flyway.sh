@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 backend_jar="${1:-}"
+readonly expected_flyway_latest=54
 required_env=(
   APP_ENV SERVER_PORT MYSQL_HOST MYSQL_PORT MYSQL_DATABASE MYSQL_USERNAME
   MYSQL_PASSWORD MYSQL_CONTAINER_ID
@@ -70,7 +71,7 @@ fi
 
 applied_count="$(mysql_query 'SELECT COUNT(*) FROM flyway_schema_history WHERE success = 1;')"
 failed_count="$(mysql_query 'SELECT COUNT(*) FROM flyway_schema_history WHERE success = 0;')"
-latest_migration="$(mysql_query 'SELECT COALESCE(version, description) FROM flyway_schema_history WHERE success = 1 ORDER BY installed_rank DESC LIMIT 1;')"
+latest_migration="$(mysql_query 'SELECT version FROM flyway_schema_history WHERE success = 1 AND version IS NOT NULL ORDER BY installed_rank DESC LIMIT 1;')"
 
 if [[ ! "$applied_count" =~ ^[1-9][0-9]*$ ]]; then
   echo "Flyway did not record any successful migration." >&2
@@ -80,8 +81,12 @@ if [[ "$failed_count" != "0" ]]; then
   echo "Flyway recorded ${failed_count} failed migration(s)." >&2
   exit 1
 fi
+if [[ "$latest_migration" != "$expected_flyway_latest" ]]; then
+  echo "Expected MySQL Flyway migration V${expected_flyway_latest}, received V${latest_migration:-<none>}." >&2
+  exit 1
+fi
 
 echo "MySQL version: ${mysql_version}"
 echo "Successful Flyway migrations: ${applied_count}"
-echo "Latest Flyway migration: ${latest_migration}"
+echo "Latest Flyway migration: V${latest_migration}"
 echo "Application health: $(tr -d '\n\r' <"$health_file")"

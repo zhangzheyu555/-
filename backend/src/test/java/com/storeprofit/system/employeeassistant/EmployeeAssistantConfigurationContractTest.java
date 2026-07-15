@@ -14,7 +14,7 @@ class EmployeeAssistantConfigurationContractTest {
   @Test
   void springMustUseTheConfigurationAwareConstructor() {
     Constructor<?> constructor = Arrays.stream(EmployeeAssistantService.class.getConstructors())
-        .filter(candidate -> candidate.getParameterCount() == 11)
+        .filter(candidate -> candidate.getParameterCount() == 12)
         .findFirst()
         .orElseThrow();
 

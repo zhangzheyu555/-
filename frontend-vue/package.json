@@ -11,6 +11,7 @@
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:report": "playwright show-report test-results/html-report",
     "test:e2e:smoke": "playwright test tests/e2e/00-health.spec.ts tests/e2e/01-role-routing.spec.ts tests/e2e/02-menu-permission.spec.ts",
+    "test:e2e:mobile": "playwright test tests/e2e/18-inspection-detection-confirm.spec.ts --grep \"model suggestion shows a returned annotation\" --project=iphone-390 --project=android-412 --project=ipad-768 && playwright test tests/e2e/27-mobile-login-drawer-accessibility.spec.ts tests/e2e/28-mobile-exam-accessibility.spec.ts tests/e2e/28-mobile-desktop-workflow-notices.spec.ts tests/e2e/29-mobile-store-requisition-receipt.spec.ts tests/e2e/30-mobile-employee-assistant-safety.spec.ts tests/e2e/30-mobile-inspection-historical-upload.spec.ts --project=iphone-390 --project=android-412 --project=ipad-768 && playwright test tests/e2e/30-mobile-session-retry.spec.ts --project=android-412",
     "test:e2e:write": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"if ($env:E2E_WRITE -ne '1') { throw '写入类 E2E 默认禁用，请先设置 E2E_WRITE=1' }; npx playwright test tests/e2e/write\""
   },
   "dependencies": {

@@ -382,6 +382,8 @@ onBeforeUnmount(stopPolling)
 
 .import-file-row {
   display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 10px;
 }
@@ -390,10 +392,27 @@ onBeforeUnmount(stopPolling)
   display: none;
 }
 
+.import-file-row .secondary-button,
+.import-file-row .primary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+}
+
 .import-file-row .secondary-button {
-  max-width: min(480px, 100%);
+  flex: 1;
+  min-width: 0;
+  max-width: none;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.import-file-row .primary-button {
+  flex: 0 0 auto;
+  width: auto;
+  margin: 0;
   white-space: nowrap;
 }
 
@@ -557,8 +576,10 @@ onBeforeUnmount(stopPolling)
 
   .import-file-row .secondary-button,
   .import-file-row .primary-button {
+    flex: 0 0 auto;
     max-width: none;
     width: 100%;
+    margin: 0;
   }
 
   .overwrite-summary__amounts {

@@ -101,8 +101,19 @@ class ExamLearningFlowTest {
             new ExamAnswerInput(questions.get(1).id(), "停止使用并上报")
         )
     ));
+    var repeatedAttempt = centerService.submit(employee, assignment.id(), new ExamSubmissionRequest(
+        false,
+        List.of(
+            new ExamAnswerInput(questions.get(0).id(), "错误"),
+            new ExamAnswerInput(questions.get(1).id(), "停止使用并上报")
+        )
+    ));
 
     assertThat(attempt.score()).isEqualByComparingTo("0.00");
+    assertThat(repeatedAttempt.id()).isEqualTo(attempt.id());
+    assertThat(jdbc.queryForObject(
+        "select count(*) from training_exam_attempt where tenant_id = 1 and assignment_id = ?",
+        Integer.class, assignment.id())).isOne();
     assertThat(centerRepository.assignment(1L, assignment.id(), false).orElseThrow().status())
         .isEqualTo("REVIEW_PENDING");
     var review = learningService.reviewDetail(operator, attempt.id());

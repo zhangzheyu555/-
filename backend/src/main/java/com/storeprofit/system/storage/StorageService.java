@@ -3,6 +3,7 @@ package com.storeprofit.system.storage;
 import com.storeprofit.system.common.BusinessException;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
+import com.storeprofit.system.platform.authorization.DataScopeDomains;
 import java.io.IOException;
 import java.io.InputStream;
 import java.sql.PreparedStatement;
@@ -144,6 +145,23 @@ public class StorageService {
   }
 
   /**
+   * Rectification evidence is only accepted through the inspection workflow.  The caller has
+   * already resolved the inspection record and the manager's bound-store scope; this method keeps
+   * generic /api/storage/upload from becoming a bypass for that workflow.
+   */
+  @Transactional
+  public StorageUploadResponse uploadInspectionRectificationEvidence(
+      AuthUser user,
+      MultipartFile file,
+      String rectificationId,
+      String storeId
+  ) {
+    accessControl.requireInspectionRead(user);
+    accessControl.requireInspectionRectificationSubmit(user);
+    return uploadInternal(user, file, "INSPECTION_RECTIFICATION", rectificationId, storeId, true);
+  }
+
+  /**
    * Specialised tenant-wide video upload. It deliberately bypasses the generic attachment endpoint:
    * the caller must have exam.manage and the returned id is usable only through the authenticated
    * training-video API. The stream is sent to JDBC directly so the backend does not hold the whole
@@ -268,12 +286,21 @@ public class StorageService {
     }
     String normalizedBusinessType = normalizeBusinessType(businessType);
     String normalizedBusinessId = normalizeBusinessId(businessId);
-    if ("INSPECTION_RECORD".equals(normalizedBusinessType)
+    boolean inspectionRecordEvidence = "INSPECTION_RECORD".equals(normalizedBusinessType);
+    boolean rectificationEvidence = "INSPECTION_RECTIFICATION".equals(normalizedBusinessType);
+    if (inspectionRecordEvidence
         && !isInspectionDraftBusiness(normalizedStoreId, normalizedBusinessType, normalizedBusinessId)
         && !historicalInspectionEndpoint) {
       throw new BusinessException(
           "INSPECTION_HISTORICAL_EVIDENCE_SPECIAL_ENDPOINT_REQUIRED",
-          "历史巡检现场证据请通过“补传并关联证据”专用流程处理",
+          "历史巡检证据请通过受控的历史证据流程处理",
+          HttpStatus.FORBIDDEN
+      );
+    }
+    if (rectificationEvidence && !historicalInspectionEndpoint) {
+      throw new BusinessException(
+          "INSPECTION_RECTIFICATION_EVIDENCE_SPECIAL_ENDPOINT_REQUIRED",
+          "巡检整改证据请通过受控的整改证据流程处理",
           HttpStatus.FORBIDDEN
       );
     }
@@ -283,7 +310,7 @@ public class StorageService {
     String contentType = file.getContentType() == null || file.getContentType().isBlank()
         ? "application/octet-stream"
         : file.getContentType().trim();
-    if ("INSPECTION_RECORD".equals(normalizedBusinessType) && !isImageContentType(contentType)) {
+    if ((inspectionRecordEvidence || rectificationEvidence) && !isImageContentType(contentType)) {
       throw new BusinessException(
           "INSPECTION_EVIDENCE_IMAGE_REQUIRED", "巡检现场证据必须上传图片原图", HttpStatus.BAD_REQUEST);
     }
@@ -293,7 +320,7 @@ public class StorageService {
     } catch (IOException ex) {
       throw new BusinessException("UPLOAD_READ_FAILED", "附件读取失败，请重新上传", HttpStatus.BAD_REQUEST);
     }
-    if ("INSPECTION_RECORD".equals(normalizedBusinessType) && !hasImageSignature(content)) {
+    if ((inspectionRecordEvidence || rectificationEvidence) && !hasImageSignature(content)) {
       throw new BusinessException(
           "INSPECTION_EVIDENCE_IMAGE_REQUIRED", "巡检现场证据必须上传可识别的图片原图", HttpStatus.BAD_REQUEST);
     }
@@ -354,12 +381,21 @@ public class StorageService {
         return Optional.empty();
       }
       requireDailyLossAttachmentRead(user, attachment.businessType());
-      accessControl.requireAttachmentRead(user, attachment.storeId(), attachment.uploadedBy());
+      if ("INSPECTION_RECTIFICATION".equals(attachment.businessType())) {
+        accessControl.requireInspectionRead(user);
+        accessControl.requireStoreAccess(
+            user, DataScopeDomains.INSPECTION, attachment.storeId(), "查看巡检整改证据");
+      } else {
+        accessControl.requireAttachmentRead(user, attachment.storeId(), attachment.uploadedBy());
+      }
       requireInspectionDraftOwner(
           user, attachment.storeId(), attachment.businessType(), attachment.businessId(), attachment.uploadedBy());
       requireBusinessReference(user.tenantId(), attachment.storeId(), attachment.businessType(), attachment.businessId());
       if ("DAILY_LOSS".equals(attachment.businessType())) {
         logAttachmentDownload(user, attachment.storeId(), attachment.businessId());
+      }
+      if ("INSPECTION_RECTIFICATION".equals(attachment.businessType())) {
+        logInspectionRectificationAttachmentDownload(user, attachment.storeId(), attachment.businessId());
       }
       return Optional.of(new AttachmentContent(
           attachment.fileName(), attachment.contentType(), attachment.fileSize(), attachment.content()));
@@ -739,6 +775,7 @@ public class StorageService {
     }
     String sql = switch (businessType) {
       case "INSPECTION_RECORD" -> "select count(*) from inspection_record where tenant_id = ? and store_id = ? and id = ?";
+      case "INSPECTION_RECTIFICATION" -> "select count(*) from inspection_rectification where tenant_id = ? and store_id = ? and id = ?";
       case "EXPENSE", "EXPENSE_CLAIM" -> "select count(*) from expense_claim where tenant_id = ? and store_id = ? and id = ?";
       case "DAILY_LOSS" -> "select count(*) from daily_loss_record where tenant_id = ? and store_id = ? and id = ?";
       case "WAREHOUSE_DELIVERY" -> "select count(*) from warehouse_delivery_order where tenant_id = ? and store_id = ? and id = ?";
@@ -888,5 +925,13 @@ public class StorageService {
         values (?, ?, ?, 'attachment_download', 'daily_loss_record', ?, ?, '下载每日报损附件', current_timestamp)
         """,
         user.tenantId(), user.id(), user.displayName(), businessId, storeId);
+  }
+
+  private void logInspectionRectificationAttachmentDownload(AuthUser user, String storeId, String rectificationId) {
+    jdbcTemplate.update("""
+        insert into operation_log(tenant_id, operator_id, operator_name, action, target_type, target_id, store_id, reason, created_at)
+        values (?, ?, ?, 'inspection_rectification_evidence_download', 'inspection_rectification', ?, ?, '下载巡检整改证据', current_timestamp)
+        """,
+        user.tenantId(), user.id(), user.displayName(), rectificationId, storeId);
   }
 }

@@ -2,7 +2,7 @@
   --bg: #f3f7f6;
   --surface: #ffffff;
   --ink: #1c1d22;
-  --muted: #7d8491;
+  --muted: #626b78;
   --line: #e1ebe9;
   --primary: #76bdb8;
   --primary-dark: #285f5c;
@@ -40,14 +40,17 @@ body {
   overflow: hidden;
   background: var(--bg);
   color: var(--ink);
-  font-family: "SimSun", "宋体", "NSimSun", "Microsoft YaHei", Arial, sans-serif;
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC",
+    "Noto Sans CJK SC", system-ui, sans-serif;
   line-height: 1.5;
 }
 
 button,
 input,
 select,
-textarea {
+textarea,
+option {
+  font-family: inherit;
   font: inherit;
 }
 

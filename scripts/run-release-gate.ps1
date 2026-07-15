@@ -1,13 +1,36 @@
 [CmdletBinding()]
-param()
+param(
+  [Parameter(Mandatory = $true)]
+  [ValidateRange(1, 65535)]
+  [int]$MySqlPort,
+
+  [Parameter(Mandatory = $true)]
+  [string]$MySqlServiceName,
+
+  [string]$Database = 'ai_profit_release_gate',
+  [string]$ReportRoot = ''
+)
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+$releaseCommon = Join-Path $PSScriptRoot 'ReleaseCandidateCommon.psm1'
+if (-not (Test-Path -LiteralPath $releaseCommon -PathType Leaf)) {
+  throw "Release candidate helper is missing: $releaseCommon"
+}
+Import-Module -Name $releaseCommon -Force -ErrorAction Stop
+$flywaySource = Get-ReleaseFlywaySource -ProjectRoot $root
 $backendSource = Join-Path $root 'backend'
 $frontend = Join-Path $root 'frontend-vue'
 $mysql = 'C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe'
-$database = 'ai_profit_test_empty'
-$reportPath = Join-Path $root 'release-gate-final.md'
+if ($MySqlPort -eq 3307) {
+  throw 'Port 3307 is protected from release-gate scripts. Supply an isolated non-production MySQL port.'
+}
+if (-not $ReportRoot) {
+  $reportBase = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { [IO.Path]::GetTempPath() }
+  $ReportRoot = Join-Path $reportBase 'AI-Profit-OS\release-gates'
+}
+New-Item -ItemType Directory -Path $ReportRoot -Force | Out-Null
+$reportPath = Join-Path $ReportRoot ('release-gate-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.md')
 $temporaryRoot = Join-Path $env:TEMP ('ai-profit-release-gate-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 $temporaryBackend = Join-Path $temporaryRoot 'backend'
 $backendLog = Join-Path $temporaryRoot 'backend.log'
@@ -33,7 +56,7 @@ function Invoke-TestMySql {
   param([Parameter(Mandatory)][string]$Sql, [Parameter(Mandatory)][string]$Password)
   $startInfo = New-Object Diagnostics.ProcessStartInfo
   $startInfo.FileName = $mysql
-  $startInfo.Arguments = '--protocol=TCP --host=127.0.0.1 --port=3307 --user=ai_profit_test --batch --skip-column-names'
+  $startInfo.Arguments = "--protocol=TCP --host=127.0.0.1 --port=$MySqlPort --user=ai_profit_test --batch --skip-column-names"
   $startInfo.UseShellExecute = $false
   $startInfo.RedirectStandardInput = $true
   $startInfo.RedirectStandardOutput = $true
@@ -66,8 +89,9 @@ function Write-GateReport {
     '',
     "- Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz')",
     '- Environment: TEST',
-    '- MySQL: 8.0 isolated local instance on 127.0.0.1:3307',
+    "- MySQL: 8.0 isolated local instance on 127.0.0.1:$MySqlPort",
     '- Backend verification port: 18080',
+    "- Expected Flyway: V$($flywaySource.version) ($($flywaySource.fileName))",
     '- Secrets persisted: no',
     '',
     '## Results',
@@ -94,13 +118,15 @@ $securePassword = Read-Host 'ai_profit_test password' -AsSecureString
 $password = ConvertFrom-SecureValue $securePassword
 try {
   if (-not (Test-Path -LiteralPath $mysql)) { throw 'MySQL 8 client is unavailable.' }
-  $service = Get-Service -Name 'MySQL80Test' -ErrorAction Stop
+  $service = Get-Service -Name $MySqlServiceName -ErrorAction Stop
   if ($service.Status -ne 'Running' -or $service.StartType -ne 'Manual') {
-    throw 'MySQL80Test must be running with Manual startup type.'
+    throw "$MySqlServiceName must be running with Manual startup type."
   }
-  $listener = Get-NetTCPConnection -State Listen -LocalPort 3307 -ErrorAction Stop
-  if ($listener.LocalAddress -ne '127.0.0.1') { throw 'MySQL80Test is not restricted to 127.0.0.1.' }
-  Add-Result 'Environment preflight' 'PASS' 'MySQL80Test is Manual and listens only on 127.0.0.1:3307.'
+  $listener = Get-NetTCPConnection -State Listen -LocalPort $MySqlPort -ErrorAction Stop
+  if (@($listener | Where-Object { $_.LocalAddress -ne '127.0.0.1' }).Count -gt 0) {
+    throw "$MySqlServiceName is not restricted to 127.0.0.1:$MySqlPort."
+  }
+  Add-Result 'Environment preflight' 'PASS' ("$MySqlServiceName is Manual and listens only on 127.0.0.1:$MySqlPort.")
 
   $databaseEvidence = Invoke-TestMySql -Password $password -Sql @"
 SELECT CONCAT(VERSION(), '|', @@port, '|', @@character_set_server);
@@ -108,12 +134,12 @@ SELECT CONCAT(SCHEMA_NAME, '|', DEFAULT_CHARACTER_SET_NAME)
 FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='$database';
 SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='$database';
 "@
-  if ($databaseEvidence -notmatch '8\.0\.46\|3307\|utf8mb4') { throw 'Unexpected MySQL version, port, or server character set.' }
+  if ($databaseEvidence -notmatch ("8\.\d+\.\d+\|$MySqlPort\|utf8mb4")) { throw 'Unexpected MySQL version, port, or server character set.' }
   if ($databaseEvidence -notmatch "$database\|utf8mb4") { throw 'The empty TEST database is missing or not utf8mb4.' }
   $lineValues = @($databaseEvidence -split "`r?`n")
   $tableCount = [int]$lineValues[-1]
   if ($tableCount -ne 0) { throw "$database already contains $tableCount tables; destructive cleanup is intentionally refused." }
-  Add-Result 'Empty MySQL database' 'PASS' 'MySQL 8.0.46, utf8mb4, zero pre-migration tables.'
+  Add-Result 'Empty MySQL database' 'PASS' 'MySQL 8, utf8mb4, zero pre-migration tables.'
 
   if (Get-NetTCPConnection -State Listen -LocalPort 18080 -ErrorAction SilentlyContinue) {
     throw 'Port 18080 is already in use; no process was terminated.'
@@ -125,7 +151,7 @@ SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='$database';
 
   $env:APP_ENV = 'TEST'
   $env:MYSQL_HOST = '127.0.0.1'
-  $env:MYSQL_PORT = '3307'
+  $env:MYSQL_PORT = [string]$MySqlPort
   $env:MYSQL_DATABASE = $database
   $env:MYSQL_USERNAME = 'ai_profit_test'
   $env:MYSQL_PASSWORD = $password
@@ -166,6 +192,7 @@ SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='$database';
   $versionData = if ($versionResponse.data) { $versionResponse.data } else { $versionResponse }
   if ($versionData.environment -ne 'TEST') { throw 'Fresh backend did not report TEST environment.' }
   if ($versionData.databaseMigrationVersion -in @('none', 'unavailable', $null, '')) { throw 'Flyway migration version is unavailable.' }
+  if ([string]$versionData.databaseMigrationVersion -ne [string]$flywaySource.version) { throw "Flyway latest migration must be V$($flywaySource.version); runtime reported V$($versionData.databaseMigrationVersion)." }
   Add-Result 'Empty database Flyway migration' 'PASS' ("Migrated through version {0}." -f $versionData.databaseMigrationVersion)
   Add-Result 'Fresh runtime identity' 'PASS' ("TEST on 18080; sourceVersion={0}; buildTime={1}." -f $versionData.sourceVersion, $versionData.buildTime)
 

@@ -96,7 +96,7 @@ public class WarehousePdfRenderer {
           display(order.returnNo()),
           dateOnly(order.returnDate()),
           display(order.returnStoreName(), order.returnStoreId()),
-          display(order.receiveDepartment(), "采购"),
+          display(order.receiveWarehouseName(), "未记录收货仓"),
           display(order.handledBy(), ""),
           order.lines().stream()
               .map(line -> List.of(
@@ -426,7 +426,7 @@ public class WarehousePdfRenderer {
         String returnNo,
         String date,
         String returnDepartment,
-        String receiveDepartment,
+        String receiveWarehouse,
         String handledBy,
         List<List<String>> rows
     ) {
@@ -441,7 +441,7 @@ public class WarehousePdfRenderer {
       y = 150;
       setFont(24, Font.PLAIN);
       graphics.drawString("退货部门：" + blank(returnDepartment), left, y);
-      graphics.drawString("收货部门：" + blank(receiveDepartment), left + 360, y);
+      graphics.drawString("收货仓：" + blank(receiveWarehouse), left + 360, y);
       FontMetrics metrics = graphics.getFontMetrics();
       int handlerX = left + 770;
       List<String> handlerLines = wrap("经手人：" + blank(handledBy), metrics, canvasWidth - handlerX - 36);

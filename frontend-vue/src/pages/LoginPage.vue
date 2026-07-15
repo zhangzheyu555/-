@@ -441,4 +441,94 @@ onMounted(async () => {
   border-radius: 50%;
   background: var(--ds-success);
 }
+
+@media (max-width: 768px) {
+  .login-screen {
+    height: 100vh;
+    height: 100dvh;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    min-height: 100dvh;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+  }
+
+  .login-brandbar {
+    min-height: 68px;
+    height: auto;
+    padding-left: max(18px, env(safe-area-inset-left));
+    padding-right: max(18px, env(safe-area-inset-right));
+  }
+
+  .login-workspace {
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    flex: 1 0 auto;
+    grid-template-columns: minmax(0, 1fr);
+    align-self: stretch;
+    gap: 30px;
+    padding: 36px 18px max(28px, calc(28px + env(safe-area-inset-bottom)));
+    padding-left: max(18px, env(safe-area-inset-left));
+    padding-right: max(18px, env(safe-area-inset-right));
+  }
+
+  .login-intro {
+    min-width: 0;
+    min-height: 0;
+    padding: 0 0 24px;
+    border-right: 0;
+    border-bottom: 1px solid var(--ds-line-strong);
+  }
+
+  .login-intro h1 {
+    font-size: 28px;
+  }
+
+  .login-intro p {
+    font-size: 15px;
+  }
+
+  .login-form {
+    min-width: 0;
+    gap: 16px;
+    padding-left: 0;
+  }
+
+  .input-shell {
+    min-width: 0;
+  }
+
+  .password-toggle {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+  }
+
+  .login-options {
+    flex-wrap: wrap;
+    gap: 4px 16px;
+  }
+
+  .remember-account,
+  .help-link {
+    min-height: 44px;
+  }
+
+  .help-link {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .login-submit {
+    min-height: 48px;
+  }
+
+  .system-health {
+    min-height: 44px;
+    padding: 0 18px;
+    text-align: center;
+  }
+}
 </style>

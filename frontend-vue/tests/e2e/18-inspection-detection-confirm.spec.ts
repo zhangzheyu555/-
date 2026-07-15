@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
-import { expect, test, type Page, type Route } from '@playwright/test'
+import { expect, test, type Page, type Route, type TestInfo } from '@playwright/test'
+import { expectNoWholePageOverflow } from './auth.setup'
 
 const bossUser = {
   id: 9001,
@@ -14,6 +15,21 @@ const bossUser = {
   dataScopes: { STORE: { mode: 'ALL', storeIds: [] }, INSPECTION: { mode: 'ALL', storeIds: [] } },
   defaultWorkspace: '/boss',
   permissionVersion: 1,
+}
+
+const mobileProjectWidths: Record<string, number> = {
+  'iphone-390': 390,
+  'android-412': 412,
+  'ipad-768': 768,
+}
+
+async function useResponsiveViewport(page: Page, testInfo: TestInfo) {
+  const configuredWidth = mobileProjectWidths[testInfo.project.name]
+  if (configuredWidth) {
+    expect(page.viewportSize()?.width).toBe(configuredWidth)
+    return
+  }
+  await page.setViewportSize({ width: 390, height: 844 })
 }
 
 function standardItem(
@@ -119,7 +135,7 @@ function nestedKeys(value: unknown): string[] {
   return Object.entries(value as Record<string, unknown>).flatMap(([key, child]) => [key, ...nestedKeys(child)])
 }
 
-test('model suggestion shows a returned annotation and only the 200-point deduction', async ({ page }) => {
+test('model suggestion shows a returned annotation and only the 200-point deduction', async ({ page }, testInfo) => {
   let confirmationBody: Record<string, unknown> | undefined
 
   await page.route('**/api/**', async (route) => {
@@ -151,7 +167,12 @@ test('model suggestion shows a returned annotation and only the 200-point deduct
 
   await seedSession(page)
   await page.goto('/operations/inspection/tasks')
-  await page.locator('input[type="file"][accept="image/*"]').setInputFiles({
+  const photoInput = page.locator('.inspection-upload-box input[type="file"]')
+  await expect(photoInput).toHaveAttribute('accept', 'image/*')
+  await expect(photoInput).toHaveAttribute('capture', 'environment')
+  const uploadButtonBox = await page.locator('.inspection-upload-box .upload-button').boundingBox()
+  expect(uploadButtonBox?.height, '拍照/选图按钮的点击高度').toBeGreaterThanOrEqual(44)
+  await photoInput.setInputFiles({
     name: '巡检现场.jpg',
     mimeType: 'image/jpeg',
     buffer: Buffer.from('inspection-focus-image'),
@@ -159,7 +180,7 @@ test('model suggestion shows a returned annotation and only the 200-point deduct
 
   const rule = page.locator('.inspection-detection-rule')
   await expect(rule).toContainText('H-4.1.2 · 地面清洁无纸屑 · 条款ID 41')
-  await expect(rule.locator('.inspection-detection-preview img')).toHaveAttribute('src', /^data:image\/png;base64,/)
+  await expect(page.locator('.inspection-detection-result .inspection-detection-preview img')).toHaveAttribute('src', /^data:image\/png;base64,/)
   await expect(rule.locator('.inspection-deduction-metrics > div').nth(0)).toContainText('200分制建议扣分4 分')
   await expect(rule.locator('.inspection-deduction-metrics')).not.toContainText('旧100分制')
   await expect(rule.locator('.inspection-deduction-metrics')).not.toContainText('200分制换算')
@@ -178,7 +199,7 @@ test('model suggestion shows a returned annotation and only the 200-point deduct
   expect(nestedKeys(confirmationBody).filter((key) => forbiddenKeys.has(key))).toEqual([])
 
   const hygieneScore = page.locator('.category-score').filter({ hasText: '卫生得分' })
-  await expect(hygieneScore).toContainText('59 / 63')
+  await expect(hygieneScore).toContainText('59 分（满分63）')
   await expect(page.locator('.inspection-score-bar').getByText('196 / 200', { exact: true })).toBeVisible()
   await expect(page.locator('.inspection-score-bar').getByText('-4', { exact: true })).toBeVisible()
   await expect(page.locator('.inspection-score-bar').getByText('合格', { exact: true })).toBeVisible()
@@ -188,10 +209,10 @@ test('model suggestion shows a returned annotation and only the 200-point deduct
   mkdirSync(path.dirname(screenshotPath), { recursive: true })
   await page.screenshot({ path: screenshotPath, fullPage: true })
 
-  await page.setViewportSize({ width: 390, height: 844 })
+  await useResponsiveViewport(page, testInfo)
   await expect(page.locator('.inspection-score-bar').getByText('196 / 200', { exact: true })).toBeVisible()
   await expect(page.locator('.inspection-score-bar').getByText('合格', { exact: true })).toBeVisible()
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true)
+  await expectNoWholePageOverflow(page, `${testInfo.project.name} inspection confirmation`)
   await page.screenshot({
     path: path.resolve(process.cwd(), '..', 'output', 'playwright', 'inspection-detection-confirm-196-mobile.png'),
     fullPage: true,

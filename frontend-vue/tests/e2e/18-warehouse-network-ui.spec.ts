@@ -159,6 +159,139 @@ const overview = (warehouseId = 1) => ({
   movements: [],
 })
 
+const transferActions = (overrides: Partial<{
+  canCreate: boolean
+  canSubmit: boolean
+  canApprove: boolean
+  canReject: boolean
+  canShip: boolean
+  canReceive: boolean
+  canCancel: boolean
+}> = {}) => ({
+  canCreate: false,
+  canSubmit: false,
+  canApprove: false,
+  canReject: false,
+  canShip: false,
+  canReceive: false,
+  canCancel: false,
+  ...overrides,
+})
+
+const transferContext = (warehouseId: number, session: typeof baseSession) => {
+  const can = (permission: string) => session.role === 'BOSS' || session.permissions.includes(permission)
+  const route = {
+    sourceWarehouse: { id: 1, code: 'JZ-CENTRAL', name: '荆州总仓' },
+    targetWarehouse: { id: 2, code: 'SD-REGIONAL', name: '山东分仓' },
+    materials: [{
+      itemId: 11,
+      itemName: '鲜牛奶',
+      itemCode: 'MILK-01',
+      unit: '箱',
+      availableQuantity: 18,
+      shortageMessage: '荆州总仓当前可发 18 箱鲜牛奶，请调整数量或等待补货。',
+    }],
+  }
+  if (warehouseId === 1) {
+    return {
+      currentWarehouse: route.sourceWarehouse,
+      mode: 'PROACTIVE_ALLOCATION',
+      routes: [{
+        ...route,
+        actions: transferActions({
+          canCreate: can('warehouse.transfer.request'),
+          canSubmit: can('warehouse.transfer.request'),
+          canCancel: can('warehouse.transfer.request'),
+          canApprove: can('warehouse.transfer.approve'),
+          canReject: can('warehouse.transfer.approve'),
+          canShip: can('warehouse.transfer.ship'),
+        }),
+      }],
+      todos: { pendingApproval: 1, pendingShipment: 1, completed: 3 },
+    }
+  }
+  return {
+    currentWarehouse: route.targetWarehouse,
+    mode: 'REQUEST_REPLENISHMENT',
+    routes: [{
+      ...route,
+      actions: transferActions({
+        canCreate: can('warehouse.transfer.request'),
+        canSubmit: can('warehouse.transfer.request'),
+        canCancel: can('warehouse.transfer.request'),
+        canReceive: can('warehouse.transfer.receive'),
+      }),
+    }],
+    todos: { draft: 1, pendingReceipt: 2, completed: 4 },
+  }
+}
+
+const transferRecords = (warehouseId: number) => {
+  const sharedLine = {
+    id: 1,
+    itemId: 11,
+    itemName: '鲜牛奶',
+    unit: '箱',
+    requestedQuantity: 3,
+    approvedQuantity: 3,
+    reservedQuantity: 3,
+    shippedQuantity: 0,
+    receivedQuantity: 0,
+    inTransitQuantity: 0,
+    unitCost: 50,
+    amount: 150,
+  }
+  if (warehouseId === 1) {
+    return [
+      {
+        id: 'TR-JZ-DRAFT',
+        transferNo: 'DB-JZ-DRAFT',
+        status: 'DRAFT',
+        sourceWarehouseId: 1,
+        sourceWarehouseName: '荆州总仓',
+        targetWarehouseId: 2,
+        targetWarehouseName: '山东分仓',
+        totalAmount: 150,
+        requestedBy: '荆州仓管理员',
+        createdAt: '2026-07-15 08:30',
+        note: '总仓主动配货草稿',
+        version: 1,
+        lines: [sharedLine],
+      },
+      {
+        id: 'TR-JZ',
+        transferNo: 'DB-JZ-001',
+        status: 'APPROVED',
+        sourceWarehouseId: 1,
+        sourceWarehouseName: '荆州总仓',
+        targetWarehouseId: 2,
+        targetWarehouseName: '山东分仓',
+        totalAmount: 150,
+        requestedBy: '山东仓管理员',
+        createdAt: '2026-07-15 09:00',
+        note: '总仓待发货调拨',
+        version: 1,
+        lines: [sharedLine],
+      },
+    ]
+  }
+  return [{
+    id: 'TR-SD',
+    transferNo: 'DB-SD-001',
+    status: 'SHIPPED',
+    sourceWarehouseId: 1,
+    sourceWarehouseName: '荆州总仓',
+    targetWarehouseId: 2,
+    targetWarehouseName: '山东分仓',
+    totalAmount: 150,
+    shippedBy: '荆州仓管理员',
+    createdAt: '2026-07-15 10:00',
+    note: '山东待收货调拨',
+    version: 2,
+    lines: [{ ...sharedLine, shippedQuantity: 3, inTransitQuantity: 3 }],
+  }]
+}
+
 interface RequestLog {
   urls: string[]
   requisitionBody: Record<string, unknown> | null
@@ -200,11 +333,18 @@ async function fulfillApi(route: Route, session: typeof baseSession, log: Reques
     const warehouseId = Number(url.searchParams.get('warehouseId') || (session.role === 'STORE_MANAGER' ? 1 : 1))
     return route.fulfill(ok(overview(warehouseId)))
   }
+  if (path === '/api/warehouse/transfers/context') {
+    const warehouseId = Number(url.searchParams.get('warehouseId') || 1)
+    return route.fulfill(ok(transferContext(warehouseId, session)))
+  }
   if (path === '/api/warehouse/transfers' && request.method() === 'POST') {
     log.transferBody = request.postDataJSON()
     return route.fulfill(ok({ id: 'TR-1', status: 'DRAFT', lines: [] }))
   }
-  if (path === '/api/warehouse/transfers') return route.fulfill(ok([]))
+  if (path === '/api/warehouse/transfers') {
+    const warehouseId = Number(url.searchParams.get('warehouseId') || 1)
+    return route.fulfill(ok(transferRecords(warehouseId)))
+  }
   if (path === '/api/warehouse/item-categories' || path === '/api/warehouse/returns') return route.fulfill(ok([]))
   if (path === '/api/warehouse/requisitions' && request.method() === 'POST') {
     log.requisitionBody = request.postDataJSON()
@@ -303,14 +443,15 @@ test('boss sees complete warehouse navigation and regional context has no purcha
   const log = await prepare(page, baseSession)
   await page.goto('/warehouse')
   const pageRoot = page.locator('.warehouse-page')
-  for (const label of ['全部仓库总览', '荆州总仓', '山东分仓', '仓间调拨', '门店叫货', '外部采购', '出入库记录']) {
+  for (const label of ['全部仓库总览', '荆州总仓', '山东分仓', '门店叫货', '外部采购', '出入库记录']) {
     await expect(pageRoot.getByRole('link', { name: label, exact: true })).toBeVisible()
   }
+  await expect(pageRoot.getByRole('link', { name: /仓间调拨/ })).toBeVisible()
   await page.screenshot({ path: '../output/playwright/warehouse-network-overview.png', fullPage: true })
 
   await page.goto('/warehouse/shandong')
   await expect(pageRoot.getByText('山东分仓', { exact: true }).first()).toBeVisible()
-  await expect(pageRoot.getByRole('link', { name: '向荆州总仓申请补货', exact: true })).toBeVisible()
+  await expect(pageRoot.getByRole('link', { name: '向上级总仓申请补货', exact: true })).toBeVisible()
   await expect(pageRoot.getByRole('link', { name: '外部采购', exact: true })).toHaveCount(0)
   await expect(pageRoot.getByRole('link', { name: '外部采购入库', exact: true })).toHaveCount(0)
   await page.screenshot({ path: '../output/playwright/warehouse-shandong-context.png', fullPage: true })
@@ -327,13 +468,59 @@ test('multi-warehouse admin switches by scoped warehouse id and ignores query ta
   await expect.poll(() => new URL(page.url()).pathname).toBe('/warehouse/shandong')
 
   await page.goto('/warehouse/shandong?warehouseId=1')
-  await expect(page.getByRole('link', { name: '向荆州总仓申请补货' })).toBeVisible()
+  await expect(page.getByRole('link', { name: '向上级总仓申请补货' })).toBeVisible()
   const overviewRequests = log.urls.map((raw) => new URL(raw)).filter((url) => url.pathname === '/api/warehouse/overview')
   expect(overviewRequests.at(-1)?.searchParams.get('warehouseId')).toBe('2')
   expect(log.consoleErrors).toEqual([])
 })
 
-test('Shandong-only admin creates replenishment with the fixed parent route', async ({ page }) => {
+test('transfer workbench keeps its route while switching warehouse context and reloads real workbench data', async ({ page }) => {
+  const log = await prepare(page, warehouseAdminSession)
+  await page.goto('/warehouse/transfers?warehouseId=1')
+
+  const selector = page.getByLabel('当前仓库')
+  await expect(selector).toHaveValue('1')
+  await expect(page.getByRole('heading', { name: '向分仓主动配货', exact: true })).toBeVisible()
+  await expect(page.getByLabel('调出仓')).toHaveValue('荆州总仓')
+  const centralTarget = page.getByLabel('调入仓')
+  await expect(centralTarget.locator('option')).toHaveCount(1)
+  await expect(centralTarget).toHaveValue('1:2')
+  await expect(page.getByText('主动配货草稿', { exact: true })).toBeVisible()
+  await expect(page.getByText('待审批', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('待发货', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('DB-JZ-001', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '发货', exact: true })).toBeVisible()
+
+  await page.getByRole('button', { name: '提交', exact: true }).click()
+  await expect.poll(() => log.urls.some((raw) => new URL(raw).pathname.endsWith('/TR-JZ-DRAFT/submit'))).toBe(true)
+
+  await selector.selectOption('2')
+  await expect.poll(() => new URL(page.url()).pathname).toBe('/warehouse/transfers')
+  await expect.poll(() => new URL(page.url()).searchParams.get('warehouseId')).toBe('2')
+  await expect(selector).toHaveValue('2')
+  await expect(page.getByRole('heading', { name: '向上级总仓申请补货', exact: true })).toBeVisible()
+  await expect(page.getByLabel('调出仓')).toHaveValue('荆州总仓')
+  await expect(page.getByLabel('调入仓')).toHaveValue('山东分仓')
+  await expect(page.getByText('DB-SD-001', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '确认收货', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '发货', exact: true })).toHaveCount(0)
+  await expect(page.getByText('待收货', { exact: true }).first()).toBeVisible()
+
+  for (const endpoint of ['/api/warehouse/overview', '/api/warehouse/transfers', '/api/warehouse/transfers/context']) {
+    expect(log.urls.some((raw) => {
+      const requestUrl = new URL(raw)
+      return requestUrl.pathname === endpoint && requestUrl.searchParams.get('warehouseId') === '2'
+    })).toBe(true)
+  }
+
+  await selector.selectOption('1')
+  await expect.poll(() => new URL(page.url()).searchParams.get('warehouseId')).toBe('1')
+  await expect(page.getByRole('heading', { name: '向分仓主动配货', exact: true })).toBeVisible()
+  await expect(page.getByText('DB-JZ-001', { exact: true })).toBeVisible()
+  expect(log.consoleErrors).toEqual([])
+})
+
+test('Shandong-only admin creates replenishment through the backend-provided route', async ({ page }) => {
   const log = await prepare(page, shandongAdminSession)
   await page.goto('/warehouse/transfers')
   await expect(page.getByLabel('当前仓库')).toHaveCount(0)
@@ -397,7 +584,7 @@ test('regional warehouse context remains usable without page overflow on mobile'
 
   const pageRoot = page.locator('.warehouse-page')
   await expect(pageRoot.getByText('山东分仓', { exact: true }).first()).toBeVisible()
-  await expect(pageRoot.getByRole('link', { name: '向荆州总仓申请补货', exact: true })).toBeVisible()
+  await expect(pageRoot.getByRole('link', { name: '向上级总仓申请补货', exact: true })).toBeVisible()
   await expect(pageRoot.getByRole('link', { name: '外部采购', exact: true })).toHaveCount(0)
   const viewport = await page.evaluate(() => ({
     clientWidth: document.documentElement.clientWidth,

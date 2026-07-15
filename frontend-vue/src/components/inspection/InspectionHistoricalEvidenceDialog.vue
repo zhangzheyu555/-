@@ -321,7 +321,7 @@ function clauseLabel(item: InspectionItemResult) {
         <section v-else class="evidence-step" aria-labelledby="upload-evidence-title">
           <div class="step-heading"><span>1</span><div><h4 id="upload-evidence-title">从微信重新选择原图补传</h4><p>原图将通过受认证的后端上传并直接绑定当前历史巡检，不会保存在浏览器本地。</p></div></div>
           <label class="upload-original-button">
-            <input type="file" accept="image/*" :disabled="submitting" @change="onFileChange" />
+            <input type="file" accept="image/*" capture="environment" :disabled="submitting" @change="onFileChange" />
             <Upload :size="16" />{{ selectedFile ? '重新选择原图' : '选择图片原图' }}
           </label>
           <p v-if="selectedFile" class="selected-original"><b>{{ selectedFile.name }}</b><span>已选择，仍需人工勾选下方历史条款后才能提交。</span></p>
@@ -394,7 +394,7 @@ function clauseLabel(item: InspectionItemResult) {
 .evidence-empty b { color: var(--ink); font-size: 13px; }
 .missing-original-hint { padding: 9px 10px; border-radius: 7px; background: var(--ds-warning-soft); color: #77440d; font-size: 12px; font-weight: 700; line-height: 1.5; }
 .evidence-loading { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; color: var(--muted); font-size: 13px; }
-.upload-original-button { display: inline-flex; width: fit-content; align-items: center; gap: 7px; min-height: 38px; padding: 0 12px; border: 1px solid var(--primary); border-radius: 8px; background: var(--primary-soft); color: var(--primary-dark); font-size: 13px; font-weight: 800; cursor: pointer; }
+.upload-original-button { display: inline-flex; width: fit-content; align-items: center; gap: 7px; min-height: 44px; padding: 0 12px; border: 1px solid var(--primary); border-radius: 8px; background: var(--primary-soft); color: var(--primary-dark); font-size: 13px; font-weight: 800; cursor: pointer; }
 .upload-original-button input { display: none; }
 .selected-original { padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--ds-surface-muted); }
 .historical-evidence-dialog > footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 22px; border-top: 1px solid var(--line); background: var(--ds-surface, #fff); }
@@ -403,5 +403,5 @@ function clauseLabel(item: InspectionItemResult) {
 .historical-evidence-dialog > footer > div { display: grid; grid-template-columns: repeat(2, 148px); gap: 12px; flex: 0 0 auto; align-items: center; justify-content: flex-end; }
 .historical-evidence-dialog .primary-button, .historical-evidence-dialog .secondary-button { display: inline-flex; width: 100%; height: 48px; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; writing-mode: horizontal-tb; }
 .historical-evidence-dialog .primary-button:disabled { cursor: not-allowed; opacity: .55; }
-@media (max-width: 620px) { .historical-evidence-backdrop { align-items: end; padding: 0; } .historical-evidence-dialog { width: 100%; max-height: min(88vh, 760px); border-bottom-right-radius: 0; border-bottom-left-radius: 0; } .historical-evidence-dialog > header, .historical-evidence-body, .historical-evidence-dialog > footer { padding-right: 16px; padding-left: 16px; } .evidence-mode-tabs { margin-right: 16px; margin-left: 16px; } .historical-evidence-dialog > footer { align-items: stretch; flex-direction: column; } .historical-evidence-dialog > footer > div { grid-template-columns: repeat(2, 1fr); width: 100%; } .dialog-error { align-items: flex-start; flex-wrap: wrap; } }
+@media (max-width: 620px) { .historical-evidence-backdrop { align-items: end; padding: 0; } .historical-evidence-dialog { width: 100%; max-height: min(88vh, 760px); border-bottom-right-radius: 0; border-bottom-left-radius: 0; } .historical-evidence-dialog > header, .historical-evidence-body, .historical-evidence-dialog > footer { padding-right: 16px; padding-left: 16px; } .dialog-close { width: 44px; height: 44px; } .evidence-mode-tabs { margin-right: 16px; margin-left: 16px; } .evidence-mode-tabs button, .candidate-retry { min-height: 44px; } .historical-evidence-dialog > footer { align-items: stretch; flex-direction: column; } .historical-evidence-dialog > footer > div { grid-template-columns: repeat(2, 1fr); width: 100%; } .dialog-error { align-items: flex-start; flex-wrap: wrap; } }
 </style>

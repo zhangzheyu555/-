@@ -15,6 +15,13 @@ const modules = computed(() => [
     permission: PERMISSIONS.INSPECTION_READ,
   },
   {
+    label: '整改复核',
+    description: '查看店长已提交的整改证据，填写备注后通过或驳回。',
+    to: '/operations/inspection/reviews',
+    icon: ClipboardCheck,
+    permission: PERMISSIONS.INSPECTION_MANAGE,
+  },
+  {
     label: '培训考试',
     description: '维护课程、题库、考试发布和成绩报表。',
     to: '/operations/exams',

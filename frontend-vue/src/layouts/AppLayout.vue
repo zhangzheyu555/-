@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Bell, CalendarDays, ChevronDown, Menu, Search, X } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import { getStores, type StoreInfo } from '../api/operations'
@@ -16,6 +16,9 @@ const auth = useAuthStore()
 const businessScope = useBusinessScope()
 const warehouse = useWarehouseStore()
 const mobileNavOpen = ref(false)
+const mobileMenuButton = ref<HTMLButtonElement | null>(null)
+const mobileNavDrawer = ref<HTMLElement | null>(null)
+const mobileDrawerCloseButton = ref<HTMLButtonElement | null>(null)
 const searchText = ref('')
 const searchOpen = ref(false)
 const searchInput = ref<InstanceType<typeof SearchInput> | null>(null)
@@ -49,7 +52,7 @@ const topbarStores = computed(() => {
 
 async function logout() {
   if (auth.loggingOut) return
-  mobileNavOpen.value = false
+  closeMobileNav({ restoreFocus: false })
   searchText.value = ''
   try {
     await auth.logout()
@@ -99,34 +102,143 @@ function selectGlobalStore(event: Event) {
   void router.push({ path: route.path, query })
 }
 
+function focusDrawerCloseButton() {
+  mobileDrawerCloseButton.value?.focus()
+}
+
+function keepFocusInsideMobileNav(event: FocusEvent) {
+  if (!mobileNavOpen.value) return
+  const drawer = mobileNavDrawer.value
+  const target = event.target
+  if (!drawer || !(target instanceof Node) || drawer.contains(target)) return
+  focusDrawerCloseButton()
+}
+
+function handleDocumentKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Escape' || !mobileNavOpen.value) return
+  event.preventDefault()
+  closeMobileNav()
+}
+
+async function openMobileNav() {
+  if (mobileNavOpen.value) return
+  mobileNavOpen.value = true
+  document.body.classList.add('drawer-open')
+  await nextTick()
+  focusDrawerCloseButton()
+}
+
+function closeMobileNav(options: { restoreFocus?: boolean } = {}) {
+  const { restoreFocus = true } = options
+  if (!mobileNavOpen.value) return
+  mobileNavOpen.value = false
+  document.body.classList.remove('drawer-open')
+  if (restoreFocus) {
+    void nextTick(() => mobileMenuButton.value?.focus())
+  }
+}
+
+function closeMobileNavForNavigation() {
+  closeMobileNav({ restoreFocus: false })
+}
+
+function drawerFocusableElements() {
+  const drawer = mobileNavDrawer.value
+  if (!drawer) return []
+  return Array.from(drawer.querySelectorAll<HTMLElement>(
+    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  )).filter((element) => !element.hasAttribute('hidden') && element.getClientRects().length > 0)
+}
+
+function handleDrawerKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeMobileNav()
+    return
+  }
+  if (event.key !== 'Tab') return
+
+  const focusable = drawerFocusableElements()
+  if (!focusable.length) {
+    event.preventDefault()
+    mobileNavDrawer.value?.focus()
+    return
+  }
+
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  const activeElement = document.activeElement
+  if (event.shiftKey && activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
+
 watch(
   () => route.fullPath,
   () => {
-    mobileNavOpen.value = false
+    closeMobileNav({ restoreFocus: false })
     searchOpen.value = false
     document.body.classList.remove('modal-open', 'drawer-open', 'menu-open')
   },
 )
+
+onBeforeUnmount(() => {
+  document.removeEventListener('focusin', keepFocusInsideMobileNav)
+  document.removeEventListener('keydown', handleDocumentKeydown)
+  document.body.classList.remove('drawer-open')
+})
+
+onMounted(() => {
+  document.addEventListener('focusin', keepFocusInsideMobileNav)
+  document.addEventListener('keydown', handleDocumentKeydown)
+})
 </script>
 
 <template>
   <div class="app-shell">
     <AppSidebar v-if="!mobileNavOpen" mode="desktop" @logout="logout" />
-    <div v-if="mobileNavOpen" class="mobile-nav-backdrop" @click="mobileNavOpen = false" />
-    <div v-if="mobileNavOpen" class="mobile-nav-drawer open">
+    <div v-if="mobileNavOpen" class="mobile-nav-backdrop" aria-hidden="true" @click="closeMobileNav()" />
+    <div
+      v-if="mobileNavOpen"
+      id="mobile-navigation-drawer"
+      ref="mobileNavDrawer"
+      class="mobile-nav-drawer open"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="mobile-navigation-title"
+      tabindex="-1"
+      @keydown="handleDrawerKeydown"
+    >
       <div class="mobile-nav-head">
-        <b>菜单</b>
-        <button class="icon-button" type="button" aria-label="关闭菜单" @click="mobileNavOpen = false">
+        <b id="mobile-navigation-title">菜单</b>
+        <button ref="mobileDrawerCloseButton" class="icon-button" type="button" aria-label="关闭菜单" @click="closeMobileNav()">
           <X :size="18" />
         </button>
       </div>
-      <AppSidebar mode="mobile" @navigate="mobileNavOpen = false" @logout="logout" />
+      <AppSidebar mode="mobile" @navigate="closeMobileNavForNavigation" @logout="logout" />
     </div>
 
-    <main class="app-main" :class="{ 'assistant-route': route.path === '/assistant' }">
+    <main
+      class="app-main"
+      :class="{ 'assistant-route': route.path === '/assistant' }"
+      :inert="mobileNavOpen || undefined"
+      :aria-hidden="mobileNavOpen || undefined"
+    >
       <header class="topbar app-topbar">
         <div class="topbar-primary-row">
-          <button class="mobile-menu-button" type="button" aria-label="打开菜单" @click="mobileNavOpen = true">
+          <button
+            ref="mobileMenuButton"
+            class="mobile-menu-button"
+            type="button"
+            aria-label="打开菜单"
+            aria-controls="mobile-navigation-drawer"
+            :aria-expanded="mobileNavOpen"
+            @click="openMobileNav"
+          >
             <Menu :size="20" />
           </button>
           <div class="topbar-context">
@@ -318,6 +430,13 @@ watch(
   .topbar-primary-row {
     width: 100%;
     min-width: 0;
+  }
+
+  .notification-button,
+  .search-trigger,
+  .search-close {
+    width: 44px;
+    height: 44px;
   }
 
   .topbar-context {

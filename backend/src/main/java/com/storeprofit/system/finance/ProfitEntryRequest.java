@@ -2,10 +2,11 @@ package com.storeprofit.system.finance;
 
 import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import java.math.BigDecimal;
 
 public record ProfitEntryRequest(
-    String storeId,
+    @NotBlank String storeId,
     @NotBlank String month,
     // 列类型为 DECIMAL(14,2)：整数位超过 12 位会溢出直接落 500，这里在入参层拦成 400。
     @Digits(integer = 12, fraction = 2) BigDecimal sales,
@@ -24,6 +25,31 @@ public record ProfitEntryRequest(
     @Digits(integer = 12, fraction = 2) BigDecimal repair,
     @Digits(integer = 12, fraction = 2) BigDecimal equip,
     @Digits(integer = 12, fraction = 2) BigDecimal expOther,
-    String note
+    String note,
+    @NotNull Long brandId
 ) {
+  public ProfitEntryRequest(
+      String storeId,
+      String month,
+      BigDecimal sales,
+      BigDecimal refund,
+      BigDecimal discount,
+      BigDecimal material,
+      BigDecimal packaging,
+      BigDecimal loss,
+      BigDecimal costOther,
+      BigDecimal rent,
+      BigDecimal labor,
+      BigDecimal utility,
+      BigDecimal property,
+      BigDecimal commission,
+      BigDecimal promo,
+      BigDecimal repair,
+      BigDecimal equip,
+      BigDecimal expOther,
+      String note
+  ) {
+    this(storeId, month, sales, refund, discount, material, packaging, loss, costOther,
+        rent, labor, utility, property, commission, promo, repair, equip, expOther, note, null);
+  }
 }

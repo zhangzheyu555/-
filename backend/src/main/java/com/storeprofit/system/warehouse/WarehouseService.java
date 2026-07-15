@@ -11,6 +11,7 @@ import com.storeprofit.system.platform.authorization.DataScopeDomains;
 import com.storeprofit.system.platform.authorization.DataScopeModes;
 import com.storeprofit.system.platform.authorization.PermissionCodes;
 import com.storeprofit.system.warehouse.WarehouseRepository.ReturnSourceMovementRow;
+import com.storeprofit.system.warehouse.WarehouseRepository.WarehouseFacilitySnapshot;
 import com.storeprofit.system.warehouse.WarehouseTopologyRepository.BatchRow;
 import com.storeprofit.system.warehouse.WarehouseTopologyRepository.FacilityRow;
 import com.storeprofit.system.warehouse.WarehouseTopologyRepository.InventoryRow;
@@ -497,8 +498,12 @@ public class WarehouseService {
     if (!warehouseRepository.storeExists(user.tenantId(), storeId)) {
       throw new BusinessException("STORE_NOT_FOUND", "退货门店不存在", HttpStatus.BAD_REQUEST);
     }
-    FacilityRow returnWarehouse = topologyService == null ? null
-        : requisitionFacility(user, requisition.id());
+    // receiveDepartment remains on the wire for backward compatibility, but it
+    // must never choose the physical receiving warehouse or its PDF wording.
+    WarehouseFacilitySnapshot receiveWarehouse = warehouseRepository
+        .receiveWarehouseForRequisition(user.tenantId(), requisition.id())
+        .orElseThrow(() -> new BusinessException(
+            "WAREHOUSE_NOT_FOUND", "叫货单未关联有效供货仓", HttpStatus.CONFLICT));
     String returnDate = request.returnDate() == null || request.returnDate().isBlank()
         ? LocalDate.now().toString()
         : request.returnDate().trim();
@@ -510,9 +515,6 @@ public class WarehouseService {
     String deliveryId = warehouseRepository.deliveryByRequisition(user.tenantId(), requisition.id())
         .map(WarehouseDeliveryResponse::id)
         .orElse(null);
-    String receiveDepartment = request.receiveDepartment() == null || request.receiveDepartment().isBlank()
-        ? "仓库"
-        : request.receiveDepartment().trim();
     BigDecimal total = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
     ArrayList<ReturnLineDraft> drafts = new ArrayList<>();
     for (WarehouseReturnLineRequest line : request.lines()) {
@@ -574,16 +576,10 @@ public class WarehouseService {
         remaining = remaining.subtract(used).setScale(2, RoundingMode.HALF_UP);
       }
     }
-    if (returnWarehouse == null) {
-      warehouseRepository.insertReturnOrder(user.tenantId(), returnNo, returnNo, requisition.id(),
-          deliveryId, storeId, storeName, receiveDepartment, "SUBMITTED", total,
-          returnHandler(user), user.displayName(), request.reason(), request.note(), returnDate);
-    } else {
-      warehouseRepository.insertReturnOrder(user.tenantId(), returnWarehouse.id(),
-          returnNo, returnNo, requisition.id(), deliveryId, storeId, storeName, receiveDepartment,
-          "SUBMITTED", total, returnHandler(user), user.displayName(), request.reason(),
-          request.note(), returnDate);
-    }
+    warehouseRepository.insertReturnOrder(user.tenantId(), receiveWarehouse,
+        returnNo, returnNo, requisition.id(), deliveryId, storeId, storeName,
+        "SUBMITTED", total, returnHandler(user), user.displayName(), request.reason(),
+        request.note(), returnDate);
     for (ReturnLineDraft draft : drafts) {
       warehouseRepository.insertReturnOrderLine(
           user.tenantId(),
@@ -1574,6 +1570,8 @@ public class WarehouseService {
         row.sourceDeliveryId(),
         row.returnStoreId(),
         row.returnStoreName(),
+        row.receiveWarehouseId(),
+        row.receiveWarehouseName(),
         row.receiveDepartment(),
         row.status(),
         row.statusLabel(),

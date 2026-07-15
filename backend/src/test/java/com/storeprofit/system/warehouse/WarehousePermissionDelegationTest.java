@@ -150,6 +150,8 @@ class WarehousePermissionDelegationTest {
         "DEL-1",
         storeId,
         storeId,
+        1L,
+        "荆州总仓",
         "仓库",
         "SUBMITTED",
         "已提交",

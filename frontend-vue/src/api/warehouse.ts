@@ -319,6 +319,8 @@ export interface WarehouseReturnOrder {
   sourceDeliveryId?: string
   returnStoreId: string
   returnStoreName: string
+  receiveWarehouseId?: string | number
+  receiveWarehouseName?: string
   receiveDepartment?: string
   status: string
   statusLabel: string
@@ -423,6 +425,62 @@ export interface WarehouseTransferCreatePayload {
   clientRequestId: string
 }
 
+/**
+ * 调拨工作台由后端根据当前用户、仓库范围和启用路线裁剪后返回的上下文。
+ * 前端只能使用 routes 中的来源仓、目标仓、可执行动作和物料库存，不能自行推断路线。
+ */
+export type WarehouseTransferContextMode = 'REQUEST_REPLENISHMENT' | 'PROACTIVE_ALLOCATION' | 'NONE'
+
+export interface WarehouseTransferEndpoint {
+  id: string | number
+  code?: string
+  name: string
+}
+
+export interface WarehouseTransferRouteActions {
+  canCreate: boolean
+  canSubmit: boolean
+  canApprove: boolean
+  canReject: boolean
+  canShip: boolean
+  canReceive: boolean
+  canCancel: boolean
+}
+
+export interface WarehouseTransferMaterial {
+  itemId: number
+  itemName: string
+  itemCode?: string
+  unit?: string
+  availableQuantity: number
+  shortageMessage?: string
+}
+
+export interface WarehouseTransferRoute {
+  sourceWarehouse: WarehouseTransferEndpoint
+  targetWarehouse: WarehouseTransferEndpoint
+  formAction?: WarehouseTransferContextMode
+  workbenchLabel?: string
+  actions: WarehouseTransferRouteActions
+  materials: WarehouseTransferMaterial[]
+}
+
+export interface WarehouseTransferTodos {
+  draft?: number
+  pendingApproval?: number
+  pendingShipment?: number
+  pendingReceipt?: number
+  completed?: number
+}
+
+export interface WarehouseTransferContext {
+  currentWarehouse: WarehouseTransferEndpoint
+  mode: WarehouseTransferContextMode
+  workbenchLabel?: string
+  routes: WarehouseTransferRoute[]
+  todos: WarehouseTransferTodos
+}
+
 export function getWarehouses() {
   return apiGet<WarehouseInfo[]>('/api/warehouse/warehouses')
 }
@@ -436,6 +494,12 @@ export function getWarehouseOverview(warehouseId?: string | number) {
 export function getWarehouseTransfers(warehouseId?: string | number) {
   return apiGet<WarehouseTransfer[]>('/api/warehouse/transfers', {
     params: warehouseId ? { warehouseId } : undefined,
+  })
+}
+
+export function getWarehouseTransferContext(warehouseId: string | number) {
+  return apiGet<WarehouseTransferContext>('/api/warehouse/transfers/context', {
+    params: { warehouseId },
   })
 }
 

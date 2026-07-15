@@ -96,6 +96,23 @@ class WarehousePrintPermissionDelegationTest {
   }
 
   @Test
+  void explicitCrossStoreReturnIdReturnsForbiddenAndIsNotRendered() {
+    AuthUser delegated = user("OPERATIONS", "rg1");
+    BusinessException denied = forbidden();
+    WarehouseReturnResponse otherStore = returnOrder("PSTH-OTHER", "rg2", null);
+    when(accessControl.hasPermission(delegated, PermissionCodes.WAREHOUSE_CENTRAL_READ)).thenReturn(false);
+    when(accessControl.dataScope(delegated, DataScopeDomains.WAREHOUSE))
+        .thenReturn(new DataScope(DataScopeModes.STORE_LIST, List.of("rg1")));
+    when(repository.returnOrder(1L, "PSTH-OTHER")).thenReturn(Optional.of(otherStore));
+    doThrow(denied).when(accessControl).requireStoreAccess(
+        delegated, DataScopeDomains.WAREHOUSE, "rg2", "下载该配送退货单");
+
+    assertThatThrownBy(() -> service.returnPdf(delegated, "PSTH-OTHER")).isSameAs(denied);
+
+    verify(renderer, never()).returnOrder(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
   void personalStoreReadDenyPreventsPdfRendering() {
     AuthUser delegated = user("OPERATIONS", "rg1");
     BusinessException denied = forbidden();
@@ -137,6 +154,44 @@ class WarehousePrintPermissionDelegationTest {
         "2026-07-11 10:00:00",
         "",
         "仓库管理员"
+    );
+  }
+
+  private WarehouseReturnResponse returnOrder(String id, String storeId) {
+    return returnOrder(id, storeId, "荆州总仓");
+  }
+
+  private WarehouseReturnResponse returnOrder(String id, String storeId, String receiveWarehouseName) {
+    return new WarehouseReturnResponse(
+        id,
+        id,
+        "REQ-1",
+        "DEL-1",
+        storeId,
+        storeId,
+        1L,
+        receiveWarehouseName,
+        "荆州总仓",
+        "SUBMITTED",
+        "已提交",
+        BigDecimal.TEN,
+        "经办人",
+        "创建人",
+        "修改人",
+        null,
+        null,
+        "原因",
+        "备注",
+        null,
+        null,
+        "2026-07-11",
+        null,
+        null,
+        "2026-07-11 10:00:00",
+        "2026-07-11 10:00:00",
+        0,
+        0,
+        List.of()
     );
   }
 

@@ -121,7 +121,27 @@ try {
     if (-not $launcherSource.Contains($marker)) { throw '统一启动器缺少环境隔离或双助手门禁。' }
   }
   if ($launcherSource.Contains('AutoPromoteConfirmed')) { throw '统一启动器仍允许自动替换绕过。' }
-  Write-Output 'PASS DPAPI round-trip, encrypted file, missing-field/repository/reparse rejection, isolated injection, safe preflight output, legacy-launcher rejection and environment-clear gate.'
+  # Verify the runtime-secured marker is injected by the launcher.
+  if (-not $launcherSource.Contains("ASSISTANT_RUNTIME_SECURED")) {
+    throw '统一启动器缺少 ASSISTANT_RUNTIME_SECURED 环境变量注入。'
+  }
+  # Verify the backend Java service checks the marker and refuses non-secure launches.
+  $employeeServicePath = Join-Path $PSScriptRoot '..\backend\src\main\java\com\storeprofit\system\employeeassistant\EmployeeAssistantService.java'
+  if (-not (Test-Path -LiteralPath $employeeServicePath -PathType Leaf)) {
+    throw '未找到 EmployeeAssistantService.java，无法校验运行态防呆。'
+  }
+  $employeeServiceSource = [IO.File]::ReadAllText($employeeServicePath, [Text.UTF8Encoding]::new($false))
+  if (-not ($employeeServiceSource.Contains("runtimeSecured") -and
+      $employeeServiceSource.Contains("未通过安全启动器注入"))) {
+    throw 'EmployeeAssistantService 缺少 runtimeSecured 运行态防呆校验。'
+  }
+  # Verify application.yml declares the runtime-secured property.
+  $appYmlPath = Join-Path $PSScriptRoot '..\backend\src\main\resources\application.yml'
+  $appYmlSource = [IO.File]::ReadAllText($appYmlPath, [Text.UTF8Encoding]::new($false))
+  if (-not $appYmlSource.Contains("runtime-secured: ${ASSISTANT_RUNTIME_SECURED:false}")) {
+    throw 'application.yml 缺少 runtime-secured 属性声明。'
+  }
+  Write-Output 'PASS DPAPI round-trip, encrypted file, missing-field/repository/reparse rejection, isolated injection, safe preflight output, legacy-launcher rejection, runtime-secured marker and environment-clear gate.'
 } finally {
   $businessKey = $null
   $employeeKey = $null
