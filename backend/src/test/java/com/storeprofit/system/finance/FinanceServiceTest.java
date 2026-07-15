@@ -2,6 +2,8 @@ package com.storeprofit.system.finance;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -16,6 +18,7 @@ import com.storeprofit.system.platform.authorization.DataScope;
 import com.storeprofit.system.platform.authorization.DataScopeDomains;
 import com.storeprofit.system.platform.authorization.DataScopeModes;
 import com.storeprofit.system.platform.authorization.DataScopeService;
+import java.math.BigDecimal;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -50,6 +53,25 @@ class FinanceServiceTest {
         .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
 
     verify(financeRepository, never()).deleteEntry(1L, "rg1", "2026-12");
+  }
+
+  @Test
+  void storeManagerCanStillSaveManualEntryForOwnStore() {
+    ProfitEntryRequest request = new ProfitEntryRequest(
+        "rg1", "2026-07", new BigDecimal("100"), BigDecimal.ZERO, BigDecimal.ZERO,
+        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+        BigDecimal.ZERO, "本店手工录入"
+    );
+    when(financeRepository.storeExists(1L, "rg1")).thenReturn(true);
+
+    service.save(storeManager, request);
+
+    verify(accessControl).requireFinanceWrite(storeManager);
+    verify(accessControl, never()).requireFinanceImport(storeManager);
+    verify(financeRepository).upsert(eq(1L), any(ProfitEntryRequest.class), eq(3L));
+    verify(financeRepository).logSave(1L, 3L, "店长·荆州之星店", "rg1", "2026-07");
   }
 
   @Test

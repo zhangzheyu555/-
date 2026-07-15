@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory, type RouteLocationRaw, type RouteRecordRaw } from 'vue-router'
-import { PERMISSIONS, type PermissionCode } from '../permissions/permissions'
+import { canUseFinanceProfitImport, PERMISSIONS, type PermissionCode } from '../permissions/permissions'
+import { isBossRole } from '../permissions/roles'
 import { resolveAvailableWorkspace } from '../permissions/workspaces'
 import { useAuthStore } from '../stores/auth'
 
@@ -15,6 +16,8 @@ const StoreDetailPage = () => import('../pages/StoreDetailPage.vue')
 const StoreManagementPage = () => import('../pages/StoreManagementPage.vue')
 const SupervisorWorkbenchPage = () => import('../pages/SupervisorWorkbenchPage.vue')
 const AssistantPage = () => import('../pages/AssistantPage.vue')
+const EmployeeAssistantPage = () => import('../pages/EmployeeAssistantPage.vue')
+const DailyLossPage = () => import('../pages/DailyLossPage.vue')
 const OperationLogPage = () => import('../pages/OperationLogPage.vue')
 const NoPermissionPage = () => import('../pages/NoPermissionPage.vue')
 const PlaceholderPage = () => import('../pages/PlaceholderPage.vue')
@@ -47,13 +50,28 @@ const appChildren: RouteRecordRaw[] = [
   { path: 'operations', name: 'operations-workspace', component: OperationsWorkspace, meta: permissionMeta(PERMISSIONS.OPERATIONS_DASHBOARD_READ, { menuKey: 'operations-workspace', title: '运营工作台' }) },
 
   { path: 'assistant', name: 'assistant', component: AssistantPage, meta: permissionMeta(PERMISSIONS.ASSISTANT_USE, { menuKey: 'assistant', title: '门店经营助手' }) },
+  { path: 'employee-assistant', name: 'employee-assistant', component: EmployeeAssistantPage, meta: permissionMeta(PERMISSIONS.EMPLOYEE_ASSISTANT_USE, { menuKey: 'employee-assistant', title: '员工服务助手' }) },
+  // 已下线的辅助页面：保留旧链接兼容，统一回到员工服务助手。
+  { path: 'employee-assistant/knowledge', redirect: '/employee-assistant' },
+  { path: 'employee-assistant/handoffs', redirect: '/employee-assistant' },
+  { path: 'daily-loss', name: 'daily-loss', component: DailyLossPage, meta: permissionMeta(PERMISSIONS.DAILY_LOSS_READ, { menuKey: 'daily-loss', title: '每日报损' }) },
   { path: 'profit', name: 'profit', component: ProfitOverviewPage, meta: permissionMeta(PERMISSIONS.FINANCE_PROFIT_READ, { menuKey: 'profit-overview', title: '利润概览' }) },
   { path: 'profit-table', name: 'profit-table', component: ProfitTablePage, meta: permissionMeta(PERMISSIONS.FINANCE_PROFIT_READ, { menuKey: 'profit-table', title: '利润表' }) },
   { path: 'data-entry', name: 'data-entry', component: DataEntryPage, meta: permissionMeta(PERMISSIONS.FINANCE_PROFIT_WRITE, { menuKey: 'data-entry', title: '数据录入' }) },
+  {
+    path: 'finance/import',
+    name: 'finance-profit-import',
+    component: DataEntryPage,
+    meta: permissionMeta(PERMISSIONS.FINANCE_PROFIT_IMPORT, {
+      menuKey: 'finance-profit-import',
+      title: '导入月度汇总',
+      financeImportOnly: true,
+    }),
+  },
   { path: 'expenses', name: 'expenses', component: ExpensePage, meta: permissionMeta(PERMISSIONS.EXPENSE_READ, { menuKey: 'expenses', title: '报销栏' }) },
   { path: 'export', name: 'export', component: DataExportPage, meta: permissionMeta(PERMISSIONS.FINANCE_EXPORT, { menuKey: 'data-export', title: '数据导出' }) },
   { path: 'store-detail', name: 'store-detail', component: StoreDetailPage, meta: permissionMeta(PERMISSIONS.STORE_READ, { menuKey: 'store-detail', title: '门店详情' }) },
-  { path: 'stores', name: 'stores', component: StoreManagementPage, meta: permissionMeta(PERMISSIONS.STORE_MANAGE, { menuKey: 'store-management', title: '门店管理' }) },
+  { path: 'stores', name: 'stores', component: StoreManagementPage, meta: permissionMeta(PERMISSIONS.STORE_MANAGE, { menuKey: 'store-management', title: '门店管理', bossOnly: true }) },
   { path: 'logs', name: 'logs', component: OperationLogPage, meta: permissionMeta(PERMISSIONS.SYSTEM_AUDIT_READ, { menuKey: 'operation-logs', title: '操作日志' }) },
   { path: 'platform-login', name: 'platform-login', component: PlatformLoginPage, meta: permissionMeta(PERMISSIONS.PLATFORM_READ, { menuKey: 'platform-settings', title: '平台配置' }) },
   { path: 'users', name: 'users', component: UserPermissionPage, meta: permissionMeta(PERMISSIONS.SYSTEM_USER_MANAGE, { menuKey: 'user-permissions', title: '账号权限' }) },
@@ -178,6 +196,39 @@ router.beforeEach(async (to) => {
       && to.name !== 'no-permission'
       && to.name !== 'login') {
     return { name: 'no-permission', query: { reason: 'STORE_NOT_BOUND', from: to.fullPath } }
+  }
+
+  const requiresFinanceWrite = to.matched.some((record) => record.meta.permission === PERMISSIONS.FINANCE_PROFIT_WRITE)
+  if (requiresFinanceWrite && auth.isLoggedIn && auth.role === 'STORE_MANAGER') {
+    return {
+      path: '/profit-table',
+      query: { notice: 'STORE_MANAGER_DATA_ENTRY_FORBIDDEN' },
+    }
+  }
+
+  const requiresFinanceImport = to.matched.some((record) => record.meta.financeImportOnly === true)
+  if (requiresFinanceImport && auth.isLoggedIn) {
+    const canImport = canUseFinanceProfitImport(auth.role, auth.permissions)
+    if (!canImport) {
+      if (auth.role === 'STORE_MANAGER') {
+        return {
+          path: '/profit-table',
+          query: { notice: 'STORE_MANAGER_IMPORT_FORBIDDEN' },
+        }
+      }
+      return { name: 'no-permission', query: { from: to.fullPath } }
+    }
+  }
+
+  const requiresBoss = to.matched.some((record) => record.meta.bossOnly === true)
+  if (requiresBoss && auth.isLoggedIn && !isBossRole(auth.role)) {
+    if (auth.role === 'STORE_MANAGER') {
+      return {
+        path: '/store',
+        query: { notice: 'STORE_MANAGEMENT_FORBIDDEN' },
+      }
+    }
+    return { name: 'no-permission', query: { from: to.fullPath } }
   }
 
   if (to.name === 'finance-workspace' && to.query.tab === 'expenses') {

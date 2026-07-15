@@ -1,6 +1,7 @@
 package com.storeprofit.system.inspection;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -8,208 +9,186 @@ import static org.mockito.Mockito.when;
 
 import com.storeprofit.system.audit.AuditLogRequest;
 import com.storeprofit.system.audit.AuditRepository;
+import com.storeprofit.system.common.BusinessException;
 import com.storeprofit.system.platform.auth.AuthUser;
 import com.storeprofit.system.storage.StorageService;
+import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.awt.image.BufferedImage;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
-import org.apache.poi.ss.usermodel.Cell;
+import javax.imageio.ImageIO;
 import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.usermodel.WorkbookFactory;
+import org.apache.poi.ss.usermodel.PrintSetup;
 import org.apache.poi.xssf.usermodel.XSSFSheet;
-import org.apache.poi.xssf.usermodel.XSSFPicture;
-import org.apache.poi.xssf.usermodel.XSSFShape;
-import javax.imageio.ImageIO;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 class InspectionExportServiceTest {
+  private static final AuthUser BOSS = new AuthUser(
+      1L, 1L, "default", "boss", "", "老板", "BOSS", null, true);
+
   @Test
-  void createsReadableThreeSheetWorkbookAndDegradesDamagedPhoto() throws Exception {
+  void fillsTheControlledTemplateAndContinuesPhotosAfterTheTwelfthSlot() throws Exception {
     InspectionService inspectionService = mock(InspectionService.class);
     StorageService storageService = mock(StorageService.class);
     AuditRepository auditRepository = mock(AuditRepository.class);
-    AuthUser user = new AuthUser(1L, 1L, "default", "boss", "", "老板", "BOSS", null, true);
-    InspectionRecordResponse record = record();
-    when(inspectionService.record(user, "INSP-1")).thenReturn(record);
-    when(storageService.inspectionAttachment(user, 9L, "INSP-1")).thenReturn(Optional.of(
-        new StorageService.InspectionAttachmentContent(
-            9L, "s1", "INSPECTION_RECORD", "INSP-1", "damaged.webp", "image/webp",
-            4, new byte[]{1, 2, 3, 4}, 1L, LocalDateTime.of(2026, 7, 13, 10, 30))));
-    byte[] validPng = png();
-    for (long id = 10; id <= 15; id++) {
-      when(storageService.inspectionAttachment(user, id, "INSP-1")).thenReturn(Optional.of(
-          attachment(id, "photo-" + id + ".png", validPng)));
+    InspectionRecordResponse record = reportRecord(List.of(
+        1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L, 11L, 12L, 13L));
+    when(inspectionService.prepareForExport(BOSS, "INSP-1")).thenReturn(record);
+    byte[] image = png();
+    for (long id = 1; id <= 13; id++) {
+      when(storageService.inspectionAttachment(BOSS, id, "INSP-1"))
+          .thenReturn(Optional.of(attachment(id, "现场照片-" + id + ".png", image)));
     }
     InspectionExportService service = new InspectionExportService(
         inspectionService, storageService, new InspectionImageNormalizer(), auditRepository);
 
-    InspectionExportFile file = service.export(user, "INSP-1");
+    InspectionExportFile file = service.export(BOSS, "INSP-1");
 
-    assertThat(file.filename()).isEqualTo("茹菓-荆州之星店-巡检报告-20260713-INSP-1.xlsx");
-    assertThat(file.content()).isNotEmpty();
+    assertThat(file.filename()).isEqualTo("巡检报告_万达二店_20260623_INSP-1.xlsx");
     try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(file.content()))) {
-      assertThat(workbook.getNumberOfSheets()).isEqualTo(3);
-      assertThat(workbook.getSheetName(0)).isEqualTo("巡检报告");
-      assertThat(workbook.getSheetName(1)).isEqualTo("照片证据");
-      assertThat(workbook.getSheetName(2)).isEqualTo("整改跟踪");
-      assertThat(sheetText(workbook, "巡检报告"))
-          .contains("原始物料得分", "20.00", "原始卫生得分", "30.00", "原始服务得分", "48.00")
-          .contains("最终物料得分", "37.00", "最终卫生得分", "63.00", "最终服务得分", "96.00")
-          .contains("分类分口径", "修正版重算", "196.00/200.00")
-          .contains("保存快照标准分", "保存快照实际分");
-      assertThat(workbook.getSheet("照片证据").getPrintSetup().getLandscape()).isTrue();
-      assertThat(sheetText(workbook, "照片证据")).contains("照片读取失败", "M-01", "荆州之星店");
-      assertThat(sheetText(workbook, "照片证据")).contains("上传时间", "已整改");
-      XSSFSheet evidence = (XSSFSheet) workbook.getSheet("照片证据");
-      assertThat(evidence.getDrawingPatriarch().getShapes()).hasSize(1);
-      assertPictureAspectRatios(evidence);
-      XSSFSheet rectification = (XSSFSheet) workbook.getSheet("整改跟踪");
-      assertThat(rectification.getDrawingPatriarch()).isNotNull();
-      assertThat(rectification.getDrawingPatriarch().getShapes()).hasSize(5);
-      assertThat(sheetText(workbook, "整改跟踪")).contains("已整改");
-      assertPictureAspectRatios(rectification);
+      // The source workbook has three sheets; the photo continuation is appended without
+      // discarding its retained template sheets.
+      assertThat(workbook.getNumberOfSheets()).isEqualTo(4);
+      XSSFSheet report = (XSSFSheet) workbook.getSheetAt(0);
+      XSSFSheet continuation = (XSSFSheet) workbook.getSheet("现场照片-2");
+      assertThat(report.getNumMergedRegions()).isEqualTo(56);
+      assertThat(report.getPrintSetup().getPaperSize()).isEqualTo(PrintSetup.A4_PAPERSIZE);
+      assertThat(report.getPrintSetup().getLandscape()).isFalse();
+      assertThat(cellText(report, 14, 7)).isEqualTo("总分：196 / 200");
+      assertThat(cellText(report, 13, 7)).isEqualTo("巡检结果：合格");
+      assertThat(cellText(report, 14, 7)).doesNotContain("195");
+      assertThat(report.getDrawingPatriarch().getShapes()).hasSize(12);
+      assertThat(continuation.getDrawingPatriarch().getShapes()).hasSize(1);
+      assertThat(cellText(continuation, 0, 0)).isEqualTo("现场照片续页");
+      assertThat(continuation.getMargin(Sheet.LeftMargin)).isEqualTo(report.getMargin(Sheet.LeftMargin));
+      assertThat(continuation.getMargin(Sheet.TopMargin)).isEqualTo(report.getMargin(Sheet.TopMargin));
+      assertThat(workbook.getPrintArea(workbook.getSheetIndex(continuation)))
+          .contains("'现场照片-2'!A1:Q135");
     }
-    verify(storageService).inspectionAttachment(user, 15L, "INSP-1");
     ArgumentCaptor<AuditLogRequest> log = ArgumentCaptor.forClass(AuditLogRequest.class);
     verify(auditRepository).writeLog(any(), log.capture());
     assertThat(log.getValue().action()).isEqualTo("导出巡检报告");
-    assertThat(log.getValue().reason()).doesNotContain("damaged.webp", "mysql://");
+    assertThat(log.getValue().reason()).isEqualTo("基于受控巡检模板生成Excel；现场照片数：13");
   }
 
   @Test
-  void exportsLegacyHundredPointOriginalAndTwoHundredPointReferenceWithoutDoubleConversion()
-      throws Exception {
+  void marksNoPhotosWithoutRebuildingTheTemplate() throws Exception {
     InspectionService inspectionService = mock(InspectionService.class);
     StorageService storageService = mock(StorageService.class);
     AuditRepository auditRepository = mock(AuditRepository.class);
-    AuthUser user = new AuthUser(1L, 1L, "default", "boss", "", "老板", "BOSS", null, true);
-    InspectionRecordResponse record = legacyHundredPointRecord();
-    when(inspectionService.record(user, "LEGACY-98")).thenReturn(record);
+    when(inspectionService.prepareForExport(BOSS, "INSP-NO-PHOTO"))
+        .thenReturn(reportRecord(List.of()));
     InspectionExportService service = new InspectionExportService(
         inspectionService, storageService, new InspectionImageNormalizer(), auditRepository);
 
-    InspectionExportFile file = service.export(user, "LEGACY-98");
+    InspectionExportFile file = service.export(BOSS, "INSP-NO-PHOTO");
 
     try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(file.content()))) {
-      assertThat(sheetText(workbook, "巡检报告"))
-          .contains("原始成绩", "98.00/100.00")
-          .contains("展示成绩", "196.00/200.00")
-          .contains("200分制换算参考", "196.00/200.00")
-          .contains("分类分口径", "历史100分制换算")
-          .contains("分制迁移", "旧100分制已换算（原始值保留）")
-          .contains("保存快照标准分", "120.0", "保存快照扣分", "4.0");
-      Row clause = findRow(workbook, "巡检报告", 1, "L-01");
-      assertThat(clause.getCell(4).getNumericCellValue()).isEqualTo(120.0);
-      assertThat(clause.getCell(5).getNumericCellValue()).isEqualTo(116.0);
-      assertThat(clause.getCell(6).getNumericCellValue()).isEqualTo(4.0);
+      XSSFSheet report = (XSSFSheet) workbook.getSheetAt(0);
+      assertThat(report.getNumMergedRegions()).isEqualTo(56);
+      assertThat(cellText(report, 15, 0)).isEqualTo("无现场照片");
+      assertThat(report.getDrawingPatriarch().getShapes()).isEmpty();
     }
   }
 
-  private String sheetText(Workbook workbook, String sheetName) {
-    StringBuilder text = new StringBuilder();
-    for (Row row : workbook.getSheet(sheetName)) {
-      for (Cell cell : row) {
-        text.append(cell.toString()).append('|');
+  @Test
+  void keepsTheOriginalPhotoPageForOneAndTwelvePhotos() throws Exception {
+    for (int photoCount : List.of(1, 12)) {
+      InspectionService inspectionService = mock(InspectionService.class);
+      StorageService storageService = mock(StorageService.class);
+      AuditRepository auditRepository = mock(AuditRepository.class);
+      List<Long> attachmentIds = java.util.stream.LongStream.rangeClosed(1, photoCount)
+          .boxed().toList();
+      when(inspectionService.prepareForExport(BOSS, "INSP-" + photoCount))
+          .thenReturn(reportRecord(attachmentIds));
+      byte[] image = png();
+      for (Long attachmentId : attachmentIds) {
+        when(storageService.inspectionAttachment(BOSS, attachmentId, "INSP-1"))
+            .thenReturn(Optional.of(attachment(attachmentId, "现场照片-" + attachmentId + ".png", image)));
+      }
+      InspectionExportService service = new InspectionExportService(
+          inspectionService, storageService, new InspectionImageNormalizer(), auditRepository);
+
+      InspectionExportFile file = service.export(BOSS, "INSP-" + photoCount);
+
+      try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(file.content()))) {
+        XSSFSheet report = (XSSFSheet) workbook.getSheetAt(0);
+        assertThat(workbook.getNumberOfSheets()).isEqualTo(3);
+        assertThat(report.getDrawingPatriarch().getShapes()).hasSize(photoCount);
       }
     }
-    return text.toString();
   }
 
-  private Row findRow(Workbook workbook, String sheetName, int column, String value) {
-    for (Row row : workbook.getSheet(sheetName)) {
-      Cell cell = row.getCell(column);
-      if (cell != null && value.equals(cell.toString())) {
-        return row;
-      }
-    }
-    throw new AssertionError("未找到导出行: " + value);
+  @Test
+  void returnsTheSpecificPhotoErrorInsteadOfCreatingAPartialWorkbook() {
+    InspectionService inspectionService = mock(InspectionService.class);
+    StorageService storageService = mock(StorageService.class);
+    AuditRepository auditRepository = mock(AuditRepository.class);
+    when(inspectionService.prepareForExport(BOSS, "INSP-BAD-PHOTO"))
+        .thenReturn(reportRecord(List.of(99L)));
+    when(storageService.inspectionAttachment(BOSS, 99L, "INSP-1")).thenReturn(Optional.of(
+        attachment(99L, "损坏现场照片.webp", new byte[] {1, 2, 3, 4})));
+    InspectionExportService service = new InspectionExportService(
+        inspectionService, storageService, new InspectionImageNormalizer(), auditRepository);
+
+    assertThatThrownBy(() -> service.export(BOSS, "INSP-BAD-PHOTO"))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(exception -> {
+          BusinessException business = (BusinessException) exception;
+          assertThat(business.getCode()).isEqualTo("INSPECTION_EXPORT_PHOTO_INVALID");
+          assertThat(business.getMessage()).contains("损坏现场照片.webp");
+        });
   }
 
-  private InspectionRecordResponse record() {
+  private InspectionRecordResponse reportRecord(List<Long> photoIds) {
     InspectionItemResultResponse item = new InspectionItemResultResponse(
-        1L, 1L, "物料标准", "M-01", "时效标签", "标签必须真实", "现场核对",
-        bd("1"), bd("0"), bd("1"), true, "YELLOW", false, "标签填写不完整",
-        List.of(9L, 15L), "店长", java.time.LocalDate.of(2026, 7, 15), "已完成", null,
-        List.of(10L, 12L, 13L), List.of(11L, 14L), 1);
-    InspectionResultRepairAudit repair = new InspectionResultRepairAudit(
-        1L, 38L, "2025.11.06", bd("200"), bd("180"), bd("98"),
-        bd("20"), bd("30"), bd("48"), "FAILED", false,
-        40L, "2025.11.06-R1", bd("200"), bd("180"), bd("196"),
-        bd("37"), bd("63"), bd("96"), "PASSED", true,
-        "RECALCULATED", "按修正版标准重算", 105, 105, 1L,
-        LocalDateTime.of(2026, 7, 13, 11, 0));
+        1L, 1L, "卫生", "H-01", "地面卫生", "地面应保持整洁", "现场检查",
+        bd("4"), bd("0"), bd("4"), true, "YELLOW", false, "发现纸屑",
+        photoIds, "店长", LocalDate.of(2026, 6, 30), "待整改", null,
+        List.of(), List.of(), 1);
     InspectionResultPresentation presentation = InspectionResultPolicy.present(
-        bd("200"), bd("98"), bd("20"), bd("30"), bd("48"), false, "FAILED", "[]",
-        "2025.11.06", repair);
+        bd("200"), bd("196"), bd("37"), bd("59"), bd("100"), true, "PASSED", "[]",
+        "2025.11.06-R1", null);
     return new InspectionRecordResponse(
-        "INSP-1", "s1", "001", "荆州之星店", 1L, "茹菓", "2026-07-13",
-        "督导", "茹菓", bd("200"), bd("98"), false, "[]", "[]", "[]", null,
-        38L, "2025.11.06", bd("20"), bd("30"), bd("48"), "FAILED", List.of(item),
+        "INSP-1", "store-1", "WD-02", "万达二店", 1L, "茹菓", "2026-06-23",
+        "夏督导", "茹菓", bd("200"), bd("196"), true, "[]", "[]", "[]", "现场复核通过",
+        41L, "2025.11.06-R1", bd("37"), bd("59"), bd("100"), "PASSED", List.of(item),
         presentation);
   }
 
-  private InspectionRecordResponse legacyHundredPointRecord() {
-    InspectionItemResultResponse item = new InspectionItemResultResponse(
-        2L, null, "旧制", "L-01", "旧制扣分项", "历史快照", "现场核对",
-        bd("120"), bd("116"), bd("4"), false, "NORMAL", false, null,
-        List.of(), null, null, "无需整改", null, List.of(), List.of(), 1);
-    InspectionResultPresentation presentation = InspectionResultPolicy.present(
-        bd("100"), bd("98"), bd("30"), bd("30"), bd("38"), true, "PASSED", "[]",
-        "legacy-100", null);
-    InspectionScoreScaleMigrationAudit scaleAudit = new InspectionScoreScaleMigrationAudit(
-        2L, InspectionScoreScaleMigrationAudit.HUNDRED_TO_TWO_HUNDRED,
-        bd("100"), null, bd("98"), bd("30"), bd("30"), bd("38"), true, "PASSED",
-        bd("200"), bd("180"), bd("196"), bd("60"), bd("60"), bd("76"), true, "PASSED",
-        LocalDateTime.of(2026, 7, 13, 16, 0));
-    return new InspectionRecordResponse(
-        "LEGACY-98", "s1", "001", "荆州之星店", 1L, "茹菓", "2025-10-01",
-        "督导", "茹菓", bd("100"), bd("98"), true, "[]", "[]", "[]", null,
-        1L, "legacy-100", bd("30"), bd("30"), bd("38"), "PASSED", List.of(item),
-        presentation, scaleAudit);
-  }
-
-  private BigDecimal bd(String value) {
-    return new BigDecimal(value).setScale(2);
-  }
-
-  private StorageService.InspectionAttachmentContent attachment(long id, String name, byte[] content) {
+  private StorageService.InspectionAttachmentContent attachment(long id, String fileName, byte[] content) {
     return new StorageService.InspectionAttachmentContent(
-        id, "s1", "INSPECTION_RECORD", "INSP-1", name, "image/png", content.length,
-        content, 1L, LocalDateTime.of(2026, 7, 13, 10, 30));
+        id, "store-1", "INSPECTION_RECORD", "INSP-1", fileName, "image/png", content.length,
+        content, 1L, LocalDateTime.of(2026, 6, 23, 10, 0));
   }
 
   private byte[] png() throws Exception {
-    BufferedImage image = new BufferedImage(4, 3, BufferedImage.TYPE_INT_RGB);
-    java.awt.Graphics2D graphics = image.createGraphics();
-    graphics.setColor(java.awt.Color.ORANGE);
-    graphics.fillRect(0, 0, 4, 3);
+    BufferedImage image = new BufferedImage(16, 10, BufferedImage.TYPE_INT_RGB);
+    Graphics2D graphics = image.createGraphics();
+    graphics.setColor(Color.ORANGE);
+    graphics.fillRect(0, 0, image.getWidth(), image.getHeight());
     graphics.dispose();
     ByteArrayOutputStream output = new ByteArrayOutputStream();
     ImageIO.write(image, "png", output);
     return output.toByteArray();
   }
 
-  private void assertPictureAspectRatios(XSSFSheet sheet) {
-    for (XSSFShape shape : sheet.getDrawingPatriarch().getShapes()) {
-      if (!(shape instanceof XSSFPicture picture)) {
-        continue;
-      }
-      var anchor = picture.getClientAnchor();
-      double widthPixels = 0;
-      for (int column = anchor.getCol1(); column < anchor.getCol2(); column++) {
-        widthPixels += sheet.getColumnWidthInPixels(column);
-      }
-      double heightPixels = 0;
-      for (int row = anchor.getRow1(); row < anchor.getRow2(); row++) {
-        heightPixels += sheet.getRow(row).getHeightInPoints() * 96d / 72d;
-      }
-      assertThat(widthPixels / heightPixels).isBetween(1.31, 1.35);
-    }
+  private BigDecimal bd(String value) {
+    return new BigDecimal(value).setScale(2);
+  }
+
+  private String cellText(XSSFSheet sheet, int rowIndex, int columnIndex) {
+    Row row = sheet.getRow(rowIndex);
+    return row == null || row.getCell(columnIndex) == null ? "" : row.getCell(columnIndex).getStringCellValue();
   }
 }

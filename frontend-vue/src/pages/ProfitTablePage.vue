@@ -23,6 +23,13 @@ const profit = useProfitStore()
 const scope = useBusinessScope()
 const reportMode = ref<ReportMode>(scope.isStoreManager.value ? 'single' : (isSummaryMode(route.query.mode) ? 'summary' : 'single'))
 
+const dataEntryNotice = computed(() => {
+  const notice = route.query.notice
+  if (notice === 'STORE_MANAGER_DATA_ENTRY_FORBIDDEN') return '经营数据由财务统一录入；店长可查看本店经营结果。'
+  if (notice === 'STORE_MANAGER_IMPORT_FORBIDDEN') return '月度经营数据导入仅限财务或老板处理；店长可查看本店经营结果。'
+  return ''
+})
+
 const selectedMonth = computed(() => String(route.query.month || profit.month || profit.summary.month || ''))
 const monthOptions = computed(() => profit.months.length ? profit.months : Array.from(new Set(profit.allEntries.map((entry) => entry.month).filter(Boolean))))
 const allStoreOptions = computed<StoreOption[]>(() => {
@@ -295,6 +302,7 @@ onMounted(async () => {
     </PageHeader>
 
     <div v-if="profit.error" class="error-box">{{ profit.error }}</div>
+    <div v-if="dataEntryNotice" class="notice-box">{{ dataEntryNotice }}</div>
 
     <section class="report-filter-card">
       <div class="filter-left">

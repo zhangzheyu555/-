@@ -259,7 +259,7 @@ test('数据录入导入抽屉沿用统一底栏且关闭时不触发写请求',
   const blockedWrites = await prepareReadonlyPage(page)
   await page.goto('/data-entry')
 
-  await page.getByRole('button', { name: '导入数据' }).click()
+  await page.getByRole('button', { name: '导入月度汇总' }).click()
   const drawer = page.getByRole('dialog', { name: '经营数据导入' })
   await expect(drawer).toBeVisible()
 

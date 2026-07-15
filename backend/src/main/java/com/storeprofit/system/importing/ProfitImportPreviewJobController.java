@@ -30,8 +30,8 @@ public class ProfitImportPreviewJobController {
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @RequestParam MultipartFile file,
       @RequestParam(defaultValue = "AUTO") ProfitImportSourceType sourceType,
-      @RequestParam(required = false) String storeId,
-      @RequestParam(required = false) String month
+      @RequestParam String storeId,
+      @RequestParam String month
   ) {
     return ApiResponse.ok(jobService.submit(
         authService.requireUser(authorization), file, sourceType, storeId, month));

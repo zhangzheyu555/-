@@ -393,7 +393,30 @@ public class WarehouseRepository {
       String note,
       Long createdBy
   ) {
+    return subtractStoreInventoryIfEnough(
+        tenantId, storeId, itemId, quantity, "OUT", sourceType, sourceId, note, createdBy);
+  }
+
+  /**
+   * Atomically deducts a store's on-hand quantity and records the named business movement.
+   * Callers must supply a source-specific idempotency boundary before invoking this method.
+   */
+  public boolean subtractStoreInventoryIfEnough(
+      long tenantId,
+      String storeId,
+      long itemId,
+      BigDecimal quantity,
+      String movementType,
+      String sourceType,
+      String sourceId,
+      String note,
+      Long createdBy
+  ) {
     BigDecimal required = amount(quantity);
+    String normalizedMovementType = blankToNull(movementType);
+    if (normalizedMovementType == null) {
+      normalizedMovementType = "OUT";
+    }
     int changed = jdbcTemplate.update("""
         update store_inventory
         set quantity = quantity - ?, updated_at = current_timestamp
@@ -406,8 +429,8 @@ public class WarehouseRepository {
         insert into store_inventory_movement(
           tenant_id, store_id, item_id, quantity_delta, movement_type,
           source_type, source_id, note, created_by, created_at
-        ) values (?, ?, ?, ?, 'OUT', ?, ?, ?, ?, current_timestamp)
-        """, tenantId, storeId, itemId, required.negate(), blankToNull(sourceType),
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+        """, tenantId, storeId, itemId, required.negate(), normalizedMovementType, blankToNull(sourceType),
         blankToNull(sourceId), blankToNull(note), createdBy);
     return true;
   }
@@ -2009,7 +2032,7 @@ public class WarehouseRepository {
     BigDecimal dailyUsage = amount(rs.getBigDecimal("daily_usage_estimate"));
     BigDecimal minStockQuantity = amount(rs.getBigDecimal("min_stock_quantity"));
     boolean alertEnabled = rs.getBoolean("alert_enabled");
-    Integer expiryAlertDays = (Integer) rs.getObject("expiry_alert_days");
+    Integer expiryAlertDays = rs.getObject("expiry_alert_days") == null ? null : ((Number) rs.getObject("expiry_alert_days")).intValue();
     BigDecimal stockValue = stock.multiply(unitPrice).setScale(2, RoundingMode.HALF_UP);
     BigDecimal daysAvailable = dailyUsage.compareTo(BigDecimal.ZERO) == 0
         ? BigDecimal.ZERO.setScale(1, RoundingMode.HALF_UP)
@@ -2033,7 +2056,7 @@ public class WarehouseRepository {
         rs.getString("spec"),
         rs.getString("warehouse_location"),
         unitPrice,
-        (Integer) rs.getObject("shelf_life_days"),
+        rs.getObject("shelf_life_days") == null ? null : ((Number) rs.getObject("shelf_life_days")).intValue(),
         amount(rs.getBigDecimal("cups_per_unit")),
         dailyUsage,
         rs.getInt("min_stock_days"),

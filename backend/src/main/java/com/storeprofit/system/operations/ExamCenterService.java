@@ -42,6 +42,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class ExamCenterService {
+  private static final int RETAKE_COOLDOWN_DAYS = 7;
   private static final Set<String> TARGET_ROLES = Set.of(
       "EMPLOYEE", "STORE_MANAGER", "SUPERVISOR", "WAREHOUSE", "FINANCE");
 
@@ -241,8 +242,19 @@ public class ExamCenterService {
   public ExamPaperResponse assignmentPaper(AuthUser user, long assignmentId) {
     accessControl.requireExamRead(user);
     ExamAssignmentResponse assignment = requireVisibleAssignment(user, assignmentId, false);
+    requireRetakeAvailable(assignment);
     return operationsRepository.examPaper(user.tenantId(), assignment.paperId(), true)
         .orElseThrow(() -> new BusinessException("PAPER_NOT_FOUND", "试卷不存在", HttpStatus.NOT_FOUND));
+  }
+
+  private void requireRetakeAvailable(ExamAssignmentResponse assignment) {
+    if (!"RETAKE_PENDING".equals(assignment.status())) return;
+    String availableAt = assignment.retakeAvailableAt() == null ? "" : assignment.retakeAvailableAt();
+    throw new BusinessException(
+        "EXAM_RETAKE_WAIT",
+        "本场考试因切屏违规已作废，需等待 7 天后重考"
+            + (availableAt.isBlank() ? "" : "（可重考时间：" + availableAt + "）"),
+        HttpStatus.CONFLICT);
   }
 
   @Transactional
@@ -254,6 +266,7 @@ public class ExamCenterService {
     if ("COMPLETED".equals(assignment.status())) {
       throw new BusinessException("EXAM_COMPLETED", "该考试已经提交，不能重复作答", HttpStatus.CONFLICT);
     }
+    requireRetakeAvailable(assignment);
     LocalDateTime now = LocalDateTime.now();
     LocalDateTime startAt = parseStoredDateTime(assignment.startAt());
     LocalDateTime dueAt = parseStoredDateTime(assignment.dueAt());
@@ -272,6 +285,16 @@ public class ExamCenterService {
       throw new BusinessException("QUESTION_EMPTY", "试卷暂无题目，不能提交", HttpStatus.CONFLICT);
     }
     Map<Long, String> answers = answerMap(request == null ? null : request.answers());
+    boolean violatedSubmission = request != null && Boolean.TRUE.equals(request.violated());
+    if (!violatedSubmission) {
+      for (OperationsBusinessRepository.QuestionForGrade question : questions) {
+        String answer = answers.get(question.id());
+        if (answer == null || answer.isBlank()) {
+          throw new BusinessException(
+              "EXAM_ANSWERS_INCOMPLETE", "试卷所有题目均为必答，请完成全部题目后再提交", HttpStatus.BAD_REQUEST);
+        }
+      }
+    }
     BigDecimal score = BigDecimal.ZERO;
     boolean requiresReview = false;
     Map<Long, Boolean> correctMap = new HashMap<>();
@@ -286,7 +309,7 @@ public class ExamCenterService {
       }
     }
     score = score.setScale(2, RoundingMode.HALF_UP);
-    boolean violated = request != null && Boolean.TRUE.equals(request.violated());
+    boolean violated = violatedSubmission;
     boolean passed = !requiresReview && !violated && score.compareTo(amount(paper.passScore())) >= 0;
     long attemptId = operationsRepository.insertExamAttempt(
         user.tenantId(),
@@ -314,14 +337,21 @@ public class ExamCenterService {
           correct ? amount(question.score()) : BigDecimal.ZERO
       );
     }
-    learningRepository.createAttemptReview(user.tenantId(), attemptId, requiresReview ? "PENDING" : "AUTO_GRADED");
-    boolean assignmentUpdated = requiresReview
-        ? repository.submitAssignmentForReview(user.tenantId(), assignmentId, attemptId, score)
-        : repository.completeAssignment(user.tenantId(), assignmentId, attemptId, score, passed);
+    learningRepository.createAttemptReview(
+        user.tenantId(), attemptId, requiresReview && !violated ? "PENDING" : "AUTO_GRADED");
+    boolean assignmentUpdated;
+    if (violated) {
+      assignmentUpdated = repository.scheduleAssignmentRetake(
+          user.tenantId(), assignmentId, attemptId, score, now.plusDays(RETAKE_COOLDOWN_DAYS));
+    } else if (requiresReview) {
+      assignmentUpdated = repository.submitAssignmentForReview(user.tenantId(), assignmentId, attemptId, score);
+    } else {
+      assignmentUpdated = repository.completeAssignment(user.tenantId(), assignmentId, attemptId, score, passed);
+    }
     if (!assignmentUpdated) {
       throw new BusinessException("EXAM_ALREADY_SUBMITTED", "考试已被提交，请刷新后查看成绩", HttpStatus.CONFLICT);
     }
-    if (!requiresReview) {
+    if (!requiresReview && !violated) {
       learningRepository.syncWrongQuestions(user.tenantId(), user.id(), attemptId);
     }
     writeAudit(
@@ -330,7 +360,8 @@ public class ExamCenterService {
         "training_exam_attempt",
         Long.toString(attemptId),
         assignment.storeId(),
-        requiresReview ? "考试已提交，等待阅卷" : passed ? "考试通过" : violated ? "考试违规，未通过" : "考试未通过"
+        violated ? "切屏违规，考试作废，" + RETAKE_COOLDOWN_DAYS + " 天后可重考"
+            : requiresReview ? "考试已提交，等待阅卷" : passed ? "考试通过" : "考试未通过"
     );
     return operationsRepository.examAttempt(user.tenantId(), attemptId)
         .orElseThrow(() -> new BusinessException("ATTEMPT_NOT_FOUND", "考试成绩保存失败", HttpStatus.INTERNAL_SERVER_ERROR));
@@ -471,29 +502,58 @@ public class ExamCenterService {
     return result;
   }
 
-  private boolean isCorrect(OperationsBusinessRepository.QuestionForGrade question, String userAnswer) {
+  static boolean isCorrect(OperationsBusinessRepository.QuestionForGrade question, String userAnswer) {
     if ("ESSAY".equals(question.questionType())) {
       return false;
     }
-    String normalized = blankToNull(userAnswer);
+    String normalized = normalizeForMatch(userAnswer);
     if (normalized == null) {
       return false;
     }
-    String standard = blankToNull(question.standardAnswer());
+    String standard = normalizeForMatch(question.standardAnswer());
     if (standard != null && standard.equalsIgnoreCase(normalized)) {
       return true;
     }
-    String keywords = blankToNull(question.acceptKeywords());
+    String keywords = question.acceptKeywords() == null || question.acceptKeywords().isBlank()
+        ? null : question.acceptKeywords();
     if (keywords == null) {
       return false;
     }
+    List<String> numericKeywords = new ArrayList<>();
+    List<String> textKeywords = new ArrayList<>();
     for (String keyword : keywords.split("[,，\\n]")) {
-      String value = keyword.trim();
-      if (!value.isBlank() && normalized.contains(value)) {
+      String value = normalizeForMatch(keyword);
+      if (value == null) continue;
+      if (value.chars().anyMatch(Character::isDigit)) numericKeywords.add(value);
+      else textKeywords.add(value);
+    }
+    if (numericKeywords.isEmpty() && textKeywords.isEmpty()) return false;
+    for (String keyword : numericKeywords) {
+      if (!normalized.contains(keyword)) return false;
+    }
+    if (textKeywords.isEmpty()) return true;
+    for (String keyword : textKeywords) {
+      if (normalized.contains(keyword)) {
         return true;
       }
     }
     return false;
+  }
+
+  private static String normalizeForMatch(String value) {
+    if (value == null) return null;
+    StringBuilder builder = new StringBuilder(value.length());
+    for (char ch : value.toCharArray()) {
+      if (Character.isWhitespace(ch)) continue;
+      char mapped = switch (ch) {
+        case '０' -> '0'; case '１' -> '1'; case '２' -> '2'; case '３' -> '3'; case '４' -> '4';
+        case '５' -> '5'; case '６' -> '6'; case '７' -> '7'; case '８' -> '8'; case '９' -> '9';
+        case '：' -> ':'; case '．' -> '.'; case '％' -> '%'; case '＋' -> '+'; case '－' -> '-';
+        default -> ch;
+      };
+      builder.append(Character.toLowerCase(mapped));
+    }
+    return builder.isEmpty() ? null : builder.toString();
   }
 
   private LocalDateTime parseDateTime(String value, String message) {

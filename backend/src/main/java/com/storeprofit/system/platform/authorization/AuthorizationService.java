@@ -12,7 +12,10 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class AuthorizationService {
-  private static final Set<String> EMPLOYEE_PERMISSION_CEILING = Set.of(PermissionCodes.EXAM_LEARN);
+  private static final Set<String> EMPLOYEE_PERMISSION_CEILING = Set.of(
+      PermissionCodes.EXAM_LEARN,
+      PermissionCodes.EMPLOYEE_ASSISTANT_USE
+  );
 
   private final AuthorizationRepository repository;
 
@@ -29,7 +32,17 @@ public class AuthorizationService {
     if (AccessControlService.isBossRole(canonicalRole)) {
       return bossPermissions();
     }
-    return repository.roleTemplatePermissions(tenantId, canonicalRole);
+    LinkedHashSet<String> permissions = new LinkedHashSet<>(
+        repository.roleTemplatePermissions(tenantId, canonicalRole));
+    // V37 previously granted store.manage to store managers and operations users. Keep that
+    // historical migration immutable, but never surface the obsolete grant to a non-BOSS user.
+    permissions.remove(PermissionCodes.STORE_MANAGE);
+    // Importing a workbook can overwrite an accounting period. Its catalog entry is deliberately
+    // only attached to FINANCE; preserve that boundary even if a legacy role template was edited.
+    if (!"FINANCE".equals(canonicalRole)) {
+      permissions.remove(PermissionCodes.FINANCE_PROFIT_IMPORT);
+    }
+    return Set.copyOf(permissions);
   }
 
   public List<UserPermissionOverride> userOverrides(long tenantId, long userId) {
@@ -61,7 +74,7 @@ public class AuthorizationService {
     String role = AccessControlService.canonicalRole(user.role());
     Set<String> enabledCodes = repository.enabledPermissionCodes();
     LinkedHashSet<String> effective = new LinkedHashSet<>(
-        repository.roleTemplatePermissions(user.tenantId(), role));
+        roleTemplatePermissions(user.tenantId(), role));
     LinkedHashSet<String> denied = new LinkedHashSet<>();
     for (UserPermissionOverride override : repository.userOverrides(user.tenantId(), user.id())) {
       if (!enabledCodes.contains(override.permissionCode())) {
@@ -76,6 +89,15 @@ public class AuthorizationService {
     effective.removeAll(denied);
     if ("EMPLOYEE".equals(role)) {
       effective.retainAll(EMPLOYEE_PERMISSION_CEILING);
+    }
+    // Personal ALLOW overrides are evaluated above, then this hard BOSS-only boundary is
+    // applied. DENY still wins for every ordinary permission, and cannot be bypassed here.
+    effective.remove(PermissionCodes.STORE_MANAGE);
+    // The import privilege is role-bound in addition to being catalog-bound. A hand-edited
+    // personal ALLOW for a store manager, operations user, warehouse user, or employee must not
+    // turn the data-entry screen into a bulk-import backdoor.
+    if (!"FINANCE".equals(role)) {
+      effective.remove(PermissionCodes.FINANCE_PROFIT_IMPORT);
     }
     return Set.copyOf(effective);
   }
@@ -100,7 +122,10 @@ public class AuthorizationService {
           PermissionCodes.EMPLOYEE_READ,
           PermissionCodes.FINANCE_PROFIT_READ,
           PermissionCodes.FINANCE_PROFIT_WRITE,
+          PermissionCodes.FINANCE_PROFIT_IMPORT,
           PermissionCodes.FINANCE_EXPORT,
+          PermissionCodes.DAILY_LOSS_READ,
+          PermissionCodes.DAILY_LOSS_REVIEW,
           PermissionCodes.EXPENSE_CREATE,
           PermissionCodes.EXPENSE_READ,
           PermissionCodes.EXPENSE_REVIEW,
@@ -113,7 +138,8 @@ public class AuthorizationService {
           PermissionCodes.ATTACHMENT_WRITE,
           PermissionCodes.TODO_READ,
           PermissionCodes.TODO_TRANSITION,
-          PermissionCodes.ASSISTANT_USE
+          PermissionCodes.ASSISTANT_USE,
+          PermissionCodes.EMPLOYEE_ASSISTANT_USE
       );
       case "WAREHOUSE" -> Set.of(
           PermissionCodes.STORE_READ,
@@ -128,20 +154,24 @@ public class AuthorizationService {
           PermissionCodes.WAREHOUSE_CENTRAL_MANAGE,
           PermissionCodes.WAREHOUSE_STORE_READ,
           PermissionCodes.WAREHOUSE_REQUISITION_REVIEW,
+          PermissionCodes.DAILY_LOSS_READ,
+          PermissionCodes.DAILY_LOSS_REVIEW,
           PermissionCodes.EXAM_LEARN,
           PermissionCodes.ATTACHMENT_READ,
           PermissionCodes.ATTACHMENT_WRITE,
           PermissionCodes.TODO_READ,
           PermissionCodes.TODO_TRANSITION,
-          PermissionCodes.ASSISTANT_USE
+          PermissionCodes.ASSISTANT_USE,
+          PermissionCodes.EMPLOYEE_ASSISTANT_USE
       );
       case "STORE_MANAGER" -> Set.of(
           PermissionCodes.STORE_READ,
-          PermissionCodes.STORE_MANAGE,
           PermissionCodes.EMPLOYEE_READ,
           PermissionCodes.EMPLOYEE_MANAGE,
           PermissionCodes.FINANCE_PROFIT_READ,
           PermissionCodes.FINANCE_PROFIT_WRITE,
+          PermissionCodes.DAILY_LOSS_READ,
+          PermissionCodes.DAILY_LOSS_CREATE,
           PermissionCodes.EXPENSE_CREATE,
           PermissionCodes.EXPENSE_READ,
           PermissionCodes.SALARY_READ,
@@ -157,17 +187,19 @@ public class AuthorizationService {
           PermissionCodes.ATTACHMENT_WRITE,
           PermissionCodes.TODO_READ,
           PermissionCodes.TODO_TRANSITION,
-          PermissionCodes.ASSISTANT_USE
+          PermissionCodes.ASSISTANT_USE,
+          PermissionCodes.EMPLOYEE_ASSISTANT_USE
       );
       case "OPERATIONS" -> Set.of(
           PermissionCodes.OPERATIONS_DASHBOARD_READ,
           PermissionCodes.STORE_READ,
-          PermissionCodes.STORE_MANAGE,
           PermissionCodes.EMPLOYEE_READ,
           PermissionCodes.WAREHOUSE_STORE_READ,
           PermissionCodes.INVENTORY_READ,
           PermissionCodes.INVENTORY_MANAGE,
           PermissionCodes.INVENTORY_REVIEW,
+          PermissionCodes.DAILY_LOSS_READ,
+          PermissionCodes.DAILY_LOSS_REVIEW,
           PermissionCodes.INSPECTION_READ,
           PermissionCodes.INSPECTION_MANAGE,
           PermissionCodes.EXAM_LEARN,
@@ -179,7 +211,9 @@ public class AuthorizationService {
           PermissionCodes.ATTACHMENT_WRITE,
           PermissionCodes.TODO_READ,
           PermissionCodes.TODO_TRANSITION,
-          PermissionCodes.ASSISTANT_USE
+          PermissionCodes.ASSISTANT_USE,
+          PermissionCodes.EMPLOYEE_ASSISTANT_USE,
+          PermissionCodes.EMPLOYEE_ASSISTANT_HANDOFF_MANAGE
       );
       case "EMPLOYEE" -> EMPLOYEE_PERMISSION_CEILING;
       default -> Set.of();

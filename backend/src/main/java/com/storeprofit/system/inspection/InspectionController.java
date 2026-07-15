@@ -80,6 +80,52 @@ public class InspectionController {
     return ApiResponse.ok(inspectionService.record(user, id));
   }
 
+  /** Boss/supervisor-only forensic evidence candidates for one existing inspection record. */
+  @GetMapping("/{id}/evidence/attachments")
+  public ApiResponse<InspectionEvidenceCandidatesResponse> evidenceAttachments(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id
+  ) {
+    AuthUser user = accessControl.requireUser(authorization);
+    accessControl.requireInspectionManage(user);
+    return ApiResponse.ok(inspectionService.historicalEvidenceCandidates(user, id));
+  }
+
+  /** Links explicit existing attachment IDs to explicit immutable historical clause IDs only. */
+  @PostMapping("/{id}/evidence/link")
+  public ApiResponse<InspectionEvidenceLinkResponse> linkEvidence(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id,
+      @RequestBody InspectionEvidenceLinkRequest request
+  ) {
+    AuthUser user = accessControl.requireUser(authorization);
+    accessControl.requireInspectionManage(user);
+    return ApiResponse.ok(inspectionService.linkHistoricalEvidence(user, id, request));
+  }
+
+  /**
+   * Uploads one original image and atomically links it to operator-selected historical
+   * clauses.  Accepts both {@code clauseIds} (standardItemId) and
+   * {@code historicalSnapshotIds} (snapshot row id); at least one set must be non-empty.
+   */
+  @PostMapping(value = "/{id}/evidence/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+  public ApiResponse<InspectionEvidenceLinkResponse> uploadEvidence(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id,
+      @RequestParam("file") MultipartFile file,
+      @RequestParam(value = "clauseIds", required = false) List<Long> clauseIds,
+      @RequestParam(value = "historicalSnapshotIds", required = false) List<Long> historicalSnapshotIds,
+      @RequestParam(value = "sourcePhotoIndex", required = false) Integer sourcePhotoIndex
+  ) {
+    AuthUser user = accessControl.requireUser(authorization);
+    accessControl.requireInspectionManage(user);
+    return ApiResponse.ok(inspectionService.uploadAndLinkHistoricalEvidence(
+        user, id, file,
+        clauseIds != null ? clauseIds : List.of(),
+        historicalSnapshotIds != null ? historicalSnapshotIds : List.of(),
+        sourcePhotoIndex));
+  }
+
   @GetMapping(value = "/{id}/export.xlsx", produces = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
   public ResponseEntity<byte[]> exportRecord(
       @RequestHeader(value = "Authorization", required = false) String authorization,

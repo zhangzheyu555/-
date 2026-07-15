@@ -32,6 +32,12 @@ import { useAuthStore } from '../stores/auth'
 
 type AssistantMode = 'AUTO' | 'LOCAL' | 'AI'
 type RunStatus = 'loading' | 'success' | 'error'
+type AssistantServiceTone = 'ready' | 'configured' | 'warning'
+
+interface AssistantServicePresentation {
+  text: string
+  tone: AssistantServiceTone
+}
 
 interface AssistantRun {
   id: number
@@ -81,6 +87,17 @@ let documentOverflow = ''
 let todoDialogTrigger: HTMLElement | null = null
 let runId = 0
 let initialized = false
+let assistantStatusRequest: Promise<void> | null = null
+let assistantStatusRetryTimer: number | null = null
+let lastAssistantStatusFocusRefreshAt = 0
+let assistantStatusUnconfiguredRetryUsed = false
+let pageDisposed = false
+
+// A fresh backend process does not inherit the previous Java process environment. Recheck once
+// after a known "not configured" result and whenever the operator returns to this page, without
+// polling continuously or creating duplicate status requests.
+const ASSISTANT_STATUS_FOCUS_DEBOUNCE_MS = 1_500
+const ASSISTANT_STATUS_UNCONFIGURED_RECHECK_DELAY_MS = 15_000
 
 const financeScope = computed(() => auth.dataScope('FINANCE') || auth.dataScope('STORE'))
 const accessibleStores = computed(() => {
@@ -101,6 +118,10 @@ const modeHint = computed(() => {
   if (assistantMode.value === 'AI') return '必须取得真实AI分析，失败会明确提示'
   return '数字查询走数据库，原因与建议走AI'
 })
+const assistantServicePresentation = computed<AssistantServicePresentation | null>(() => {
+  if (!assistantStatus.value) return null
+  return servicePresentation(assistantStatus.value)
+})
 
 const quickQuestions = computed(() => [
   `${selectedMonthText()}营业额是多少`,
@@ -110,11 +131,15 @@ const quickQuestions = computed(() => [
 
 onMounted(() => {
   document.addEventListener('keydown', handlePageKeydown)
+  window.addEventListener('focus', refreshAssistantStatusOnFocus)
   void loadPage()
 })
 
 onBeforeUnmount(() => {
+  pageDisposed = true
   document.removeEventListener('keydown', handlePageKeydown)
+  window.removeEventListener('focus', refreshAssistantStatusOnFocus)
+  clearAssistantStatusRetryTimer()
   releaseFullscreenLayout(false)
 })
 
@@ -149,12 +174,61 @@ async function loadPage() {
   }
 }
 
-async function loadAssistantStatus() {
-  try {
-    assistantStatus.value = await getAssistantStatus()
-  } catch {
-    assistantStatus.value = null
+function loadAssistantStatus() {
+  if (assistantStatusRequest) return assistantStatusRequest
+
+  const request = (async () => {
+    try {
+      const nextStatus = await getAssistantStatus()
+      if (!pageDisposed) assistantStatus.value = nextStatus
+    } catch {
+      if (!pageDisposed) assistantStatus.value = null
+    } finally {
+      assistantStatusRequest = null
+      if (!pageDisposed) scheduleUnconfiguredAssistantStatusRefresh()
+    }
+  })()
+
+  assistantStatusRequest = request
+  return request
+}
+
+function refreshAssistantStatusOnFocus() {
+  if (pageDisposed || pageLoading.value || document.visibilityState !== 'visible') return
+
+  const now = Date.now()
+  if (now - lastAssistantStatusFocusRefreshAt < ASSISTANT_STATUS_FOCUS_DEBOUNCE_MS) return
+  lastAssistantStatusFocusRefreshAt = now
+
+  // A focus refresh is the single retry for an already-known unconfigured state. Cancel the
+  // deferred retry so rapidly returning to the page cannot make a second request.
+  if (assistantStatus.value?.configured === false) {
+    assistantStatusUnconfiguredRetryUsed = true
+    clearAssistantStatusRetryTimer()
   }
+  void loadAssistantStatus()
+}
+
+function scheduleUnconfiguredAssistantStatusRefresh() {
+  if (assistantStatus.value?.configured !== false) {
+    assistantStatusUnconfiguredRetryUsed = false
+    clearAssistantStatusRetryTimer()
+    return
+  }
+  if (assistantStatusUnconfiguredRetryUsed || assistantStatusRetryTimer !== null) return
+
+  assistantStatusUnconfiguredRetryUsed = true
+  assistantStatusRetryTimer = window.setTimeout(() => {
+    assistantStatusRetryTimer = null
+    if (pageDisposed || document.visibilityState !== 'visible' || assistantStatus.value?.configured !== false) return
+    void loadAssistantStatus()
+  }, ASSISTANT_STATUS_UNCONFIGURED_RECHECK_DELAY_MS)
+}
+
+function clearAssistantStatusRetryTimer() {
+  if (assistantStatusRetryTimer === null) return
+  window.clearTimeout(assistantStatusRetryTimer)
+  assistantStatusRetryTimer = null
 }
 
 function applyDefaults() {
@@ -199,10 +273,11 @@ async function submitQuestion(preset?: string) {
   }
   pageError.value = ''
   input.value = ''
+  const requestMode = assistantRequestMode(question, assistantMode.value)
   const run: AssistantRun = {
     id: ++runId,
     question,
-    mode: assistantMode.value,
+    mode: requestMode,
     status: 'loading',
   }
   runs.value.push(run)
@@ -212,7 +287,7 @@ async function submitQuestion(preset?: string) {
   try {
     run.response = await askAssistant({
       message: question,
-      mode: assistantMode.value,
+      mode: requestMode,
       storeId: effectiveStoreId.value,
       month: selectedMonth.value,
     })
@@ -221,6 +296,7 @@ async function submitQuestion(preset?: string) {
     run.status = 'error'
     run.error = normalizeError(error, '经营助手暂时无法完成请求，请稍后重试。')
   } finally {
+    refreshAssistantStatusAfterAnalysis(requestMode, run.response)
     sending.value = false
     await nextTick(() => scrollToBottom())
   }
@@ -244,6 +320,7 @@ async function requestAiAnalysis(run: AssistantRun) {
     run.status = 'error'
     run.error = normalizeError(error, 'AI分析请求失败，请稍后重试。')
   } finally {
+    refreshAssistantStatusAfterAnalysis('AI', run.response)
     sending.value = false
     await nextTick(() => scrollToBottom())
   }
@@ -258,10 +335,11 @@ async function retryRun(run: AssistantRun) {
   run.status = 'loading'
   run.error = ''
   sending.value = true
+  const requestMode = assistantRequestMode(run.question, run.mode)
   try {
     run.response = await askAssistant({
       message: run.question,
-      mode: run.mode,
+      mode: requestMode,
       storeId: effectiveStoreId.value,
       month: selectedMonth.value,
     })
@@ -270,9 +348,32 @@ async function retryRun(run: AssistantRun) {
     run.status = 'error'
     run.error = normalizeError(error, '经营助手暂时无法完成请求，请稍后重试。')
   } finally {
+    refreshAssistantStatusAfterAnalysis(requestMode, run.response)
     sending.value = false
     await nextTick(() => scrollToBottom())
   }
+}
+
+function refreshAssistantStatusAfterAnalysis(
+  requestMode: AssistantMode,
+  response?: AssistantChatResponse,
+) {
+  // A configured key is not proof that the last model response passed the quality gate.
+  // Refresh after every possible AI path so a rejected response cannot coexist with a stale
+  // green health marker after the user retries or refreshes this page.
+  if (requestMode !== 'AI' && response?.selectedMode !== 'AI') return
+  if (assistantStatus.value && response?.selectedMode === 'AI') {
+    if (response.aiAnalysis.available) {
+      assistantStatus.value = { ...assistantStatus.value, state: 'READY', lastErrorCode: null }
+    } else if (response.error && isAnalysisResponseRejectedCode(response.error.code)) {
+      assistantStatus.value = {
+        ...assistantStatus.value,
+        state: 'RESPONSE_REJECTED',
+        lastErrorCode: response.error.code,
+      }
+    }
+  }
+  void loadAssistantStatus()
 }
 
 function clearConversation() {
@@ -513,10 +614,133 @@ function maskedRequestId(value: string) {
 }
 
 function aiUnavailableMessage(run: AssistantRun) {
-  if (assistantStatus.value?.configured === false || run.response?.error?.code === 'DEEPSEEK_NOT_CONFIGURED') {
+  const code = run.response?.error?.code || ''
+  if (assistantStatus.value?.configured === false || code === 'DEEPSEEK_NOT_CONFIGURED') {
     return 'AI分析服务尚未配置，本地经营数据仍可正常查询。'
   }
-  return run.response?.error?.message || 'AI分析暂时不可用，请稍后重新分析。'
+  const rejectionMessage = analysisRejectionMessage(code)
+  if (rejectionMessage) return rejectionMessage
+  return 'AI分析暂时不可用，请稍后重新分析。'
+}
+
+function aiUnavailableTitle(run: AssistantRun) {
+  return analysisRejectionTitle(run.response?.error?.code || '') || 'AI分析暂时不可用'
+}
+
+const analysisResponseRejectedCodes = new Set([
+  'SCHEMA_INVALID',
+  'DATA_LIMITED_REQUIRED',
+  'ANALYSIS_UNKNOWN_NUMERIC',
+  'ANALYSIS_SNAPSHOT_CONTRADICTION',
+  'ANALYSIS_ACTION_ROLE_INVALID',
+  'ANALYSIS_QUALITY_REJECTED',
+  // Compatibility with responses emitted by the already-running package during rollout.
+  'DEEPSEEK_QUALITY_INSUFFICIENT',
+  'UNKNOWN_AMOUNT',
+  'CONTRADICTION',
+  'ACTION_OWNER_ROLE',
+  'ACTION_OWNER_ROLE_INVALID',
+  'ANALYSIS_TYPE',
+  'DATA_LIMITATIONS',
+  'DATA_ACTIONS',
+  'DATA_LIMITED_CAUSES',
+])
+
+function isAnalysisResponseRejectedCode(code: string) {
+  return analysisResponseRejectedCodes.has(String(code || '').trim())
+}
+
+function analysisRejectionMessage(code: string) {
+  switch (String(code || '').trim()) {
+    case 'SCHEMA_INVALID':
+      return '模型返回格式异常，已自动重试仍未成功，请稍后重试。'
+    case 'DATA_LIMITED_REQUIRED':
+    case 'ANALYSIS_TYPE':
+    case 'DATA_LIMITATIONS':
+    case 'DATA_ACTIONS':
+    case 'DATA_LIMITED_CAUSES':
+      return '经营数据不足，暂不能判断原因，请先补全成本、费用或历史月份数据。'
+    case 'ANALYSIS_UNKNOWN_NUMERIC':
+    case 'UNKNOWN_AMOUNT':
+      return '模型引用了当前经营数据中没有的金额或比例，系统已拦截该结果，请核对数据后重新分析。'
+    case 'ANALYSIS_SNAPSHOT_CONTRADICTION':
+    case 'CONTRADICTION':
+      return '模型结论与当前经营数据不一致，系统已拦截该结果，请核对数据后重新分析。'
+    case 'ANALYSIS_ACTION_ROLE_INVALID':
+    case 'ACTION_OWNER_ROLE':
+    case 'ACTION_OWNER_ROLE_INVALID':
+      return '模型建议的处理角色不符合系统职责范围，系统已拦截该结果，请稍后重新分析。'
+    case 'ANALYSIS_QUALITY_REJECTED':
+    case 'DEEPSEEK_QUALITY_INSUFFICIENT':
+      return '模型结果未通过必要的完整性校验，未展示不可靠结论，请稍后重新分析。'
+    default:
+      return ''
+  }
+}
+
+function analysisRejectionTitle(code: string) {
+  switch (String(code || '').trim()) {
+    case 'SCHEMA_INVALID':
+      return '模型格式异常'
+    case 'DATA_LIMITED_REQUIRED':
+    case 'ANALYSIS_TYPE':
+    case 'DATA_LIMITATIONS':
+    case 'DATA_ACTIONS':
+    case 'DATA_LIMITED_CAUSES':
+      return '经营数据待补全'
+    case 'ANALYSIS_UNKNOWN_NUMERIC':
+    case 'UNKNOWN_AMOUNT':
+    case 'ANALYSIS_SNAPSHOT_CONTRADICTION':
+    case 'CONTRADICTION':
+    case 'ANALYSIS_ACTION_ROLE_INVALID':
+    case 'ACTION_OWNER_ROLE':
+    case 'ACTION_OWNER_ROLE_INVALID':
+      return '分析结果已拦截'
+    case 'ANALYSIS_QUALITY_REJECTED':
+    case 'DEEPSEEK_QUALITY_INSUFFICIENT':
+      return '分析结果待复核'
+    default:
+      return ''
+  }
+}
+
+function servicePresentation(status: AssistantStatus): AssistantServicePresentation {
+  const state = status.state || (status.configured ? 'CONFIGURED' : 'NOT_CONFIGURED')
+  const provider = String(status.provider || 'DeepSeek').trim() || 'DeepSeek'
+  if (state === 'READY') return { text: '分析服务正常', tone: 'ready' }
+  if (state === 'CONFIGURED') return { text: `${provider} 已配置`, tone: 'configured' }
+  if (state === 'RESPONSE_REJECTED') {
+    return { text: analysisRejectionTitle(status.lastErrorCode || '') || '分析结果待复核', tone: 'warning' }
+  }
+  if (state === 'UPSTREAM_ERROR') return { text: 'AI服务暂不可用', tone: 'warning' }
+  return { text: 'AI服务未配置', tone: 'warning' }
+}
+
+function isDataLimitedAnalysis(analysis: AssistantChatResponse['aiAnalysis']) {
+  return analysis.analysisType === 'DATA_LIMITED'
+}
+
+// AUTO keeps a direct request for operating facts on the MySQL-only path. The backend repeats
+// this classification as the authorization boundary; doing it here prevents a slow model call
+// for the clear, common cases before the request leaves the browser.
+function assistantRequestMode(question: string, selectedMode: AssistantMode): AssistantMode {
+  if (selectedMode !== 'AUTO' || !isDirectFactQuestion(question)) return selectedMode
+  return 'LOCAL'
+}
+
+function isDirectFactQuestion(question: string) {
+  const normalized = String(question || '').trim().toLowerCase()
+  if (!normalized) return false
+  const analysisIntent = [
+    '为什么', '原因', '异常', '趋势', '对比', '建议', '改善', '风险', '怎么办', '怎么做',
+    '分析', '变化', '表现', '优化', '如何',
+  ]
+  if (analysisIntent.some((keyword) => normalized.includes(keyword))) return false
+
+  return [
+    '多少', '金额', '营业额', '净利润', '净利率', '营收', '收入', '成本', '费用', '利润',
+    '查询', '排名', '亏损', '本月', '上月', '这个月', 'revenue', 'profit', 'cost', 'amount',
+  ].some((keyword) => normalized.includes(keyword))
 }
 
 function selectedMonthText() {
@@ -552,8 +776,19 @@ function numberValue(value?: number) {
 
 const technicalErrors = ['java.lang', 'exception', 'stacktrace', 'handler dispatch', 'axios']
 function normalizeError(value: unknown, fallback: string) {
+  const code = value && typeof value === 'object'
+    ? String((value as { code?: unknown }).code || '')
+    : ''
+  if (code === 'REQUEST_TIMEOUT') {
+    return 'AI分析耗时较长，请稍后重试，或先使用‘查数据’获取经营事实。'
+  }
+  if (code === 'DEEPSEEK_NOT_CONFIGURED') {
+    return 'AI分析服务尚未配置，本地经营数据仍可正常查询。'
+  }
+  const rejectionMessage = analysisRejectionMessage(code)
+  if (rejectionMessage) return rejectionMessage
   const message = value instanceof Error ? value.message : String(value || '')
-  if (!message || technicalErrors.some((item) => message.toLowerCase().includes(item))) return fallback
+  if (!message || technicalErrors.some((item) => message.toLowerCase().includes(item)) || !/[\u3400-\u9fff]/.test(message)) return fallback
   return message
 }
 </script>
@@ -687,12 +922,17 @@ function normalizeError(value: unknown, fallback: string) {
                 <div>
                   <Sparkles :size="18" />
                   <h3>AI经营分析</h3>
+                  <span v-if="isDataLimitedAnalysis(run.response.aiAnalysis)" class="analysis-type-tag">经营数据不足</span>
                 </div>
                 <span>
                   {{ run.response.aiAnalysis.provider }} · {{ run.response.aiAnalysis.model }} · {{ latencyText(run.response.aiAnalysis.latencyMs) }}
                   <template v-if="maskedRequestId(run.response.aiAnalysis.requestId)"> · 请求 {{ maskedRequestId(run.response.aiAnalysis.requestId) }}</template>
                 </span>
               </header>
+              <section v-if="isDataLimitedAnalysis(run.response.aiAnalysis)" class="analysis-data-limited" role="status" data-testid="assistant-data-limited">
+                <div><AlertTriangle :size="18" /><strong>经营数据不足</strong></div>
+                <p>经营数据不足，暂不能判断原因，请先补全成本、费用或历史月份数据</p>
+              </section>
               <section class="analysis-block conclusion-block">
                 <h4>核心判断</h4>
                 <p>{{ run.response.aiAnalysis.summary }}</p>
@@ -722,7 +962,7 @@ function normalizeError(value: unknown, fallback: string) {
                 </ul>
               </section>
               <section class="analysis-block action-block">
-                <h4>本周行动建议</h4>
+                <h4>{{ isDataLimitedAnalysis(run.response.aiAnalysis) ? '请先补全以下经营数据' : '本周行动建议' }}</h4>
                 <ol class="action-list">
                   <li v-for="(item, actionIndex) in run.response.aiAnalysis.actions" :key="`${item.action}-${actionIndex}`">
                     <div class="action-copy">
@@ -756,7 +996,7 @@ function normalizeError(value: unknown, fallback: string) {
             </section>
 
             <section v-else-if="run.response.error" class="ai-unavailable" role="status">
-              <div><AlertTriangle :size="18" /><strong>AI分析暂时不可用</strong></div>
+              <div><AlertTriangle :size="18" /><strong>{{ aiUnavailableTitle(run) }}</strong></div>
               <p>{{ aiUnavailableMessage(run) }}</p>
               <button type="button" :disabled="sending" @click="requestAiAnalysis(run)">
                 <RefreshCcw :size="15" />重新分析
@@ -785,8 +1025,15 @@ function normalizeError(value: unknown, fallback: string) {
             @click="assistantMode = mode[0]"
           >{{ mode[1] }}</button>
           <span>{{ modeHint }}</span>
-          <span v-if="assistantStatus" class="service-status" :class="{ ready: assistantStatus.configured }">
-            {{ assistantStatus.configured ? `${assistantStatus.provider} 已就绪` : 'AI服务未配置' }}
+          <span
+            v-if="assistantServicePresentation"
+            class="service-status"
+            :class="assistantServicePresentation.tone"
+            role="status"
+            aria-live="polite"
+            data-testid="assistant-service-status"
+          >
+            {{ assistantServicePresentation.text }}
           </span>
         </div>
         <form class="question-form" @submit.prevent="submitQuestion()">
@@ -1031,6 +1278,10 @@ function normalizeError(value: unknown, fallback: string) {
 .ai-result footer { margin-top: 12px; color: var(--ds-muted); font-size: 12px; }
 
 .ai-heading { padding-bottom: 14px; border-bottom: 1px solid var(--ds-line); color: var(--ds-primary-hover); }
+.analysis-type-tag { display: inline-flex; min-height: 22px; padding: 0 7px; align-items: center; border-radius: 999px; background: var(--ds-primary-soft); color: var(--ds-primary-hover); font-size: 11px; font-weight: 600; }
+.analysis-data-limited { margin-top: 16px; padding: 12px 14px; border: 1px solid var(--ds-line); border-radius: 6px; background: var(--ds-primary-soft); }
+.analysis-data-limited > div { display: flex; align-items: center; gap: 8px; color: var(--ds-primary-hover); }
+.analysis-data-limited p { margin: 6px 0 0; color: var(--ds-secondary); line-height: 1.6; }
 .analysis-block { margin-top: 18px; }
 .analysis-block h4 { margin: 0 0 8px; color: var(--ds-ink); font-size: 14px; }
 .analysis-block h4 small { margin-left: 6px; color: var(--ds-muted); font-weight: 400; }
@@ -1103,6 +1354,7 @@ function normalizeError(value: unknown, fallback: string) {
 .mode-switch .service-status { display: inline-flex; margin-left: auto; align-items: center; gap: 6px; white-space: nowrap; }
 .mode-switch .service-status::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--ds-warning); }
 .mode-switch .service-status.ready::before { background: var(--ds-success); }
+.mode-switch .service-status.configured::before { background: var(--ds-secondary); }
 .question-form { display: flex; gap: 10px; }
 .question-form input { min-width: 0; flex: 1; padding: 0 14px; outline: none; }
 .question-form button { display: inline-flex; min-width: 108px; padding: 0 18px; align-items: center; justify-content: center; gap: 7px; border-color: var(--ds-primary-hover); background: var(--ds-primary-hover); color: #fff; font-weight: 700; }

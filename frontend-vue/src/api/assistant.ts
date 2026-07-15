@@ -1,5 +1,9 @@
 import { apiGet, apiPost } from './http'
 
+// DeepSeek can need a second structured-output repair pass. Keep this override scoped to the
+// operating-assistant chat endpoint so ordinary business APIs retain the 15 second default.
+export const ASSISTANT_CHAT_TIMEOUT_MS = 90_000
+
 export interface AssistantChatRequest {
   message: string
   history?: Array<{
@@ -65,6 +69,12 @@ export interface AssistantAction {
 
 export interface AssistantAiAnalysis {
   available: boolean
+  /**
+   * FULL means the model could make a complete, evidence-checked operating analysis.
+   * DATA_LIMITED is still a valid response, but only contains conclusions that the
+   * available operating data can support plus concrete data-completion actions.
+   */
+  analysisType?: 'FULL' | 'DATA_LIMITED'
   provider: string
   model: string
   requestId: string
@@ -86,6 +96,12 @@ export interface AssistantError {
 export interface AssistantStatus {
   enabled: boolean
   configured: boolean
+  /**
+   * Configuration and proven analysis health are deliberately different.  Older
+   * backend packages do not include this field; callers must treat a missing value
+   * as configured-only rather than claiming the analysis service is healthy.
+   */
+  state?: 'NOT_CONFIGURED' | 'CONFIGURED' | 'READY' | 'RESPONSE_REJECTED' | 'UPSTREAM_ERROR'
   provider: string
   model: string
   baseUrlHost: string
@@ -95,7 +111,9 @@ export interface AssistantStatus {
 }
 
 export function askAssistant(payload: AssistantChatRequest) {
-  return apiPost<AssistantChatResponse, AssistantChatRequest>('/api/assistant/chat', payload)
+  return apiPost<AssistantChatResponse, AssistantChatRequest>('/api/assistant/chat', payload, {
+    timeout: ASSISTANT_CHAT_TIMEOUT_MS,
+  })
 }
 
 export function getAssistantStatus() {

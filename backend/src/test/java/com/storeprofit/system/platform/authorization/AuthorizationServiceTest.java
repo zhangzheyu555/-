@@ -46,6 +46,45 @@ class AuthorizationServiceTest {
   }
 
   @Test
+  void storeManageIsNeverExposedToNonBossEvenWithLegacyTemplateAndPersonalAllow() {
+    AuthUser manager = user(8L, "STORE_MANAGER");
+    when(repository.roleTemplatePermissions(1L, "STORE_MANAGER"))
+        .thenReturn(Set.of(PermissionCodes.STORE_READ, PermissionCodes.STORE_MANAGE));
+    when(repository.enabledPermissionCodes()).thenReturn(Set.of(
+        PermissionCodes.STORE_READ, PermissionCodes.STORE_MANAGE));
+    when(repository.userOverrides(1L, 8L)).thenReturn(List.of(
+        new UserPermissionOverride(PermissionCodes.STORE_MANAGE, PermissionEffect.ALLOW)));
+
+    assertThat(service.roleTemplatePermissions(1L, "STORE_MANAGER"))
+        .contains(PermissionCodes.STORE_READ)
+        .doesNotContain(PermissionCodes.STORE_MANAGE);
+    assertThat(service.effectivePermissions(manager))
+        .contains(PermissionCodes.STORE_READ)
+        .doesNotContain(PermissionCodes.STORE_MANAGE);
+  }
+
+  @Test
+  void financeImportIsNeverExposedToNonFinanceEvenWithTemplateAndPersonalAllow() {
+    AuthUser manager = user(8L, "STORE_MANAGER");
+    AuthUser finance = user(9L, "FINANCE");
+    when(repository.roleTemplatePermissions(1L, "STORE_MANAGER"))
+        .thenReturn(Set.of(PermissionCodes.FINANCE_PROFIT_IMPORT));
+    when(repository.roleTemplatePermissions(1L, "FINANCE"))
+        .thenReturn(Set.of(PermissionCodes.FINANCE_PROFIT_IMPORT));
+    when(repository.enabledPermissionCodes()).thenReturn(Set.of(PermissionCodes.FINANCE_PROFIT_IMPORT));
+    when(repository.userOverrides(1L, 8L)).thenReturn(List.of(
+        new UserPermissionOverride(PermissionCodes.FINANCE_PROFIT_IMPORT, PermissionEffect.ALLOW)));
+    when(repository.userOverrides(1L, 9L)).thenReturn(List.of());
+
+    assertThat(service.roleTemplatePermissions(1L, "STORE_MANAGER"))
+        .doesNotContain(PermissionCodes.FINANCE_PROFIT_IMPORT);
+    assertThat(service.effectivePermissions(manager))
+        .doesNotContain(PermissionCodes.FINANCE_PROFIT_IMPORT);
+    assertThat(service.effectivePermissions(finance))
+        .contains(PermissionCodes.FINANCE_PROFIT_IMPORT);
+  }
+
+  @Test
   void bossSessionPermissionSetAlsoIncludesDatabaseCatalogExtensions() {
     AuthUser boss = user(1L, "BOSS");
     when(repository.enabledPermissionCodes()).thenReturn(Set.of("future.permission.catalogued"));
@@ -59,17 +98,28 @@ class AuthorizationServiceTest {
   }
 
   @Test
-  void employeeHardCeilingCannotBeExpandedByPersonalAllow() {
+  void employeeHardCeilingKeepsOnlyLearningAndEmployeeAssistantPermissions() {
     AuthUser employee = user(9L, "EMPLOYEE");
     when(repository.roleTemplatePermissions(1L, "EMPLOYEE"))
-        .thenReturn(Set.of(PermissionCodes.EXAM_LEARN, PermissionCodes.SALARY_READ));
+        .thenReturn(Set.of(
+            PermissionCodes.EXAM_LEARN,
+            PermissionCodes.EMPLOYEE_ASSISTANT_USE,
+            PermissionCodes.SALARY_READ
+        ));
     when(repository.enabledPermissionCodes()).thenReturn(Set.of(
-        PermissionCodes.EXAM_LEARN, PermissionCodes.SALARY_READ, PermissionCodes.PLATFORM_MANAGE));
+        PermissionCodes.EXAM_LEARN,
+        PermissionCodes.EMPLOYEE_ASSISTANT_USE,
+        PermissionCodes.SALARY_READ,
+        PermissionCodes.PLATFORM_MANAGE
+    ));
     when(repository.userOverrides(1L, 9L)).thenReturn(List.of(
         new UserPermissionOverride(PermissionCodes.PLATFORM_MANAGE, PermissionEffect.ALLOW)
     ));
 
-    assertThat(service.effectivePermissions(employee)).containsExactly(PermissionCodes.EXAM_LEARN);
+    assertThat(service.effectivePermissions(employee)).containsExactlyInAnyOrder(
+        PermissionCodes.EXAM_LEARN,
+        PermissionCodes.EMPLOYEE_ASSISTANT_USE
+    );
   }
 
   @Test

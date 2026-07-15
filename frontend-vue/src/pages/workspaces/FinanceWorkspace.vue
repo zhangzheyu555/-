@@ -1,18 +1,22 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { BarChart3, ClipboardPenLine, Download, ReceiptText } from 'lucide-vue-next'
+import { BarChart3, ClipboardPenLine, Download, FileSpreadsheet, ReceiptText } from 'lucide-vue-next'
 import PageHeader from '../../components/common/PageHeader.vue'
-import { PERMISSIONS } from '../../permissions/permissions'
+import { canUseFinanceProfitImport, PERMISSIONS } from '../../permissions/permissions'
 import { useAuthStore } from '../../stores/auth'
 
 const auth = useAuthStore()
+const canImportMonthlySummary = computed(() => canUseFinanceProfitImport(auth.role, auth.permissions))
 const modules = computed(() => [
   { label: '利润分析', description: '查看授权门店的利润概览和月度利润表。', to: '/profit', icon: BarChart3, permission: PERMISSIONS.FINANCE_PROFIT_READ },
   { label: '经营数据录入', description: '录入授权门店的月度经营数据。', to: '/data-entry', icon: ClipboardPenLine, permission: PERMISSIONS.FINANCE_PROFIT_WRITE },
+  { label: '导入月度汇总', description: '上传单店单月汇总，校验并确认后写入经营数据。', to: '/finance/import', icon: FileSpreadsheet, permission: PERMISSIONS.FINANCE_PROFIT_IMPORT, financeImportOnly: true },
   { label: '报销审核', description: '查看报销记录并处理审核流程。', to: '/expenses', icon: ReceiptText, permission: PERMISSIONS.EXPENSE_READ },
   { label: '员工工资', description: '核对、审核并按权限处理工资。', to: '/finance/salary', icon: ClipboardPenLine, permission: PERMISSIONS.SALARY_READ },
   { label: '数据导出', description: '导出授权范围内的经营数据。', to: '/export', icon: Download, permission: PERMISSIONS.FINANCE_EXPORT },
-].filter((item) => auth.hasPermission(item.permission)))
+].filter((item) => (
+  item.financeImportOnly ? canImportMonthlySummary.value : auth.hasPermission(item.permission)
+)))
 </script>
 
 <template>

@@ -133,6 +133,36 @@ class DeepSeekClientTest {
   }
 
   @Test
+  void rejectsAnExpiredLogicalAnalysisBudgetBeforeNetworkCall() {
+    AtomicInteger calls = new AtomicInteger();
+    server.createContext("/chat/completions", exchange -> {
+      calls.incrementAndGet();
+      respond(exchange, 200, successResponse("unexpected", "configured-model", "{}"));
+    });
+    DeepSeekClient client = new DeepSeekClient(properties, objectMapper);
+
+    assertThatThrownBy(() -> client.analyze("system", "user", Duration.ZERO))
+        .isInstanceOfSatisfying(DeepSeekException.class,
+            failure -> assertThat(failure.getCode()).isEqualTo("DEEPSEEK_ANALYSIS_TIMEOUT"));
+    assertThat(calls).hasValue(0);
+  }
+
+  @Test
+  void logicalAnalysisBudgetAlsoStopsTransportRetry() {
+    AtomicInteger calls = new AtomicInteger();
+    server.createContext("/chat/completions", exchange -> {
+      calls.incrementAndGet();
+      respond(exchange, 503, "{}");
+    });
+    DeepSeekClient client = new DeepSeekClient(properties, objectMapper);
+
+    assertThatThrownBy(() -> client.analyze("system", "user", Duration.ofMillis(250)))
+        .isInstanceOfSatisfying(DeepSeekException.class,
+            failure -> assertThat(failure.getCode()).isEqualTo("DEEPSEEK_ANALYSIS_TIMEOUT"));
+    assertThat(calls).hasValue(1);
+  }
+
+  @Test
   void opensCircuitAfterConfiguredNumberOfTransientFailures() {
     AtomicInteger calls = new AtomicInteger();
     properties.setCircuitFailureThreshold(1);

@@ -254,7 +254,7 @@ class InspectionScoringServiceTest {
     List<InspectionItemResultRequest> results = new ArrayList<>(fullScoreResults());
     InspectionStandardItemResponse changed = standards.get(21);
     results.set(21, new InspectionItemResultRequest(
-        changed.id(), BigDecimal.ZERO.setScale(2), true, "需要整改", List.of(),
+        changed.id(), BigDecimal.ZERO.setScale(2), true, "需要整改", List.of(999L),
         "店长", LocalDate.of(2026, 7, 15), "已完成", null, List.of(), List.of()));
     InspectionRecordRequest request = request(results, "[{\"attachmentId\":999},{\"attachmentId\":999}]");
 
@@ -268,6 +268,53 @@ class InspectionScoringServiceTest {
     assertThat(snapshots.getValue()).filteredOn(snapshot -> snapshot.standardId().equals(changed.id()))
         .extracting(InspectionStandardSnapshot::rectificationStatus)
         .containsExactly("COMPLETED");
+  }
+
+  @Test
+  void preservesTheAuthoritativeFourPointDeductionSeparatelyFromActualScore() {
+    List<InspectionItemResultRequest> results = new ArrayList<>(fullScoreResults());
+    InspectionStandardItemResponse hygieneClause = standards.get(21);
+    assertThat(hygieneClause.suggestedScore()).isEqualByComparingTo("4.00");
+    results.set(21, result(hygieneClause, bd("0"), true, "店铺内部卫生未达标"));
+
+    InspectionRecordResponse response = service.save(user(), "insp-four-point", request(results));
+
+    assertThat(response.score()).isEqualByComparingTo("196.00");
+    InspectionStandardSnapshot snapshot = savedSnapshots.get().stream()
+        .filter(item -> item.standardId().equals(hygieneClause.id()))
+        .findFirst().orElseThrow();
+    assertThat(snapshot.suggestedScore()).isEqualByComparingTo("4.00");
+    assertThat(snapshot.actualScore()).isEqualByComparingTo("0.00");
+    assertThat(snapshot.actualDeductionScore()).isEqualByComparingTo("4.00");
+  }
+
+  @Test
+  void unmatchedAiEvidenceDoesNotChangeScoreOrCreateDeductionSnapshots() {
+    String unmatchedPhotos = """
+        [{
+          "attachmentId": 1008,
+          "fileName": "微信图片_未匹配.jpg",
+          "reviewStatus": "pending",
+          "detection": {
+            "image_id": "unmatched-ai-photo",
+            "detections": [{"class_name":"unknown_scene","confidence":0.93,"bbox":[0,0,10,10]}]
+          }
+        }]
+        """;
+
+    InspectionRecordResponse response = service.save(
+        user(), "insp-unmatched", request(withEvidence(fullScoreResults(), "M-RED-1", 1008L), unmatchedPhotos));
+
+    assertThat(response.score()).isEqualByComparingTo("200.00");
+    assertThat(response.hygieneScore()).isEqualByComparingTo("63.00");
+    assertThat(saved.get().photosJson()).contains("\"decisionStatus\":\"UNMATCHED\"");
+    assertThat(savedSnapshots.get()).allSatisfy(snapshot -> {
+      assertThat(snapshot.actualScore()).isEqualByComparingTo(snapshot.suggestedScore());
+      assertThat(snapshot.actualDeductionScore()).isEqualByComparingTo("0.00");
+    });
+    verify(recordRepository, never()).logAction(
+        anyLong(), anyLong(), anyString(), eq("inspection_detection_confirm"),
+        anyString(), anyString(), anyString(), anyString());
   }
 
   @Test
@@ -400,7 +447,7 @@ class InspectionScoringServiceTest {
         }]
         """;
     InspectionRecordResponse created = service.save(
-        user(), "insp-general", request(fullScoreResults(), pendingPhotos));
+        user(), "insp-general", request(withEvidence(fullScoreResults(), "H-2", 1001L), pendingPhotos));
     assertThat(created.score()).isEqualByComparingTo("200.00");
 
     ObjectMapper mapper = new ObjectMapper();
@@ -471,7 +518,7 @@ class InspectionScoringServiceTest {
         }]
         """;
     InspectionRecordResponse created = service.save(
-        user(), "insp-adjust", request(fullScoreResults(), pendingPhotos));
+        user(), "insp-adjust", request(withEvidence(fullScoreResults(), "H-2", 1002L), pendingPhotos));
     ObjectMapper mapper = new ObjectMapper();
     List<Map<String, Object>> photos = mapper.readValue(
         saved.get().photosJson(), new TypeReference<>() {});
@@ -562,6 +609,31 @@ class InspectionScoringServiceTest {
     return new InspectionRecordRequest(
         "s1", "2026-07-13", "督导", "茹菓", null, null, null,
         null, null, photosJson, "", 38L, null, null, null, null, null, results);
+  }
+
+  private List<InspectionItemResultRequest> withEvidence(
+      List<InspectionItemResultRequest> source,
+      String standardCode,
+      long attachmentId
+  ) {
+    int index = -1;
+    for (int i = 0; i < standards.size(); i++) {
+      if (standardCode.equals(standards.get(i).code())) {
+        index = i;
+        break;
+      }
+    }
+    if (index < 0) {
+      throw new IllegalArgumentException("测试条款不存在：" + standardCode);
+    }
+    List<InspectionItemResultRequest> results = new ArrayList<>(source);
+    InspectionItemResultRequest current = results.get(index);
+    results.set(index, new InspectionItemResultRequest(
+        current.standardItemId(), current.actualScore(), current.issueFound(), current.deductionReason(),
+        List.of(attachmentId), current.responsiblePerson(), current.rectificationDeadline(),
+        current.rectificationStatus(), current.reviewResult(), current.beforePhotoAttachmentIds(),
+        current.afterPhotoAttachmentIds()));
+    return results;
   }
 
   private InspectionRecordResponse legacyRecord(String id) {

@@ -78,7 +78,38 @@ public class ProfitImportService {
       String storeId,
       String month
   ) {
-    accessControl.requireFinanceWrite(user);
+    return recognize(user, file, requestedSourceType, storeId, month, true);
+  }
+
+  /** Shared authorization boundary for every spreadsheet-recognition and commit entry point. */
+  public void requireImportAccess(AuthUser user) {
+    accessControl.requireFinanceImport(user);
+  }
+
+  /**
+   * The data-entry drawer is deliberately stricter than the historic bulk-recognize endpoint.
+   * In particular, it must retain a parsed row's own store identity so PreviewJobService can
+   * reject a multi-store file instead of silently converting it to the current store.
+   */
+  public ProfitImportRecognizeResponse recognizeForSingleStoreMonthPreview(
+      AuthUser user,
+      MultipartFile file,
+      ProfitImportSourceType requestedSourceType,
+      String storeId,
+      String month
+  ) {
+    return recognize(user, file, requestedSourceType, storeId, month, false);
+  }
+
+  private ProfitImportRecognizeResponse recognize(
+      AuthUser user,
+      MultipartFile file,
+      ProfitImportSourceType requestedSourceType,
+      String storeId,
+      String month,
+      boolean applyLegacyStoreManagerLock
+  ) {
+    requireImportAccess(user);
     BusinessScope businessScope = resolveBusinessScope(user, storeId, "预览经营数据导入");
     String targetStoreId = businessScope.storeId();
     validateFile(file);
@@ -102,7 +133,7 @@ public class ProfitImportService {
       long validationStarted = System.nanoTime();
       List<ProfitImportRow> rows = parsedRows
           .stream()
-          .map(row -> lockParsedRow(user, row, businessScope))
+          .map(row -> applyLegacyStoreManagerLock ? lockParsedRow(user, row, businessScope) : row)
           .map(row -> enrich(user, row))
           .toList();
       long validationMs = (System.nanoTime() - validationStarted) / 1_000_000L;
@@ -137,7 +168,7 @@ public class ProfitImportService {
 
   @Transactional
   public ProfitImportCommitResponse commit(AuthUser user, ProfitImportCommitRequest request) {
-    accessControl.requireFinanceWrite(user);
+    requireImportAccess(user);
     if (request == null || request.rows() == null || request.rows().isEmpty()) {
       throw new BusinessException("IMPORT_EMPTY", "请选择至少一条识别结果后再确认导入", HttpStatus.BAD_REQUEST);
     }
@@ -193,6 +224,9 @@ public class ProfitImportService {
     }
 
     boolean existing = financeRepository.entryExists(user.tenantId(), storeId, normalizedMonth);
+    Map<String, BigDecimal> existingValues = existing
+        ? existingValues(user, storeId, normalizedMonth)
+        : Map.of();
     if (existing && !row.overwrite()) {
       return new ProfitImportRow(
           rowId,
@@ -204,7 +238,8 @@ public class ProfitImportService {
           List.of("该门店月份已有数据，勾选覆盖后才能写入"),
           List.of(),
           true,
-          "CONFLICT"
+          "CONFLICT",
+          existingValues
       );
     }
 
@@ -218,8 +253,9 @@ public class ProfitImportService {
         ordered(values),
         List.of(),
         List.of(),
-        true,
-        "SAVED"
+        existing,
+        "SAVED",
+        existingValues
     );
   }
 
@@ -267,8 +303,32 @@ public class ProfitImportService {
         warnings,
         row.errors(),
         true,
-        "CONFLICT"
+        "CONFLICT",
+        existingValues(user, row.storeId(), row.month())
     );
+  }
+
+  private Map<String, BigDecimal> existingValues(AuthUser user, String storeId, String month) {
+    return financeRepository.entry(user.tenantId(), storeId, month, financeScope(user))
+        .map(entry -> ordered(Map.ofEntries(
+            Map.entry("sales", entry.sales()),
+            Map.entry("refund", entry.refund()),
+            Map.entry("discount", entry.discount()),
+            Map.entry("material", entry.material()),
+            Map.entry("packaging", entry.packaging()),
+            Map.entry("loss", entry.loss()),
+            Map.entry("costOther", entry.costOther()),
+            Map.entry("rent", entry.rent()),
+            Map.entry("labor", entry.labor()),
+            Map.entry("utility", entry.utility()),
+            Map.entry("property", entry.property()),
+            Map.entry("commission", entry.commission()),
+            Map.entry("promo", entry.promo()),
+            Map.entry("repair", entry.repair()),
+            Map.entry("equip", entry.equip()),
+            Map.entry("expOther", entry.expOther())
+        )))
+        .orElse(Map.of());
   }
 
   private List<StoreResponse> scopedStores(AuthUser user) {
@@ -280,6 +340,9 @@ public class ProfitImportService {
       ProfitImportRow row,
       BusinessScope businessScope
   ) {
+    // This compatibility behaviour belongs only to the legacy bulk-recognize endpoint.  The
+    // single-store Data Entry preview deliberately bypasses it so cross-store rows remain visible
+    // and can be rejected before any confirmation is possible.
     if (row == null || businessScope.storeId() == null
         || !"STORE_MANAGER".equals(AccessControlService.canonicalRole(user.role()))) {
       return row;

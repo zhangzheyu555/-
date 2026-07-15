@@ -374,7 +374,8 @@ tbody tr:hover {
 
 .error-box,
 .success-box,
-.warning-box {
+.warning-box,
+.notice-box {
   padding: 10px 12px;
   border-radius: 6px;
   font-size: 14px;
@@ -397,6 +398,12 @@ tbody tr:hover {
   border: 1px solid #efddb9;
   background: var(--ds-warning-soft);
   color: #87500f;
+}
+
+.notice-box {
+  border: 1px solid #b8d4f2;
+  background: #ebf4fd;
+  color: #2a5c8a;
 }
 
 .drawer,

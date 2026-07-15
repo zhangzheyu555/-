@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { AlertTriangle, CheckCircle2, Download, ImagePlus, LoaderCircle, Plus, RefreshCw, RotateCw, Sparkles, Trash2, Upload, XCircle } from 'lucide-vue-next'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { AlertTriangle, CheckCircle2, Download, ImagePlus, Link2, LoaderCircle, Plus, RefreshCw, RotateCw, Sparkles, Trash2, Upload, XCircle } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import PageHeader from '../components/common/PageHeader.vue'
+import InspectionHistoricalEvidenceDialog from '../components/inspection/InspectionHistoricalEvidenceDialog.vue'
 import {
   confirmInspectionDetection,
   confirmInspectionDetectionSuggestion,
   createInspectionRecord,
   detectInspectionPhoto,
   downloadInspectionExcel,
+  fetchInspectionAttachment,
+  getInspectionEvidenceAttachments,
   getInspectionRecord,
   getInspectionRecords,
   getInspectionServiceHealth,
@@ -19,12 +22,15 @@ import {
   type InspectionCategoryCode,
   type InspectionDetectionItem,
   type InspectionDetectionResult,
+  type InspectionEvidenceCandidate,
+  type InspectionEvidenceLinkResponse,
   type InspectionItemResult,
   type InspectionRecord,
   type InspectionServiceHealth,
 } from '../api/inspection'
 import { getBrands, getStores, type BrandInfo, type StoreInfo } from '../api/operations'
 import { PERMISSIONS } from '../permissions/permissions'
+import { canAccessRoles } from '../permissions/roles'
 import { useAuthStore } from '../stores/auth'
 import {
   emptyInspectionStandard,
@@ -46,6 +52,8 @@ interface BrandOption {
 
 interface DraftPhoto {
   attachmentId?: number
+  /** Historical photosJson position, supplied by the backend-safe detail payload. */
+  sourcePhotoIndex?: number
   fileName: string
   sourceFile?: File
   url?: string
@@ -59,6 +67,8 @@ interface DraftPhoto {
   modelLinkedClauseId?: number
   modelAddedPhotoLink?: boolean
 }
+
+type PersistedDraftPhoto = DraftPhoto & { attachmentId: number }
 
 interface DeductionDetail {
   id?: string
@@ -93,6 +103,14 @@ interface DeductionForm {
   issue: string
 }
 
+type DetailPhotoLoadStatus = 'loading' | 'ready' | 'forbidden' | 'missing' | 'failed'
+
+interface DetailPhotoPreview {
+  status: DetailPhotoLoadStatus
+  url?: string
+  message?: string
+}
+
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
@@ -125,12 +143,32 @@ const detailRecord = ref<InspectionRecord | null>(null)
 const detailLoading = ref(false)
 const detailError = ref('')
 let detailRequestSequence = 0
+const detailPhotoPreviews = ref<Record<string, DetailPhotoPreview>>({})
+const detailPhotoPreview = ref<{ url: string; fileName: string } | null>(null)
+const detailPhotoControllers = new Map<string, AbortController>()
+const detailPhotoPreviewDialog = ref<HTMLElement | null>(null)
+let detailPhotoPreviewTrigger: HTMLElement | null = null
+let detailPhotoPreviewGeneration = 0
+// Metadata only. The cache is keyed exclusively by the server-provided photosJson
+// index; never infer an evidence state from a display name or an attachment id.
+const detailEvidenceCandidatesByPhotoIndex = ref<Record<string, InspectionEvidenceCandidate>>({})
+const detailEvidenceCandidatesLoading = ref(false)
+const historicalEvidenceDialog = ref<{
+  attachmentId?: number
+  sourcePhotoIndex?: number
+  mode: 'existing' | 'upload'
+} | null>(null)
 const filterBrand = ref('')
 const filterMonth = ref('')
 const standardDimension = ref('')
 const inspectionStandard = ref<InspectionStandardSet>(emptyInspectionStandard)
 
 const canManageInspection = computed(() => auth.hasPermission(PERMISSIONS.INSPECTION_MANAGE))
+// The server remains authoritative. This only prevents a non-manager from seeing an
+// action they cannot complete; SUPERVISOR is normalized to the local OPERATIONS role.
+const canSupplementHistoricalEvidence = computed(() => (
+  canManageInspection.value && canAccessRoles(auth.role, ['BOSS', 'SUPERVISOR'])
+))
 const tabs = computed<Array<{ id: InspectionTab; label: string; to: string }>>(() => [
   { id: 'records', label: '巡检记录', to: '/operations/inspection/records' },
   ...(canManageInspection.value
@@ -396,6 +434,10 @@ function categoryCodeForDimension(value?: string): InspectionCategoryCode {
 }
 
 function itemDeduction(item: InspectionItemResult) {
+  const deductionScore = Number(item.deductionScore)
+  if (Number.isFinite(deductionScore) && deductionScore >= 0) {
+    return roundScore(deductionScore)
+  }
   return Math.max(0, roundScore(safeNumber(item.standardScore) - safeNumber(item.actualScore)))
 }
 
@@ -530,6 +572,10 @@ function openRecordDetail(recordId: string) {
 
 function closeRecordDetail() {
   detailRequestSequence += 1
+  releaseDetailPhotoPreviews()
+  detailEvidenceCandidatesByPhotoIndex.value = {}
+  detailEvidenceCandidatesLoading.value = false
+  historicalEvidenceDialog.value = null
   selectedRecordId.value = ''
   detailRecord.value = null
   detailError.value = ''
@@ -537,8 +583,33 @@ function closeRecordDetail() {
   syncRecordQuery()
 }
 
+function openHistoricalEvidenceDialog(photo?: DraftPhoto) {
+  if (!selectedRecord.value || !canSupplementHistoricalEvidence.value) return
+  historicalEvidenceDialog.value = {
+    attachmentId: photo?.attachmentId,
+    sourcePhotoIndex: photo?.sourcePhotoIndex,
+    mode: photo ? unlinkedEvidenceActionMode(photo) : 'upload',
+  }
+}
+
+function closeHistoricalEvidenceDialog() {
+  historicalEvidenceDialog.value = null
+}
+
+async function onHistoricalEvidenceSaved(result: InspectionEvidenceLinkResponse) {
+  const recordId = String(result.recordId || selectedRecordId.value)
+  historicalEvidenceDialog.value = null
+  actionMessage.value = String(result.action).toUpperCase() === 'SUPPLEMENT'
+    ? '原图已补传并关联到所选历史条款；历史评分和整改状态未改动。'
+    : '已将所选证据关联到历史条款；历史评分和整改状态未改动。'
+  if (recordId) await loadSelectedRecord(recordId)
+}
+
 async function loadSelectedRecord(recordId: string) {
   const requestSequence = ++detailRequestSequence
+  releaseDetailPhotoPreviews()
+  detailEvidenceCandidatesByPhotoIndex.value = {}
+  detailEvidenceCandidatesLoading.value = false
   detailRecord.value = null
   detailError.value = ''
   detailLoading.value = true
@@ -546,11 +617,37 @@ async function loadSelectedRecord(recordId: string) {
     const record = await getInspectionRecord(recordId)
     if (requestSequence !== detailRequestSequence || selectedRecordId.value !== recordId) return
     detailRecord.value = record
+    void loadDetailPhotoPreviews(record)
+    void loadDetailEvidenceCandidateStatuses(record, requestSequence)
   } catch (error) {
     if (requestSequence !== detailRequestSequence || selectedRecordId.value !== recordId) return
     detailError.value = friendlyError(error, '巡检详情没有读取成功，请稍后再试。')
   } finally {
     if (requestSequence === detailRequestSequence) detailLoading.value = false
+  }
+}
+
+async function loadDetailEvidenceCandidateStatuses(record: InspectionRecord, requestSequence: number) {
+  if (!canSupplementHistoricalEvidence.value) return
+  detailEvidenceCandidatesLoading.value = true
+  try {
+    const response = await getInspectionEvidenceAttachments(String(record.id))
+    if (requestSequence !== detailRequestSequence || selectedRecordId.value !== String(record.id)) return
+    detailEvidenceCandidatesByPhotoIndex.value = Object.fromEntries(
+      response.candidates
+        .filter((candidate) => Number.isInteger(candidate.photoIndex) && Number(candidate.photoIndex) >= 0)
+        .map((candidate) => [String(candidate.photoIndex), candidate]),
+    )
+  } catch {
+    // The detail view remains usable without this optional metadata. Do not turn a
+    // candidate lookup failure into an assertion that an original image exists.
+    if (requestSequence === detailRequestSequence && selectedRecordId.value === String(record.id)) {
+      detailEvidenceCandidatesByPhotoIndex.value = {}
+    }
+  } finally {
+    if (requestSequence === detailRequestSequence && selectedRecordId.value === String(record.id)) {
+      detailEvidenceCandidatesLoading.value = false
+    }
   }
 }
 
@@ -764,10 +861,10 @@ function redlineDetails(record: InspectionRecord) {
 }
 
 function recordPhotos(record: InspectionRecord) {
-  return parseJsonArray<Record<string, unknown>>(record.photosJson).map(normalizeRecordPhoto)
+  return parseJsonArray<Record<string, unknown>>(record.photosJson).map((photo, index) => normalizeRecordPhoto(photo, index))
 }
 
-function normalizeRecordPhoto(value: Record<string, unknown>): DraftPhoto {
+function normalizeRecordPhoto(value: Record<string, unknown>, sourcePhotoIndex?: number): DraftPhoto {
   const nestedDetection = value.detection && typeof value.detection === 'object'
     ? value.detection as InspectionDetectionResult
     : undefined
@@ -785,6 +882,7 @@ function normalizeRecordPhoto(value: Record<string, unknown>): DraftPhoto {
     : ['REVOKED', 'DISMISSED'].includes(decision) ? 'dismissed' : 'pending'
   return {
     attachmentId: positiveNumber(value.attachmentId ?? value.attachment_id),
+    sourcePhotoIndex,
     fileName: textValue(value.fileName ?? value.filename ?? detection?.filename) || '现场照片',
     url: textValue(value.url),
     contentType: textValue(value.contentType ?? value.content_type),
@@ -795,9 +893,245 @@ function normalizeRecordPhoto(value: Record<string, unknown>): DraftPhoto {
   }
 }
 
+/**
+ * A photo is evidence for a clause only when its persisted attachment id is explicitly
+ * present in that clause's photoAttachmentIds. AI matching alone must never create a
+ * score/evidence relationship in the detail view.
+ */
+function recordClausePhotos(record: InspectionRecord, item: InspectionItemResult) {
+  const photosByAttachmentId = new Map(
+    recordPhotos(record)
+      .filter(hasPersistedAttachment)
+      .map((photo) => [photo.attachmentId, photo]),
+  )
+  return numberArray(item.photoAttachmentIds)
+    .map((attachmentId) => photosByAttachmentId.get(attachmentId))
+    .filter(hasPersistedAttachment)
+}
+
+function recordUnlinkedPhotos(record: InspectionRecord) {
+  const associatedIds = new Set(recordItemResults(record).flatMap((item) => numberArray(item.photoAttachmentIds)))
+  return recordPhotos(record).filter((photo) => !photo.attachmentId || !associatedIds.has(photo.attachmentId))
+}
+
+function recordPhotoIsExplicitlyLinked(record: InspectionRecord, photo: DraftPhoto) {
+  const attachmentId = photo.attachmentId
+  return Boolean(attachmentId && recordItemResults(record).some((item) => (
+    numberArray(item.photoAttachmentIds).includes(attachmentId)
+  )))
+}
+
+function evidenceCandidateForHistoricalPhoto(photo: DraftPhoto) {
+  if (!Number.isInteger(photo.sourcePhotoIndex) || Number(photo.sourcePhotoIndex) < 0) return undefined
+  return detailEvidenceCandidatesByPhotoIndex.value[String(photo.sourcePhotoIndex)]
+}
+
+function historicalPhotoNeedsOriginalUpload(photo: DraftPhoto) {
+  const status = evidenceCandidateForHistoricalPhoto(photo)?.status
+  return status === 'MISSING' || status === 'ORIGINAL_NOT_STORED'
+}
+
+function hasValidUnlinkedHistoricalEvidence(photo: DraftPhoto) {
+  const candidate = evidenceCandidateForHistoricalPhoto(photo)
+  return candidate?.status === 'UNLINKED'
+    && Number.isInteger(candidate.attachmentId)
+    && Number(candidate.attachmentId) > 0
+    && candidate.attachmentId === photo.attachmentId
+}
+
+function unlinkedEvidenceActionMode(photo: DraftPhoto): 'existing' | 'upload' {
+  return hasValidUnlinkedHistoricalEvidence(photo) ? 'existing' : 'upload'
+}
+
+function unlinkedEvidenceActionLabel(photo: DraftPhoto) {
+  return hasValidUnlinkedHistoricalEvidence(photo) ? '关联已有证据' : '补传并关联证据'
+}
+
+function unlinkedPhotoMessage(photo: DraftPhoto) {
+  if (historicalPhotoNeedsOriginalUpload(photo) || !photo.attachmentId) return '原图未入库，需补传'
+  return hasValidUnlinkedHistoricalEvidence(photo) ? '待人工关联历史条款' : '待核验并关联历史条款'
+}
+
+function recordPendingAiPhotos(record: InspectionRecord) {
+  return recordPhotos(record).filter((photo) => {
+    if (!photo.detection) return false
+    const status = detectionDecisionStatus(photo.detection)
+    return status === 'PENDING' || status === 'UNMATCHED'
+  })
+}
+
+function detailPhotoKey(photo: DraftPhoto) {
+  return photo.attachmentId ? String(photo.attachmentId) : ''
+}
+
+function detailPhotoState(photo: DraftPhoto): DetailPhotoPreview {
+  if (!photo.attachmentId) return { status: 'missing', message: '原图未入库，需补传' }
+  return detailPhotoPreviews.value[detailPhotoKey(photo)] || { status: 'loading', message: '正在加载图片…' }
+}
+
+function detailPhotoMessage(photo: DraftPhoto) {
+  const state = detailPhotoState(photo)
+  if (state.status === 'ready') return ''
+  return state.message || '图片加载失败'
+}
+
+function isPreviewableImage(blob: Blob, photo: DraftPhoto) {
+  if (String(blob.type || photo.contentType || '').toLowerCase().startsWith('image/')) return true
+  return /\.(?:avif|gif|jpe?g|png|webp)$/i.test(photo.fileName)
+}
+
+function detailPhotoError(error: unknown): DetailPhotoPreview {
+  const status = Number((error as { status?: number })?.status)
+  if (status === 403) return { status: 'forbidden', message: '无查看权限' }
+  if (status === 404) return { status: 'missing', message: '图片不存在' }
+  if (status === 401) return { status: 'forbidden', message: '登录已失效，请重新登录' }
+  return { status: 'failed', message: '图片加载失败，请稍后重试' }
+}
+
+function replaceDetailPhotoState(key: string, state: DetailPhotoPreview) {
+  detailPhotoPreviews.value = { ...detailPhotoPreviews.value, [key]: state }
+}
+
+async function loadDetailPhotoPreviews(record: InspectionRecord) {
+  releaseDetailPhotoPreviews()
+  const generation = detailPhotoPreviewGeneration
+  // Do not fetch an original image merely because a historical metadata entry has
+  // an attachmentId. A Blob is requested only after this exact id is persisted in
+  // a snapshot clause's photoAttachmentIds collection.
+  const uniquePhotos = Array.from(new Map(
+    recordItemResults(record)
+      .flatMap((item) => recordClausePhotos(record, item))
+      .map((photo) => [String(photo.attachmentId), photo]),
+  ).values())
+  detailPhotoPreviews.value = Object.fromEntries(
+    uniquePhotos.map((photo) => [detailPhotoKey(photo), { status: 'loading', message: '正在加载图片…' }]),
+  )
+  await Promise.all(uniquePhotos.map((photo) => loadDetailPhotoPreview(photo, generation)))
+}
+
+async function loadDetailPhotoPreview(photo: DraftPhoto, generation = detailPhotoPreviewGeneration) {
+  const attachmentId = photo.attachmentId
+  const key = detailPhotoKey(photo)
+  if (!attachmentId || !key) return
+  detailPhotoControllers.get(key)?.abort()
+  const controller = new AbortController()
+  detailPhotoControllers.set(key, controller)
+  replaceDetailPhotoState(key, { status: 'loading', message: '正在加载图片…' })
+  try {
+    const blob = await fetchInspectionAttachment(attachmentId, controller.signal)
+    if (generation !== detailPhotoPreviewGeneration || controller.signal.aborted) return
+    if (!isPreviewableImage(blob, photo)) {
+      replaceDetailPhotoState(key, { status: 'failed', message: '附件不是可预览图片' })
+      return
+    }
+    const previous = detailPhotoPreviews.value[key]?.url
+    if (previous) URL.revokeObjectURL(previous)
+    replaceDetailPhotoState(key, { status: 'ready', url: URL.createObjectURL(blob) })
+  } catch (error) {
+    if (generation !== detailPhotoPreviewGeneration || controller.signal.aborted) return
+    replaceDetailPhotoState(key, detailPhotoError(error))
+  } finally {
+    if (detailPhotoControllers.get(key) === controller) detailPhotoControllers.delete(key)
+  }
+}
+
+function retryDetailPhoto(photo: DraftPhoto) {
+  void loadDetailPhotoPreview(photo)
+}
+
+function markDetailPhotoFailed(photo: DraftPhoto) {
+  const key = detailPhotoKey(photo)
+  if (!key) return
+  const url = detailPhotoPreviews.value[key]?.url
+  if (url) URL.revokeObjectURL(url)
+  replaceDetailPhotoState(key, { status: 'failed', message: '图片加载失败，请稍后重试' })
+  if (detailPhotoPreview.value?.url === url) closeDetailPhotoPreview()
+}
+
+function openDetailPhotoPreview(photo: DraftPhoto, event?: MouseEvent) {
+  const state = detailPhotoState(photo)
+  if (state.status !== 'ready' || !state.url) return
+  detailPhotoPreviewTrigger = event?.currentTarget instanceof HTMLElement
+    ? event.currentTarget
+    : document.activeElement instanceof HTMLElement ? document.activeElement : null
+  detailPhotoPreview.value = { url: state.url, fileName: photo.fileName || '现场图片' }
+}
+
+function closeDetailPhotoPreview() {
+  detailPhotoPreview.value = null
+  const trigger = detailPhotoPreviewTrigger
+  detailPhotoPreviewTrigger = null
+  trigger?.focus()
+}
+
+function handleDetailPhotoPreviewKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeDetailPhotoPreview()
+    return
+  }
+  if (event.key !== 'Tab' || !detailPhotoPreviewDialog.value) return
+  const focusable = Array.from(detailPhotoPreviewDialog.value.querySelectorAll<HTMLElement>(
+    'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  )).filter((element) => !element.hasAttribute('hidden'))
+  if (!focusable.length) return
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
+
+function releaseDetailPhotoPreviews() {
+  detailPhotoPreviewGeneration += 1
+  detailPhotoControllers.forEach((controller) => controller.abort())
+  detailPhotoControllers.clear()
+  Object.values(detailPhotoPreviews.value).forEach((state) => {
+    if (state.url) URL.revokeObjectURL(state.url)
+  })
+  detailPhotoPreviews.value = {}
+  detailPhotoPreview.value = null
+  detailPhotoPreviewTrigger = null
+}
+
+function clauseEvidenceStatus(record: InspectionRecord, item: InspectionItemResult) {
+  const photos = recordClausePhotos(record, item)
+  const decisionStatuses = photos.map((photo) => detectionDecisionStatus(photo.detection))
+  const effective = itemDeduction(item) > 0
+  if (effective) {
+    const status = decisionStatuses.includes('CONFIRMED')
+      ? '历史已生效（AI已确认）'
+      : '历史已生效（人工确认）'
+    return decisionStatuses.includes('PENDING') || decisionStatuses.includes('UNMATCHED')
+      ? `${status}；另有 AI 待确认未计分`
+      : status
+  }
+  if (decisionStatuses.includes('UNMATCHED')) return '未匹配正式条款，未计分'
+  if (decisionStatuses.includes('PENDING')) return 'AI待确认，未计分'
+  return photos.length ? '已关联证据，未扣分' : '未关联证据'
+}
+
+function photoAiStatus(photo: DraftPhoto) {
+  const status = detectionDecisionStatus(photo.detection)
+  if (status === 'UNMATCHED') return '未匹配正式条款，未计入本次得分'
+  if (status === 'PENDING') return 'AI待确认，未计入本次得分'
+  if (status === 'CONFIRMED') return '历史已生效（AI已确认）'
+  if (status === 'REVOKED') return 'AI确认已撤销，未计分'
+  return '未关联证据'
+}
+
 function positiveNumber(value: unknown) {
   const number = Number(value)
   return Number.isFinite(number) && number > 0 ? number : undefined
+}
+
+function hasPersistedAttachment(photo: DraftPhoto | undefined): photo is PersistedDraftPhoto {
+  const attachmentId = photo?.attachmentId
+  return typeof attachmentId === 'number' && Number.isFinite(attachmentId) && attachmentId > 0
 }
 
 function hasRepairMarker(record: InspectionRecord) {
@@ -1250,22 +1584,6 @@ function detectionClauseLabel(result?: InspectionDetectionResult) {
   return [code, title, id ? `条款ID ${id}` : ''].filter(Boolean).join(' · ') || '未匹配正式条款'
 }
 
-function detectionLegacyDeduction(result?: InspectionDetectionResult) {
-  return Math.abs(safeNumber(result?.legacyDeduction))
-}
-
-function detectionConvertedDeduction(result?: InspectionDetectionResult) {
-  return Math.abs(safeNumber(result?.convertedDeduction200))
-}
-
-function detectionClauseDeduction(result?: InspectionDetectionResult) {
-  return Math.abs(safeNumber(result?.clauseDeduction ?? result?.legacyDeduction))
-}
-
-function detectionScaleAdjustment(result?: InspectionDetectionResult) {
-  return Math.abs(safeNumber(result?.scaleAdjustmentDeduction))
-}
-
 function detectionFinalDeduction(result?: InspectionDetectionResult) {
   return Math.abs(safeNumber(result?.confirmedDeduction ?? result?.finalDeduction ?? result?.standardDeduction))
 }
@@ -1331,7 +1649,9 @@ function sanitizeDetectionForPersistence(detection?: InspectionDetectionResult) 
 }
 
 function photoHref(photo: DraftPhoto) {
-  return photo.previewUrl || photo.url || (photo.attachmentId ? `/api/storage/${photo.attachmentId}/content` : '#')
+  // Persisted evidence is read through fetchInspectionAttachment as an authenticated Blob.
+  // Only an in-memory draft preview may be opened directly here.
+  return photo.previewUrl || '#'
 }
 
 function removePhoto(index: number) {
@@ -1569,12 +1889,14 @@ function toLegacySnapshot(item: InspectionItemResult) {
 }
 
 function friendlyError(error: unknown, fallback: string) {
-  const status = (error as { status?: number })?.status
+  const apiError = error as { status?: number; code?: string }
+  const status = apiError.status
   const message = error instanceof Error ? error.message : ''
   if (status === 401) return '登录已过期，请重新登录后再操作。'
   if (status === 403 || message.includes('No permission')) return '当前账号没有巡检权限。'
   if (status === 404) return fallback
-  if (status === 409) return fallback
+  if (apiError.code === 'INSPECTION_RECORD_CONFLICT') return '数据已发生变化，请刷新后重试'
+  if (status === 409) return message || fallback
   if (message.includes('Inspection record not found')) return '没有找到这条巡检记录。'
   if (message.includes('Network') || message.includes('timeout')) return '网络连接不稳定，请稍后重试。'
   return message && !/[A-Za-z]{4,}/.test(message) ? message : fallback
@@ -1587,11 +1909,13 @@ function inspectionExportError(error: unknown) {
     const detail = message
       .replace(/^评分数据待修复[：:]?\s*/, '')
       .replace(/^该巡检记录评分数据不完整[，,]?\s*/, '')
+      .replace(/^缺失项[：:]?\s*/, '')
       .trim()
     return detail
-      ? `该巡检记录评分数据不完整，请先修复评分后再导出。缺失项：${detail}`
-      : '该巡检记录评分数据不完整，请先修复评分后再导出。'
+      ? `该巡检记录评分数据不完整，缺失项：${detail}。需人工修复评分后导出。`
+      : '该巡检记录评分数据不完整，需人工修复评分后导出。'
   }
+  if (apiError.code === 'INSPECTION_RECORD_CONFLICT') return '数据已发生变化，请刷新后重试'
   return friendlyError(error, '巡检报告导出失败，请稍后重试。')
 }
 
@@ -1626,6 +1950,8 @@ watch(
       return
     }
     detailRequestSequence += 1
+    releaseDetailPhotoPreviews()
+    historicalEvidenceDialog.value = null
     detailRecord.value = null
     detailError.value = ''
     detailLoading.value = false
@@ -1651,13 +1977,22 @@ watch(
   () => fillDeductionFromClause(),
 )
 
+watch(detailPhotoPreview, (preview) => {
+  if (preview) {
+    window.addEventListener('keydown', handleDetailPhotoPreviewKeydown)
+    void nextTick(() => detailPhotoPreviewDialog.value?.focus())
+  } else window.removeEventListener('keydown', handleDetailPhotoPreviewKeydown)
+})
+
 onMounted(() => {
   void refresh()
   void refreshDetectionService()
 })
 
 onUnmounted(() => {
+  window.removeEventListener('keydown', handleDetailPhotoPreviewKeydown)
   releaseDraftPhotos()
+  releaseDetailPhotoPreviews()
   clearDraftReviewTimers()
 })
 </script>
@@ -1751,6 +2086,12 @@ onUnmounted(() => {
             <h3>{{ selectedRecord.storeName || selectedRecord.storeId }}</h3>
           </div>
           <div class="inspection-detail-actions">
+            <button
+              v-if="canSupplementHistoricalEvidence"
+              class="secondary-button"
+              type="button"
+              @click="openHistoricalEvidenceDialog()"
+            ><ImagePlus :size="16" />补传并关联证据</button>
             <button class="primary-button" type="button" :disabled="exportingRecordId === String(selectedRecord.id)" @click="exportRecord(selectedRecord)">
               <Download :size="16" />{{ exportingRecordId === String(selectedRecord.id) ? '正在生成...' : '导出Excel' }}
             </button>
@@ -1792,63 +2133,108 @@ onUnmounted(() => {
           <div v-if="!recordItemResults(selectedRecord).length" class="empty-state compact">{{ recordSnapshotEmptyText(selectedRecord) }}</div>
           <div v-else class="inspection-table-wrap">
             <table class="inspection-table snapshot-table">
-              <thead><tr><th>分类</th><th>编号</th><th>检查条款</th><th>风险</th><th class="r">标准分</th><th class="r">实际分</th><th>扣分原因</th></tr></thead>
+              <thead><tr><th>条款</th><th class="r">标准分</th><th class="r">实得分</th><th class="r">实际扣分</th><th>扣分原因</th><th>现场证据</th><th>状态</th></tr></thead>
               <tbody>
                 <tr v-for="item in recordItemResults(selectedRecord)" :key="`snapshot-${item.standardItemId}`">
-                  <td>{{ item.categoryName || item.dimension || '—' }}</td>
-                  <td>{{ item.code || '—' }}</td>
-                  <td>{{ item.title || item.description || '—' }}</td>
-                  <td><span class="risk-chip" :class="String(item.riskLevel || 'NORMAL').toLowerCase()">{{ riskLabel(item.riskLevel) }}</span></td>
-                  <td class="r">{{ safeNumber(item.standardScore) }}</td>
-                  <td class="r">{{ safeNumber(item.actualScore) }}</td>
+                  <td class="snapshot-clause">
+                    <b>{{ item.title || item.description || '—' }}</b>
+                    <small>{{ item.categoryName || item.dimension || '未分类' }} · {{ item.code || '未编号' }} · {{ riskLabel(item.riskLevel) }}</small>
+                  </td>
+                  <td class="r">{{ formatScore(item.standardScore) }}</td>
+                  <td class="r snapshot-actual-score">实得 {{ formatScore(item.actualScore) }} / {{ formatScore(item.standardScore) }}</td>
+                  <td class="r"><span :class="{ 'snapshot-deducted': itemDeduction(item) > 0 }">{{ itemDeduction(item) > 0 ? `扣 ${formatScore(itemDeduction(item))} 分` : '未扣分' }}</span></td>
                   <td>{{ item.deductionReason || '—' }}</td>
+                  <td>
+                    <div v-if="recordClausePhotos(selectedRecord, item).length" class="inspection-evidence-list">
+                      <article v-for="photo in recordClausePhotos(selectedRecord, item)" :key="`${item.standardItemId}-${photo.attachmentId || photo.fileName}`" class="inspection-evidence-item">
+                        <button
+                          class="inspection-evidence-thumb"
+                          type="button"
+                          :disabled="detailPhotoState(photo).status !== 'ready'"
+                          :aria-label="`预览 ${photo.fileName || '现场证据'}`"
+                          @click="openDetailPhotoPreview(photo, $event)"
+                        >
+                          <img
+                            v-if="detailPhotoState(photo).status === 'ready' && detailPhotoState(photo).url"
+                            :src="detailPhotoState(photo).url"
+                            :alt="`${photo.fileName || '现场证据'} 缩略图`"
+                            @error="markDetailPhotoFailed(photo)"
+                          />
+                          <LoaderCircle v-else-if="detailPhotoState(photo).status === 'loading'" class="spin" :size="18" />
+                          <XCircle v-else :size="18" />
+                        </button>
+                        <span>
+                          <b :title="photo.fileName">{{ photo.fileName || '现场照片' }}</b>
+                          <small v-if="detailPhotoMessage(photo)" :class="`evidence-${detailPhotoState(photo).status}`">{{ detailPhotoMessage(photo) }}</small>
+                        </span>
+                        <button
+                          v-if="['failed', 'missing'].includes(detailPhotoState(photo).status) && photo.attachmentId"
+                          class="evidence-retry"
+                          type="button"
+                          @click="retryDetailPhoto(photo)"
+                        >重试</button>
+                      </article>
+                    </div>
+                    <small v-else class="evidence-unlinked">未关联证据</small>
+                  </td>
+                  <td><span class="evidence-status" :class="{ effective: itemDeduction(item) > 0, pending: clauseEvidenceStatus(selectedRecord, item).includes('未计分'), unlinked: clauseEvidenceStatus(selectedRecord, item) === '未关联证据' }">{{ clauseEvidenceStatus(selectedRecord, item) }}</span></td>
                 </tr>
               </tbody>
             </table>
           </div>
         </div>
-        <div class="inspection-detail-section">
-          <h4>现场照片证据</h4>
-          <div v-if="!recordPhotos(selectedRecord).length" class="empty-state compact">暂无现场照片。</div>
-          <div v-else class="inspection-photo-list">
-            <a v-for="photo in recordPhotos(selectedRecord)" :key="photo.url || photo.fileName" :href="photoHref(photo)" target="_blank" rel="noreferrer">
-              {{ photo.fileName || '现场照片' }}
-            </a>
+        <div v-if="recordUnlinkedPhotos(selectedRecord).length" class="inspection-detail-section">
+          <h4>未关联现场证据</h4>
+          <p class="inspection-evidence-note">以下图片未在任何条款的图片关联中出现，系统不会自动归因或影响扣分；请由老板或督导人工选择历史条款。</p>
+          <div class="inspection-evidence-list unlinked-evidence-list">
+            <article v-for="photo in recordUnlinkedPhotos(selectedRecord)" :key="`unlinked-${photo.attachmentId || photo.fileName}`" class="inspection-evidence-item">
+              <span class="inspection-evidence-thumb" :aria-label="`${photo.fileName || '未关联证据'} 尚未关联历史条款，不能预览原图`">
+                <XCircle :size="18" />
+              </span>
+              <span><b>{{ photo.fileName || '现场照片' }}</b><small class="evidence-unlinked">{{ unlinkedPhotoMessage(photo) }}</small></span>
+              <button
+                v-if="canSupplementHistoricalEvidence"
+                class="evidence-associate"
+                type="button"
+                :disabled="detailEvidenceCandidatesLoading"
+                @click="openHistoricalEvidenceDialog(photo)"
+              >
+                <Link2 v-if="hasValidUnlinkedHistoricalEvidence(photo)" :size="14" />
+                <ImagePlus v-else :size="14" />
+                {{ detailEvidenceCandidatesLoading ? '正在核验证据' : unlinkedEvidenceActionLabel(photo) }}
+              </button>
+              <span v-else class="evidence-status unlinked">{{ unlinkedPhotoMessage(photo) }}</span>
+            </article>
           </div>
-          <div v-if="recordPhotos(selectedRecord).some((photo) => photo.detection)" class="inspection-detail-detections">
-            <article v-for="photo in recordPhotos(selectedRecord).filter((item) => item.detection)" :key="detectionKey(photo.detection) || photo.fileName" class="inspection-detail-detection">
+        </div>
+        <div v-if="recordPendingAiPhotos(selectedRecord).length" class="inspection-detail-section">
+          <h4>AI 待确认识别结果（不计分）</h4>
+          <p class="inspection-evidence-note">AI 建议独立展示；未匹配或待确认的结果不会写入本次得分、扣分明细或历史快照。</p>
+          <div class="inspection-detail-detections">
+            <article v-for="photo in recordPendingAiPhotos(selectedRecord)" :key="`ai-${detectionKey(photo.detection) || photo.attachmentId || photo.fileName}`" class="inspection-detail-detection ai-pending-card">
+              <button v-if="recordPhotoIsExplicitlyLinked(selectedRecord, photo)" class="inspection-evidence-thumb" type="button" :disabled="detailPhotoState(photo).status !== 'ready'" :aria-label="`预览 ${photo.fileName || 'AI识别图片'}`" @click="openDetailPhotoPreview(photo, $event)">
+                <img v-if="detailPhotoState(photo).status === 'ready' && detailPhotoState(photo).url" :src="detailPhotoState(photo).url" :alt="`${photo.fileName || 'AI识别图片'} 缩略图`" @error="markDetailPhotoFailed(photo)" />
+                <LoaderCircle v-else-if="detailPhotoState(photo).status === 'loading'" class="spin" :size="18" />
+                <XCircle v-else :size="18" />
+              </button>
+              <span v-else class="inspection-evidence-thumb" :aria-label="`${photo.fileName || 'AI识别图片'} 尚未关联历史条款，不能预览原图`"><XCircle :size="18" /></span>
               <div>
-                <span>模型识别条款</span>
+                <span>模型识别结果 · {{ photo.fileName || '现场图片' }}</span>
                 <b>{{ detectionClauseLabel(photo.detection) }}</b>
-                <small>
-                  旧100分制建议 {{ formatScore(detectionLegacyDeduction(photo.detection)) }} 分 ·
-                  200分制换算 {{ formatScore(detectionConvertedDeduction(photo.detection)) }} 分 ·
-                  <template v-if="detectionScaleAdjustment(photo.detection) > 0">
-                    条款扣分 {{ formatScore(detectionClauseDeduction(photo.detection)) }} 分 + 换算调整 {{ formatScore(detectionScaleAdjustment(photo.detection)) }} 分 ·
-                  </template>
-                  最终扣分 {{ detectionClauseId(photo.detection) ? formatScore(detectionFinalDeduction(photo.detection)) : '待匹配' }} 分 ·
-                  置信度 {{ confidenceText(detectionConfidence(photo.detection)) }}
-                </small>
-                <small class="inspection-model-only-hint">模型仅建议，最终扣分由服务端按正式条款规则计算。</small>
+                <small>{{ detectionCount(photo.detection) ? `识别到 ${detectionCount(photo.detection)} 个疑似问题` : '未识别到明确问题' }} · 置信度 {{ confidenceText(detectionConfidence(photo.detection)) }}</small>
+                <small class="inspection-model-only-hint">{{ photoAiStatus(photo) }}</small>
+                <small v-if="recordPhotoIsExplicitlyLinked(selectedRecord, photo) && detailPhotoMessage(photo)" :class="`evidence-${detailPhotoState(photo).status}`">{{ detailPhotoMessage(photo) }}</small>
+                <small v-else-if="!recordPhotoIsExplicitlyLinked(selectedRecord, photo)" class="evidence-unlinked">待人工关联历史条款，不能预览原图</small>
               </div>
               <div class="inspection-detail-decision">
-                <span :class="`decision-${detectionDecisionStatus(photo.detection).toLowerCase()}`">
-                  {{ detectionDecisionStatus(photo.detection) === 'CONFIRMED' ? '已确认扣分' : detectionDecisionStatus(photo.detection) === 'REVOKED' ? '已撤销' : '待确认' }}
-                </span>
+                <span class="decision-pending">{{ photoAiStatus(photo) }}</span>
                 <button
-                  v-if="canManageInspection && !hasRepairMarker(selectedRecord) && detectionDecisionStatus(photo.detection) !== 'CONFIRMED'"
+                  v-if="canManageInspection && !hasRepairMarker(selectedRecord) && detectionDecisionStatus(photo.detection) === 'PENDING'"
                   class="primary-button"
                   type="button"
                   :disabled="!detectionClauseId(photo.detection) || isPersistedDecisionBusy(detectionKey(photo.detection))"
                   @click="decidePersistedDetection(photo, 'confirm')"
-                >确认问题</button>
-                <button
-                  v-if="canManageInspection && !hasRepairMarker(selectedRecord) && detectionDecisionStatus(photo.detection) === 'CONFIRMED'"
-                  class="secondary-button"
-                  type="button"
-                  :disabled="isPersistedDecisionBusy(detectionKey(photo.detection))"
-                  @click="decidePersistedDetection(photo, 'revoke')"
-                >撤销确认</button>
+                >人工确认并计分</button>
               </div>
             </article>
           </div>
@@ -1939,7 +2325,7 @@ onUnmounted(() => {
           </label>
           <div class="inspection-standard-note" :class="{ muted: standardReady, invalid: hasGlobalStandard && !standardReady }">
             <div>
-              <span v-if="standardReady">{{ globalStandard.title }} {{ globalStandard.version }} · 105条（物料40 / 卫生47 / 服务18）· {{ globalStandardStats.fullScore }}分 · 合格线{{ globalStandardStats.passScore }}分 · 红线 {{ globalStandardStats.redlineCount }} 条 · 黄线 {{ globalStandardStats.yellowLineCount }} 条</span>
+              <span v-if="standardReady">{{ globalStandard.title }} {{ globalStandard.version }} · 105条（物料40 / 卫生47 / 服务18） · {{ globalStandardStats.fullScore }}分（满分200） · 合格线{{ globalStandardStats.passScore }}分 · 红线 {{ globalStandardStats.redlineCount }} 条 · 黄线 {{ globalStandardStats.yellowLineCount }} 条</span>
               <span v-else-if="globalStandard.validationError" class="danger">当前标准未通过校验，只能只读查看，不能保存巡检。</span>
               <span v-else>暂无稽核标准</span>
             </div>
@@ -2020,10 +2406,7 @@ onUnmounted(() => {
                     <b>{{ detectionClauseLabel(photo.detection) }}</b>
                   </div>
                   <dl class="inspection-deduction-metrics">
-                    <div><dt>旧100分制建议</dt><dd>{{ formatScore(detectionLegacyDeduction(photo.detection)) }} 分</dd></div>
-                    <div><dt>200分制换算</dt><dd>{{ formatScore(detectionConvertedDeduction(photo.detection)) }} 分</dd></div>
-                    <div v-if="detectionScaleAdjustment(photo.detection) > 0"><dt>条款 + 换算调整</dt><dd>{{ formatScore(detectionClauseDeduction(photo.detection)) }} + {{ formatScore(detectionScaleAdjustment(photo.detection)) }} 分</dd></div>
-                    <div><dt>最终扣分</dt><dd>{{ detectionClauseId(photo.detection) ? `${formatScore(detectionFinalDeduction(photo.detection))} 分` : '待匹配' }}</dd></div>
+                    <div><dt>200分制建议扣分</dt><dd>{{ detectionClauseId(photo.detection) ? `${formatScore(detectionFinalDeduction(photo.detection))} 分` : '待匹配' }}</dd></div>
                     <div><dt>识别置信度</dt><dd>{{ confidenceText(detectionConfidence(photo.detection)) }}</dd></div>
                   </dl>
                   <p class="inspection-model-only-hint">模型仅建议；最终扣分由服务端按正式条款规则计算，需督导确认。</p>
@@ -2069,7 +2452,7 @@ onUnmounted(() => {
       <section class="content-card inspection-score-bar">
         <div v-for="category in categoryScores" :key="category.code" class="category-score">
           <span>{{ category.name }}得分</span>
-          <b>{{ category.score }}<small> / {{ category.fullScore }}</small></b>
+          <b>{{ category.score }}<small> 分（满分{{ category.fullScore }}）</small></b>
         </div>
         <div>
           <span>总分</span>
@@ -2108,7 +2491,7 @@ onUnmounted(() => {
             <span class="inspection-section-title">{{ group.dim }}标准</span>
             <h3>{{ group.items.length }} 条完整检查项</h3>
           </div>
-          <strong>{{ categoryScores.find((item) => item.code === group.categoryCode)?.score || 0 }} / {{ group.fullScore }} 分</strong>
+          <strong>{{ categoryScores.find((item) => item.code === group.categoryCode)?.score || 0 }} / {{ group.fullScore }} 分（200分制）</strong>
         </div>
         <div class="inspection-table-wrap">
           <table class="inspection-table inspection-item-table">
@@ -2428,6 +2811,31 @@ onUnmounted(() => {
       </template>
     </div>
   </section>
+
+  <Teleport to="body">
+    <InspectionHistoricalEvidenceDialog
+      v-if="historicalEvidenceDialog && selectedRecord && canSupplementHistoricalEvidence"
+      :record="selectedRecord"
+      :items="recordItemResults(selectedRecord)"
+      :initial-attachment-id="historicalEvidenceDialog.attachmentId"
+      :source-photo-index="historicalEvidenceDialog.sourcePhotoIndex"
+      :initial-mode="historicalEvidenceDialog.mode"
+      @close="closeHistoricalEvidenceDialog"
+      @saved="onHistoricalEvidenceSaved"
+    />
+  </Teleport>
+
+  <Teleport to="body">
+    <div v-if="detailPhotoPreview" class="inspection-image-preview-backdrop" @click.self="closeDetailPhotoPreview">
+      <section ref="detailPhotoPreviewDialog" class="inspection-image-preview-dialog" tabindex="-1" role="dialog" aria-modal="true" aria-label="现场图片预览">
+        <header>
+          <b>{{ detailPhotoPreview.fileName }}</b>
+          <button type="button" class="icon-button" aria-label="关闭图片预览" @click="closeDetailPhotoPreview"><XCircle :size="20" /></button>
+        </header>
+        <img :src="detailPhotoPreview.url" :alt="detailPhotoPreview.fileName" />
+      </section>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -3291,6 +3699,8 @@ onUnmounted(() => {
 @media (max-width: 860px) {
   .inspection-deduction-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .inspection-detail-detection { align-items: flex-start; flex-direction: column; }
+  .ai-pending-card { grid-template-columns: 50px minmax(0, 1fr); }
+  .ai-pending-card .inspection-detail-decision { grid-column: 1 / -1; }
 }
 
 .pending {
@@ -3506,7 +3916,238 @@ onUnmounted(() => {
 }
 
 .snapshot-table {
-  min-width: 1000px;
+  min-width: 1240px;
+}
+
+.snapshot-clause {
+  min-width: 180px;
+}
+
+.snapshot-clause b,
+.snapshot-clause small {
+  display: block;
+}
+
+.snapshot-clause small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.snapshot-actual-score,
+.snapshot-deducted {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.snapshot-deducted {
+  color: var(--bad);
+  font-weight: 800;
+}
+
+.inspection-evidence-list {
+  display: grid;
+  min-width: 210px;
+  gap: 7px;
+}
+
+.inspection-evidence-item {
+  display: grid;
+  grid-template-columns: 50px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 54px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+}
+
+.inspection-evidence-thumb {
+  display: grid;
+  width: 50px;
+  height: 42px;
+  place-items: center;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: var(--ds-surface-muted);
+  color: var(--muted);
+}
+
+.inspection-evidence-thumb:not(:disabled):hover,
+.inspection-evidence-thumb:not(:disabled):focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.inspection-evidence-thumb:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.inspection-evidence-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.inspection-evidence-item > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.inspection-evidence-item b,
+.inspection-evidence-item small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspection-evidence-item b {
+  font-size: 12px;
+}
+
+.inspection-evidence-item small,
+.inspection-evidence-note {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.inspection-evidence-item .evidence-forbidden,
+.inspection-evidence-item .evidence-missing,
+.inspection-evidence-item .evidence-failed {
+  color: var(--bad);
+}
+
+.evidence-retry {
+  min-height: 28px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--primary-dark);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.evidence-retry:hover,
+.evidence-retry:focus-visible {
+  background: var(--primary-soft);
+}
+
+.evidence-associate {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0 7px;
+  border: 1px solid var(--primary);
+  border-radius: 5px;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.evidence-associate:hover,
+.evidence-associate:focus-visible {
+  background: #d8efed;
+}
+
+.evidence-unlinked {
+  color: var(--warn);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.evidence-status {
+  display: inline-flex;
+  max-width: 230px;
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: var(--ds-surface-muted);
+  color: var(--ds-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.evidence-status.effective {
+  background: var(--ds-danger-soft);
+  color: var(--bad);
+}
+
+.evidence-status.pending,
+.evidence-status.unlinked {
+  background: var(--ds-warning-soft);
+  color: #77440d;
+}
+
+.inspection-evidence-note {
+  margin: -2px 0 10px;
+}
+
+.unlinked-evidence-list {
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+}
+
+.unlinked-evidence-list .evidence-status {
+  justify-self: end;
+}
+
+.ai-pending-card {
+  display: grid;
+  grid-template-columns: 50px minmax(0, 1fr) auto;
+}
+
+.inspection-image-preview-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1510;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(9, 14, 14, .72);
+}
+
+.inspection-image-preview-dialog {
+  display: grid;
+  width: min(960px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow: hidden;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.inspection-image-preview-dialog header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.inspection-image-preview-dialog header b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspection-image-preview-dialog > img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 102px);
+  margin: auto;
+  object-fit: contain;
 }
 
 .inspection-standard-error {

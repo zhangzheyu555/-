@@ -175,6 +175,48 @@ class UserAuthorizationManagementTest {
   }
 
   @Test
+  void storeManagementCannotBeGrantedToANonBossAccount() {
+    AuthUser manager = user(4L, "manager", "STORE_MANAGER", "rg1", 2L);
+    stubAuthorizationSnapshot(manager);
+    when(authorizationService.catalog()).thenReturn(List.of(catalogEntry(PermissionCodes.STORE_MANAGE)));
+
+    assertThatThrownBy(() -> service.updateAuthorization(
+        boss,
+        4L,
+        new UserAuthorizationUpdateRequest(
+            List.of(new UserPermissionOverrideRequest(PermissionCodes.STORE_MANAGE, "ALLOW")),
+            List.of())))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode())
+            .isEqualTo("STORE_MANAGEMENT_BOSS_ONLY"));
+
+    verify(authorizationService, never()).replaceUserOverrides(
+        eq(1L), eq(4L), org.mockito.ArgumentMatchers.anyList(), eq(1L));
+    verify(authorizationService, never()).incrementPermissionVersionAndDeleteTokens(1L, 4L);
+  }
+
+  @Test
+  void financeImportCannotBeGrantedToANonFinanceAccount() {
+    AuthUser manager = user(5L, "manager-import", "STORE_MANAGER", "rg1", 2L);
+    stubAuthorizationSnapshot(manager);
+    when(authorizationService.catalog()).thenReturn(List.of(catalogEntry(PermissionCodes.FINANCE_PROFIT_IMPORT)));
+
+    assertThatThrownBy(() -> service.updateAuthorization(
+        boss,
+        5L,
+        new UserAuthorizationUpdateRequest(
+            List.of(new UserPermissionOverrideRequest(PermissionCodes.FINANCE_PROFIT_IMPORT, "ALLOW")),
+            List.of())))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode())
+            .isEqualTo("FINANCE_IMPORT_FINANCE_ONLY"));
+
+    verify(authorizationService, never()).replaceUserOverrides(
+        eq(1L), eq(5L), org.mockito.ArgumentMatchers.anyList(), eq(1L));
+    verify(authorizationService, never()).incrementPermissionVersionAndDeleteTokens(1L, 5L);
+  }
+
+  @Test
   void bossAuthorizationIsFixedAndCannotBeOverridden() {
     when(authRepository.user(1L, 1L)).thenReturn(Optional.of(boss));
 

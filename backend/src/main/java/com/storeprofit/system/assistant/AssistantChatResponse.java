@@ -74,6 +74,7 @@ public record AssistantChatResponse(
       String model,
       String requestId,
       long latencyMs,
+      String analysisType,
       String summary,
       List<String> findings,
       List<Risk> risks,
@@ -87,6 +88,7 @@ public record AssistantChatResponse(
       model = available ? safe(model) : "";
       requestId = available ? safe(requestId) : "";
       latencyMs = available ? Math.max(0, latencyMs) : 0;
+      analysisType = available ? normalizeAnalysisType(analysisType) : "";
       summary = available ? safe(summary) : "";
       findings = immutableStrings(findings);
       risks = risks == null ? List.of() : List.copyOf(risks);
@@ -97,8 +99,43 @@ public record AssistantChatResponse(
     }
 
     public static AiAnalysis unavailable() {
-      return new AiAnalysis(false, "", "", "", 0, "", List.of(), List.of(),
+      return new AiAnalysis(false, "", "", "", 0, "", "", List.of(), List.of(),
           List.of(), List.of(), "", List.of());
+    }
+
+    /**
+     * Source-compatible constructor for trusted Java callers. Provider output is never accepted
+     * through this overload; AssistantService always supplies the explicitly validated type.
+     */
+    public AiAnalysis(
+        boolean available,
+        String provider,
+        String model,
+        String requestId,
+        long latencyMs,
+        String summary,
+        List<String> findings,
+        List<Risk> risks,
+        List<PossibleCause> possibleCauses,
+        List<Action> actions,
+        String confidence,
+        List<String> limitations
+    ) {
+      this(
+          available,
+          provider,
+          model,
+          requestId,
+          latencyMs,
+          available ? "FULL" : "",
+          summary,
+          findings,
+          risks,
+          possibleCauses,
+          actions,
+          confidence,
+          limitations
+      );
     }
   }
 
@@ -210,6 +247,11 @@ public record AssistantChatResponse(
     return List.of("HIGH", "MEDIUM", "LOW").contains(normalized) ? normalized : "MEDIUM";
   }
 
+  private static String normalizeAnalysisType(String value) {
+    String normalized = safe(value).toUpperCase();
+    return List.of("FULL", "DATA_LIMITED").contains(normalized) ? normalized : "";
+  }
+
   private static String safe(String value) {
     return value == null ? "" : value.trim();
   }
@@ -265,7 +307,7 @@ public record AssistantChatResponse(
         "兼容响应",
         new LocalData(aiUsed ? "" : answer, List.of(), month, String.join(",", storeScope), dataSource),
         aiUsed
-            ? new AiAnalysis(true, "DeepSeek", "", "", 0, answer, List.of("兼容响应"),
+            ? new AiAnalysis(true, "DeepSeek", "", "", 0, "FULL", answer, List.of("兼容响应"),
                 List.of(), List.of(), List.of(new Action("兼容响应", "", "", "", "")),
                 "MEDIUM", List.of())
             : AiAnalysis.unavailable(),
@@ -306,7 +348,7 @@ public record AssistantChatResponse(
         new LocalData(localAnswer, List.of(), resolvedMonth == null ? month : resolvedMonth,
             resolvedStoreName, dataSource),
         deepSeekAvailable && aiUsed && deepSeekAnswer != null
-            ? new AiAnalysis(true, "DeepSeek", model, requestId, 0, deepSeekAnswer,
+            ? new AiAnalysis(true, "DeepSeek", model, requestId, 0, "FULL", deepSeekAnswer,
                 List.of("兼容响应"), List.of(), List.of(),
                 List.of(new Action("兼容响应", "", "", "", "")), "MEDIUM", List.of())
             : AiAnalysis.unavailable(),

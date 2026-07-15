@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.storeprofit.system.finance.FinanceService;
 import com.storeprofit.system.finance.ProfitEntryResponse;
 import com.storeprofit.system.finance.ProfitSummaryResponse;
@@ -122,6 +123,24 @@ class DeepSeekIntegrationTest {
       assertThat(response.fallbackUsed()).isTrue();
       assertThat(response.localData().source()).isEqualTo("MySQL 8 财务库");
       assertThat(response.error().code()).isEqualTo("DEEPSEEK_DISABLED");
+    }
+
+    @Test
+    @DisplayName("经营助手降级响应不序列化 API Key")
+    void fallbackResponseNeverSerializesOperatingAssistantKey() throws Exception {
+      String configuredKey = "test-operating-assistant-key-not-a-real-secret";
+      properties.setEnabled(false);
+      properties.setApiKey(configuredKey);
+
+      AssistantChatResponse response = assistantService.chat(boss(),
+          new AssistantChatRequest("为什么利润下降", List.of(), "", null, null, null));
+      String serialized = new ObjectMapper().findAndRegisterModules().writeValueAsString(response);
+
+      assertThat(response.fallbackUsed()).isTrue();
+      assertThat(serialized)
+          .doesNotContain(configuredKey)
+          .doesNotContain("apiKey")
+          .doesNotContain("api-key");
     }
   }
 
@@ -366,6 +385,13 @@ class DeepSeekIntegrationTest {
     void defaultTimeoutIs45Seconds() {
       DeepSeekProperties props = new DeepSeekProperties();
       assertThat(props.getTimeout()).isEqualTo(Duration.ofSeconds(45));
+    }
+
+    @Test
+    @DisplayName("整次经营分析默认受 75 秒总预算约束")
+    void defaultAnalysisTimeoutIsSeventyFiveSeconds() {
+      DeepSeekProperties props = new DeepSeekProperties();
+      assertThat(props.getAnalysisTimeout()).isEqualTo(Duration.ofSeconds(75));
     }
   }
 }

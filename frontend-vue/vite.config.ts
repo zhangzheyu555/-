@@ -26,7 +26,9 @@ function backendProxy(target: string) {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const backendTarget = env.VITE_BACKEND_PROXY_TARGET || 'http://127.0.0.1:8080'
+  // 本项目本机后端的受控运行端口为 18081。仍允许维护环境用
+  // VITE_BACKEND_PROXY_TARGET 覆盖，避免未加载 .env.local 时悄悄转发到旧的 8080。
+  const backendTarget = env.VITE_BACKEND_PROXY_TARGET || 'http://127.0.0.1:18081'
   return {
     plugins: [vue()],
     server: {

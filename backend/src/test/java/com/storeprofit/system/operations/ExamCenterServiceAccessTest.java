@@ -124,7 +124,7 @@ class ExamCenterServiceAccessTest {
     return new ExamAssignmentResponse(
         id, 7L, 3L, "月度考试", "食品安全", userId, "员工甲", "EMPLOYEE",
         storeId, "荆州之星店", "ASSIGNED", "待参加",
-        "2026-07-01 09:00:00", "2026-07-31 18:00:00", null, null, null, null
+        "2026-07-01 09:00:00", "2026-07-31 18:00:00", null, null, null, null, null
     );
   }
 

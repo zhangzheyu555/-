@@ -1,4 +1,5 @@
-import { hasPermission, PERMISSIONS, type PermissionCode } from './permissions'
+import { canUseFinanceProfitImport, hasPermission, PERMISSIONS, type PermissionCode } from './permissions'
+import { isBossRole } from './roles'
 
 export type MenuIconKey =
   | 'assistant'
@@ -23,6 +24,8 @@ export interface PermissionMenuItem {
   icon: MenuIconKey
   requiredPermission: PermissionCode
   alternativePermissions?: PermissionCode[]
+  bossOnly?: boolean
+  financeOrBossOnly?: boolean
   workspacePath?: string
   requiredDataScope?: {
     domain: string
@@ -56,6 +59,14 @@ export const MENU_GROUP_CONFIG: PermissionMenuGroup[] = [
       { key: 'profit-overview', label: '利润概览', to: '/profit', icon: 'profit', requiredPermission: PERMISSIONS.FINANCE_PROFIT_READ },
       { key: 'profit-table', label: '利润表', to: '/profit-table', icon: 'profit', requiredPermission: PERMISSIONS.FINANCE_PROFIT_READ },
       { key: 'data-entry', label: '数据录入', to: '/data-entry', icon: 'profit', requiredPermission: PERMISSIONS.FINANCE_PROFIT_WRITE },
+      {
+        key: 'finance-profit-import',
+        label: '导入月度汇总',
+        to: '/finance/import',
+        icon: 'profit',
+        requiredPermission: PERMISSIONS.FINANCE_PROFIT_IMPORT,
+        financeOrBossOnly: true,
+      },
       { key: 'expenses', label: '报销栏', to: '/expenses', icon: 'expense', requiredPermission: PERMISSIONS.EXPENSE_READ },
       {
         label: '员工工资',
@@ -94,6 +105,14 @@ export const MENU_GROUP_CONFIG: PermissionMenuGroup[] = [
         requiredDataScope: { domain: 'WAREHOUSE', modes: ['ALL', 'WAREHOUSE_LIST', 'CENTRAL_WAREHOUSE', 'STORE_LIST', 'OWN_STORE'] },
       },
       {
+        key: 'daily-loss',
+        label: '每日报损',
+        to: '/daily-loss',
+        icon: 'inventory',
+        requiredPermission: PERMISSIONS.DAILY_LOSS_READ,
+        requiredDataScope: { domain: 'WAREHOUSE', modes: ['ALL', 'WAREHOUSE_LIST', 'STORE_LIST', 'OWN_STORE'] },
+      },
+      {
         label: '门店详情',
         key: 'store-detail',
         to: '/store-detail',
@@ -130,7 +149,7 @@ export const MENU_GROUP_CONFIG: PermissionMenuGroup[] = [
   {
     title: '系统管理',
     items: [
-      { key: 'store-management', label: '门店管理', to: '/stores', icon: 'store', requiredPermission: PERMISSIONS.STORE_MANAGE },
+      { key: 'store-management', label: '门店管理', to: '/stores', icon: 'store', requiredPermission: PERMISSIONS.STORE_MANAGE, bossOnly: true },
       { key: 'user-permissions', label: '账号权限', to: '/users', icon: 'users', requiredPermission: PERMISSIONS.SYSTEM_USER_MANAGE },
       { key: 'operation-logs', label: '操作日志', to: '/logs', icon: 'log', requiredPermission: PERMISSIONS.SYSTEM_AUDIT_READ },
     ],
@@ -139,6 +158,7 @@ export const MENU_GROUP_CONFIG: PermissionMenuGroup[] = [
 
 export const UTILITY_MENU_CONFIG: PermissionMenuItem[] = [
   { key: 'assistant', label: '门店经营助手', to: '/assistant', icon: 'assistant', requiredPermission: PERMISSIONS.ASSISTANT_USE },
+  { key: 'employee-assistant', label: '员工服务助手', to: '/employee-assistant', icon: 'assistant', requiredPermission: PERMISSIONS.EMPLOYEE_ASSISTANT_USE },
 ]
 
 export function resolveMenuGroups(subject: MenuSubject): PermissionMenuGroup[] {
@@ -156,6 +176,8 @@ export function resolveUtilityMenuItems(subject: MenuSubject) {
 }
 
 function canShow(item: PermissionMenuItem, subject: MenuSubject) {
+  if (item.bossOnly && !isBossRole(subject.role)) return false
+  if (item.financeOrBossOnly && !canUseFinanceProfitImport(subject.role, subject.permissions)) return false
   const canAccess = hasPermission(subject.role, subject.permissions, item.requiredPermission)
     || item.alternativePermissions?.some((permission) => hasPermission(subject.role, subject.permissions, permission))
   if (!canAccess) return false

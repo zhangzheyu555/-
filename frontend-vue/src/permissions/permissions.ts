@@ -1,4 +1,4 @@
-import { isBossRole } from './roles'
+import { isBossRole, normalizeRoleCode } from './roles'
 
 export const PERMISSIONS = {
   SYSTEM_USER_MANAGE: 'system.user.manage',
@@ -13,6 +13,7 @@ export const PERMISSIONS = {
   EMPLOYEE_MANAGE: 'employee.manage',
   FINANCE_PROFIT_READ: 'finance.profit.read',
   FINANCE_PROFIT_WRITE: 'finance.profit.write',
+  FINANCE_PROFIT_IMPORT: 'finance.profit.import',
   FINANCE_PROFIT_DELETE: 'finance.profit.delete',
   FINANCE_EXPORT: 'finance.export',
   EXPENSE_CREATE: 'expense.create',
@@ -39,6 +40,9 @@ export const PERMISSIONS = {
   INVENTORY_READ: 'inventory.read',
   INVENTORY_MANAGE: 'inventory.manage',
   INVENTORY_REVIEW: 'inventory.review',
+  DAILY_LOSS_READ: 'daily_loss.read',
+  DAILY_LOSS_CREATE: 'daily_loss.create',
+  DAILY_LOSS_REVIEW: 'daily_loss.review',
   INSPECTION_READ: 'inspection.read',
   INSPECTION_MANAGE: 'inspection.manage',
   EXAM_LEARN: 'exam.learn',
@@ -47,6 +51,9 @@ export const PERMISSIONS = {
   PLATFORM_READ: 'platform.read',
   PLATFORM_MANAGE: 'platform.manage',
   ASSISTANT_USE: 'assistant.use',
+  EMPLOYEE_ASSISTANT_USE: 'employee_assistant.use',
+  EMPLOYEE_ASSISTANT_KNOWLEDGE_MANAGE: 'employee_assistant.knowledge_manage',
+  EMPLOYEE_ASSISTANT_HANDOFF_MANAGE: 'employee_assistant.handoff_manage',
   ATTACHMENT_READ: 'attachment.read',
   ATTACHMENT_WRITE: 'attachment.write',
   TODO_READ: 'todo.read',
@@ -54,6 +61,15 @@ export const PERMISSIONS = {
 } as const
 
 export type PermissionCode = (typeof PERMISSIONS)[keyof typeof PERMISSIONS]
+
+/**
+ * 月度经营数据导入会写入正式经营数据，必须同时具备导入与写入权限。
+ * 将此判定集中在权限层，避免菜单、工作台、页面和路由各自只校验其中一项。
+ */
+export const FINANCE_PROFIT_IMPORT_REQUIRED_PERMISSIONS = [
+  PERMISSIONS.FINANCE_PROFIT_IMPORT,
+  PERMISSIONS.FINANCE_PROFIT_WRITE,
+] as const
 
 export function normalizePermissionCode(permission?: string) {
   return String(permission || '').trim().toLowerCase()
@@ -76,4 +92,13 @@ export function hasEveryPermission(
   requiredPermissions: readonly string[],
 ) {
   return requiredPermissions.every((permission) => hasPermission(role, permissions, permission))
+}
+
+export function canUseFinanceProfitImport(
+  role: string | undefined,
+  permissions: readonly string[] | undefined,
+) {
+  const normalizedRole = normalizeRoleCode(role)
+  return (isBossRole(normalizedRole) || normalizedRole === 'FINANCE')
+    && hasEveryPermission(role, permissions, FINANCE_PROFIT_IMPORT_REQUIRED_PERMISSIONS)
 }

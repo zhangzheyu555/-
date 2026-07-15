@@ -1,4 +1,4 @@
-import { apiGet, apiPost, http, type ApiResponse } from './http'
+import { apiGet, apiPost, apiPostForm, http, type ApiResponse } from './http'
 import { downloadBlob } from './reports'
 import type { RoleTodoItem } from './todos'
 
@@ -12,6 +12,7 @@ export interface InspectionRecord {
   inspectionDate: string
   inspector?: string
   brand?: string
+  /** fullScore/score/passScore 均为 200 分制展示值，后端已统一归一化。 */
   fullScore?: number
   score?: number
   maxScore?: number
@@ -67,6 +68,7 @@ export type InspectionCategoryCode = 'MATERIAL' | 'HYGIENE' | 'SERVICE'
 export type InspectionRepairStatus = 'NOT_NEEDED' | 'REPAIRED' | 'MANUAL_REVIEW' | 'PENDING_REVIEW' | string
 
 export interface InspectionItemResult {
+  snapshotId?: number
   standardItemId: number
   code?: string
   dimension?: string
@@ -77,6 +79,8 @@ export interface InspectionItemResult {
   checkMethod?: string
   standardScore?: number
   actualScore: number
+  /** 后端快照的权威实际扣分；缺失时页面才按标准分减实得分兼容旧记录。 */
+  deductionScore?: number
   deductionReason?: string
   riskLevel?: InspectionRiskLevel
   issueFound?: boolean
@@ -119,6 +123,46 @@ export interface InspectionAttachment {
   fileSize?: number
   url?: string
   storagePath?: string
+}
+
+/**
+ * Historical evidence candidates are deliberately identified by attachmentId only.
+ * File names are display metadata, never a signal that permits an association.
+ */
+export type InspectionEvidenceCandidateStatus = 'UNLINKED' | 'LINKED' | 'MISSING' | 'ORIGINAL_NOT_STORED' | 'INVALID_TYPE' | string
+
+export interface InspectionEvidenceCandidate {
+  attachmentId?: number
+  /** Server-validated photosJson array position; never derive this from a file name. */
+  photoIndex?: number
+  fileName?: string
+  contentType?: string
+  status: InspectionEvidenceCandidateStatus
+  message?: string
+  linkedClauseIds: number[]
+}
+
+export interface InspectionEvidenceAttachmentsResponse {
+  recordId: string
+  storeId?: string
+  candidates: InspectionEvidenceCandidate[]
+}
+
+export interface InspectionEvidenceLinkRequest {
+  attachmentIds: number[]
+  /** Standard item ids (standardItemId); mutually non-overlapping with historicalSnapshotIds. */
+  clauseIds: number[]
+  /** Snapshot row ids (snapshotId); required when standard_id is NULL in inspection_record_standard_snapshot. */
+  historicalSnapshotIds?: number[]
+}
+
+export interface InspectionEvidenceLinkResponse {
+  recordId: string
+  attachmentIds: number[]
+  clauseIds: number[]
+  /** `ASSOCIATE` or `SUPPLEMENT`; rendered as business copy by the caller. */
+  action?: string
+  record: InspectionRecord
 }
 
 export interface InspectionSummary {
@@ -316,6 +360,19 @@ export async function downloadInspectionExcel(recordId: string, fallbackName = '
   downloadBlob(response.data, decodeFilename(disposition) || fallbackName)
 }
 
+/**
+ * 通过受认证、门店数据范围校验的附件接口读取巡检现场图片。
+ * 调用方只使用返回的 Blob/ObjectURL，绝不能把 storagePath 或静态路径暴露给页面。
+ */
+export async function fetchInspectionAttachment(attachmentId: number, signal?: AbortSignal) {
+  const response = await http.get<Blob>(`/api/storage/attachments/${encodeURIComponent(String(attachmentId))}`, {
+    responseType: 'blob',
+    timeout: 120_000,
+    signal,
+  })
+  return response.data
+}
+
 export async function uploadInspectionAttachment(file: File, storeId: string, businessId = 'inspection-draft') {
   const form = new FormData()
   form.append('file', file)
@@ -327,6 +384,51 @@ export async function uploadInspectionAttachment(file: File, storeId: string, bu
     throw new Error(response.data?.message || '附件上传失败')
   }
   return response.data.data
+}
+
+/**
+ * Reads only the backend-authorized evidence candidates for one historical record.
+ * Do not derive candidates from file names or browser state.
+ */
+export function getInspectionEvidenceAttachments(recordId: string) {
+  return apiGet<InspectionEvidenceAttachmentsResponse>(
+    `/api/inspections/${encodeURIComponent(recordId)}/evidence/attachments`,
+  )
+}
+
+/** Writes only attachment-to-snapshot-clause evidence associations. */
+export function linkInspectionEvidence(recordId: string, payload: InspectionEvidenceLinkRequest) {
+  return apiPost<InspectionEvidenceLinkResponse, InspectionEvidenceLinkRequest>(
+    `/api/inspections/${encodeURIComponent(recordId)}/evidence/link`,
+    payload,
+  )
+}
+
+/**
+ * Uploads an original image for a historical record and associates it in the same
+ * backend operation.  At least one of {@code clauseIds} (standardItemId) or
+ * {@code historicalSnapshotIds} (snapshot row id) must be non-empty.
+ */
+export async function uploadAndLinkInspectionEvidence(
+  recordId: string,
+  file: File,
+  clauseIds: number[],
+  historicalSnapshotIds: number[],
+  sourcePhotoIndex?: number,
+) {
+  const form = new FormData()
+  form.append('file', file)
+  clauseIds.forEach((clauseId) => form.append('clauseIds', String(clauseId)))
+  historicalSnapshotIds.forEach((snapshotId) => form.append('historicalSnapshotIds', String(snapshotId)))
+  // The server uses this original photosJson position to replace a metadata-only
+  // entry. It is intentionally optional for a brand-new historical upload.
+  if (Number.isInteger(sourcePhotoIndex) && Number(sourcePhotoIndex) >= 0) {
+    form.append('sourcePhotoIndex', String(sourcePhotoIndex))
+  }
+  return apiPostForm<InspectionEvidenceLinkResponse>(
+    `/api/inspections/${encodeURIComponent(recordId)}/evidence/upload`,
+    form,
+  )
 }
 
 export async function detectInspectionPhoto(file: File) {

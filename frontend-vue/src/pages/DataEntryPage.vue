@@ -1,7 +1,7 @@
 ﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ChevronDown, ChevronLeft, ChevronRight, FileSpreadsheet, History, RefreshCw, Save, X } from 'lucide-vue-next'
-import { onBeforeRouteLeave, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { getProfitEntries, getProfitMonths, saveProfitEntry, type ProfitEntry } from '../api/finance'
 import { getBrands, getStores, type BrandInfo, type StoreInfo } from '../api/operations'
 import BrandSelect from '../components/common/BrandSelect.vue'
@@ -12,7 +12,7 @@ import UnsavedChangesDialog from '../components/ui/UnsavedChangesDialog.vue'
 import { useBusinessScope } from '../composables/useBusinessScope'
 import { money, percent, useProfitStore } from '../stores/profit'
 import { useAuthStore } from '../stores/auth'
-import { PERMISSIONS } from '../permissions/permissions'
+import { canUseFinanceProfitImport, PERMISSIONS } from '../permissions/permissions'
 import { normalizeBrandName } from '../utils/brand'
 import { filterStoresByBrand } from '../utils/storeFilter'
 
@@ -87,6 +87,7 @@ const HISTORY_FETCH_LIMIT = 8
 const HISTORY_PAGE_SIZE = 6
 
 const router = useRouter()
+const route = useRoute()
 const auth = useAuthStore()
 const scope = useBusinessScope()
 const profit = useProfitStore()
@@ -133,7 +134,18 @@ const filteredStores = computed(() => scope.isStoreManager.value
   ? (managerStore.value ? [managerStore.value] : [])
   : filterStoresByBrand(stores.value, selectedBrandId.value))
 const selectedStore = computed(() => stores.value.find((store) => store.id === selectedStoreId.value) || managerStore.value)
+const importTargetStoreId = computed(() => scope.scopedStoreId(selectedStoreId.value))
 const canSave = computed(() => auth.hasPermission(PERMISSIONS.FINANCE_PROFIT_WRITE))
+const canImportMonthlySummary = computed(() => canUseFinanceProfitImport(auth.role, auth.permissions))
+const isFinanceImportRoute = computed(() => route.name === 'finance-profit-import')
+const pageTitle = computed(() => (
+  isFinanceImportRoute.value ? '导入月度汇总' : '数据录入'
+))
+const pageSubtitle = computed(() => {
+  if (isFinanceImportRoute.value) return '上传单店单月汇总，校验通过并确认后写入经营数据。'
+  if (scope.isStoreManager.value) return '仅可手工录入本人负责门店的月度经营数据。'
+  return ''
+})
 const historyPreview = computed(() => historyRows.value.slice(0, 5))
 const historyPageCount = computed(() => Math.max(1, Math.ceil(historyRows.value.length / HISTORY_PAGE_SIZE)))
 const pagedHistory = computed(() => {
@@ -374,7 +386,7 @@ async function load() {
     }
     selectedMonth.value = profit.summary.month || selectedMonth.value
     if (!selectedStoreId.value) selectedStoreId.value = filteredStores.value[0]?.id || ''
-    await Promise.all([loadCurrentEntry(), loadHistory()])
+    if (!isFinanceImportRoute.value) await Promise.all([loadCurrentEntry(), loadHistory()])
   } catch (loadError) {
     error.value = displayError(loadError, '数据录入页面加载失败，请刷新后重试。')
   }
@@ -511,7 +523,11 @@ function refreshEntry() {
 
 function goImportStatus() {
   error.value = ''
-  if (!scope.scopedStoreId(selectedStoreId.value) || !selectedMonth.value) {
+  if (!canImportMonthlySummary.value) {
+    error.value = '经营数据导入仅限财务或老板处理。'
+    return
+  }
+  if (!importTargetStoreId.value || !selectedMonth.value) {
     error.value = '请选择门店和月份后再导入。'
     return
   }
@@ -521,6 +537,10 @@ function goImportStatus() {
 async function onImportSaved(saved: number) {
   importDrawerOpen.value = false
   success.value = `已导入 ${saved} 条经营数据。`
+  if (isFinanceImportRoute.value) {
+    await profit.load()
+    return
+  }
   await Promise.all([profit.load(), loadCurrentEntry(), loadHistory()])
 }
 
@@ -556,9 +576,14 @@ function handleKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape' && historyDrawerOpen.value && !unsavedDialogOpen.value) historyDrawerOpen.value = false
 }
 
-onMounted(() => {
+onMounted(async () => {
   document.addEventListener('keydown', handleKeydown)
-  void load()
+  await load()
+  if (route.query.notice === 'FINANCE_IMPORT_FORBIDDEN') {
+    error.value = '经营数据导入仅限财务或老板处理。'
+    return
+  }
+  if (isFinanceImportRoute.value) goImportStatus()
 })
 onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
 
@@ -575,6 +600,7 @@ onBeforeRouteLeave(() => {
 
 watch([selectedStoreId, selectedMonth], () => {
   success.value = ''
+  if (isFinanceImportRoute.value) return
   void loadCurrentEntry()
   void loadHistory()
 })
@@ -590,17 +616,17 @@ watch(
 
 <template>
   <section class="page-panel data-entry-page">
-    <PageHeader title="数据录入">
+    <PageHeader :title="pageTitle" :subtitle="pageSubtitle">
       <template #actions>
         <div class="entry-toolbar__actions">
-          <span v-if="isDirty" class="entry-dirty" role="status"><i aria-hidden="true" />尚未保存</span>
+          <span v-if="!isFinanceImportRoute && isDirty" class="entry-dirty" role="status"><i aria-hidden="true" />尚未保存</span>
           <button class="tool-icon-button" type="button" title="刷新数据" aria-label="刷新数据" :disabled="loadingEntry || saving" @click="refreshEntry">
             <RefreshCw :size="17" />
           </button>
-          <button class="tool-button" type="button" @click="goImportStatus">
-            <FileSpreadsheet :size="16" />导入数据
+          <button v-if="canImportMonthlySummary" class="tool-button" type="button" @click="goImportStatus">
+            <FileSpreadsheet :size="16" />导入月度汇总
           </button>
-          <button class="save-button" type="button" :disabled="!canSave || saving" :title="canSave ? '保存当前门店和月份的经营数据' : '当前角色没有保存权限'" @click="save">
+          <button v-if="!isFinanceImportRoute" class="save-button" type="button" :disabled="!canSave || saving" :title="canSave ? '保存当前门店和月份的经营数据' : '当前角色没有保存权限'" @click="save">
             <Save :size="16" />{{ saving ? '保存中' : '保存' }}
           </button>
         </div>
@@ -642,16 +668,27 @@ watch(
     <div v-else-if="success" class="entry-notice entry-notice--success" role="status" aria-live="polite">{{ success }}</div>
 
     <ProfitImportDrawer
-      v-if="importDrawerOpen"
-      :store-id="selectedStoreId"
+      v-if="canImportMonthlySummary && importDrawerOpen"
+      :store-id="importTargetStoreId"
       :store-name="selectedStore?.name"
       :month="selectedMonth"
-      :scope-locked="scope.isStoreManager.value"
       @close="importDrawerOpen = false"
       @saved="onImportSaved"
     />
 
-    <div class="entry-workspace">
+    <section v-if="isFinanceImportRoute" class="import-route-guidance" aria-labelledby="import-route-guidance-title">
+      <div>
+        <h2 id="import-route-guidance-title">导入范围</h2>
+        <p>一次只处理一个门店、一个月份的月度汇总。上传后将先校验门店、月份、字段和已有记录，再由财务确认是否写入。</p>
+      </div>
+      <ol>
+        <li>选择要处理的门店和月份</li>
+        <li>上传 Excel 或 CSV 并查看识别结果</li>
+        <li>核对覆盖摘要后确认导入</li>
+      </ol>
+    </section>
+
+    <div v-else class="entry-workspace">
       <form class="entry-sheet" novalidate @submit.prevent="save">
         <section class="entry-section">
           <div class="entry-section__head">
@@ -838,7 +875,7 @@ watch(
     </div>
 
     <Teleport to="body">
-      <div v-if="historyDrawerOpen" class="history-drawer-backdrop" @click.self="historyDrawerOpen = false">
+      <div v-if="!isFinanceImportRoute && historyDrawerOpen" class="history-drawer-backdrop" @click.self="historyDrawerOpen = false">
         <section class="history-drawer" role="dialog" aria-modal="true" aria-labelledby="history-drawer-title">
           <header class="history-drawer__head">
             <div>
@@ -906,6 +943,66 @@ watch(
   border: 1px solid var(--entry-line);
   border-radius: var(--entry-radius);
   background: var(--entry-surface);
+}
+
+.import-route-guidance {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.7fr);
+  align-items: start;
+  gap: 24px;
+  padding: 24px;
+  border: 1px solid var(--entry-line);
+  border-radius: var(--entry-radius);
+  background: var(--entry-surface);
+}
+
+.import-route-guidance h2 {
+  margin: 0;
+  color: var(--entry-ink);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.import-route-guidance p {
+  max-width: 680px;
+  margin: 8px 0 0;
+  color: var(--entry-muted);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.import-route-guidance ol {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: import-step;
+}
+
+.import-route-guidance li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--entry-ink);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.import-route-guidance li::before {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--entry-primary-soft);
+  color: var(--entry-primary);
+  content: counter(import-step);
+  counter-increment: import-step;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .entry-toolbar__fields {
@@ -1644,7 +1741,8 @@ watch(
   }
 
   .entry-toolbar__fields,
-  .entry-summary-column {
+  .entry-summary-column,
+  .import-route-guidance {
     grid-template-columns: 1fr;
   }
 

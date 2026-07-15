@@ -11,6 +11,7 @@ import com.storeprofit.system.platform.authorization.AuthorizationService;
 import com.storeprofit.system.platform.authorization.DataScopeDomains;
 import com.storeprofit.system.platform.authorization.PermissionCodes;
 import com.storeprofit.system.storage.StorageService;
+import com.storeprofit.system.storage.StorageUploadResponse;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -26,6 +27,7 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -63,6 +65,8 @@ public class InspectionService {
   private static final BigDecimal H_4_1_2_SERVER_DEDUCTION = new BigDecimal("4.00");
   private static final String H_4_1_2_DEDUCTION_POLICY = "LEGACY_100_TO_200_H412_V1";
   private static final String ACTIVE_CLAUSE_DEDUCTION_POLICY = "ACTIVE_CLAUSE_SCORE_V1";
+  /** 标注图仅用于当前浏览器识别结果预览，不能进入巡检记录或 MySQL。 */
+  private static final int MAX_TRANSIENT_ANNOTATED_IMAGE_CHARS = 5_000_000;
   private final InspectionRecordRepository recordRepository;
   private final InspectionStandardRepository standardRepository;
   private final StorageService storageService;
@@ -225,6 +229,523 @@ public class InspectionService {
   }
 
   /**
+   * Safe forensic view for a historical inspection.  Candidates are derived only from the
+   * record's stored photo references and attachments already bound to that exact record; this is
+   * never a filename-based or store-wide attachment search.
+   */
+  public InspectionEvidenceCandidatesResponse historicalEvidenceCandidates(AuthUser user, String id) {
+    requireHistoricalEvidenceManage(user);
+    InspectionRecordResponse record = requireRecord(user.tenantId(), id);
+    requireInspectionStoreAccess(user, record.storeId(), "查看历史巡检证据");
+    StorageService storage = requireInspectionEvidenceStorage();
+
+    Map<Long, List<Long>> linkedClauses = linkedClauseIds(record.itemResults());
+    Map<Long, StorageService.InspectionAttachmentMetadata> storedById = new LinkedHashMap<>();
+    for (StorageService.InspectionAttachmentMetadata attachment
+        : storage.inspectionRecordAttachments(user, record.storeId(), record.id())) {
+      storedById.put(attachment.id(), attachment);
+    }
+
+    List<InspectionEvidenceAttachmentResponse> candidates = new ArrayList<>();
+    Set<Long> handledAttachmentIds = new LinkedHashSet<>();
+    List<Map<String, Object>> storedPhotos = parseEvidencePhotos(record.photosJson());
+    for (int photoIndex = 0; photoIndex < storedPhotos.size(); photoIndex++) {
+      Map<String, Object> photo = storedPhotos.get(photoIndex);
+      Long attachmentId = longValue(photo, "attachmentId", "attachment_id");
+      if (attachmentId == null || attachmentId <= 0) {
+        candidates.add(new InspectionEvidenceAttachmentResponse(
+            photoIndex,
+            null,
+            textValue(photo, "fileName", "filename", "name"),
+            null,
+            "ORIGINAL_NOT_STORED",
+            "原图未入库，需补传",
+            List.of()
+        ));
+        continue;
+      }
+      if (!handledAttachmentIds.add(attachmentId)) {
+        continue;
+      }
+      StorageService.InspectionAttachmentMetadata attachment = storedById.get(attachmentId);
+      if (attachment == null) {
+        attachment = storage.historicalInspectionAttachment(
+            user, record.storeId(), record.id(), attachmentId, true).orElse(null);
+      }
+      if (attachment == null || !attachment.contentStored()) {
+        candidates.add(new InspectionEvidenceAttachmentResponse(
+            photoIndex,
+            attachmentId,
+            attachment == null ? textValue(photo, "fileName", "filename", "name") : attachment.fileName(),
+            attachment == null ? null : attachment.contentType(),
+            attachment == null ? "MISSING" : "ORIGINAL_NOT_STORED",
+            "原图未入库，需补传",
+            List.of()
+        ));
+        continue;
+      }
+      candidates.add(evidenceCandidate(
+          photoIndex, attachment, linkedClauses.getOrDefault(attachmentId, List.of())));
+    }
+    for (StorageService.InspectionAttachmentMetadata attachment : storedById.values()) {
+      if (handledAttachmentIds.add(attachment.id())) {
+        candidates.add(evidenceCandidate(
+            null, attachment, linkedClauses.getOrDefault(attachment.id(), List.of())));
+      }
+    }
+    return new InspectionEvidenceCandidatesResponse(record.id(), record.storeId(), candidates);
+  }
+
+  @Transactional
+  public InspectionEvidenceLinkResponse linkHistoricalEvidence(
+      AuthUser user,
+      String id,
+      InspectionEvidenceLinkRequest request
+  ) {
+    if (request == null) {
+      throw new BusinessException("INSPECTION_EVIDENCE_REQUIRED", "请选择现场证据和历史条款", HttpStatus.BAD_REQUEST);
+    }
+    return linkHistoricalEvidence(
+        user, id, request.attachmentIds(), request.clauseIds(), request.historicalSnapshotIds(),
+        "inspection_historical_evidence_link", "ASSOCIATE", "关联", null, null, null);
+  }
+
+  @Transactional
+  public InspectionEvidenceLinkResponse uploadAndLinkHistoricalEvidence(
+      AuthUser user,
+      String id,
+      MultipartFile file,
+      List<Long> clauseIds,
+      List<Long> historicalSnapshotIds,
+      Integer sourcePhotoIndex
+  ) {
+    requireHistoricalEvidenceManage(user);
+    InspectionRecordResponse record = requireRecord(user.tenantId(), id);
+    requireInspectionStoreAccess(user, record.storeId(), "补传历史巡检证据");
+    requireInspectionEvidenceImage(file);
+    StorageService storage = requireInspectionEvidenceStorage();
+    validatePhotoSourceForUpload(user, record, storage, sourcePhotoIndex);
+    StorageUploadResponse uploaded = storage.uploadHistoricalInspectionEvidence(
+        user, file, record.id(), record.storeId());
+    if (uploaded.id() == null || uploaded.id() <= 0) {
+      throw new BusinessException("INSPECTION_EVIDENCE_UPLOAD_FAILED", "现场证据上传失败，请重新选择原图", HttpStatus.BAD_GATEWAY);
+    }
+    return linkHistoricalEvidence(
+        user, id, List.of(uploaded.id()), clauseIds, historicalSnapshotIds,
+        "inspection_historical_evidence_upload", "SUPPLEMENT", "补传并关联", sourcePhotoIndex,
+        uploaded.fileName(), uploaded.contentType());
+  }
+
+  /**
+   * Dedicated historical-evidence writer.  It intentionally does not call save(), score
+   * calculation, standard replacement, or rectification logic.
+   *
+   * <p>Two association paths are supported, and at least one must be non-empty:
+   * <ol>
+   *   <li>{@code sourceClauseIds} — keyed by {@code standardItemId}; used for records
+   *       whose snapshots still carry a valid {@code inspection_standard_item.id}.</li>
+   *   <li>{@code sourceHistoricalSnapshotIds} — keyed by the snapshot row's own
+   *       {@code id} (snapshotId); the only safe path when {@code standard_id} is NULL.</li>
+   * </ol></p>
+   */
+  private InspectionEvidenceLinkResponse linkHistoricalEvidence(
+      AuthUser user,
+      String id,
+      List<Long> sourceAttachmentIds,
+      List<Long> sourceClauseIds,
+      List<Long> sourceHistoricalSnapshotIds,
+      String auditAction,
+      String actionCode,
+      String actionLabel,
+      Integer sourcePhotoIndex,
+      String uploadedFileName,
+      String uploadedContentType
+  ) {
+    requireHistoricalEvidenceManage(user);
+    InspectionRecordResponse preLock = requireRecord(user.tenantId(), id);
+    requireInspectionStoreAccess(user, preLock.storeId(), "补充历史巡检证据");
+    recordRepository.lockRecord(user.tenantId(), preLock.id());
+    InspectionRecordResponse record = requireRecord(user.tenantId(), preLock.id());
+    requireInspectionStoreAccess(user, record.storeId(), "补充历史巡检证据");
+    StorageService storage = requireInspectionEvidenceStorage();
+    List<Long> attachmentIds = requiredEvidenceIds(
+        sourceAttachmentIds, "INSPECTION_EVIDENCE_REQUIRED", "请选择要关联的现场证据");
+
+    List<Long> clauseIds = sourceClauseIds != null ? sourceClauseIds.stream()
+        .filter(v -> v != null && v > 0).distinct().toList() : List.of();
+    List<Long> historicalSnapshotIds = sourceHistoricalSnapshotIds != null
+        ? sourceHistoricalSnapshotIds.stream().filter(v -> v != null && v > 0).distinct().toList()
+        : List.of();
+
+    if (clauseIds.isEmpty() && historicalSnapshotIds.isEmpty()) {
+      throw new BusinessException(
+          "INSPECTION_EVIDENCE_CLAUSE_REQUIRED", "请至少选择一条历史巡检条款", HttpStatus.BAD_REQUEST);
+    }
+
+    List<InspectionItemResultResponse> itemResults = record.itemResults();
+    Map<Long, InspectionItemResultResponse> snapshotsByStandardId = new HashMap<>();
+    Map<Long, InspectionItemResultResponse> snapshotsBySnapshotId = new HashMap<>();
+    for (InspectionItemResultResponse item : itemResults == null ? List.<InspectionItemResultResponse>of() : itemResults) {
+      if (item.standardItemId() != null && item.standardItemId() > 0) {
+        snapshotsByStandardId.putIfAbsent(item.standardItemId(), item);
+      }
+      if (item.snapshotId() != null && item.snapshotId() > 0) {
+        snapshotsBySnapshotId.put(item.snapshotId(), item);
+      }
+    }
+
+    // Validate clauseIds (standardItemId path)
+    for (Long clauseId : clauseIds) {
+      if (!snapshotsByStandardId.containsKey(clauseId)) {
+        throw new BusinessException(
+            "INSPECTION_EVIDENCE_CLAUSE_NOT_FOUND",
+            "所选历史巡检条款不存在，不能按名称或编号猜测关联",
+            HttpStatus.BAD_REQUEST
+        );
+      }
+    }
+
+    // Validate historicalSnapshotIds (snapshot row id path)
+    for (Long snapshotId : historicalSnapshotIds) {
+      InspectionItemResultResponse snapshot = snapshotsBySnapshotId.get(snapshotId);
+      if (snapshot == null) {
+        throw new BusinessException(
+            "INSPECTION_EVIDENCE_CLAUSE_NOT_FOUND",
+            "所选历史巡检条款快照不属于当前记录，不能按名称或编号猜测关联",
+            HttpStatus.BAD_REQUEST
+        );
+      }
+    }
+
+    Set<Long> allowedAttachmentIds = historicalCandidateAttachmentIds(user, record, storage);
+    for (Long attachmentId : attachmentIds) {
+      if (!allowedAttachmentIds.contains(attachmentId)) {
+        throw new BusinessException(
+            "ATTACHMENT_SCOPE_MISMATCH",
+            "该附件未明确属于当前历史巡检，不能按文件名或编号猜测关联",
+            HttpStatus.FORBIDDEN
+        );
+      }
+      storage.rebindHistoricalInspectionEvidence(user, record.storeId(), record.id(), attachmentId, true);
+    }
+
+    List<Map<String, Object>> photos = parseEvidencePhotos(record.photosJson());
+    validatePhotoSourceForUpload(user, record, storage, sourcePhotoIndex);
+    bindEvidencePhotos(photos, attachmentIds, sourcePhotoIndex, uploadedFileName, uploadedContentType);
+    recordRepository.updateRecordPhotosJson(user.tenantId(), record.id(), toJson(photos));
+
+    // Write evidence IDs through standardItemId path
+    for (Long clauseId : clauseIds) {
+      InspectionItemResultResponse snapshot = snapshotsByStandardId.get(clauseId);
+      List<Long> merged = mergeAttachmentIds(snapshot.photoAttachmentIds(), attachmentIds);
+      recordRepository.updateSnapshotEvidenceIds(user.tenantId(), record.id(), clauseId, merged);
+    }
+
+    // Write evidence IDs through snapshotId path
+    for (Long snapshotId : historicalSnapshotIds) {
+      InspectionItemResultResponse snapshot = snapshotsBySnapshotId.get(snapshotId);
+      List<Long> merged = mergeAttachmentIds(snapshot.photoAttachmentIds(), attachmentIds);
+      recordRepository.updateSnapshotEvidenceIdsBySnapshotId(user.tenantId(), record.id(), snapshotId, merged);
+    }
+
+    // Operation log for clauseIds path
+    for (Long clauseId : clauseIds) {
+      for (Long attachmentId : attachmentIds) {
+        recordRepository.logAction(
+            user.tenantId(), user.id(), user.displayName(), auditAction,
+            record.id(), record.storeId(), record.inspectionDate(),
+            actionLabel + "历史巡检现场证据；recordId=" + record.id()
+                + "；条款ID=" + clauseId + "；附件ID=" + attachmentId
+        );
+      }
+    }
+
+    // Operation log for snapshotId path
+    for (Long snapshotId : historicalSnapshotIds) {
+      for (Long attachmentId : attachmentIds) {
+        recordRepository.logAction(
+            user.tenantId(), user.id(), user.displayName(), auditAction,
+            record.id(), record.storeId(), record.inspectionDate(),
+            actionLabel + "历史巡检现场证据；recordId=" + record.id()
+                + "；snapshotId=" + snapshotId + "；附件ID=" + attachmentId
+        );
+      }
+    }
+
+    // Response uses clauseIds for backward compat; also includes snapshot IDs for audit
+    List<Long> allClauseIds = new ArrayList<>(clauseIds);
+    allClauseIds.addAll(historicalSnapshotIds);
+    return new InspectionEvidenceLinkResponse(
+        record.id(), actionCode, attachmentIds, allClauseIds, requireRecord(user.tenantId(), record.id()));
+  }
+
+  private void requireHistoricalEvidenceManage(AuthUser user) {
+    requireInspectionRead(user);
+    requireInspectionManage(user);
+    // AccessControlService canonicalizes the local SUPERVISOR role to OPERATIONS. The latter is
+    // accepted here only for that established supervisor mapping; this remains restricted by
+    // inspection permission and the record's store range below.
+    if (AccessControlService.isBoss(user)
+        || AccessControlService.hasAnyRole(user, "SUPERVISOR", "OPERATIONS")) {
+      return;
+    }
+    throw new BusinessException(
+        "FORBIDDEN", "只有老板或负责巡检的督导可以补传和关联历史现场证据", HttpStatus.FORBIDDEN);
+  }
+
+  private StorageService requireInspectionEvidenceStorage() {
+    if (storageService == null) {
+      throw new BusinessException(
+          "INSPECTION_EVIDENCE_STORAGE_UNAVAILABLE", "巡检附件服务不可用，暂不能补传现场证据", HttpStatus.CONFLICT);
+    }
+    return storageService;
+  }
+
+  private void requireInspectionEvidenceImage(MultipartFile file) {
+    if (file == null || file.isEmpty()) {
+      throw new BusinessException("INSPECTION_EVIDENCE_FILE_REQUIRED", "请从微信重新选择原图补传", HttpStatus.BAD_REQUEST);
+    }
+    String contentType = file.getContentType();
+    if (contentType == null || !contentType.trim().toLowerCase(java.util.Locale.ROOT).startsWith("image/")) {
+      throw new BusinessException(
+          "INSPECTION_EVIDENCE_IMAGE_REQUIRED", "现场证据必须上传图片原图", HttpStatus.BAD_REQUEST);
+    }
+  }
+
+  private InspectionEvidenceAttachmentResponse evidenceCandidate(
+      Integer photoIndex,
+      StorageService.InspectionAttachmentMetadata attachment,
+      List<Long> linkedClauseIds
+  ) {
+    if (!attachment.contentStored()) {
+      return new InspectionEvidenceAttachmentResponse(
+          photoIndex, attachment.id(), attachment.fileName(), attachment.contentType(), "ORIGINAL_NOT_STORED",
+          "原图未入库，需补传", List.of());
+    }
+    if (attachment.contentType() == null
+        || !attachment.contentType().trim().toLowerCase(java.util.Locale.ROOT).startsWith("image/")) {
+      return new InspectionEvidenceAttachmentResponse(
+          photoIndex, attachment.id(), attachment.fileName(), attachment.contentType(), "INVALID_TYPE",
+          "附件不是图片，不能作为现场证据", linkedClauseIds);
+    }
+    return new InspectionEvidenceAttachmentResponse(
+        photoIndex, attachment.id(), attachment.fileName(), attachment.contentType(),
+        linkedClauseIds.isEmpty() ? "UNLINKED" : "LINKED",
+        linkedClauseIds.isEmpty() ? "已入库，未关联历史条款" : "已关联现场证据",
+        linkedClauseIds);
+  }
+
+  private Map<Long, List<Long>> linkedClauseIds(List<InspectionItemResultResponse> snapshots) {
+    Map<Long, List<Long>> linked = new HashMap<>();
+    for (InspectionItemResultResponse snapshot : snapshots == null ? List.<InspectionItemResultResponse>of() : snapshots) {
+      if (snapshot.standardItemId() == null) {
+        continue;
+      }
+      for (Long attachmentId : snapshot.photoAttachmentIds()) {
+        if (attachmentId != null && attachmentId > 0) {
+          linked.computeIfAbsent(attachmentId, ignored -> new ArrayList<>()).add(snapshot.standardItemId());
+        }
+      }
+    }
+    linked.replaceAll((id, clauseIds) -> clauseIds.stream().distinct().toList());
+    return linked;
+  }
+
+  private Set<Long> historicalCandidateAttachmentIds(
+      AuthUser user,
+      InspectionRecordResponse record,
+      StorageService storage
+  ) {
+    Set<Long> allowed = new HashSet<>();
+    for (Map<String, Object> photo : parseEvidencePhotos(record.photosJson())) {
+      Long attachmentId = longValue(photo, "attachmentId", "attachment_id");
+      if (attachmentId != null && attachmentId > 0) {
+        allowed.add(attachmentId);
+      }
+    }
+    for (StorageService.InspectionAttachmentMetadata attachment
+        : storage.inspectionRecordAttachments(user, record.storeId(), record.id())) {
+      allowed.add(attachment.id());
+    }
+    return allowed;
+  }
+
+  private Map<Long, InspectionItemResultResponse> snapshotsByStandardId(
+      List<InspectionItemResultResponse> snapshots
+  ) {
+    Map<Long, InspectionItemResultResponse> byId = new HashMap<>();
+    for (InspectionItemResultResponse snapshot : snapshots == null ? List.<InspectionItemResultResponse>of() : snapshots) {
+      if (snapshot.standardItemId() == null || byId.put(snapshot.standardItemId(), snapshot) != null) {
+        throw new BusinessException(
+            "INSPECTION_EVIDENCE_CLAUSE_NOT_FOUND",
+            "历史巡检条款快照缺少唯一条款编号，不能猜测关联",
+            HttpStatus.CONFLICT
+        );
+      }
+    }
+    return byId;
+  }
+
+  private List<Long> requiredEvidenceIds(List<Long> values, String code, String message) {
+    if (values == null || values.isEmpty()) {
+      throw new BusinessException(code, message, HttpStatus.BAD_REQUEST);
+    }
+    List<Long> normalized = new ArrayList<>();
+    for (Long value : values) {
+      if (value == null || value <= 0 || normalized.contains(value)) {
+        throw new BusinessException("BAD_ATTACHMENT_ID", "现场证据或历史条款编号不正确", HttpStatus.BAD_REQUEST);
+      }
+      normalized.add(value);
+    }
+    return List.copyOf(normalized);
+  }
+
+  private List<Long> mergeAttachmentIds(List<Long> existing, List<Long> additions) {
+    LinkedHashSet<Long> merged = new LinkedHashSet<>();
+    if (existing != null) {
+      existing.stream().filter(Objects::nonNull).filter(value -> value > 0).forEach(merged::add);
+    }
+    additions.stream().filter(Objects::nonNull).filter(value -> value > 0).forEach(merged::add);
+    return List.copyOf(merged);
+  }
+
+  private boolean photosContainAttachmentId(List<Map<String, Object>> photos, long attachmentId) {
+    return photos.stream().anyMatch(photo -> Objects.equals(
+        longValue(photo, "attachmentId", "attachment_id"), attachmentId));
+  }
+
+  /**
+   * Associates a freshly uploaded original with the exact metadata-only photo selected by its
+   * server-issued array position.  No filename comparison is performed.  When no position is
+   * supplied the upload is a new evidence item and gets an explicit new JSON object.
+   */
+  private void bindEvidencePhotos(
+      List<Map<String, Object>> photos,
+      List<Long> attachmentIds,
+      Integer sourcePhotoIndex,
+      String uploadedFileName,
+      String uploadedContentType
+  ) {
+    if (sourcePhotoIndex != null) {
+      if (attachmentIds.size() != 1 || sourcePhotoIndex < 0 || sourcePhotoIndex >= photos.size()) {
+        throw new BusinessException(
+            "INSPECTION_EVIDENCE_SOURCE_INVALID", "待补传的历史图片已变化，请刷新后重新选择", HttpStatus.CONFLICT);
+      }
+      Map<String, Object> target = photos.get(sourcePhotoIndex);
+      target.remove("attachment_id");
+      target.put("attachmentId", attachmentIds.getFirst());
+      if (uploadedFileName != null && !uploadedFileName.isBlank()) {
+        target.put("fileName", uploadedFileName);
+      }
+      if (uploadedContentType != null && !uploadedContentType.isBlank()) {
+        target.put("contentType", uploadedContentType);
+      }
+      return;
+    }
+    for (Long attachmentId : attachmentIds) {
+      if (!photosContainAttachmentId(photos, attachmentId)) {
+        Map<String, Object> appended = new LinkedHashMap<>();
+        appended.put("attachmentId", attachmentId);
+        if (uploadedFileName != null && !uploadedFileName.isBlank()) {
+          appended.put("fileName", uploadedFileName);
+        }
+        if (uploadedContentType != null && !uploadedContentType.isBlank()) {
+          appended.put("contentType", uploadedContentType);
+        }
+        photos.add(appended);
+      }
+    }
+  }
+
+  private void validatePhotoSourceForUpload(
+      AuthUser user,
+      InspectionRecordResponse record,
+      StorageService storage,
+      Integer sourcePhotoIndex
+  ) {
+    if (sourcePhotoIndex == null) {
+      return;
+    }
+    List<Map<String, Object>> photos = parseEvidencePhotos(record.photosJson());
+    if (sourcePhotoIndex < 0 || sourcePhotoIndex >= photos.size()) {
+      throw new BusinessException(
+          "INSPECTION_EVIDENCE_SOURCE_INVALID", "待补传的历史图片不存在，请刷新后重新选择", HttpStatus.CONFLICT);
+    }
+    Long existingAttachmentId = longValue(photos.get(sourcePhotoIndex), "attachmentId", "attachment_id");
+    if (existingAttachmentId == null || existingAttachmentId <= 0) {
+      return;
+    }
+    StorageService.InspectionAttachmentMetadata attachment = storage.historicalInspectionAttachment(
+        user, record.storeId(), record.id(), existingAttachmentId, true).orElse(null);
+    if (attachment == null || !attachment.contentStored()) {
+      return;
+    }
+    if (attachment.contentType() != null
+        && attachment.contentType().trim().toLowerCase(java.util.Locale.ROOT).startsWith("image/")) {
+      throw new BusinessException(
+          "INSPECTION_EVIDENCE_SOURCE_INVALID", "该历史图片已经关联可用原图，请直接选择已有证据", HttpStatus.CONFLICT);
+    }
+  }
+
+  private List<Map<String, Object>> parseEvidencePhotos(String photosJson) {
+    if (photosJson == null || photosJson.isBlank()) {
+      return new ArrayList<>();
+    }
+    try {
+      List<Map<String, Object>> parsed = OBJECT_MAPPER.readValue(
+          photosJson, new TypeReference<List<Map<String, Object>>>() {});
+      List<Map<String, Object>> photos = new ArrayList<>();
+      for (Map<String, Object> photo : parsed == null ? List.<Map<String, Object>>of() : parsed) {
+        if (photo == null) {
+          throw new BusinessException(
+              "INSPECTION_EVIDENCE_UNLINKED", "巡检图片缺少有效附件编号和人工确认条款", HttpStatus.BAD_REQUEST);
+        }
+        photos.add(new LinkedHashMap<>(photo));
+      }
+      return photos;
+    } catch (JsonProcessingException ex) {
+      throw new BusinessException(
+          "INSPECTION_EVIDENCE_UNLINKED", "巡检图片证据无法读取，请重新选择并关联原图", HttpStatus.BAD_REQUEST);
+    }
+  }
+
+  /**
+   * New inspection persistence never accepts a display-only filename as evidence.  Every photo
+   * entry must name a positive attachment ID and that ID must occur in at least one explicit
+   * clause evidence collection.  Storage rebind validates the actual attachment, tenant/store
+   * ownership and image MIME immediately before this check in a runtime-backed service.
+   */
+  private void requireNewInspectionEvidenceLinked(
+      String photosJson,
+      List<InspectionStandardSnapshot> snapshots
+  ) {
+    List<Map<String, Object>> photos = parseEvidencePhotos(photosJson);
+    if (photos.isEmpty()) {
+      return;
+    }
+    Set<Long> manuallyLinkedAttachmentIds = new HashSet<>();
+    for (InspectionStandardSnapshot snapshot
+        : snapshots == null ? List.<InspectionStandardSnapshot>of() : snapshots) {
+      if (snapshot.photoAttachmentIds() != null) {
+        snapshot.photoAttachmentIds().stream()
+            .filter(Objects::nonNull)
+            .filter(value -> value > 0)
+            .forEach(manuallyLinkedAttachmentIds::add);
+      }
+    }
+    for (Map<String, Object> photo : photos) {
+      Long attachmentId = longValue(photo, "attachmentId", "attachment_id");
+      if (attachmentId == null || attachmentId <= 0 || !manuallyLinkedAttachmentIds.contains(attachmentId)) {
+        throw new BusinessException(
+            "INSPECTION_EVIDENCE_UNLINKED",
+            "每张巡检图片都必须绑定有效附件并至少关联一条人工确认的巡检条款",
+            HttpStatus.BAD_REQUEST
+        );
+      }
+    }
+  }
+
+  /**
    * Returns a record whose displayed score can safely be used in an exported report.
    *
    * <p>Older records are repaired only when their own immutable snapshot determines every score.
@@ -267,19 +788,22 @@ public class InspectionService {
       throw scoreRepairRequired(List.of("标准版本校验：" + validation.validationError()));
     }
 
-    if (hasCompleteStoredScore(evidence)) {
-      return record;
-    }
-
     ExportScoreRepair repair = calculateExportScoreRepair(
         standards, record.itemResults(), version, missingFields);
     if (!missingFields.isEmpty()) {
       throw scoreRepairRequired(missingFields);
     }
+    if (hasCompleteStoredScore(evidence)) {
+      validateStoredScoreAgainstSnapshot(evidence, version, repair, missingFields);
+      if (!missingFields.isEmpty()) {
+        throw scoreRepairRequired(missingFields);
+      }
+      return record;
+    }
     InspectionResultRepairWrite write = new InspectionResultRepairWrite(
         evidence.standardVersionId(), evidence.standardVersion(), evidence.fullScore(), evidence.passScore(),
         evidence.score(), evidence.materialScore(), evidence.hygieneScore(), evidence.serviceScore(),
-        evidence.resultCode(), Boolean.TRUE.equals(evidence.passed()),
+        evidence.resultCode(), evidence.passed(),
         version.id(), version.version(), version.fullScore(), version.passScore(), repair.score(),
         repair.materialScore(), repair.hygieneScore(), repair.serviceScore(), repair.resultCode(),
         repair.passed(), "RECALCULATED", repair.reason(), evidence.snapshotCount(), standards.size(), user.id()
@@ -341,6 +865,35 @@ public class InspectionService {
         && evidence.score().compareTo(evidence.fullScore()) <= 0;
   }
 
+  /**
+   * A formally stored score is exportable only when the immutable clause snapshot proves the
+   * exact same result.  This is validation only: a discrepancy is reported for manual repair,
+   * never replaced with a score calculated from the current standard.
+   */
+  private void validateStoredScoreAgainstSnapshot(
+      InspectionRecordRepository.ScoreEvidence evidence,
+      InspectionStandardRepository.VersionRow version,
+      ExportScoreRepair snapshotScore,
+      List<String> missingFields
+  ) {
+    if (!Objects.equals(blankToNull(evidence.standardVersion()), blankToNull(version.version()))) {
+      missingFields.add("标准版本与版本编号一致性");
+    }
+    if (evidence.fullScore().compareTo(version.fullScore()) != 0) {
+      missingFields.add("满分与标准版本一致性");
+    }
+    if (evidence.passScore().compareTo(version.passScore()) != 0) {
+      missingFields.add("合格线与标准版本一致性");
+    }
+    if (evidence.score().compareTo(snapshotScore.score()) != 0) {
+      missingFields.add("最终得分与标准快照一致性");
+    }
+    if (evidence.passed() == null || evidence.passed() != snapshotScore.passed()
+        || !Objects.equals(blankToNull(evidence.resultCode()), blankToNull(snapshotScore.resultCode()))) {
+      missingFields.add("巡检结论与红线快照一致性");
+    }
+  }
+
   private ExportScoreRepair calculateExportScoreRepair(
       List<InspectionStandardItemResponse> standards,
       List<InspectionItemResultResponse> snapshots,
@@ -370,13 +923,39 @@ public class InspectionService {
         missingFields.add("标准快照条款：" + standard.code());
         return ExportScoreRepair.empty();
       }
-      BigDecimal maximum = amountOrDefault(standard.suggestedScore(), ZERO_AMOUNT);
-      BigDecimal deduction = amountOrDefault(snapshot.deductionScore(), ZERO_AMOUNT);
-      if (maximum.signum() < 0 || deduction.signum() < 0 || deduction.compareTo(maximum) > 0) {
+      BigDecimal maximum = standard.suggestedScore();
+      BigDecimal snapshotMaximum = snapshot.standardScore();
+      BigDecimal deduction = snapshot.deductionScore();
+      BigDecimal snapshotActual = snapshot.actualScore();
+      if (maximum == null || maximum.signum() < 0) {
+        missingFields.add("标准条款分值：" + standard.code());
+        return ExportScoreRepair.empty();
+      }
+      if (snapshotMaximum == null
+          || snapshotMaximum.signum() < 0
+          || snapshotMaximum.compareTo(maximum) != 0) {
+        missingFields.add("标准快照分值一致性：" + standard.code());
+        return ExportScoreRepair.empty();
+      }
+      if (deduction == null
+          || deduction.signum() < 0
+          || deduction.compareTo(maximum) > 0) {
         missingFields.add("条款扣分：" + standard.code());
         return ExportScoreRepair.empty();
       }
+      if (deduction.signum() > 0 && !snapshot.issueFound()) {
+        missingFields.add("扣分问题状态：" + standard.code());
+        return ExportScoreRepair.empty();
+      }
+      if (deduction.signum() > 0 && blankToNull(snapshot.deductionReason()) == null) {
+        missingFields.add("扣分原因：" + standard.code());
+        return ExportScoreRepair.empty();
+      }
       BigDecimal actual = maximum.subtract(deduction).setScale(2, RoundingMode.HALF_UP);
+      if (snapshotActual == null || snapshotActual.compareTo(actual) != 0) {
+        missingFields.add("标准快照分值一致性：" + standard.code());
+        return ExportScoreRepair.empty();
+      }
       String bucket = category(standard.dimension());
       if (bucket == null) {
         missingFields.add("条款分类：" + standard.code());
@@ -505,10 +1084,19 @@ public class InspectionService {
     if (!recordRepository.storeExists(user.tenantId(), normalized.storeId())) {
       throw new BusinessException("STORE_NOT_FOUND", "Store does not exist in current tenant", HttpStatus.BAD_REQUEST);
     }
+    // Reject display-only and unassociated photo JSON before any inspection row/snapshot write.
+    requireNewInspectionEvidenceLinked(normalized.photosJson(), calculated.snapshots());
+    if (!calculated.attachmentIds().isEmpty() && storageService == null) {
+      throw new BusinessException(
+          "INSPECTION_EVIDENCE_UNLINKED",
+          "巡检附件服务不可用，不能确认图片已入库并关联条款",
+          HttpStatus.CONFLICT
+      );
+    }
     String targetId = normalizeId(id);
     recordRepository.upsert(user.tenantId(), targetId, normalized);
     recordRepository.replaceStandardSnapshots(user.tenantId(), targetId, calculated.snapshots());
-    if (storageService != null && !calculated.attachmentIds().isEmpty()) {
+    if (!calculated.attachmentIds().isEmpty()) {
       storageService.rebindInspectionAttachments(
           user, normalized.storeId(), targetId, calculated.attachmentIds());
     }
@@ -1354,8 +1942,42 @@ public class InspectionService {
     if (standardRepository == null) {
       return raw;
     }
-    return detectionSuggestions(user, new InspectionDetectionBindingRequest(
+    Map<String, Object> suggestion = detectionSuggestions(user, new InspectionDetectionBindingRequest(
         null, null, InspectionScoringRules.LEGACY_MAX_SCORE, List.of(raw), null)).getFirst();
+    return withTransientAnnotatedPreview(raw, suggestion);
+  }
+
+  /**
+   * The enriched detection is safe to persist because image fields are stripped there. Restore only
+   * a bounded local data-image for this immediate HTTP response so the current page can preview it.
+   */
+  static Map<String, Object> withTransientAnnotatedPreview(
+      Map<String, Object> raw,
+      Map<String, Object> suggestion
+  ) {
+    Map<String, Object> response = new LinkedHashMap<>();
+    if (suggestion != null) {
+      response.putAll(suggestion);
+    }
+    Object candidate = raw == null ? null : raw.get("annotated_image");
+    if (!(candidate instanceof String)) {
+      candidate = raw == null ? null : raw.get("annotatedImage");
+    }
+    if (candidate instanceof String annotatedImage && isSafeTransientAnnotatedPreview(annotatedImage)) {
+      response.put("annotated_image", annotatedImage.trim());
+    }
+    return response;
+  }
+
+  private static boolean isSafeTransientAnnotatedPreview(String image) {
+    String value = image == null ? "" : image.trim();
+    if (value.isEmpty() || value.length() > MAX_TRANSIENT_ANNOTATED_IMAGE_CHARS) {
+      return false;
+    }
+    return value.startsWith("data:image/jpeg;base64,")
+        || value.startsWith("data:image/jpg;base64,")
+        || value.startsWith("data:image/png;base64,")
+        || value.startsWith("data:image/webp;base64,");
   }
 
   /** Compatibility entry point for isolated HTTP-client tests. */

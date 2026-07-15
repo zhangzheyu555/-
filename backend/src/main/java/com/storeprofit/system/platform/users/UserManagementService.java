@@ -424,6 +424,16 @@ public class UserManagementService {
         throw new BusinessException(
             "BOSS_AUTHORIZATION_FIXED", "老板账号始终拥有全部权限，不能配置个人授权", HttpStatus.CONFLICT);
       }
+      if (PermissionCodes.STORE_MANAGE.equals(permissionCode) && effect == PermissionEffect.ALLOW) {
+        throw new BusinessException(
+            "STORE_MANAGEMENT_BOSS_ONLY", "门店管理仅限老板（系统管理员），不能授予其他账号", HttpStatus.BAD_REQUEST);
+      }
+      if (PermissionCodes.FINANCE_PROFIT_IMPORT.equals(permissionCode)
+          && effect == PermissionEffect.ALLOW
+          && !"FINANCE".equals(AccessControlService.canonicalRole(target.role()))) {
+        throw new BusinessException(
+            "FINANCE_IMPORT_FINANCE_ONLY", "月度经营数据导入仅限财务或老板，不能授予其他账号", HttpStatus.BAD_REQUEST);
+      }
       if ("EMPLOYEE".equals(AccessControlService.canonicalRole(target.role()))
           && effect == PermissionEffect.ALLOW
           && !PermissionCodes.EXAM_LEARN.equals(permissionCode)) {

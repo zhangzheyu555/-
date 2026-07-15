@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { Eye, RefreshCw } from 'lucide-vue-next'
+import { useAuthStore } from '../../stores/auth'
+
+const auth = useAuthStore()
 
 defineProps<{
   type: 'no-employee' | 'no-salary'
@@ -22,7 +25,8 @@ const emit = defineEmits<{
     <h3>当前范围尚未导入员工</h3>
     <p>请先导入员工，再生成工资记录。</p>
     <div class="empty-actions">
-      <RouterLink class="primary-button" to="/data-entry">前往数据录入</RouterLink>
+      <RouterLink v-if="auth.role !== 'STORE_MANAGER'" class="primary-button" to="/data-entry">前往数据录入</RouterLink>
+      <p v-else class="empty-muted">经营数据由财务统一录入；请联系财务补录经营数据。</p>
     </div>
   </section>
   <section v-else-if="type === 'no-salary'" class="content-card empty-block">
@@ -45,4 +49,5 @@ const emit = defineEmits<{
 .empty-block p { color: var(--muted); margin: 0 0 20px; }
 .empty-actions { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
 .empty-actions a { text-decoration: none; }
+.empty-muted { color: var(--ds-muted, #888); font-size: 14px; }
 </style>

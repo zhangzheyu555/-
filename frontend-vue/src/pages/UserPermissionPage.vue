@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { AlertTriangle, CheckCircle2, KeyRound, Pencil, Plus, RefreshCw, Shield, ShieldCheck, Store, X } from 'lucide-vue-next'
 import { getStores, type StoreInfo } from '../api/operations'
 import { getWarehouses, type WarehouseInfo } from '../api/warehouse'
+import { ApiError } from '../api/http'
 import PageHeader from '../components/common/PageHeader.vue'
 import ModalFooter from '../components/ui/ModalFooter.vue'
 import UiButton from '../components/ui/UiButton.vue'
@@ -920,6 +921,11 @@ function roleTone(role: string) {
 }
 
 function displayError(reason: unknown, fallback: string) {
+  if (reason instanceof ApiError) {
+    if (reason.code === 'BACKEND_UNAVAILABLE' || (reason.status != null && reason.status >= 500)) {
+      return '账号权限服务暂时不可用，请确认本机服务已启动后刷新页面。'
+    }
+  }
   const message = reason instanceof Error ? reason.message : String(reason || '')
   return message || fallback
 }

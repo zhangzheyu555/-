@@ -102,6 +102,9 @@ function toggleRemember(event: Event) {
 }
 
 onMounted(async () => {
+  if (route.query.reason === 'SESSION_EXPIRED') {
+    submitError.value = '登录已失效，请重新登录后重试。'
+  }
   const remembered = localStorage.getItem(REMEMBERED_USERNAME_KEY) || ''
   if (remembered) {
     username.value = remembered

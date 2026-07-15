@@ -92,7 +92,7 @@ class StorageServiceTest {
         "select count(*) from store_branch where tenant_id = ? and id = ?",
         Integer.class, 1L, "s1")).thenReturn(1);
     MockMultipartFile photo = new MockMultipartFile(
-        "file", "shop.jpg", "image/jpeg", new byte[]{1, 2, 3});
+        "file", "shop.jpg", "image/jpeg", new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xD9});
 
     assertThatNoException().isThrownBy(() -> storageService.upload(
         supervisor, photo, "INSPECTION_RECORD", "inspection-s1-draft", "s1"));
@@ -101,12 +101,12 @@ class StorageServiceTest {
         supervisor, photo, "INSPECTION_RECORD", "draft", "s1"))
         .isInstanceOf(BusinessException.class)
         .satisfies(error -> assertThat(((BusinessException) error).getCode())
-            .isEqualTo("ATTACHMENT_BUSINESS_NOT_FOUND"));
+            .isEqualTo("INSPECTION_HISTORICAL_EVIDENCE_SPECIAL_ENDPOINT_REQUIRED"));
     assertThatThrownBy(() -> storageService.upload(
         supervisor, photo, "INSPECTION_RECORD", "inspection-s2-draft", "s1"))
         .isInstanceOf(BusinessException.class)
         .satisfies(error -> assertThat(((BusinessException) error).getCode())
-            .isEqualTo("ATTACHMENT_BUSINESS_NOT_FOUND"));
+            .isEqualTo("INSPECTION_HISTORICAL_EVIDENCE_SPECIAL_ENDPOINT_REQUIRED"));
     assertThatThrownBy(() -> storageService.upload(
         supervisor, photo, "EXPENSE", "inspection-s1-draft", "s1"))
         .isInstanceOf(BusinessException.class)

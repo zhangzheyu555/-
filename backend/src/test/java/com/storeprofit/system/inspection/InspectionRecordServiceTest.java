@@ -72,6 +72,7 @@ class InspectionRecordServiceTest {
           hygiene_score decimal(8,2) null,
           service_score decimal(8,2) null,
           result_code varchar(32) null,
+          test_marker varchar(32) null,
           created_at timestamp not null default current_timestamp,
           updated_at timestamp null default null
         )
@@ -564,6 +565,29 @@ class InspectionRecordServiceTest {
     }
   }
 
+  @Test
+  void repairAuditPreservesAbsentOriginalScoreEvidence() {
+    insertRecord("repair-null-evidence", "200.00", "196.00", true, "PASSED", "2025.11.06");
+    InspectionResultRepairWrite repair = new InspectionResultRepairWrite(
+        38L, "历史标准", null, null, null, null, null, null, null, null,
+        40L, "2025.11.06-R1", bd("200"), bd("180"), bd("196"),
+        bd("37"), bd("59"), bd("100"), "PASSED", true,
+        "RECALCULATED", "完整快照确定性重算", 105, 105, 1L
+    );
+
+    assertThat(repository.insertRepairAudit(1L, "repair-null-evidence", repair)).isTrue();
+    Map<String, Object> row = jdbcTemplate.queryForMap("""
+        select original_full_score, original_score, original_passed
+        from inspection_result_repair_audit
+        where tenant_id = 1 and inspection_record_id = 'repair-null-evidence'
+        """);
+
+    assertThat(row.get("ORIGINAL_FULL_SCORE")).isNull();
+    assertThat(row.get("ORIGINAL_SCORE")).isNull();
+    assertThat(row.get("ORIGINAL_PASSED")).isNull();
+    assertThat(repository.record(1L, "repair-null-evidence")).isPresent();
+  }
+
   private InspectionResultRepairWrite repairWriteForRace() {
     return new InspectionResultRepairWrite(
         38L, "2025.11.06", bd("200"), bd("180"), bd("98"),
@@ -610,14 +634,14 @@ class InspectionRecordServiceTest {
           inspection_record_id varchar(120) not null,
           original_standard_version_id bigint null,
           original_standard_version varchar(64) null,
-          original_full_score decimal(8,2) not null,
+          original_full_score decimal(8,2) null,
           original_pass_score decimal(8,2) null,
-          original_score decimal(8,2) not null,
+          original_score decimal(8,2) null,
           original_material_score decimal(8,2) null,
           original_hygiene_score decimal(8,2) null,
           original_service_score decimal(8,2) null,
           original_result_code varchar(32) null,
-          original_passed tinyint(1) not null,
+          original_passed tinyint(1) null,
           repaired_standard_version_id bigint not null,
           repaired_standard_version varchar(64) null,
           repaired_full_score decimal(8,2) null,
@@ -695,7 +719,7 @@ class InspectionRecordServiceTest {
         passed,
         "[{\"item\":\"counter\",\"deduct\":8}]",
         passed ? "[]" : "[{\"item\":\"food safety\"}]",
-        "[{\"src\":\"https://example.test/photo.jpg\"}]",
+        "[]",
         "follow up"
     );
   }

@@ -18,6 +18,9 @@ public record ProfitImportPreviewJobResponse(
     String selectedMonth,
     List<String> detectedMonths,
     boolean monthConflict,
-    long elapsedMs
+    long elapsedMs,
+    String targetStoreId,
+    String targetStoreName,
+    String targetMonth
 ) {
 }

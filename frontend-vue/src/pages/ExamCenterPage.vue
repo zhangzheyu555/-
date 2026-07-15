@@ -9,13 +9,15 @@ import ModalFooter from '../components/ui/ModalFooter.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import UnsavedChangesDialog from '../components/ui/UnsavedChangesDialog.vue'
 import {
-  BookOpen, CheckCircle2, ClipboardCheck, Download, FileQuestion, Files, FolderTree,
-  GraduationCap, Library, ListChecks, Play, Plus, RefreshCw, Send,
-  Trash2, UserCheck, X,
+  BookOpen, ChartBarBig, CheckCircle2, ClipboardCheck, Download, FileQuestion, Files, FolderTree,
+  GraduationCap, Library, ListChecks, MonitorPlay, Play, Plus, RefreshCw, Send,
+  Trash2, Upload, UserCheck, X,
 } from 'lucide-vue-next'
 import {
   deleteExamQuestionCategory,
+  deleteTrainingVideo,
   downloadExamResults,
+  fetchTrainingVideoBlob,
   getAssignedExamPaper,
   getExamCampaign,
   getExamCenterOverview,
@@ -28,8 +30,11 @@ import {
   getExamWrongQuestions,
   getTrainingCourses,
   getTrainingMaterials,
+  getTrainingVideoProgressReport,
+  getTrainingVideos,
   markExamWrongQuestion,
   publishExam,
+  reportTrainingVideoProgress,
   saveExamPaper,
   saveExamQuestionBankItem,
   saveExamQuestionCategory,
@@ -37,6 +42,7 @@ import {
   saveTrainingMaterial,
   submitAssignedExam,
   submitExamReview,
+  uploadTrainingVideo,
   type ExamAssignment,
   type ExamCampaignDetail,
   type ExamCenterOverview,
@@ -51,11 +57,13 @@ import {
   type ExamWrongQuestion,
   type TrainingCourse,
   type TrainingMaterialRecord,
+  type TrainingVideo,
+  type TrainingVideoViewerRow,
 } from '../api/exams'
 import { useAuthStore } from '../stores/auth'
 
-type ViewKey = 'mine' | 'courses' | 'materials' | 'questions' | 'categories' | 'papers' | 'campaigns' | 'grading' | 'results' | 'wrongs'
-type EditorKey = 'course' | 'material' | 'category' | 'question' | 'paper' | 'publish' | null
+type ViewKey = 'mine' | 'courses' | 'videos' | 'materials' | 'questions' | 'categories' | 'papers' | 'campaigns' | 'grading' | 'video-progress' | 'results' | 'wrongs'
+type EditorKey = 'course' | 'material' | 'category' | 'question' | 'paper' | 'publish' | 'video' | null
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -69,6 +77,8 @@ const questions = ref<ExamQuestionBankItem[]>([])
 const reviews = ref<ExamReviewTask[]>([])
 const results = ref<ExamResultRecord[]>([])
 const wrongQuestions = ref<ExamWrongQuestion[]>([])
+const videos = ref<TrainingVideo[]>([])
+const videoReport = ref<TrainingVideoViewerRow[]>([])
 const selectedCampaign = ref<ExamCampaignDetail | null>(null)
 const reviewDetail = ref<ExamReviewDetail | null>(null)
 
@@ -86,6 +96,17 @@ const editorSnapshot = ref('')
 const reviewSnapshot = ref('')
 const pendingDismiss = ref<'editor' | 'review' | 'exam' | null>(null)
 const pendingCategoryDelete = ref<ExamQuestionCategory | null>(null)
+const pendingVideoDelete = ref<TrainingVideo | null>(null)
+const expandedViewers = ref<number[]>([])
+const videoFile = ref<File | null>(null)
+const uploadPercent = ref(0)
+const playingVideo = ref<TrainingVideo | null>(null)
+const videoBlobUrl = ref('')
+const videoLoading = ref(false)
+const seekBlocked = ref(false)
+const playerRef = ref<HTMLVideoElement | null>(null)
+let progressTimer: number | undefined
+let seekNoticeTimer: number | undefined
 
 const activeAssignment = ref<ExamAssignment | null>(null)
 const activePaper = ref<ExamPaper | null>(null)
@@ -96,6 +117,7 @@ const violated = ref(false)
 
 const courseForm = reactive(emptyCourse())
 const materialForm = reactive(emptyMaterial())
+const videoForm = reactive(emptyVideo())
 const categoryForm = reactive(emptyCategory())
 const questionForm = reactive(emptyBankQuestion())
 const paperForm = reactive<ExamPaperSavePayload>(emptyPaper())
@@ -112,6 +134,7 @@ const publishForm = reactive({
 function currentEditorState() {
   if (editor.value === 'course') return courseForm
   if (editor.value === 'material') return materialForm
+  if (editor.value === 'video') return { ...videoForm, fileName: videoFile.value?.name || '' }
   if (editor.value === 'category') return categoryForm
   if (editor.value === 'question') return questionForm
   if (editor.value === 'paper') return { ...paperForm, selectedBankIds: selectedBankIds.value }
@@ -155,6 +178,7 @@ const modules = computed(() => {
   const common: Array<{ key: ViewKey; label: string; icon: typeof Play; badge?: number }> = [
     { key: 'mine' as const, label: '我的考试', icon: Play },
     { key: 'courses' as const, label: '培训课程', icon: GraduationCap },
+    { key: 'videos' as const, label: '学习视频', icon: MonitorPlay },
     { key: 'materials' as const, label: '学习资料', icon: Library },
   ]
   if (canManage.value || companyView.value) common.push(
@@ -162,6 +186,7 @@ const modules = computed(() => {
     { key: 'categories', label: '题目分类', icon: FolderTree },
     { key: 'papers', label: '试卷与组卷', icon: Files },
     { key: 'campaigns', label: '考试发布', icon: UserCheck },
+    { key: 'video-progress', label: '观看进度', icon: ChartBarBig },
   )
   if (canManage.value) common.push({ key: 'grading', label: '阅卷中心', icon: ClipboardCheck, badge: reviews.value.length })
   common.push({ key: 'results', label: '成绩统计', icon: ListChecks })
@@ -169,11 +194,50 @@ const modules = computed(() => {
   return common
 })
 
+const enabledVideos = computed(() => videos.value.filter((item) => item.enabled))
+const myVideoSummary = computed(() => {
+  const list = enabledVideos.value
+  const completed = list.filter((item) => item.myCompleted).length
+  const percent = list.length ? list.reduce((sum, item) => sum + Number(item.myPercent || 0), 0) / list.length : 0
+  return { total: list.length, completed, percent }
+})
+const videoGroups = computed(() => {
+  const groups = new Map<string, TrainingVideo[]>()
+  for (const item of videos.value) {
+    const label = item.courseTitle || item.category || '未分组'
+    const bucket = groups.get(label)
+    if (bucket) bucket.push(item)
+    else groups.set(label, [item])
+  }
+  return Array.from(groups.entries()).map(([label, items]) => ({ label, items }))
+})
+const playingVideoPercent = computed(() => {
+  const current = playingVideo.value && videos.value.find((item) => item.id === playingVideo.value?.id)
+  return current ? Number(current.myPercent || 0) : 0
+})
+const viewerSummaries = computed(() => {
+  const totalVideos = enabledVideos.value.length
+  const persons = new Map<number, { userId: number; userName: string; storeName: string; rows: TrainingVideoViewerRow[] }>()
+  for (const row of videoReport.value) {
+    const person = persons.get(row.userId)
+    if (person) person.rows.push(row)
+    else persons.set(row.userId, { userId: row.userId, userName: row.userName, storeName: row.storeName || '', rows: [row] })
+  }
+  return Array.from(persons.values()).map((person) => {
+    const completed = person.rows.filter((row) => row.completed).length
+    const percent = totalVideos ? person.rows.reduce((sum, row) => sum + Number(row.percent || 0), 0) / totalVideos : 0
+    return { ...person, completed, totalVideos, percent: Math.min(100, percent) }
+  }).sort((a, b) => b.percent - a.percent)
+})
+
 function emptyCourse() {
   return { id: undefined as number | undefined, courseCode: '', title: '', category: '', description: '', coverUrl: '', durationMinutes: 30, requiredRoleScope: 'EMPLOYEE,STORE_MANAGER', enabled: true, sortOrder: 0, materialIds: [] as number[] }
 }
 function emptyMaterial() {
   return { id: undefined as number | undefined, materialCode: '', title: '', category: '', imageText: '', content: '', enabled: true, sortOrder: 0 }
+}
+function emptyVideo() {
+  return { title: '', category: '', courseId: undefined as number | undefined, sortOrder: 0 }
 }
 function emptyCategory() {
   return { id: undefined as number | undefined, categoryCode: '', categoryName: '', description: '', enabled: true, sortOrder: 0 }
@@ -193,8 +257,8 @@ async function loadAll() {
   error.value = ''
   try {
     overview.value = await getExamCenterOverview()
-    const loaders: Array<Promise<unknown>> = [loadLearning(), loadResults(), loadWrongQuestions()]
-    if (overview.value.canManage || overview.value.accessMode === 'COMPANY') loaders.push(loadQuestionBank())
+    const loaders: Array<Promise<unknown>> = [loadLearning(), loadVideos(), loadResults(), loadWrongQuestions()]
+    if (overview.value.canManage || overview.value.accessMode === 'COMPANY') loaders.push(loadQuestionBank(), loadVideoReport())
     if (overview.value.canManage) loaders.push(loadReviews())
     await Promise.allSettled(loaders)
     const requested = String(route.query.view || '') as ViewKey
@@ -219,6 +283,8 @@ async function loadQuestionBank() {
   if (settled[1].status === 'fulfilled') questions.value = settled[1].value
 }
 async function loadReviews() { reviews.value = await getExamReviews() }
+async function loadVideos() { videos.value = await getTrainingVideos() }
+async function loadVideoReport() { videoReport.value = await getTrainingVideoProgressReport() }
 async function loadResults() { results.value = await getExamResults() }
 async function loadWrongQuestions() { wrongQuestions.value = await getExamWrongQuestions() }
 
@@ -273,9 +339,10 @@ function discardPendingChanges() {
 }
 
 function handleEscape(event: KeyboardEvent) {
-  if (event.key !== 'Escape' || pendingDismiss.value || pendingCategoryDelete.value) return
+  if (event.key !== 'Escape' || pendingDismiss.value || pendingCategoryDelete.value || pendingVideoDelete.value) return
   if (editor.value) requestCloseEditor()
   else if (reviewDetail.value) requestCloseReview()
+  else if (playingVideo.value) closeVideo()
   else if (activeAssignment.value) requestCloseExam()
   else if (selectedCampaign.value) selectedCampaign.value = null
 }
@@ -328,6 +395,18 @@ async function saveCurrentEditor() {
       })
       await loadQuestionBank()
       success.value = '题库题目已保存。'
+    } else if (editor.value === 'video') {
+      if (!videoFile.value) throw new Error('请选择要上传的视频文件。')
+      uploadPercent.value = 0
+      await uploadTrainingVideo({
+        file: videoFile.value,
+        title: videoForm.title,
+        category: videoForm.category,
+        courseId: videoForm.courseId,
+        sortOrder: videoForm.sortOrder,
+      }, (percent) => { uploadPercent.value = percent })
+      await loadVideos()
+      success.value = '学习视频已上传。'
     }
     closeEditorNow()
   } catch (reason) {
@@ -454,6 +533,148 @@ async function toggleWrong(item: ExamWrongQuestion) {
   try { await markExamWrongQuestion(item.id, !item.mastered); await loadWrongQuestions() } catch (reason) { error.value = displayError(reason, '错题状态更新失败。') }
 }
 
+function openVideoUpload() {
+  Object.assign(videoForm, emptyVideo())
+  videoFile.value = null
+  uploadPercent.value = 0
+  showEditor('video')
+}
+
+function handleVideoFile(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0] || null
+  videoFile.value = file
+  if (file && !videoForm.title) videoForm.title = file.name.replace(/\.[^.]+$/, '')
+}
+
+async function confirmRemoveVideo() {
+  const item = pendingVideoDelete.value
+  if (!item) return
+  pendingVideoDelete.value = null
+  try {
+    await deleteTrainingVideo(item.id)
+    await Promise.allSettled([loadVideos(), canManage.value || companyView.value ? loadVideoReport() : Promise.resolve()])
+  } catch (reason) {
+    error.value = displayError(reason, '视频删除失败。')
+  }
+}
+
+function toggleViewer(userId: number) {
+  const index = expandedViewers.value.indexOf(userId)
+  if (index >= 0) expandedViewers.value.splice(index, 1)
+  else expandedViewers.value.push(userId)
+}
+
+async function openVideo(item: TrainingVideo) {
+  videoLoading.value = true
+  error.value = ''
+  try {
+    const blob = await fetchTrainingVideoBlob(item.id)
+    if (videoBlobUrl.value) URL.revokeObjectURL(videoBlobUrl.value)
+    videoBlobUrl.value = URL.createObjectURL(blob)
+    playingVideo.value = item
+    seekBlocked.value = false
+  } catch (reason) {
+    error.value = displayError(reason, '视频加载失败。')
+  } finally {
+    videoLoading.value = false
+  }
+}
+
+function closeVideo() {
+  void flushVideoProgress()
+  stopProgressTimer()
+  if (videoBlobUrl.value) URL.revokeObjectURL(videoBlobUrl.value)
+  videoBlobUrl.value = ''
+  playingVideo.value = null
+  seekBlocked.value = false
+}
+
+function maxWatchedSeconds() {
+  const current = playingVideo.value && videos.value.find((item) => item.id === playingVideo.value?.id)
+  return current ? Number(current.myWatchedSeconds || 0) : 0
+}
+
+function handleVideoLoadedMetadata() {
+  const player = playerRef.value
+  const video = playingVideo.value
+  if (!player || !video) return
+  const resume = Math.min(Number(video.myLastPosition || 0), maxWatchedSeconds())
+  if (resume > 1 && resume < player.duration - 1) player.currentTime = resume
+  startProgressTimer()
+}
+
+function handleVideoTimeUpdate() {
+  const player = playerRef.value
+  const video = playingVideo.value && videos.value.find((item) => item.id === playingVideo.value?.id)
+  if (!player || !video || player.seeking) return
+  if (player.currentTime <= Number(video.myWatchedSeconds || 0) + 1.5) {
+    video.myWatchedSeconds = Math.max(Number(video.myWatchedSeconds || 0), player.currentTime)
+  }
+}
+
+function handleVideoSeeking() {
+  const player = playerRef.value
+  if (!player) return
+  const limit = maxWatchedSeconds()
+  if (player.currentTime > limit + 0.75) {
+    player.currentTime = limit
+    seekBlocked.value = true
+    window.clearTimeout(seekNoticeTimer)
+    seekNoticeTimer = window.setTimeout(() => { seekBlocked.value = false }, 2500)
+  }
+}
+
+function handleVideoRateChange() {
+  const player = playerRef.value
+  if (player && player.playbackRate !== 1) player.playbackRate = 1
+}
+
+function startProgressTimer() {
+  stopProgressTimer()
+  progressTimer = window.setInterval(() => { void flushVideoProgress() }, 5000)
+}
+
+function stopProgressTimer() {
+  if (progressTimer) {
+    window.clearInterval(progressTimer)
+    progressTimer = undefined
+  }
+}
+
+async function flushVideoProgress(ended = false) {
+  const player = playerRef.value
+  const video = playingVideo.value
+  if (!player || !video || !player.duration || Number.isNaN(player.duration)) return
+  try {
+    const progress = await reportTrainingVideoProgress(video.id, {
+      positionSeconds: ended ? player.duration : player.currentTime,
+      durationSeconds: player.duration,
+    })
+    const row = videos.value.find((item) => item.id === video.id)
+    if (row) {
+      row.myWatchedSeconds = Math.max(Number(row.myWatchedSeconds || 0), Number(progress.watchedSeconds || 0))
+      row.myLastPosition = Number(progress.lastPosition || 0)
+      row.myPercent = Number(progress.percent || 0)
+      row.myCompleted = progress.completed
+    }
+  } catch {
+    // 播放不中断；下一次周期上报会重试。
+  }
+}
+
+function formatDuration(seconds?: number) {
+  const total = Math.round(Number(seconds || 0))
+  if (!total) return '时长未知'
+  const minutes = Math.floor(total / 60)
+  const rest = total % 60
+  return minutes ? `${minutes} 分 ${rest} 秒` : `${rest} 秒`
+}
+
+function formatSize(bytes?: number) {
+  const size = Number(bytes || 0)
+  return size >= 1024 * 1024 ? `${(size / 1024 / 1024).toFixed(1)}MB` : `${Math.max(1, Math.round(size / 1024))}KB`
+}
+
 function handleVisibilityChange() { if (activeAssignment.value && document.hidden) { switchCount.value += 1; if (switchCount.value >= 3) violated.value = true } }
 function splitLines(value: string) { return value.split(/\r?\n|[,，]/).map((item) => item.trim()).filter(Boolean) }
 function questionTypeLabel(value: string) { return ({ SINGLE_CHOICE: '单选题', TEXT: '填空题', NUMBER: '数字题', ESSAY: '主观题' } as Record<string, string>)[value] || value }
@@ -474,6 +695,9 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', handleVisibilityChange)
   document.removeEventListener('keydown', handleEscape)
+  stopProgressTimer()
+  window.clearTimeout(seekNoticeTimer)
+  if (videoBlobUrl.value) URL.revokeObjectURL(videoBlobUrl.value)
 })
 </script>
 
@@ -512,6 +736,7 @@ onBeforeUnmount(() => {
                 <dl><div><dt>截止</dt><dd>{{ item.dueAt }}</dd></div><div><dt>状态</dt><dd><i :class="statusTone(item.status)">{{ item.statusLabel }}</i></dd></div></dl>
                 <div v-if="item.status === 'COMPLETED'" class="paper-result">{{ formatNumber(item.score) }} 分 · {{ item.passed ? '通过' : '未通过' }}</div>
                 <button v-else-if="item.status === 'ASSIGNED'" class="button primary" @click="startExam(item)"><Play :size="15" />开始考试</button>
+                <div v-else-if="item.status === 'RETAKE_PENDING'" class="paper-result retake">重考开放时间：{{ item.retakeAvailableAt || '待系统确认' }}</div>
               </article>
             </div>
           </section>
@@ -525,6 +750,50 @@ onBeforeUnmount(() => {
                 <div><b>{{ item.title }}</b><span>{{ item.category || '未分类' }} · {{ item.durationMinutes }} 分钟</span><p>{{ item.description || '暂无课程说明' }}</p></div>
                 <div class="course-meta"><span>{{ item.materialCount }} 份资料</span><i :class="item.enabled ? 'ok' : 'muted'">{{ item.enabled ? '启用' : '停用' }}</i></div>
                 <button v-if="canManage" class="text-button" @click="openCourse(item)">编辑</button>
+              </article>
+            </div>
+          </section>
+
+          <section v-else-if="activeView === 'videos'" class="workspace-section">
+            <div class="section-bar"><div><h2>学习视频</h2><span>观看进度自动记录；不支持快进，可回看已观看部分</span></div><button v-if="canManage" class="button primary" @click="openVideoUpload"><Upload :size="15" />上传视频</button></div>
+            <div v-if="enabledVideos.length" class="video-summary">
+              <div class="video-summary-info"><b>我的总进度</b><span>已完成 {{ myVideoSummary.completed }}/{{ myVideoSummary.total }} 个视频</span></div>
+              <div class="progress-track big"><div class="progress-fill" :class="{ done: myVideoSummary.completed === myVideoSummary.total && myVideoSummary.total > 0 }" :style="{ width: `${Math.round(myVideoSummary.percent)}%` }" /></div>
+              <b class="video-summary-percent">{{ Math.round(myVideoSummary.percent) }}%</b>
+            </div>
+            <div v-if="!videos.length" class="empty">暂无学习视频。</div>
+            <div v-for="group in videoGroups" :key="group.label" class="video-group">
+              <h3><GraduationCap :size="16" />{{ group.label }}<span>{{ group.items.length }} 个视频</span></h3>
+              <div class="video-grid">
+                <article v-for="item in group.items" :key="item.id" class="video-card" :class="{ off: !item.enabled }">
+                  <div class="video-cover"><MonitorPlay :size="26" /><i v-if="item.myCompleted" class="video-done"><CheckCircle2 :size="13" />已完成</i></div>
+                  <div class="video-body">
+                    <b>{{ item.title }}</b>
+                    <span>{{ formatDuration(item.durationSeconds) }} · {{ formatSize(item.fileSize) }}<template v-if="!item.enabled"> · 已停用</template></span>
+                    <div class="video-progress-row"><div class="progress-track"><div class="progress-fill" :class="{ done: item.myCompleted }" :style="{ width: `${Math.round(item.myPercent)}%` }" /></div><em>{{ Math.round(item.myPercent) }}%</em></div>
+                  </div>
+                  <div class="video-actions">
+                    <button class="button small primary" :disabled="videoLoading || !item.enabled" @click="openVideo(item)"><Play :size="14" />{{ item.myCompleted ? '重新观看' : item.myPercent > 0 ? '继续学习' : '开始学习' }}</button>
+                    <button v-if="canManage" class="icon-danger" title="删除视频" @click="pendingVideoDelete = item"><Trash2 :size="15" /></button>
+                  </div>
+                </article>
+              </div>
+            </div>
+          </section>
+
+          <section v-else-if="activeView === 'video-progress'" class="workspace-section">
+            <div class="section-bar"><div><h2>观看进度</h2><span>每人的学习视频完成度，未观看的视频按 0% 计入总进度</span></div></div>
+            <div v-if="!viewerSummaries.length" class="empty">还没有人观看学习视频。</div>
+            <div v-else class="viewer-list">
+              <article v-for="person in viewerSummaries" :key="person.userId" class="viewer-row">
+                <button type="button" class="viewer-head" @click="toggleViewer(person.userId)">
+                  <div class="viewer-name"><b>{{ person.userName }}</b><span>{{ person.storeName || '未绑定门店' }}</span></div>
+                  <div class="progress-track"><div class="progress-fill" :class="{ done: person.totalVideos > 0 && person.completed === person.totalVideos }" :style="{ width: `${Math.round(person.percent)}%` }" /></div>
+                  <b class="viewer-percent">{{ Math.round(person.percent) }}%</b><span class="viewer-count">{{ person.completed }}/{{ person.totalVideos }} 完成</span>
+                </button>
+                <div v-if="expandedViewers.includes(person.userId)" class="viewer-detail">
+                  <div v-for="row in person.rows" :key="row.videoId" class="viewer-video"><span class="viewer-video-title">{{ row.videoTitle }}</span><div class="progress-track"><div class="progress-fill" :class="{ done: row.completed }" :style="{ width: `${Math.round(row.percent)}%` }" /></div><em>{{ Math.round(row.percent) }}%</em><span class="viewer-video-time">{{ row.lastWatchedAt || '-' }}</span></div>
+                </div>
               </article>
             </div>
           </section>
@@ -595,7 +864,9 @@ onBeforeUnmount(() => {
 
       <form v-else-if="editor === 'paper'" class="drawer wide-drawer" @submit.prevent="savePaperEditor"><header><h3>{{ paperForm.id ? '编辑试卷' : '新建试卷' }}</h3><UiButton variant="ghost" icon-only aria-label="关闭试卷编辑" title="关闭" @click="requestCloseEditor"><template #icon><X :size="18" /></template></UiButton></header><div class="paper-builder"><section class="paper-settings"><div class="form-grid"><label>试卷名称<input v-model.trim="paperForm.paperName" required /></label><label>试卷编号<input v-model.trim="paperForm.paperCode" placeholder="留空自动生成" /></label><label>通过分数<input v-model.number="paperForm.passScore" type="number" min="0" /></label><label>适用角色<input v-model.trim="paperForm.roleScope" /></label></div><div class="bank-picker"><h4>从题库选题</h4><div class="bank-options"><label v-for="item in questions" :key="item.id"><input v-model="selectedBankIds" type="checkbox" :value="item.id" /><span>{{ item.questionText }}</span><em>{{ item.defaultScore }} 分</em></label></div><button type="button" class="button" @click="addSelectedBankQuestions">加入试卷</button></div></section><section class="paper-question-list"><div class="paper-question-head"><h4>试卷题目（{{ paperForm.questions.length }}）</h4><button type="button" class="text-button" @click="paperForm.questions.push(emptyPaperQuestion())">手工加题</button></div><article v-for="(item, index) in paperForm.questions" :key="index"><div class="question-order">{{ index + 1 }}</div><div class="question-fields"><select v-model="item.questionType"><option value="SINGLE_CHOICE">单选题</option><option value="TEXT">填空题</option><option value="NUMBER">数字题</option><option value="ESSAY">主观题</option></select><textarea v-model.trim="item.questionText" rows="2" placeholder="题干" /><textarea v-if="item.questionType === 'SINGLE_CHOICE'" :value="item.options.join('\n')" rows="3" placeholder="选项，每行一个" @input="item.options = ($event.target as HTMLTextAreaElement).value.split(/\r?\n/)" /><input v-model.trim="item.standardAnswer" placeholder="标准或参考答案" /><input v-model.number="item.score" type="number" min="0.01" step="0.01" /></div><button type="button" class="icon-danger" @click="paperForm.questions.splice(index, 1)"><Trash2 :size="15" /></button></article></section></div><ModalFooter><template #info><label class="switch-label"><input v-model="paperForm.enabled" type="checkbox" />启用试卷</label></template><UiButton variant="secondary" @click="requestCloseEditor">取消</UiButton><UiButton variant="primary" type="submit" :disabled="!paperForm.questions.length" :loading="saving">保存试卷</UiButton></ModalFooter></form>
 
-<form v-else class="drawer" @submit.prevent="publish"><header><h3>发布考试</h3><UiButton variant="ghost" icon-only aria-label="关闭考试发布" title="关闭" @click="requestCloseEditor"><template #icon><X :size="18" /></template></UiButton></header><div class="form-grid"><label class="wide">考试名称<input v-model.trim="publishForm.title" required /></label><label>试卷<select v-model.number="publishForm.paperId"><option v-for="item in papers" :key="item.id" :value="item.id">{{ item.paperName }}</option></select></label><label>分配方式<select v-model="targetMode"><option value="scope">按门店和角色</option><option value="users">指定人员</option></select></label><label>开始时间<input v-model="publishForm.startAt" type="datetime-local" required /></label><label>截止时间<input v-model="publishForm.dueAt" type="datetime-local" required /></label><fieldset v-if="targetMode === 'scope'" class="wide checkbox-field"><legend>应考门店</legend><label v-for="item in stores" :key="item.id"><input v-model="publishForm.storeIds" type="checkbox" :value="item.id" />{{ item.name }}</label></fieldset><fieldset v-if="targetMode === 'scope'" class="wide checkbox-field"><legend>应考角色</legend><label><input v-model="publishForm.targetRoles" type="checkbox" value="EMPLOYEE" />学员</label><label><input v-model="publishForm.targetRoles" type="checkbox" value="STORE_MANAGER" />店长</label><label><input v-model="publishForm.targetRoles" type="checkbox" value="OPERATIONS" />运营</label></fieldset><fieldset v-else class="wide checkbox-field people"><legend>应考人员</legend><label v-for="item in overview?.candidates || []" :key="item.userId"><input v-model="publishForm.userIds" type="checkbox" :value="item.userId" />{{ item.displayName }} · {{ item.departmentName || item.roleLabel }} · {{ item.storeName }}</label></fieldset></div><ModalFooter><UiButton variant="secondary" @click="requestCloseEditor">取消</UiButton><UiButton variant="primary" type="submit" :loading="saving"><template #icon><Send :size="15" /></template>确认发布</UiButton></ModalFooter></form>
+      <form v-if="editor === 'video'" class="drawer narrow" @submit.prevent="saveCurrentEditor"><header><h3>上传学习视频</h3><UiButton variant="ghost" icon-only aria-label="关闭视频上传" title="关闭" @click="requestCloseEditor"><template #icon><X :size="18" /></template></UiButton></header><div class="form-grid"><label class="wide">视频文件（mp4 / m4v / webm / mov，20MB 以内）<input type="file" accept="video/mp4,video/webm,video/quicktime,.mp4,.m4v,.webm,.mov" required @change="handleVideoFile" /></label><label class="wide">视频标题<input v-model.trim="videoForm.title" placeholder="留空使用文件名" /></label><label>所属课程<select v-model="videoForm.courseId"><option :value="undefined">不关联课程</option><option v-for="item in courses" :key="item.id" :value="item.id">{{ item.title }}</option></select></label><label>分类<input v-model.trim="videoForm.category" placeholder="如：设备维护" /></label><label>排序<input v-model.number="videoForm.sortOrder" type="number" /></label></div><div v-if="saving" class="upload-progress"><div class="progress-track"><div class="progress-fill" :style="{ width: `${uploadPercent}%` }" /></div><em>{{ uploadPercent }}%</em></div><ModalFooter><UiButton variant="secondary" :disabled="saving" @click="requestCloseEditor">取消</UiButton><UiButton variant="primary" type="submit" :loading="saving"><template #icon><Upload :size="15" /></template>上传视频</UiButton></ModalFooter></form>
+
+<form v-else-if="editor === 'publish'" class="drawer" @submit.prevent="publish"><header><h3>发布考试</h3><UiButton variant="ghost" icon-only aria-label="关闭考试发布" title="关闭" @click="requestCloseEditor"><template #icon><X :size="18" /></template></UiButton></header><div class="form-grid"><label class="wide">考试名称<input v-model.trim="publishForm.title" required /></label><label>试卷<select v-model.number="publishForm.paperId"><option v-for="item in papers" :key="item.id" :value="item.id">{{ item.paperName }}</option></select></label><label>分配方式<select v-model="targetMode"><option value="scope">按门店和角色</option><option value="users">指定人员</option></select></label><label>开始时间<input v-model="publishForm.startAt" type="datetime-local" required /></label><label>截止时间<input v-model="publishForm.dueAt" type="datetime-local" required /></label><fieldset v-if="targetMode === 'scope'" class="wide checkbox-field"><legend>应考门店</legend><label v-for="item in stores" :key="item.id"><input v-model="publishForm.storeIds" type="checkbox" :value="item.id" />{{ item.name }}</label></fieldset><fieldset v-if="targetMode === 'scope'" class="wide checkbox-field"><legend>应考角色</legend><label><input v-model="publishForm.targetRoles" type="checkbox" value="EMPLOYEE" />学员</label><label><input v-model="publishForm.targetRoles" type="checkbox" value="STORE_MANAGER" />店长</label><label><input v-model="publishForm.targetRoles" type="checkbox" value="OPERATIONS" />运营</label></fieldset><fieldset v-else class="wide checkbox-field people"><legend>应考人员</legend><label v-for="item in overview?.candidates || []" :key="item.userId"><input v-model="publishForm.userIds" type="checkbox" :value="item.userId" />{{ item.displayName }} · {{ item.departmentName || item.roleLabel }} · {{ item.storeName }}</label></fieldset></div><ModalFooter><UiButton variant="secondary" @click="requestCloseEditor">取消</UiButton><UiButton variant="primary" type="submit" :loading="saving"><template #icon><Send :size="15" /></template>确认发布</UiButton></ModalFooter></form>
     </div>
 
     <div v-if="selectedCampaign" class="overlay" role="dialog" aria-modal="true" aria-label="考试安排详情" @click.self="selectedCampaign = null"><section class="drawer"><header><div><h3>{{ selectedCampaign.campaign.title }}</h3><span>{{ selectedCampaign.campaign.paperName }}</span></div><UiButton variant="ghost" icon-only aria-label="关闭考试安排详情" title="关闭" @click="selectedCampaign = null"><template #icon><X :size="18" /></template></UiButton></header><div class="detail-actions"><button v-if="overview?.canExport" type="button" class="button" @click="exportCampaign"><Download :size="15" />导出成绩</button></div><div class="data-table"><div class="table-head detail-cols"><span>应考人</span><span>门店</span><span>状态</span><span>成绩</span></div><div v-for="item in selectedCampaign.assignments" :key="item.id" class="table-row detail-cols"><b>{{ item.examineeName }}</b><span>{{ item.storeName }}</span><i :class="statusTone(item.status)">{{ item.statusLabel }}</i><span>{{ item.score == null ? '-' : `${item.score} 分` }}</span></div></div></section></div>
@@ -603,6 +874,8 @@ onBeforeUnmount(() => {
     <div v-if="reviewDetail" class="overlay" role="dialog" aria-modal="true" aria-label="考试阅卷" @click.self="requestCloseReview"><form class="drawer wide-drawer" @submit.prevent="completeReview"><header><div><h3>{{ reviewDetail.task.examineeName }} · 阅卷</h3><span>{{ reviewDetail.task.examTitle || reviewDetail.task.paperName }}</span></div><UiButton variant="ghost" icon-only aria-label="关闭阅卷" title="关闭" @click="requestCloseReview"><template #icon><X :size="18" /></template></UiButton></header><div class="review-answer-list"><article v-for="(item, index) in reviewDetail.answers" :key="item.answerId"><h4>{{ index + 1 }}. {{ item.questionText }} <span>{{ item.maxScore }} 分</span></h4><dl><div><dt>考生答案</dt><dd>{{ item.userAnswer || '未作答' }}</dd></div><div><dt>参考答案</dt><dd>{{ item.standardAnswer || '由阅卷人判断' }}</dd></div></dl><div class="review-score"><label>得分<input v-model.number="item.awardedScore" type="number" min="0" :max="item.maxScore" step="0.01" /></label><label>评语<input v-model.trim="item.reviewComment" /></label></div></article><label class="review-note">阅卷备注<textarea v-model.trim="reviewDetail.reviewNote" rows="3" /></label></div><ModalFooter><UiButton variant="secondary" @click="requestCloseReview">取消</UiButton><UiButton variant="primary" type="submit" :loading="saving">完成阅卷</UiButton></ModalFooter></form></div>
 
     <div v-if="activeAssignment && activePaper" class="overlay exam-taking" role="dialog" aria-modal="true" aria-label="考试作答"><form class="take-panel" @submit.prevent="submitExam"><header><div><h3>{{ activeAssignment.examTitle }}</h3><span>{{ activePaper.paperName }} · 通过分 {{ activePaper.passScore }}</span></div><UiButton variant="ghost" icon-only aria-label="暂时退出考试" title="关闭" :disabled="submitting" @click="requestCloseExam"><template #icon><X :size="18" /></template></UiButton></header><div class="switch-warning" :class="{ danger: violated }">考试期间请勿切换页面；已切换 {{ switchCount }}/3 次。</div><div class="take-list"><fieldset v-for="(item, index) in activePaper.questions" :key="item.id"><legend>{{ index + 1 }}. {{ item.questionText }}（{{ item.score }} 分）</legend><label v-for="option in item.options" v-if="item.questionType === 'SINGLE_CHOICE'" :key="option" class="choice"><input v-model="answers[item.id]" type="radio" :name="`question-${item.id}`" :value="option" />{{ option }}</label><textarea v-else-if="item.questionType === 'ESSAY'" v-model.trim="answers[item.id]" rows="5" placeholder="请输入答案" /><input v-else v-model.trim="answers[item.id]" :type="item.questionType === 'NUMBER' ? 'number' : 'text'" placeholder="请输入答案" /></fieldset></div><ModalFooter><UiButton variant="secondary" :disabled="submitting" @click="requestCloseExam">暂不作答</UiButton><UiButton variant="primary" type="submit" :loading="submitting"><template #icon><Send :size="15" /></template>提交考试</UiButton></ModalFooter></form></div>
+
+    <div v-if="playingVideo" class="overlay exam-taking" role="dialog" aria-modal="true" aria-label="观看学习视频"><section class="take-panel video-panel"><header><div><h3>{{ playingVideo.title }}</h3><span>{{ playingVideo.courseTitle || playingVideo.category || '学习视频' }} · 当前进度 {{ Math.round(playingVideoPercent) }}%</span></div><UiButton variant="ghost" icon-only aria-label="关闭视频" title="关闭" @click="closeVideo"><template #icon><X :size="18" /></template></UiButton></header><div class="switch-warning" :class="{ danger: seekBlocked }">{{ seekBlocked ? '不能快进到还没看过的位置，已回到当前进度。' : '学习视频不支持快进，可回看已观看的部分；观看进度自动保存。' }}</div><video ref="playerRef" class="video-player" :src="videoBlobUrl" controls controlslist="noplaybackrate nodownload" disablePictureInPicture @loadedmetadata="handleVideoLoadedMetadata" @timeupdate="handleVideoTimeUpdate" @seeking="handleVideoSeeking" @ratechange="handleVideoRateChange" @pause="() => void flushVideoProgress()" @ended="() => void flushVideoProgress(true)" /></section></div>
 
     <UnsavedChangesDialog
       :open="Boolean(pendingDismiss)"
@@ -622,6 +895,16 @@ onBeforeUnmount(() => {
       confirm-variant="danger"
       @cancel="pendingCategoryDelete = null"
       @confirm="confirmRemoveCategory"
+    />
+    <ActionConfirmDialog
+      :open="Boolean(pendingVideoDelete)"
+      title="确认删除学习视频？"
+      :message="pendingVideoDelete ? `删除“${pendingVideoDelete.title}”后，所有人的观看进度也会一并删除。` : ''"
+      cancel-label="取消"
+      confirm-label="确认删除"
+      confirm-variant="danger"
+      @cancel="pendingVideoDelete = null"
+      @confirm="confirmRemoveVideo"
     />
   </section>
 </template>
@@ -684,6 +967,8 @@ onBeforeUnmount(() => {
   overflow-x: auto;
 }
 
+.progress-track{flex:1;min-width:0;height:8px;border-radius:999px;background:#e8ecef;overflow:hidden}.progress-track.big{height:12px}.progress-fill{height:100%;border-radius:999px;background:#76bdb8;transition:width .3s ease}.progress-fill.done{background:#278052}.video-summary{display:grid;grid-template-columns:auto minmax(120px,1fr) 48px;align-items:center;gap:14px;margin-bottom:18px;padding:14px;border:1px solid #dce7e5;background:#f7fbfa}.video-summary-info b,.video-summary-info span{display:block}.video-summary-info span{margin-top:3px;color:#7a8290;font-size:12px;white-space:nowrap}.video-summary-percent{color:#285f5c;font-size:18px;text-align:right}.video-group{margin-bottom:18px}.video-group h3{display:flex;align-items:center;gap:6px;margin:0 0 10px;font-size:14px}.video-group h3 span{color:#8a919c;font-size:11px;font-weight:400}.video-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.video-card{display:flex;flex-direction:column;gap:10px;padding:14px;border:1px solid #e0e4e9;border-radius:6px;background:#fff}.video-card.off{opacity:.62}.video-cover{position:relative;display:flex;align-items:center;justify-content:center;height:74px;border-radius:5px;background:linear-gradient(135deg,#e9f6f5,#d8edeb);color:#285f5c}.video-done{position:absolute;top:6px;right:6px;display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:999px;background:#278052;color:#fff;font-size:11px;font-style:normal}.video-body b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.video-body>span{display:block;margin-top:3px;color:#858c96;font-size:11px}.video-progress-row,.video-actions,.upload-progress{display:flex;align-items:center;gap:8px}.video-progress-row{margin-top:8px}.video-actions{justify-content:space-between;margin-top:auto}.video-progress-row em,.upload-progress em,.viewer-video em{min-width:34px;color:#285f5c;font-size:12px;font-style:normal;font-weight:700;text-align:right}.upload-progress{padding:0 20px 12px}.video-panel{width:min(880px,92vw)}.video-player{display:block;width:100%;max-height:min(62vh,560px);background:#000}.viewer-list{display:flex;flex-direction:column;border:1px solid #e1e5ea}.viewer-row{border-top:1px solid #e7eaee}.viewer-row:first-of-type{border-top:0}.viewer-head{width:100%;display:grid;grid-template-columns:190px minmax(0,1fr) 52px 90px;align-items:center;gap:14px;padding:12px 14px;border:0;background:#fff;cursor:pointer;text-align:left}.viewer-head:hover{background:#f7faf9}.viewer-name b,.viewer-name span{display:block}.viewer-name span{margin-top:2px;color:#858c96;font-size:11px}.viewer-percent{color:#285f5c;text-align:right}.viewer-count,.viewer-video-time{color:#7a8290;font-size:12px;text-align:right}.viewer-detail{padding:4px 14px 12px;background:#fafbfc}.viewer-video{display:grid;grid-template-columns:190px minmax(0,1fr) 52px 140px;align-items:center;gap:14px;padding:7px 0;font-size:12px}.viewer-video-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.paper-result.retake{background:#fff8e8;color:#8c6415}
+
 @media (max-width: 640px) {
   .workspace-section {
     padding: 14px;
@@ -701,6 +986,19 @@ onBeforeUnmount(() => {
   .paper-cards,
   .metric-strip {
     grid-template-columns: 1fr;
+  }
+
+  .video-grid,
+  .video-summary,
+  .viewer-head,
+  .viewer-video {
+    grid-template-columns: 1fr;
+  }
+
+  .viewer-count,
+  .viewer-percent,
+  .viewer-video-time {
+    text-align: left;
   }
 }
 </style>

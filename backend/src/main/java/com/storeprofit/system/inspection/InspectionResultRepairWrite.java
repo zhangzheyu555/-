@@ -12,7 +12,7 @@ record InspectionResultRepairWrite(
     BigDecimal originalHygieneScore,
     BigDecimal originalServiceScore,
     String originalResultCode,
-    boolean originalPassed,
+    Boolean originalPassed,
     Long repairedStandardVersionId,
     String repairedStandardVersion,
     BigDecimal repairedFullScore,

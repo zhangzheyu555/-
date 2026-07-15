@@ -4,14 +4,18 @@ import { Home, RefreshCw } from 'lucide-vue-next'
 import { getBrands, getStores, type BrandInfo, type StoreInfo } from '../api/operations'
 import BrandBadge from '../components/common/BrandBadge.vue'
 import PageHeader from '../components/common/PageHeader.vue'
+import { isBossRole } from '../permissions/roles'
+import { useAuthStore } from '../stores/auth'
 import { normalizeBrandName } from '../utils/brand'
 
+const auth = useAuthStore()
 const stores = ref<StoreInfo[]>([])
 const brands = ref<BrandInfo[]>([])
 const loading = ref(false)
 const error = ref('')
 
 const activeStoreCount = computed(() => stores.value.filter((store) => !store.status || store.status === '营业中').length)
+const canManageStores = computed(() => isBossRole(auth.role))
 
 async function load() {
   loading.value = true
@@ -44,7 +48,7 @@ onMounted(() => {
           <button class="ghost-button" type="button" :disabled="loading" @click="load">
             <RefreshCw :size="16" />刷新
           </button>
-          <button class="ghost-button danger" type="button" disabled>清空全部数据</button>
+          <button v-if="canManageStores" class="ghost-button danger" type="button" disabled>清空全部数据</button>
         </div>
       </template>
     </PageHeader>
@@ -87,7 +91,7 @@ onMounted(() => {
               <th>负责人</th>
               <th>开业日期</th>
               <th>状态</th>
-              <th>操作</th>
+              <th v-if="canManageStores">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -99,7 +103,7 @@ onMounted(() => {
               <td>{{ store.manager || '-' }}</td>
               <td>{{ store.openDate || '-' }}</td>
               <td><span class="status-badge" :class="store.status === '营业中' ? 'ok' : 'warn'">{{ store.status || '未设置' }}</span></td>
-              <td>
+              <td v-if="canManageStores">
                 <div class="row-actions">
                   <button class="mini-button" type="button" disabled>编辑</button>
                   <button class="mini-button" type="button" disabled>停用</button>

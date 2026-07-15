@@ -21,8 +21,18 @@ import org.springframework.stereotype.Component;
 public class InspectionImageNormalizer {
   private static final int CANVAS_WIDTH = 1600;
   private static final int CANVAS_HEIGHT = 1200;
+  private static final int MAX_LONG_EDGE = 1600;
 
   public byte[] normalize(byte[] source) throws Exception {
+    return normalize(source, CANVAS_WIDTH, CANVAS_HEIGHT);
+  }
+
+  /**
+   * Produces an export-only JPEG canvas whose aspect ratio matches the supplied photo frame.
+   * The source image is never changed. The canvas uses a white background so that fitting it
+   * into an Excel picture anchor cannot crop or stretch the inspection evidence.
+   */
+  public byte[] normalize(byte[] source, int frameWidth, int frameHeight) throws Exception {
     if (source == null || source.length == 0) {
       throw new IllegalArgumentException("empty image");
     }
@@ -31,24 +41,43 @@ public class InspectionImageNormalizer {
       throw new IllegalArgumentException("unsupported or damaged image");
     }
     BufferedImage oriented = orient(decoded, orientation(source));
-    BufferedImage canvas = new BufferedImage(CANVAS_WIDTH, CANVAS_HEIGHT, BufferedImage.TYPE_INT_RGB);
+    int[] canvasSize = canvasSize(frameWidth, frameHeight);
+    int canvasWidth = canvasSize[0];
+    int canvasHeight = canvasSize[1];
+    BufferedImage canvas = new BufferedImage(canvasWidth, canvasHeight, BufferedImage.TYPE_INT_RGB);
     Graphics2D graphics = canvas.createGraphics();
     try {
       graphics.setColor(Color.WHITE);
-      graphics.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+      graphics.fillRect(0, 0, canvasWidth, canvasHeight);
       graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
       graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-      double scale = Math.min((double) CANVAS_WIDTH / oriented.getWidth(),
-          (double) CANVAS_HEIGHT / oriented.getHeight());
+      double scale = Math.min((double) canvasWidth / oriented.getWidth(),
+          (double) canvasHeight / oriented.getHeight());
       int width = Math.max(1, (int) Math.round(oriented.getWidth() * scale));
       int height = Math.max(1, (int) Math.round(oriented.getHeight() * scale));
-      int x = (CANVAS_WIDTH - width) / 2;
-      int y = (CANVAS_HEIGHT - height) / 2;
+      int x = (canvasWidth - width) / 2;
+      int y = (canvasHeight - height) / 2;
       graphics.drawImage(oriented, x, y, width, height, null);
     } finally {
       graphics.dispose();
     }
     return jpeg(canvas);
+  }
+
+  private int[] canvasSize(int frameWidth, int frameHeight) {
+    if (frameWidth <= 0 || frameHeight <= 0) {
+      return new int[] {CANVAS_WIDTH, CANVAS_HEIGHT};
+    }
+    if (frameWidth >= frameHeight) {
+      return new int[] {
+          MAX_LONG_EDGE,
+          Math.max(1, (int) Math.round((double) MAX_LONG_EDGE * frameHeight / frameWidth))
+      };
+    }
+    return new int[] {
+        Math.max(1, (int) Math.round((double) MAX_LONG_EDGE * frameWidth / frameHeight)),
+        MAX_LONG_EDGE
+    };
   }
 
   private int orientation(byte[] source) {

@@ -3,6 +3,8 @@ package com.storeprofit.system.platform.auth;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -15,6 +17,7 @@ import com.storeprofit.system.platform.authorization.PermissionCodes;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 
 class AccessControlServiceTest {
   private final AuthService authService = mock(AuthService.class);
@@ -51,12 +54,140 @@ class AccessControlServiceTest {
   }
 
   @Test
+  void storeManagersCanNoLongerWriteProfitDataEvenWhenLegacyPermissionExists() {
+    AuthUser manager = user("STORE_MANAGER", "rg1");
+    AuthUser finance = user("FINANCE", null);
+    AuthUser boss = user("BOSS", null);
+    AuthorizationService authorizationService = mock(AuthorizationService.class);
+    AccessControlService importAccess = new AccessControlService(
+        authService, authRepository, auditRepository, authorizationService, null);
+
+    // STORE_MANAGER with a stale personal ALLOW must still be rejected.
+    when(authorizationService.hasPermission(manager, PermissionCodes.FINANCE_PROFIT_WRITE)).thenReturn(true);
+    assertThatThrownBy(() -> service.requireFinanceWrite(manager))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> {
+          BusinessException forbidden = (BusinessException) error;
+          assertThat(forbidden.getCode()).isEqualTo("FORBIDDEN");
+          assertThat(forbidden.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+        });
+
+    // FINANCE and BOSS retain full profit write access.
+    service.requireFinanceWrite(finance);
+    service.requireFinanceWrite(boss);
+
+    verify(auditRepository, atLeastOnce()).writePermissionDenied(
+        any(AuthUser.class),
+        any(String.class),
+        any(String.class),
+        any(String.class),
+        isNull(),
+        any(String.class)
+    );
+  }
+
+  @Test
+  void storeManagersCanNoLongerDeleteProfitData() {
+    AuthUser manager = user("STORE_MANAGER", "rg1");
+    assertThatThrownBy(() -> service.requireFinanceDelete(manager))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> {
+          BusinessException forbidden = (BusinessException) error;
+          assertThat(forbidden.getCode()).isEqualTo("FORBIDDEN");
+          assertThat(forbidden.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+        });
+  }
+
+  @Test
+  void batchImportIsLimitedToFinanceOrBossAfterStoreManagersLoseProfitWritePermission() {
+    AuthUser manager = user("STORE_MANAGER", "rg1");
+    AuthUser finance = user("FINANCE", null);
+    AuthUser boss = user("BOSS", null);
+    AuthorizationService authorizationService = mock(AuthorizationService.class);
+    AccessControlService importAccess = new AccessControlService(
+        authService, authRepository, auditRepository, authorizationService, null);
+
+    when(authorizationService.hasPermission(manager, PermissionCodes.FINANCE_PROFIT_IMPORT)).thenReturn(true);
+
+    assertThatThrownBy(() -> importAccess.requireFinanceImport(manager))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> {
+          BusinessException forbidden = (BusinessException) error;
+          assertThat(forbidden.getCode()).isEqualTo("FORBIDDEN");
+          assertThat(forbidden.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+        });
+
+    service.requireFinanceImport(finance);
+    service.requireFinanceImport(boss);
+    verify(auditRepository).writePermissionDenied(
+        any(AuthUser.class),
+        any(String.class),
+        any(String.class),
+        any(String.class),
+        isNull(),
+        any(String.class)
+    );
+  }
+
+  @Test
+  void importChecksFinanceWriteBeforeAFileOrPreviewJobCanBeAccepted() {
+    AuthUser finance = user("FINANCE", null);
+    AuthorizationService authorizationService = mock(AuthorizationService.class);
+    AccessControlService importAccess = new AccessControlService(
+        authService, authRepository, auditRepository, authorizationService, null);
+    when(authorizationService.hasPermission(finance, PermissionCodes.FINANCE_PROFIT_IMPORT)).thenReturn(true);
+    when(authorizationService.hasPermission(finance, PermissionCodes.FINANCE_PROFIT_WRITE)).thenReturn(false);
+
+    assertThatThrownBy(() -> importAccess.requireFinanceImport(finance))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> {
+          BusinessException forbidden = (BusinessException) error;
+          assertThat(forbidden.getCode()).isEqualTo("FORBIDDEN");
+          assertThat(forbidden.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+        });
+
+    verify(auditRepository).writePermissionDenied(
+        any(AuthUser.class),
+        any(String.class),
+        any(String.class),
+        any(String.class),
+        isNull(),
+        any(String.class)
+    );
+  }
+
+  @Test
   void bossCanAccessAnyStore() {
     AuthUser boss = user("BOSS", null);
 
     service.requireStoreAccess(boss, "rg2", "查看利润数据");
 
     assertThat(service.canAccessStore(boss, "rg2")).isTrue();
+  }
+
+  @Test
+  void onlyBossCanMaintainStoreRecordsEvenWhenLegacyRolesUsedStoreManage() {
+    AuthUser manager = user("STORE_MANAGER", "rg1");
+    AuthUser boss = user("BOSS", null);
+
+    assertThatThrownBy(() -> service.requireStoreManage(manager))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> {
+          BusinessException forbidden = (BusinessException) error;
+          assertThat(forbidden.getCode()).isEqualTo("FORBIDDEN");
+          assertThat(forbidden.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+        });
+
+    verify(auditRepository).writePermissionDenied(
+        any(AuthUser.class),
+        any(String.class),
+        any(String.class),
+        any(String.class),
+        isNull(),
+        any(String.class)
+    );
+    service.requireStoreManage(boss);
+    service.requireStoreRead(manager);
   }
 
   @Test

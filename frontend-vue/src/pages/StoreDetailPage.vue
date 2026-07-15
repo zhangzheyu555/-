@@ -46,6 +46,9 @@ const canSwitchStore = computed(() => (
 ))
 const canReadSalary = computed(() => auth.hasPermission(PERMISSIONS.SALARY_READ))
 const canExportFinance = computed(() => auth.hasPermission(PERMISSIONS.FINANCE_EXPORT))
+const storeManagementAccessDenied = computed(() => (
+  businessScope.isStoreManager.value && route.query.notice === 'STORE_MANAGEMENT_FORBIDDEN'
+))
 const detailTitle = computed(() => businessScope.isStoreManager.value
   ? `${businessScope.boundStoreName.value || selectedStore.value?.name || '本店'}详情`
   : '门店详情')
@@ -228,6 +231,10 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
         </div>
       </template>
     </PageHeader>
+
+    <div v-if="storeManagementAccessDenied" class="store-management-access-notice" role="alert">
+      当前账号无权进入门店管理，已返回本店工作台。
+    </div>
 
     <div
       v-if="!businessScope.isStoreManager.value"
@@ -416,6 +423,16 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
 .store-header-actions > * {
   width: auto;
   flex: none;
+}
+
+.store-management-access-notice {
+  padding: 12px 14px;
+  border: 1px solid #f3cf8f;
+  border-radius: 8px;
+  background: #fff8e8;
+  color: #8b5a00;
+  font-size: 14px;
+  font-weight: 700;
 }
 
 .manager-month-field {

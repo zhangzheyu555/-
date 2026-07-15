@@ -45,6 +45,7 @@ class AssistantChatResponseTest {
     );
     assertThat(json.path("localData").path("summary").asText()).isEqualTo("数据库事实");
     assertThat(json.path("aiAnalysis").path("requestId").asText()).isEqualTo("provider-id");
+    assertThat(json.path("aiAnalysis").path("analysisType").asText()).isEqualTo("FULL");
     assertThat(json.has("answer")).isFalse();
     assertThat(json.has("deepSeekAnswer")).isFalse();
   }

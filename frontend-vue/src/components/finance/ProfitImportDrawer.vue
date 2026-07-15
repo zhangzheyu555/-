@@ -3,7 +3,6 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import { Check, FileSpreadsheet, Upload, X } from 'lucide-vue-next'
 import {
   cancelProfitImportPreview,
-  commitProfitImport,
   confirmProfitImportPreview,
   createProfitImportPreview,
   getProfitImportPreview,
@@ -19,9 +18,8 @@ interface EditableRow extends ProfitImportRow {
   overwrite: boolean
 }
 
-const props = withDefaults(defineProps<{ storeId: string; storeName?: string; month: string; scopeLocked?: boolean }>(), {
+const props = withDefaults(defineProps<{ storeId: string; storeName?: string; month: string }>(), {
   storeName: '',
-  scopeLocked: false,
 })
 const emit = defineEmits<{ close: []; saved: [count: number] }>()
 
@@ -36,21 +34,25 @@ const csvMetadata = ref<PreparedCsvFile | null>(null)
 const job = ref<ProfitImportPreviewJob | null>(null)
 const stage = ref('等待选择文件')
 const progress = ref(0)
-const confirmMonthConflict = ref(false)
 const showCancelConfirm = ref(false)
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 
-const readyRows = computed(() => rows.value.filter((row) => row.status !== 'ERROR' && !row.errors.length && row.storeId && row.month))
-const failedRows = computed(() => rows.value.filter((row) => row.status === 'ERROR' || row.errors.length))
-const previewRows = computed(() => rows.value.slice(0, 10))
-const conflictCount = computed(() => readyRows.value.filter((row) => row.existing).length)
-const hasUnconfirmedConflicts = computed(() => readyRows.value.some((row) => row.existing && !row.overwrite))
+const targetLabel = computed(() => `${props.storeName || props.storeId} · ${props.month}`)
+const rowIsTarget = (row: ProfitImportRow) => row.storeId === props.storeId && row.month === props.month
+const rowIsValidTarget = (row: ProfitImportRow) => rowIsTarget(row) && row.status !== 'ERROR' && !(row.errors || []).length
+const readyRows = computed(() => rows.value.filter(rowIsValidTarget))
+const failedRows = computed(() => rows.value.filter((row) => !rowIsValidTarget(row)))
+const targetRow = computed(() => readyRows.value.length === 1 ? readyRows.value[0] : null)
+const conflictRow = computed(() => targetRow.value?.existing ? targetRow.value : null)
+const hasUnconfirmedConflict = computed(() => Boolean(conflictRow.value && !conflictRow.value.overwrite))
+const hasOverwriteSummary = computed(() => !conflictRow.value || Boolean(conflictRow.value.existingValues))
 const isWorking = computed(() => ['QUEUED', 'PARSING', 'VALIDATING', 'CONFIRMING'].includes(job.value?.status || ''))
 const canCommit = computed(() => job.value?.status === 'READY'
-  && readyRows.value.length > 0
+  && rows.value.length === 1
+  && readyRows.value.length === 1
   && failedRows.value.length === 0
-  && (!job.value.monthConflict || confirmMonthConflict.value)
-  && !hasUnconfirmedConflicts.value
+  && !hasUnconfirmedConflict.value
+  && hasOverwriteSummary.value
   && !recognizing.value
   && !committing.value)
 
@@ -69,7 +71,6 @@ function onFileChange(event: Event) {
   job.value = null
   stage.value = file ? '文件已选择' : '等待选择文件'
   progress.value = 0
-  confirmMonthConflict.value = false
 }
 
 async function recognize() {
@@ -80,13 +81,12 @@ async function recognize() {
     return
   }
   if (!props.storeId || !props.month) {
-    error.value = props.scopeLocked ? '当前账号未配置唯一门店，暂时不能导入。' : '请先选择门店和月份。'
+    error.value = '请先选择门店和月份。'
     return
   }
   recognizing.value = true
   stage.value = '上传中'
   progress.value = 5
-  confirmMonthConflict.value = false
   try {
     const uploadFile = selectedFile.value.name.toLowerCase().endsWith('.csv')
       ? (csvMetadata.value = await prepareCsvFile(selectedFile.value)).file
@@ -113,19 +113,9 @@ async function commit() {
   stage.value = '导入中'
   progress.value = 95
   try {
-    const response = job.value.legacy
-      ? await commitProfitImport(readyRows.value.map((row) => ({
-          rowId: row.rowId,
-          storeId: props.scopeLocked ? props.storeId : row.storeId,
-          month: row.month,
-          overwrite: row.overwrite,
-          values: row.values,
-          note: 'Excel/CSV 导入',
-        })))
-      : await confirmProfitImportPreview(job.value.jobId, {
-          confirmMonthConflict: confirmMonthConflict.value,
-          rows: readyRows.value.map((row) => ({ rowId: row.rowId, overwrite: row.overwrite })),
-        })
+    const response = await confirmProfitImportPreview(job.value.jobId, {
+      rows: [targetRow.value!].map((row) => ({ rowId: row.rowId, overwrite: row.overwrite })),
+    })
     message.value = `已保存 ${response.saved} 条数据${response.skipped ? `，跳过 ${response.skipped} 条` : ''}。`
     rows.value = (response.rows || []).map((row) => ({ ...row, overwrite: false }))
     stage.value = '导入成功'
@@ -145,18 +135,10 @@ function applyJob(response: ProfitImportPreviewJob) {
   stage.value = response.stage
   progress.value = response.progress
   const overwriteById = new Map(rows.value.map((row) => [row.rowId, row.overwrite]))
-  rows.value = (response.rows || []).map((row) => {
-    const mismatchedStore = props.scopeLocked && Boolean(row.storeId) && row.storeId !== props.storeId
-    return {
-      ...row,
-      storeId: props.scopeLocked ? props.storeId : row.storeId,
-      storeName: props.scopeLocked ? (props.storeName || row.storeName) : row.storeName,
-      warnings: mismatchedStore
-        ? Array.from(new Set([...(row.warnings || []), '文件中的门店字段已忽略，按当前绑定门店导入']))
-        : row.warnings,
-      overwrite: overwriteById.get(row.rowId) || false,
-    }
-  })
+  rows.value = (response.rows || []).map((row) => ({
+    ...row,
+    overwrite: overwriteById.get(row.rowId) || false,
+  }))
   error.value = response.errors?.join('；') || ''
   if (response.status === 'READY') {
     message.value = `解析完成：有效 ${response.validRows} 条，错误 ${response.errorRows} 条，营业额合计 ${money(response.salesTotal || 0)}。`
@@ -204,7 +186,7 @@ function requestClose() {
 
 async function cancelAndClose() {
   stopPolling()
-  if (job.value && isWorking.value && !job.value.legacy) {
+  if (job.value && isWorking.value) {
     try {
       await cancelProfitImportPreview(job.value.jobId)
     } catch {
@@ -242,7 +224,7 @@ onBeforeUnmount(stopPolling)
         </header>
 
         <div class="import-drawer__body">
-          <div class="import-file-row">
+        <div class="import-file-row">
             <input ref="input" type="file" accept=".xlsx,.xls,.csv" @change="onFileChange" />
             <button class="secondary-button" type="button" @click="chooseFile">
               <FileSpreadsheet :size="16" />
@@ -253,6 +235,10 @@ onBeforeUnmount(stopPolling)
               {{ recognizing ? '识别中' : '识别并预览' }}
             </button>
           </div>
+
+          <p class="import-scope-note">
+            本页仅导入“{{ storeName || storeId }} · {{ month }}”的一条月度汇总记录；多门店、跨月份或重复记录请拆分或合并后再导入。
+          </p>
 
           <p v-if="error" class="import-notice import-notice--error">{{ error }}</p>
           <p v-else-if="message" class="import-notice import-notice--success">{{ message }}</p>
@@ -267,29 +253,34 @@ onBeforeUnmount(stopPolling)
           </section>
 
           <div v-if="rows.length" class="import-summary">
-            <span>成功 {{ readyRows.length }} 条</span>
-            <span>失败 {{ failedRows.length }} 条</span>
-            <span v-if="conflictCount">其中 {{ conflictCount }} 条需要确认覆盖</span>
-            <span v-if="rows.length > previewRows.length">当前预览前 {{ previewRows.length }} 条</span>
+            <span>可导入 {{ readyRows.length }} 条</span>
+            <span>范围或格式错误 {{ failedRows.length }} 条</span>
+            <span v-if="conflictRow">当前目标已有数据，需确认覆盖</span>
           </div>
           <p v-if="csvMetadata" class="csv-metadata">
             已按 {{ csvMetadata.encoding }} 读取，分隔符：{{ csvMetadata.delimiter === '\t' ? '制表符' : csvMetadata.delimiter === ';' ? '分号' : '逗号' }}；
             表头：{{ csvMetadata.headers.join('、') || '（空）' }}
           </p>
-          <div v-if="job?.monthConflict" class="month-conflict">
-            <strong>月份不一致</strong>
-            <p>文件识别为 {{ job.detectedMonths.join('、') }}，当前选择为 {{ job.selectedMonth }}。</p>
-            <label>
-              <input v-model="confirmMonthConflict" type="checkbox" />
-              使用文件月份 {{ job.detectedMonths.join('、') }} 导入
+          <section v-if="conflictRow" class="overwrite-summary" aria-label="覆盖前后金额摘要">
+            <strong>覆盖确认：{{ targetLabel }}</strong>
+            <p>本次仅会覆盖当前门店当前月份的一条月度汇总记录。</p>
+            <div v-if="conflictRow.existingValues" class="overwrite-summary__amounts">
+              <span>营业额：{{ money(conflictRow.existingValues.sales || 0) }} → {{ money(conflictRow.values.sales || 0) }}</span>
+              <span>食材成本：{{ money(conflictRow.existingValues.material || 0) }} → {{ money(conflictRow.values.material || 0) }}</span>
+              <span>人工成本：{{ money(conflictRow.existingValues.labor || 0) }} → {{ money(conflictRow.values.labor || 0) }}</span>
+            </div>
+            <p v-else class="row-error">未返回覆盖前金额摘要，暂不能确认覆盖，请重新预览。</p>
+            <label v-if="conflictRow.existingValues" class="overwrite-check">
+              <input v-model="conflictRow.overwrite" type="checkbox" />
+              我已核对上述金额，确认覆盖 {{ targetLabel }} 的已有数据
             </label>
-          </div>
+          </section>
           <div v-if="job?.fieldMappings?.length" class="field-mappings">
             <strong>字段映射</strong>
             <span v-for="mapping in job.fieldMappings" :key="mapping">{{ mapping }}</span>
           </div>
 
-          <div v-if="rows.length" class="table-wrap import-table-wrap">
+          <div v-if="rows.length" class="table-wrap import-table-wrap" aria-label="文件逐行校验结果">
             <table>
               <thead>
                 <tr>
@@ -298,24 +289,16 @@ onBeforeUnmount(stopPolling)
                   <th>营业额</th>
                   <th>食材成本</th>
                   <th>人工成本</th>
-                  <th>覆盖</th>
                   <th>识别结果</th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="row in previewRows" :key="row.rowId">
+                <tr v-for="row in rows" :key="row.rowId">
                   <td>{{ row.storeName || row.storeId }}</td>
                   <td>{{ row.month || '-' }}</td>
                   <td>{{ money(row.values.sales || 0) }}</td>
                   <td>{{ money(row.values.material || 0) }}</td>
                   <td>{{ money(row.values.labor || 0) }}</td>
-                  <td>
-                    <label v-if="row.existing" class="overwrite-check">
-                      <input v-model="row.overwrite" type="checkbox" />
-                      覆盖
-                    </label>
-                    <span v-else>-</span>
-                  </td>
                   <td :class="{ 'row-error': row.errors?.length }">{{ rowIssue(row) }}</td>
                 </tr>
               </tbody>
@@ -325,6 +308,15 @@ onBeforeUnmount(stopPolling)
         </div>
 
         <ModalFooter v-if="!showCancelConfirm" sticky>
+          <template v-if="failedRows.length" #info>
+            文件含 {{ failedRows.length }} 条范围或格式错误记录，不能导入。请拆分或合并文件后重新预览。
+          </template>
+          <template v-else-if="!hasOverwriteSummary" #info>
+            未返回覆盖前金额摘要，暂不能确认覆盖，请重新预览。
+          </template>
+          <template v-else-if="hasUnconfirmedConflict" #info>
+            请先确认覆盖当前门店当前月份的一条已有数据
+          </template>
           <UiButton variant="secondary" type="button" @click="requestClose">取消</UiButton>
           <UiButton variant="primary" type="button" :disabled="!canCommit" :loading="committing" @click="commit">
             <template #icon><Check :size="16" /></template>
@@ -473,7 +465,7 @@ onBeforeUnmount(stopPolling)
   font-size: 12px;
 }
 
-.month-conflict {
+.overwrite-summary {
   margin: 12px 0;
   padding: 12px;
   border: 1px solid #e7b66f;
@@ -482,12 +474,26 @@ onBeforeUnmount(stopPolling)
   color: var(--ink);
 }
 
-.month-conflict p {
+.overwrite-summary p {
   margin: 5px 0 10px;
   color: var(--muted);
 }
 
-.month-conflict label,
+.overwrite-summary__amounts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 0;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.overwrite-summary__amounts span {
+  padding: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
 .field-mappings {
   display: flex;
   gap: 8px;
@@ -510,6 +516,15 @@ onBeforeUnmount(stopPolling)
 .import-table-wrap {
   border: 1px solid var(--line);
   border-radius: 6px;
+  max-height: min(440px, 50dvh);
+  overflow: auto;
+}
+
+.import-scope-note {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .overwrite-check {
@@ -544,6 +559,10 @@ onBeforeUnmount(stopPolling)
   .import-file-row .primary-button {
     max-width: none;
     width: 100%;
+  }
+
+  .overwrite-summary__amounts {
+    grid-template-columns: 1fr;
   }
 }
 </style>

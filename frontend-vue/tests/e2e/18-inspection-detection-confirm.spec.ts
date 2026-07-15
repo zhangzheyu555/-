@@ -68,6 +68,7 @@ const detectedSuggestion = {
   image_id: 'IMG-FOCUS-1',
   imageId: 'IMG-FOCUS-1',
   filename: '巡检现场.jpg',
+  annotated_image: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL13wAAAABJRU5ErkJggg==',
   passed: false,
   review_status: 'PENDING',
   auto_status: '发现地面纸屑',
@@ -118,7 +119,7 @@ function nestedKeys(value: unknown): string[] {
   return Object.entries(value as Record<string, unknown>).flatMap(([key, child]) => [key, ...nestedKeys(child)])
 }
 
-test('model suggestion is server-confirmed as 2 -> 4 and previewed as hygiene 59 / total 196 without trusting browser final score', async ({ page }) => {
+test('model suggestion shows a returned annotation and only the 200-point deduction', async ({ page }) => {
   let confirmationBody: Record<string, unknown> | undefined
 
   await page.route('**/api/**', async (route) => {
@@ -158,10 +159,10 @@ test('model suggestion is server-confirmed as 2 -> 4 and previewed as hygiene 59
 
   const rule = page.locator('.inspection-detection-rule')
   await expect(rule).toContainText('H-4.1.2 · 地面清洁无纸屑 · 条款ID 41')
-  await expect(rule.locator('.inspection-deduction-metrics > div').nth(0)).toContainText('旧100分制建议2 分')
-  await expect(rule.locator('.inspection-deduction-metrics > div').nth(1)).toContainText('200分制换算4 分')
-  await expect(rule.locator('.inspection-deduction-metrics > div').nth(2)).toContainText('条款 + 换算调整2 + 2 分')
-  await expect(rule.locator('.inspection-deduction-metrics > div').nth(3)).toContainText('最终扣分4 分')
+  await expect(rule.locator('.inspection-detection-preview img')).toHaveAttribute('src', /^data:image\/png;base64,/)
+  await expect(rule.locator('.inspection-deduction-metrics > div').nth(0)).toContainText('200分制建议扣分4 分')
+  await expect(rule.locator('.inspection-deduction-metrics')).not.toContainText('旧100分制')
+  await expect(rule.locator('.inspection-deduction-metrics')).not.toContainText('200分制换算')
   await expect(rule).toContainText('识别置信度96%')
   await expect(rule).toContainText('模型仅建议；最终扣分由服务端按正式条款规则计算，需督导确认。')
 
@@ -195,4 +196,141 @@ test('model suggestion is server-confirmed as 2 -> 4 and previewed as hygiene 59
     path: path.resolve(process.cwd(), '..', 'output', 'playwright', 'inspection-detection-confirm-196-mobile.png'),
     fullPage: true,
   })
+})
+
+test('record detail keeps effective deductions separate from unmatched AI evidence and loads protected image blobs', async ({ page }) => {
+  const recordId = 'INS-EVIDENCE-196'
+  const effectiveImageName = '微信图片_20260713101607_240_14.jpg'
+  const unmatchedImageName = '微信图片_AI待确认.jpg'
+  const attachmentAuthorization: Record<string, string | undefined> = {}
+  const listRecord = {
+    id: recordId,
+    storeId: 'STORE-1',
+    storeName: '花台店',
+    brand: '茹菓',
+    inspectionDate: '2026-07-13',
+    inspector: '测试督导',
+    fullScore: 200,
+    score: 196,
+    maxScore: 200,
+    passScore: 180,
+    passed: true,
+    resultCode: 'PASSED',
+    photosJson: '[]',
+    itemResults: [],
+  }
+  const detailRecord = {
+    ...listRecord,
+    photosJson: JSON.stringify([
+      {
+        attachmentId: 501,
+        fileName: effectiveImageName,
+        contentType: 'image/png',
+        detection: {
+          attachmentId: 501,
+          imageId: 'IMG-EFFECTIVE-501',
+          detectionKey: 'DET-EFFECTIVE-501',
+          decisionStatus: 'CONFIRMED',
+          detection_count: 1,
+        },
+      },
+      {
+        attachmentId: 502,
+        fileName: unmatchedImageName,
+        contentType: 'image/png',
+        detection: {
+          attachmentId: 502,
+          imageId: 'IMG-UNMATCHED-502',
+          detectionKey: 'DET-UNMATCHED-502',
+          decisionStatus: 'UNMATCHED',
+          detection_count: 1,
+          confidence: 0.94,
+        },
+      },
+    ]),
+    itemResults: [{
+      standardItemId: 41,
+      code: 'H-4.1',
+      dimension: '卫生标准',
+      categoryCode: 'HYGIENE',
+      categoryName: '卫生',
+      title: '店铺内部卫生',
+      standardScore: 4,
+      actualScore: 0,
+      deductionScore: 4,
+      deductionReason: '地面有纸屑/垃圾/污点，角落有积灰，需要及时清理干净',
+      riskLevel: 'NORMAL',
+      issueFound: true,
+      photoAttachmentIds: [501],
+    }],
+  }
+
+  await page.route('**/api/**', async (route) => {
+    const request = route.request()
+    const pathname = new URL(request.url()).pathname
+    if (!pathname.startsWith('/api/')) return route.continue()
+    if (pathname === '/api/auth/me') return json(route, bossUser)
+    if (pathname === '/api/inspection/standards') return json(route, standard)
+    if (pathname === '/api/inspections/service-health') return json(route, { status: 'UP', configured: true, message: '识别服务正常' })
+    if (pathname === '/api/brands') return json(route, [{ id: 1, name: '茹菓' }])
+    if (pathname === '/api/stores') return json(route, [{ id: 'STORE-1', code: 'STORE-1', name: '花台店', brandId: 1, brandName: '茹菓' }])
+    if (pathname === '/api/inspections' && request.method() === 'GET') return json(route, [listRecord])
+    if (pathname === `/api/inspections/${recordId}` && request.method() === 'GET') return json(route, detailRecord)
+    if (pathname === '/api/storage/attachments/501') {
+      attachmentAuthorization['501'] = request.headers().authorization
+      return route.fulfill({
+        status: 200,
+        contentType: 'image/png',
+        body: Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360f8cfc0000003010100c9fea9f70000000049454e44ae426082', 'hex'),
+      })
+    }
+    if (pathname === '/api/storage/attachments/502') {
+      attachmentAuthorization['502'] = request.headers().authorization
+      return route.fulfill({
+        status: 403,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: false, code: 'FORBIDDEN', message: '无查看权限' }),
+      })
+    }
+    if (pathname.startsWith('/api/supervisor/todos')) return json(route, { items: [] })
+    return json(route, [])
+  })
+
+  await seedSession(page)
+  await page.goto('/operations/inspection/records')
+  await page.getByRole('row', { name: /花台店/ }).click()
+
+  await expect(page.getByText('历史巡检条款快照（1条）')).toBeVisible()
+  const snapshot = page.locator('.snapshot-table')
+  await expect(snapshot.getByRole('columnheader', { name: '实得分' })).toBeVisible()
+  await expect(snapshot.getByRole('columnheader', { name: '实际扣分' })).toBeVisible()
+  const hygieneRow = snapshot.getByRole('row', { name: /店铺内部卫生/ })
+  await expect(hygieneRow).toContainText('4')
+  await expect(hygieneRow).toContainText('实得 0 / 4')
+  await expect(hygieneRow).toContainText('扣 4 分')
+  await expect(hygieneRow).toContainText('历史已生效（AI已确认）')
+  await expect(page.locator('.inspection-detail-grid').getByText('196 / 200', { exact: true })).toBeVisible()
+
+  const effectiveThumb = hygieneRow.getByRole('button', { name: `预览 ${effectiveImageName}` })
+  await expect(effectiveThumb.locator('img')).toBeVisible()
+  await expect(hygieneRow).toContainText(effectiveImageName)
+  await expect.poll(() => attachmentAuthorization['501']).toBe('Bearer TEST-INSPECTION-TOKEN')
+  await effectiveThumb.click()
+  await expect(page.getByRole('dialog', { name: '现场图片预览' })).toBeVisible()
+  await expect(page.getByRole('dialog').getByRole('img', { name: effectiveImageName })).toBeVisible()
+
+  const pendingCard = page.locator('.ai-pending-card')
+  await expect(pendingCard).toContainText(unmatchedImageName)
+  await expect(pendingCard).toContainText('未匹配正式条款，未计入本次得分')
+  await expect(page.getByText('AI 待确认识别结果（不计分）')).toBeVisible()
+  await expect(snapshot.getByText('扣 0 分')).toHaveCount(0)
+  await expect.poll(() => attachmentAuthorization['502']).toBe('Bearer TEST-INSPECTION-TOKEN')
+  await expect(pendingCard).toContainText('无查看权限')
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(page.getByText('历史巡检条款快照（1条）')).toBeVisible()
+  await expect(hygieneRow).toContainText('实得 0 / 4')
+  await expect(pendingCard).toContainText('未匹配正式条款，未计入本次得分')
+  await expect(pendingCard).toContainText('无查看权限')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true)
 })

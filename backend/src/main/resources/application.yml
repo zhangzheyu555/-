@@ -42,7 +42,7 @@ spring:
     table: flyway_schema_history
   servlet:
     multipart:
-      max-file-size: 10MB
+      max-file-size: 20MB
       max-request-size: 65MB
 
 app:
@@ -109,6 +109,8 @@ app:
       temperature: ${DEEPSEEK_TEMPERATURE:0.2}
       connect-timeout: ${DEEPSEEK_CONNECT_TIMEOUT:5s}
       timeout: ${DEEPSEEK_TIMEOUT_SECONDS:45}s
+      # 一次经营分析（含最多一次结构修复）的总耗时上限；单次请求仍使用 timeout。
+      analysis-timeout: ${DEEPSEEK_ANALYSIS_TIMEOUT:75s}
       max-requests-per-minute: ${DEEPSEEK_MAX_REQUESTS_PER_MINUTE:30}
       circuit-failure-threshold: ${DEEPSEEK_CIRCUIT_FAILURE_THRESHOLD:3}
       circuit-open-duration: ${DEEPSEEK_CIRCUIT_OPEN_DURATION:30s}
@@ -132,6 +134,17 @@ app:
         - api key
         - apikey
         - access token
+  employee-assistant:
+    # 留空即为未配置；生产环境不提供 localhost 或任何默认上游地址。
+    upstream-url: ${EMPLOYEE_ASSISTANT_URL:}
+    api-token: ${EMPLOYEE_ASSISTANT_API_TOKEN:}
+    connect-timeout: ${EMPLOYEE_ASSISTANT_CONNECT_TIMEOUT:5s}
+    timeout: ${EMPLOYEE_ASSISTANT_TIMEOUT:15s}
+    # REMOTE 为独立员工助手上游；MODEL 仅使用下列独立员工模型变量，绝不复用 DEEPSEEK_*。
+    provider: ${EMPLOYEE_ASSISTANT_PROVIDER:}
+    model-url: ${EMPLOYEE_ASSISTANT_MODEL_URL:}
+    model-api-key: ${EMPLOYEE_ASSISTANT_MODEL_API_KEY:}
+    model-name: ${EMPLOYEE_ASSISTANT_MODEL_NAME:}
 
 logging:
   level:

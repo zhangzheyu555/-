@@ -18,8 +18,13 @@ public final class PermissionCodes {
 
   public static final String FINANCE_PROFIT_READ = "finance.profit.read";
   public static final String FINANCE_PROFIT_WRITE = "finance.profit.write";
+  public static final String FINANCE_PROFIT_IMPORT = "finance.profit.import";
   public static final String FINANCE_PROFIT_DELETE = "finance.profit.delete";
   public static final String FINANCE_EXPORT = "finance.export";
+
+  public static final String DAILY_LOSS_READ = "daily_loss.read";
+  public static final String DAILY_LOSS_CREATE = "daily_loss.create";
+  public static final String DAILY_LOSS_REVIEW = "daily_loss.review";
 
   public static final String EXPENSE_CREATE = "expense.create";
   public static final String EXPENSE_READ = "expense.read";
@@ -59,6 +64,9 @@ public final class PermissionCodes {
   public static final String PLATFORM_READ = "platform.read";
   public static final String PLATFORM_MANAGE = "platform.manage";
   public static final String ASSISTANT_USE = "assistant.use";
+  public static final String EMPLOYEE_ASSISTANT_USE = "employee_assistant.use";
+  public static final String EMPLOYEE_ASSISTANT_KNOWLEDGE_MANAGE = "employee_assistant.knowledge_manage";
+  public static final String EMPLOYEE_ASSISTANT_HANDOFF_MANAGE = "employee_assistant.handoff_manage";
   public static final String ATTACHMENT_READ = "attachment.read";
   public static final String ATTACHMENT_WRITE = "attachment.write";
   public static final String TODO_READ = "todo.read";
@@ -81,8 +89,12 @@ public final class PermissionCodes {
       EMPLOYEE_MANAGE,
       FINANCE_PROFIT_READ,
       FINANCE_PROFIT_WRITE,
+      FINANCE_PROFIT_IMPORT,
       FINANCE_PROFIT_DELETE,
       FINANCE_EXPORT,
+      DAILY_LOSS_READ,
+      DAILY_LOSS_CREATE,
+      DAILY_LOSS_REVIEW,
       EXPENSE_CREATE,
       EXPENSE_READ,
       EXPENSE_REVIEW,
@@ -115,6 +127,9 @@ public final class PermissionCodes {
       PLATFORM_READ,
       PLATFORM_MANAGE,
       ASSISTANT_USE,
+      EMPLOYEE_ASSISTANT_USE,
+      EMPLOYEE_ASSISTANT_KNOWLEDGE_MANAGE,
+      EMPLOYEE_ASSISTANT_HANDOFF_MANAGE,
       ATTACHMENT_READ,
       ATTACHMENT_WRITE,
       TODO_READ,

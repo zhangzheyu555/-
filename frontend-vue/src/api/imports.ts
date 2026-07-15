@@ -1,4 +1,4 @@
-import { ApiError, apiDelete, apiGet, apiPost, apiPostForm } from './http'
+import { apiDelete, apiGet, apiPost, apiPostForm } from './http'
 
 export type ProfitImportSourceType = 'AUTO' | 'EXCEL' | 'CSV' | 'SCREENSHOT'
 
@@ -9,6 +9,8 @@ export interface ProfitImportRow {
   month: string
   confidence: number
   values: Record<string, number>
+  /** Existing target record values, supplied only when this one row may be overwritten. */
+  existingValues?: Record<string, number>
   warnings: string[]
   errors: string[]
   existing: boolean
@@ -53,8 +55,11 @@ export interface ProfitImportPreviewJob {
   selectedMonth: string
   detectedMonths: string[]
   monthConflict: boolean
+  /** Immutable scope captured by the preview task. */
+  targetStoreId?: string
+  targetStoreName?: string
+  targetMonth?: string
   elapsedMs: number
-  legacy?: boolean
 }
 
 export function recognizeProfitImport(
@@ -82,36 +87,9 @@ export async function createProfitImportPreview(
   form.append('sourceType', options.sourceType || 'AUTO')
   form.append('storeId', options.storeId)
   form.append('month', options.month)
-  try {
-    return await apiPostForm<ProfitImportPreviewJob>('/api/profit-imports/preview', form, {
-      timeout: PROFIT_PREVIEW_UPLOAD_TIMEOUT_MS,
-    })
-  } catch (error) {
-    if (!(error instanceof ApiError) || error.status !== 404) throw error
-    const legacy = await recognizeProfitImport(file, options)
-    const rows = legacy.rows || []
-    const validRows = rows.filter((row) => row.status !== 'ERROR' && !row.errors.length).length
-    const detectedMonths = [...new Set(rows.map((row) => row.month).filter(Boolean))].sort()
-    const fallback: ProfitImportPreviewJob = {
-      jobId: legacy.importId,
-      status: legacy.status === 'READY' ? 'READY' : legacy.status === 'PARTIAL' ? 'PARTIAL' : 'FAILED',
-      stage: legacy.status === 'READY' ? '等待确认' : '校验未通过',
-      progress: 100,
-      parsedRows: rows.length,
-      validRows,
-      errorRows: rows.length - validRows,
-      salesTotal: rows.reduce((sum, row) => sum + Number(row.values.sales || 0), 0),
-      fieldMappings: [],
-      rows,
-      errors: legacy.errors || [],
-      selectedMonth: options.month,
-      detectedMonths,
-      monthConflict: detectedMonths.some((month) => month !== options.month),
-      elapsedMs: 0,
-      legacy: true,
-    }
-    return fallback
-  }
+  return apiPostForm<ProfitImportPreviewJob>('/api/profit-imports/preview', form, {
+    timeout: PROFIT_PREVIEW_UPLOAD_TIMEOUT_MS,
+  })
 }
 
 export function getProfitImportPreview(jobId: string) {
@@ -120,7 +98,7 @@ export function getProfitImportPreview(jobId: string) {
 
 export function confirmProfitImportPreview(
   jobId: string,
-  body: { confirmMonthConflict: boolean; rows: Array<{ rowId: string; overwrite: boolean }> },
+  body: { rows: Array<{ rowId: string; overwrite: boolean }> },
 ) {
   return apiPost<ProfitImportCommitResponse, typeof body>(
     `/api/profit-imports/${encodeURIComponent(jobId)}/confirm`,

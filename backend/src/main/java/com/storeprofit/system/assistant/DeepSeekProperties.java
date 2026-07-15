@@ -18,6 +18,11 @@ public class DeepSeekProperties {
   private double temperature = 0.2;
   private Duration connectTimeout = Duration.ofSeconds(5);
   private Duration timeout = Duration.ofSeconds(45);
+  /**
+   * Hard budget for one business-analysis operation, including a possible schema repair call.
+   * This is deliberately separate from {@link #timeout}, which bounds one HTTP request.
+   */
+  private Duration analysisTimeout = Duration.ofSeconds(75);
   private int maxRequestsPerMinute = 30;
   private int circuitFailureThreshold = 3;
   private Duration circuitOpenDuration = Duration.ofSeconds(30);
@@ -26,6 +31,10 @@ public class DeepSeekProperties {
   private volatile Instant lastSuccessAt;
   private volatile Instant lastFailureAt;
   private volatile String lastFailureCode;
+  /** Last business-analysis outcome, deliberately separate from a successful HTTP response. */
+  private volatile String lastAnalysisState;
+  private volatile Instant lastValidatedAnalysisAt;
+  private volatile String lastAnalysisErrorCode;
 
   public boolean isEnabled() {
     return enabled;
@@ -99,6 +108,16 @@ public class DeepSeekProperties {
     this.timeout = timeout == null ? Duration.ofSeconds(45) : timeout;
   }
 
+  public Duration getAnalysisTimeout() {
+    return analysisTimeout;
+  }
+
+  public void setAnalysisTimeout(Duration analysisTimeout) {
+    this.analysisTimeout = analysisTimeout == null || analysisTimeout.isZero() || analysisTimeout.isNegative()
+        ? Duration.ofSeconds(75)
+        : analysisTimeout;
+  }
+
   public int getMaxRequestsPerMinute() {
     return maxRequestsPerMinute;
   }
@@ -139,6 +158,7 @@ public class DeepSeekProperties {
 
   public void markSuccess() {
     this.lastSuccessAt = Instant.now();
+    this.lastFailureCode = null;
   }
 
   public Instant getLastFailureAt() {
@@ -158,6 +178,48 @@ public class DeepSeekProperties {
     return lastFailureCode;
   }
 
+  /** Records an analysis that passed the full schema and business-quality gates. */
+  public void markAnalysisReady() {
+    Instant now = Instant.now();
+    this.lastSuccessAt = now;
+    this.lastFailureCode = null;
+    this.lastValidatedAnalysisAt = now;
+    this.lastAnalysisErrorCode = null;
+    this.lastAnalysisState = "READY";
+  }
+
+  /** Records a provider response rejected by the local JSON or business-quality contract. */
+  public void markAnalysisResponseRejected(String errorCode) {
+    markFailure(errorCode);
+    this.lastAnalysisErrorCode = safeErrorCode(errorCode);
+    this.lastAnalysisState = "RESPONSE_REJECTED";
+  }
+
+  /** Records a failed provider call after configuration has already been confirmed. */
+  public void markAnalysisUpstreamError(String errorCode) {
+    markFailure(errorCode);
+    this.lastAnalysisErrorCode = safeErrorCode(errorCode);
+    this.lastAnalysisState = "UPSTREAM_ERROR";
+  }
+
+  /**
+   * Runtime status intentionally reflects the last complete analysis outcome, not just whether a
+   * key exists or the upstream returned HTTP 200.
+   */
+  public String getAnalysisState() {
+    if (!isConfigured()) return "NOT_CONFIGURED";
+    if (lastAnalysisState == null || lastAnalysisState.isBlank()) return "CONFIGURED";
+    return lastAnalysisState;
+  }
+
+  public Instant getLastValidatedAnalysisAt() {
+    return lastValidatedAnalysisAt;
+  }
+
+  public String getLastAnalysisErrorCode() {
+    return lastAnalysisErrorCode;
+  }
+
   public String getBaseUrlHost() {
     try {
       java.net.URI uri = java.net.URI.create(baseUrl);
@@ -172,5 +234,9 @@ public class DeepSeekProperties {
       return "https://api.deepseek.com";
     }
     return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
+  }
+
+  private String safeErrorCode(String value) {
+    return value == null ? "" : value.replaceAll("[^A-Z0-9_]", "").trim();
   }
 }

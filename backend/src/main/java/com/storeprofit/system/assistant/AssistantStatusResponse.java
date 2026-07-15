@@ -10,6 +10,7 @@ public record AssistantStatusResponse(
     String baseUrlHost,
     long timeout,
     Instant lastSuccessAt,
-    String lastErrorCode
+    String lastErrorCode,
+    String state
 ) {
 }

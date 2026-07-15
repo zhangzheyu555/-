@@ -520,6 +520,22 @@ public class ExamCenterRepository {
         """, attemptId, amount(score), passed, tenantId, assignmentId) > 0;
   }
 
+  public boolean scheduleAssignmentRetake(
+      long tenantId,
+      long assignmentId,
+      long attemptId,
+      BigDecimal score,
+      java.time.LocalDateTime retakeAvailableAt
+  ) {
+    return jdbcTemplate.update("""
+        update training_exam_assignment
+        set status = 'RETAKE_PENDING', attempt_id = ?, score = ?, passed = 0,
+            retake_available_at = ?, updated_at = current_timestamp
+        where tenant_id = ? and id = ? and completed_at is null
+        """, attemptId, amount(score), java.sql.Timestamp.valueOf(retakeAvailableAt),
+        tenantId, assignmentId) > 0;
+  }
+
   public boolean submitAssignmentForReview(
       long tenantId,
       long assignmentId,
@@ -589,13 +605,15 @@ public class ExamCenterRepository {
                case
                   when a.completed_at is not null then 'COMPLETED'
                   when a.status = 'REVIEW_PENDING' then 'REVIEW_PENDING'
-                 when c.due_at < current_timestamp then 'OVERDUE'
+                  when a.status = 'RETAKE_PENDING' and a.retake_available_at > current_timestamp then 'RETAKE_PENDING'
+                  when c.due_at < current_timestamp then 'OVERDUE'
                  when c.start_at > current_timestamp then 'NOT_STARTED'
                  else 'ASSIGNED'
                end as resolved_status,
                date_format(c.start_at, '%Y-%m-%d %H:%i:%s') as start_at,
                date_format(c.due_at, '%Y-%m-%d %H:%i:%s') as due_at,
                date_format(a.completed_at, '%Y-%m-%d %H:%i:%s') as completed_at,
+               date_format(a.retake_available_at, '%Y-%m-%d %H:%i:%s') as retake_available_at,
                a.attempt_id, a.score, a.passed
         from training_exam_assignment a
         join training_exam_campaign c
@@ -630,7 +648,8 @@ public class ExamCenterRepository {
         rs.getString("completed_at"),
         attemptId,
         score == null ? null : amount(score),
-        passed
+        passed,
+        rs.getString("retake_available_at")
     );
   }
 
@@ -675,6 +694,7 @@ public class ExamCenterRepository {
       case "NOT_STARTED" -> "未开始";
       case "COMPLETED" -> "已完成";
       case "REVIEW_PENDING" -> "待阅卷";
+      case "RETAKE_PENDING" -> "违规待重考";
       case "OVERDUE" -> "已逾期";
       default -> status;
     };

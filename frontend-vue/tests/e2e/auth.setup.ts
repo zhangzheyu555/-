@@ -30,6 +30,7 @@ export const roles: RoleConfig[] = [
       '督导巡店',
       '门店经营助手',
       '数据录入',
+      '导入月度汇总',
       '报销栏',
       '数据导出',
       '门店管理',
@@ -46,7 +47,7 @@ export const roles: RoleConfig[] = [
     username: env.E2E_FINANCE_USERNAME || '',
     password: env.E2E_FINANCE_PASSWORD || '',
     expectedPath: '/finance',
-    expectedMenus: ['财务工作台', '报销栏', '利润表', '员工工资', '数据导出', '门店经营助手'],
+    expectedMenus: ['财务工作台', '报销栏', '利润表', '导入月度汇总', '员工工资', '数据导出', '门店经营助手'],
     forbiddenMenus: ['今日待办', '老板工作台', '仓库中心', '物料档案', '采购入库', '账号权限'],
     layout: 'app',
   },
@@ -56,7 +57,7 @@ export const roles: RoleConfig[] = [
     password: env.E2E_WAREHOUSE_PASSWORD || '',
     expectedPath: '/warehouse',
     expectedMenus: ['仓库中心', '门店经营助手'],
-    forbiddenMenus: ['今日待办', '老板工作台', '财务工作台', '员工工资', '督导巡店', '账号权限'],
+    forbiddenMenus: ['今日待办', '老板工作台', '财务工作台', '员工工资', '督导巡店', '账号权限', '导入月度汇总'],
     layout: 'app',
   },
   {
@@ -65,7 +66,7 @@ export const roles: RoleConfig[] = [
     password: env.E2E_STORE_PASSWORD || '',
     expectedPath: '/store',
     expectedMenus: ['门店工作台', '仓库中心', '本店工资核对', '门店详情', '巡检记录', '培训考试', '门店经营助手'],
-    forbiddenMenus: ['老板工作台', '财务工作台', '仓库工作台', '总仓库存', '物料档案', '采购入库', '账号权限'],
+    forbiddenMenus: ['老板工作台', '财务工作台', '仓库工作台', '总仓库存', '物料档案', '采购入库', '账号权限', '导入月度汇总'],
     layout: 'app',
   },
   {
@@ -74,7 +75,7 @@ export const roles: RoleConfig[] = [
     password: env.E2E_OPERATIONS_PASSWORD || '',
     expectedPath: '/operations',
     expectedMenus: ['运营工作台', '仓库中心', '督导巡店', '培训考试', '平台配置', '门店经营助手'],
-    forbiddenMenus: ['决策支持', '今日待办', '财务工作台', '员工工资', '账号权限'],
+    forbiddenMenus: ['决策支持', '今日待办', '财务工作台', '员工工资', '账号权限', '导入月度汇总'],
     layout: 'app',
   },
   {
@@ -83,7 +84,7 @@ export const roles: RoleConfig[] = [
     password: env.E2E_LEARNER_PASSWORD || '',
     expectedPath: '/learn/exams',
     expectedMenus: ['我的学习与考试'],
-    forbiddenMenus: ['老板工作台', '财务工作台', '仓库工作台', '门店工作台', '运营工作台', '账号权限'],
+    forbiddenMenus: ['老板工作台', '财务工作台', '仓库工作台', '门店工作台', '运营工作台', '账号权限', '导入月度汇总'],
     layout: 'learner',
   },
 ]

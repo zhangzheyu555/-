@@ -111,6 +111,7 @@ public class InspectionRecordRepository {
          and scale_audit.inspection_record_id = ir.id
          and scale_audit.migration_key = 'V41_100_TO_200'
         where ir.tenant_id = :tenantId
+          and ir.test_marker is null
         """);
     MapSqlParameterSource params = new MapSqlParameterSource("tenantId", tenantId);
     if (dateFrom != null && !dateFrom.isBlank()) {
@@ -308,6 +309,61 @@ public class InspectionRecordRepository {
         """, this::mapSnapshotItem, tenantId, inspectionRecordId);
   }
 
+  /**
+   * Evidence-only write path for historical records.  It intentionally updates a single JSON
+   * field instead of replacing snapshots, so score, deduction, standard version, red-line and
+   * rectification facts remain byte-for-byte as they were recorded.
+   */
+  public void updateSnapshotEvidenceIds(
+      long tenantId,
+      String inspectionRecordId,
+      long standardItemId,
+      List<Long> attachmentIds
+  ) {
+    int updated = jdbcTemplate.update("""
+        update inspection_record_standard_snapshot
+           set photo_attachment_ids_json = ?
+         where tenant_id = ? and inspection_record_id = ? and standard_id = ?
+        """, idsJson(attachmentIds), tenantId, inspectionRecordId, standardItemId);
+    if (updated != 1) {
+      throw new IllegalStateException("Inspection snapshot evidence target was not unique");
+    }
+  }
+
+  /**
+   * Evidence-only write path keyed on the snapshot row primary key ({@code id}).
+   * This is the only safe path when {@code standard_id} is NULL in the snapshot
+   * (common for early migrated records that retained rows but lost their standard
+   * item reference).
+   */
+  public void updateSnapshotEvidenceIdsBySnapshotId(
+      long tenantId,
+      String inspectionRecordId,
+      long snapshotId,
+      List<Long> attachmentIds
+  ) {
+    int updated = jdbcTemplate.update("""
+        update inspection_record_standard_snapshot
+           set photo_attachment_ids_json = ?
+         where tenant_id = ? and inspection_record_id = ? and id = ?
+        """, idsJson(attachmentIds), tenantId, inspectionRecordId, snapshotId);
+    if (updated != 1) {
+      throw new IllegalStateException("Inspection snapshot evidence target was not unique");
+    }
+  }
+
+  /** Updates only the record's evidence collection; never invokes the normal score upsert. */
+  public void updateRecordPhotosJson(long tenantId, String inspectionRecordId, String photosJson) {
+    int updated = jdbcTemplate.update("""
+        update inspection_record
+           set photos_json = ?, updated_at = current_timestamp
+         where tenant_id = ? and id = ?
+        """, blankToNull(photosJson), tenantId, inspectionRecordId);
+    if (updated != 1) {
+      throw new IllegalStateException("Inspection record evidence target was not unique");
+    }
+  }
+
   public boolean insertRepairAudit(
       long tenantId,
       String inspectionRecordId,
@@ -333,14 +389,14 @@ public class InspectionRecordRepository {
           inspectionRecordId,
           repair.originalStandardVersionId(),
           blankToNull(repair.originalStandardVersion()),
-          amount(repair.originalFullScore()),
+          nullableAmount(repair.originalFullScore()),
           nullableAmount(repair.originalPassScore()),
-          amount(repair.originalScore()),
+          nullableAmount(repair.originalScore()),
           nullableAmount(repair.originalMaterialScore()),
           nullableAmount(repair.originalHygieneScore()),
           nullableAmount(repair.originalServiceScore()),
           blankToNull(repair.originalResultCode()),
-          repair.originalPassed() ? 1 : 0,
+          repair.originalPassed() == null ? null : repair.originalPassed() ? 1 : 0,
           repair.repairedStandardVersionId(),
           blankToNull(repair.repairedStandardVersion()),
           nullableAmount(repair.repairedFullScore()),
@@ -657,7 +713,7 @@ public class InspectionRecordRepository {
         nullableAmount(rs.getBigDecimal("repair_original_hygiene_score")),
         nullableAmount(rs.getBigDecimal("repair_original_service_score")),
         rs.getString("repair_original_result_code"),
-        rs.getInt("repair_original_passed") != 0,
+        getBooleanOrNull(rs, "repair_original_passed"),
         getLongOrNull(rs, "repair_repaired_standard_version_id"),
         rs.getString("repair_repaired_standard_version"),
         nullableAmount(rs.getBigDecimal("repair_repaired_full_score")),
@@ -708,6 +764,7 @@ public class InspectionRecordRepository {
 
   private InspectionItemResultResponse mapSnapshotItem(ResultSet rs, int rowNum) throws SQLException {
     java.sql.Date deadline = rs.getDate("rectification_deadline");
+    BigDecimal deductionScore = nullableAmount(rs.getBigDecimal("actual_deduction_score"));
     return new InspectionItemResultResponse(
         rs.getLong("id"),
         getLongOrNull(rs, "standard_id"),
@@ -716,10 +773,10 @@ public class InspectionRecordRepository {
         rs.getString("standard_title"),
         rs.getString("standard_description"),
         rs.getString("check_method"),
-        amount(rs.getBigDecimal("suggested_score")),
-        amount(rs.getBigDecimal("actual_score")),
-        amount(rs.getBigDecimal("actual_deduction_score")),
-        rs.getBigDecimal("actual_deduction_score").signum() > 0
+        nullableAmount(rs.getBigDecimal("suggested_score")),
+        nullableAmount(rs.getBigDecimal("actual_score")),
+        deductionScore,
+        (deductionScore != null && deductionScore.signum() > 0)
             || (rs.getString("problem_description") != null
                 && !rs.getString("problem_description").isBlank()),
         rs.getString("risk_level"),

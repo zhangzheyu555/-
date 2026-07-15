@@ -70,8 +70,9 @@ public class AssistantController {
         deepSeekProperties.getModel(),
         deepSeekProperties.getBaseUrlHost(),
         deepSeekProperties.getTimeout().toSeconds(),
-        deepSeekProperties.getLastSuccessAt(),
-        deepSeekProperties.getLastErrorCode()
+        deepSeekProperties.getLastValidatedAnalysisAt(),
+        deepSeekProperties.getLastAnalysisErrorCode(),
+        deepSeekProperties.getAnalysisState()
     ));
   }
 

@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPost, http } from './http'
+import { apiDelete, apiGet, apiPost, apiPostForm, http } from './http'
 
 export interface ExamPaperSummary {
   id: number
@@ -86,7 +86,7 @@ export interface ExamAssignment {
   examineeRole: string
   storeId: string
   storeName: string
-  status: 'NOT_STARTED' | 'ASSIGNED' | 'COMPLETED' | 'OVERDUE'
+  status: 'NOT_STARTED' | 'ASSIGNED' | 'COMPLETED' | 'OVERDUE' | 'REVIEW_PENDING' | 'RETAKE_PENDING'
   statusLabel: string
   startAt: string
   dueAt: string
@@ -94,6 +94,7 @@ export interface ExamAssignment {
   attemptId?: number
   score?: number
   passed?: boolean
+  retakeAvailableAt?: string
 }
 
 export interface ExamCenterOverview {
@@ -210,6 +211,57 @@ export interface TrainingMaterialRecord {
 }
 
 export type TrainingMaterialPayload = Omit<TrainingMaterialRecord, 'id' | 'learnedCount'> & { id?: number }
+
+export interface TrainingVideo {
+  id: number
+  videoCode: string
+  courseId?: number
+  courseTitle?: string
+  title: string
+  category?: string
+  description?: string
+  fileName: string
+  contentType: string
+  fileSize: number
+  durationSeconds?: number
+  enabled: boolean
+  sortOrder: number
+  createdAt?: string
+  myWatchedSeconds: number
+  myLastPosition: number
+  myPercent: number
+  myCompleted: boolean
+}
+
+export interface TrainingVideoUploadPayload {
+  file: File
+  title?: string
+  category?: string
+  courseId?: number
+  sortOrder?: number
+}
+
+export interface TrainingVideoProgress {
+  videoId: number
+  watchedSeconds: number
+  lastPosition: number
+  percent: number
+  completed: boolean
+}
+
+export interface TrainingVideoViewerRow {
+  userId: number
+  userName: string
+  storeId?: string
+  storeName?: string
+  videoId: number
+  videoTitle: string
+  videoCategory?: string
+  watchedSeconds: number
+  percent: number
+  completed: boolean
+  lastWatchedAt?: string
+}
 
 export interface ExamQuestionCategory {
   id: number
@@ -365,6 +417,48 @@ export function getTrainingMaterials() {
 
 export function saveTrainingMaterial(payload: TrainingMaterialPayload) {
   return apiPost<TrainingMaterialRecord, TrainingMaterialPayload>('/api/exam-center/materials', payload)
+}
+
+export function getTrainingVideos() {
+  return apiGet<TrainingVideo[]>('/api/exam-center/videos')
+}
+
+export function uploadTrainingVideo(payload: TrainingVideoUploadPayload, onProgress?: (percent: number) => void) {
+  const form = new FormData()
+  form.append('file', payload.file, payload.file.name)
+  if (payload.title?.trim()) form.append('title', payload.title.trim())
+  if (payload.category?.trim()) form.append('category', payload.category.trim())
+  if (payload.courseId) form.append('courseId', String(payload.courseId))
+  if (payload.sortOrder != null) form.append('sortOrder', String(payload.sortOrder))
+  return apiPostForm<TrainingVideo>('/api/exam-center/videos', form, {
+    timeout: 300_000,
+    onUploadProgress: (event) => {
+      if (!onProgress) return
+      if (!event.total) return onProgress(0)
+      onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)))
+    },
+  })
+}
+
+export function deleteTrainingVideo(videoId: number) {
+  return apiDelete<boolean>(`/api/exam-center/videos/${videoId}`)
+}
+
+// 播放请求携带现有登录凭据，视频地址本身不公开且不包含令牌。
+export async function fetchTrainingVideoBlob(videoId: number) {
+  const response = await http.get<Blob>(`/api/exam-center/videos/${videoId}/content`, {
+    responseType: 'blob',
+    timeout: 300_000,
+  })
+  return response.data
+}
+
+export function reportTrainingVideoProgress(videoId: number, payload: { positionSeconds: number; durationSeconds: number }) {
+  return apiPost<TrainingVideoProgress, typeof payload>(`/api/exam-center/videos/${videoId}/progress`, payload)
+}
+
+export function getTrainingVideoProgressReport() {
+  return apiGet<TrainingVideoViewerRow[]>('/api/exam-center/videos/progress-report')
 }
 
 export function getExamQuestionCategories() {

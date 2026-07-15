@@ -86,6 +86,24 @@ const invalidStandard = {
   items: createInvalidStandardItems(),
 }
 
+/**
+ * Code-owned export fixture for the browser regression.  It deliberately has the same ID as
+ * the old database-only E2E sample, but it is a complete immutable 200-point record rather
+ * than a shortcut around the historical-report export gate.
+ */
+const canonicalExportStandard = {
+  ...standard,
+  id: 20260701,
+  title: '2026年巡检正式标准',
+  version: '2026.07-R1',
+  effectiveDate: '2026-07-01',
+  items: createValidStandardItems().map((item) => {
+    if (item.id === 1) return { ...item, suggestedScore: 4 }
+    if (item.id === 2) return { ...item, suggestedScore: 33 }
+    return item
+  }),
+}
+
 const bossUser = {
   id: 9001,
   tenantId: 1,
@@ -230,46 +248,80 @@ test('latest 200-point standard calculates 180/179 and red-line result while sav
   expect(photosJson).toContain('"attachmentId":501')
 })
 
-test('record detail shows version/category scores and downloads xlsx with authenticated blob request', async ({ page }) => {
+test('canonical E2E red-line fixture uses a complete formal standard and downloads xlsx with an authenticated request', async ({ page }) => {
   let requestedDetailId = ''
+  let exportAuthorization = ''
+  const recordId = 'e2e-seed-redline-inspection'
   const listRecord = {
-    id: 'INS-2025', storeId: 'STORE-1', storeName: '测试门店', brand: '茹菓', inspectionDate: '2026-07-13', inspector: '测试督导',
-    fullScore: 200, score: 179, maxScore: 200, passScore: 180, passed: false, resultCode: 'FAILED', standardVersionId: 20251106, standardVersion: '2025.11.06',
-    materialScore: 37, hygieneScore: 63, serviceScore: 79, photosJson: '[]', note: '', repairStatus: 'REPAIRED', repairAuditId: 801,
-    deductionsJson: JSON.stringify([{ standardId: 88, standardTitle: '旧JSON条款', suggestedScore: 100, deduct: 98, issue: '旧JSON错误分值' }]),
+    id: recordId, storeId: 'STORE-1', storeName: '测试门店', brand: '茹菓', inspectionDate: '2026-07-13', inspector: 'E2E-SEED 督导',
+    fullScore: 200, score: 196, maxScore: 200, passScore: 180, passed: false, resultCode: 'RED_LINE_FAILED', standardVersionId: canonicalExportStandard.id, standardVersion: canonicalExportStandard.version,
+    materialScore: 33, hygieneScore: 63, serviceScore: 100, photosJson: '[]', note: '正式红线导出回归样本', repairStatus: 'NOT_NEEDED',
+    deductionsJson: JSON.stringify([{ standardId: 1, standardTitle: 'M-RED-01 检查条款', suggestedScore: 4, actualScore: 0, deduct: 4, issue: '食安红线：E2E 导出回归' }]),
+    redlinesJson: JSON.stringify([{ standardId: 1, standardTitle: 'M-RED-01 检查条款', issue: '食安红线：E2E 导出回归' }]),
     itemResults: [],
   }
   const detailRecord = {
     ...listRecord,
-    itemResults: standard.items.map((item) => ({ standardItemId: item.id, code: item.code, dimension: item.dimension, categoryName: item.dimension.replace('标准', ''), categoryCode: item.dimension.includes('物料') ? 'MATERIAL' : item.dimension.includes('卫生') ? 'HYGIENE' : 'SERVICE', title: item.title, standardScore: item.suggestedScore, actualScore: item.id === 88 ? 79 : item.suggestedScore, deductionReason: item.id === 88 ? '服务动作不规范' : '', riskLevel: item.riskLevel, issueFound: false, photoAttachmentIds: [] })),
+    itemResults: canonicalExportStandard.items.map((item) => {
+      const redLineHit = item.id === 1
+      return {
+        snapshotId: item.id,
+        standardItemId: item.id,
+        code: item.code,
+        dimension: item.dimension,
+        categoryName: item.dimension.replace('标准', ''),
+        categoryCode: item.dimension.includes('物料') ? 'MATERIAL' : item.dimension.includes('卫生') ? 'HYGIENE' : 'SERVICE',
+        title: item.title,
+        standardScore: item.suggestedScore,
+        actualScore: redLineHit ? 0 : item.suggestedScore,
+        deductionScore: redLineHit ? 4 : 0,
+        deductionReason: redLineHit ? '食安红线：E2E 导出回归' : '',
+        riskLevel: item.riskLevel,
+        issueFound: redLineHit,
+        redLineHit,
+        photoAttachmentIds: [],
+      }
+    }),
   }
-  await mockInspectionApi(page, [listRecord], undefined, standard, undefined, { 'INS-2025': detailRecord }, (recordId) => { requestedDetailId = recordId })
-  await page.route('**/api/inspections/INS-2025/export.xlsx', (route) => route.fulfill({
-    status: 200,
-    headers: { 'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'content-disposition': "attachment; filename*=UTF-8''%E8%8C%B9%E8%8F%93-%E6%B5%8B%E8%AF%95%E9%97%A8%E5%BA%97.xlsx" },
-    body: Buffer.from('xlsx-content'),
-  }))
+  await mockInspectionApi(page, [listRecord], undefined, canonicalExportStandard, undefined, { [recordId]: detailRecord }, (id) => { requestedDetailId = id })
+  await page.route(`**/api/inspections/${recordId}/export.xlsx`, (route) => {
+    exportAuthorization = route.request().headers().authorization ?? ''
+    return route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'content-disposition': "attachment; filename*=UTF-8''%E8%8C%B9%E8%8F%93-%E6%B5%8B%E8%AF%95%E9%97%A8%E5%BA%97.xlsx" },
+      body: Buffer.from('xlsx-content'),
+    })
+  })
   await seedSession(page)
   await page.goto('/operations/inspection/records')
   await page.getByRole('row', { name: /测试门店/ }).click()
 
-  await expect.poll(() => requestedDetailId).toBe('INS-2025')
-  await expect(page.getByText('2025.11.06')).toBeVisible()
-  await expect(page.getByText('37 / 37')).toBeVisible()
-  await expect(page.getByText('63 / 63')).toBeVisible()
-  await expect(page.getByText('79 / 100')).toBeVisible()
-  await expect(page.locator('.inspection-detail-grid').getByText('179 / 200')).toBeVisible()
+  await expect.poll(() => requestedDetailId).toBe(recordId)
+  await expect(page.getByText('2026.07-R1')).toBeVisible()
   await expect(page.getByText('当时使用的完整标准快照（105条）')).toBeVisible()
-  await expect(page.getByRole('cell', { name: '服务动作不规范' })).toBeVisible()
-  await expect(page.getByText(/旧JSON错误分值|扣 98 分/)).toHaveCount(0)
+  await expect(page.locator('.inspection-detail-grid').getByText('33 / 37', { exact: true })).toBeVisible()
+  await expect(page.locator('.inspection-detail-grid').getByText('63 / 63', { exact: true })).toBeVisible()
+  await expect(page.locator('.inspection-detail-grid').getByText('100 / 100', { exact: true })).toBeVisible()
+  await expect(page.locator('.inspection-detail-grid').getByText('196 / 200')).toBeVisible()
+  await expect(page.locator('.inspection-detail-grid').getByText('1 / 0', { exact: true })).toBeVisible()
+  await expect(page.getByRole('cell', { name: '食安红线：E2E 导出回归' })).toBeVisible()
+  await expect(page.getByText('扣 4 分', { exact: true })).toBeVisible()
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(page.getByText('2026.07-R1')).toBeVisible()
+  await expect(page.getByRole('button', { name: '导出Excel' })).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true)
 
   const downloadPromise = page.waitForEvent('download')
   await page.getByRole('button', { name: '导出Excel' }).click()
   const download = await downloadPromise
   expect(download.suggestedFilename()).toBe('茹菓-测试门店.xlsx')
+  // The browser fixture cannot observe a server-side operation log; it does prove the download
+  // uses the authenticated API path. InspectionExportServiceTest covers the persisted log write.
+  expect(exportAuthorization).toBe('Bearer TEST-INSPECTION-TOKEN')
 })
 
-test('inspection export decodes a JSON score-repair error returned as a blob', async ({ page }) => {
+test('inspection export preserves 409 score-repair details and requires manual score repair', async ({ page }) => {
   const incompleteRecord = {
     id: 'INS-SCORE-REPAIR',
     storeId: 'STORE-1',
@@ -287,12 +339,12 @@ test('inspection export decodes a JSON score-repair error returned as a blob', a
   }
   await mockInspectionApi(page, [incompleteRecord])
   await page.route('**/api/inspections/INS-SCORE-REPAIR/export.xlsx', (route) => route.fulfill({
-    status: 422,
+    status: 409,
     contentType: 'application/json; charset=UTF-8',
     body: JSON.stringify({
       success: false,
       code: 'INSPECTION_SCORE_REPAIR_REQUIRED',
-      message: '评分数据待修复：缺少满分、合格线',
+      message: '评分数据待修复：标准快照版本、标准快照条款 ID',
       data: null,
     }),
   }))
@@ -301,8 +353,50 @@ test('inspection export decodes a JSON score-repair error returned as a blob', a
   await page.getByRole('row', { name: /测试门店/ }).click()
 
   await page.getByRole('button', { name: '导出Excel' }).click()
-  await expect(page.getByText('该巡检记录评分数据不完整，请先修复评分后再导出。缺失项：缺少满分、合格线')).toBeVisible()
+  await expect(page.getByText('该巡检记录评分数据不完整，缺失项：标准快照版本、标准快照条款 ID。需人工修复评分后导出。')).toBeVisible()
+  await expect(page.getByText('数据已发生变化，请刷新后重试')).toHaveCount(0)
   await expect(page.getByText('巡检报告导出失败，请稍后重试。')).toHaveCount(0)
+})
+
+test('inspection export labels only an optimistic-lock conflict as refresh and retry', async ({ page }) => {
+  const completeRecord = {
+    id: 'INS-EXPORT-CONFLICT',
+    storeId: 'STORE-1',
+    storeName: '测试门店',
+    brand: '茹菓',
+    inspectionDate: '2026-07-13',
+    inspector: '测试督导',
+    score: 200,
+    fullScore: 200,
+    maxScore: 200,
+    passScore: 180,
+    passed: true,
+    resultCode: 'PASSED',
+    standardVersionId: 20251106,
+    standardVersion: '2025.11.06',
+    deductionsJson: '[]',
+    redlinesJson: '[]',
+    photosJson: '[]',
+    itemResults: [],
+  }
+  await mockInspectionApi(page, [completeRecord])
+  await page.route('**/api/inspections/INS-EXPORT-CONFLICT/export.xlsx', (route) => route.fulfill({
+    status: 409,
+    contentType: 'application/json; charset=UTF-8',
+    body: JSON.stringify({
+      success: false,
+      code: 'INSPECTION_RECORD_CONFLICT',
+      message: '巡检记录版本冲突',
+      data: null,
+    }),
+  }))
+  await seedSession(page)
+  await page.goto('/operations/inspection/records')
+  await page.getByRole('row', { name: /测试门店/ }).click()
+
+  await page.getByRole('button', { name: '导出Excel' }).click()
+  await expect(page.getByText('数据已发生变化，请刷新后重试')).toBeVisible()
+  await expect(page.getByText(/需人工修复评分后导出/)).toHaveCount(0)
 })
 
 test('invalid 105-item standard remains visible with category diagnostics and blocks new inspection saving', async ({ page }) => {

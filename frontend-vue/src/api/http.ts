@@ -112,13 +112,17 @@ http.interceptors.response.use(
     // 文件下载使用 responseType: 'blob'。后端返回 JSON 业务错误时，Axios 仍会把
     // 它交给前端一个 Blob；先还原 JSON，才能保留业务错误码和可操作的中文说明。
     const responseData = await decodeBlobErrorPayload(error.response?.data)
-    const timedOut = error.code === 'ECONNABORTED' || /timeout\s+of\s+\d+ms\s+exceeded/i.test(error.message || '')
+    const timedOut = ['ECONNABORTED', 'ETIMEDOUT'].includes(error.code || '')
+      || /timeout\s+of\s+\d+ms\s+exceeded/i.test(error.message || '')
     const rawMessage = timedOut
-      ? '文件解析超时，请重试'
+      ? '请求超时，请稍后重试'
       : extractResponseMessage(responseData) || error.message || '接口请求失败'
-    const message = normalizeApiMessage(rawMessage, status)
     const requestId = extractRequestId(responseData)
-    const code = extractResponseCode(responseData)
+    // Keep timeout semantics explicit for callers that need a business-specific recovery hint.
+    // File imports apply their own wording in ProfitImportDrawer; the shared client must not
+    // incorrectly describe every slow request as a file parsing failure.
+    const code = timedOut ? 'REQUEST_TIMEOUT' : extractResponseCode(responseData)
+    const message = normalizeApiMessage(rawMessage, status, code)
 
     const logPayload: Record<string, unknown> = {
       method: error.config?.method?.toUpperCase(),
@@ -142,7 +146,7 @@ http.interceptors.response.use(
 
         if (router.currentRoute.value.name !== 'login') {
           const currentPath = router.currentRoute.value.fullPath
-          void router.push({ name: 'login', query: { redirect: currentPath } })
+          void router.push({ name: 'login', query: { redirect: currentPath, reason: 'SESSION_EXPIRED' } })
         }
 
         setTimeout(() => {
@@ -206,11 +210,16 @@ const technicalMessagePatterns = [
   /errorresponse\$builder/i,
 ]
 
-function normalizeApiMessage(message: string, status?: number) {
+function normalizeApiMessage(message: string, status?: number, code?: string) {
+  if (code === 'BACKEND_UNAVAILABLE') return '服务暂时不可用，请确认本机服务已启动后刷新页面'
   if (status === 401) return '登录已失效，请重新登录'
   if (status === 403) return '当前账号没有访问该数据或执行此操作的权限，如需访问请联系老板调整权限'
   if (status === 404) return '未找到相关数据'
-  if (status === 409) return '数据已发生变化，请刷新后重试'
+  if (code === 'INSPECTION_SCORE_REPAIR_REQUIRED') return message || '评分数据待修复'
+  // 409 also represents repair gates for historical records. Only an explicit
+  // optimistic-lock conflict is safe to turn into a refresh-and-retry message;
+  // all other business codes must retain the actionable reason returned by API.
+  if (code === 'INSPECTION_RECORD_CONFLICT') return '数据已发生变化，请刷新后重试'
   if (technicalMessagePatterns.some((pattern) => pattern.test(message))) {
     return status && status >= 500 ? '系统处理失败，请稍后重试' : '数据请求失败，请稍后重试'
   }

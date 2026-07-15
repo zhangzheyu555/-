@@ -249,8 +249,46 @@ test('store manager detail and assistant ignore another store from the URL and r
   expect(financeUrl?.searchParams.get('storeId')).toBe('rg1')
 })
 
+test('store manager cannot enter store management even with a stale store.manage permission', async ({ page }) => {
+  await prepare(page, {
+    ...managerSession,
+    permissions: [...managerSession.permissions, 'store.manage'],
+  })
+
+  await page.goto('/stores')
+
+  await expect.poll(() => new URL(page.url()).pathname).toBe('/store')
+  await expect(page.getByRole('alert')).toHaveText('当前账号无权进入门店管理，已返回本店工作台。')
+  await expect(page.locator('.app-sidebar--desktop')).not.toContainText('门店管理')
+  await expect(page.getByRole('button', { name: '清空全部数据' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '删除' })).toHaveCount(0)
+})
+
+test('store management remains hidden from the store manager mobile navigation', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await prepare(page, {
+    ...managerSession,
+    permissions: [...managerSession.permissions, 'store.manage'],
+  })
+
+  await page.goto('/stores')
+  await expect.poll(() => new URL(page.url()).pathname).toBe('/store')
+  await expect(page.getByRole('alert')).toHaveText('当前账号无权进入门店管理，已返回本店工作台。')
+
+  await page.getByRole('button', { name: '打开菜单' }).click()
+  await expect(page.locator('.app-sidebar--mobile')).not.toContainText('门店管理')
+  await expect(page.getByRole('button', { name: '清空全部数据' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '删除' })).toHaveCount(0)
+})
+
 test('boss retains store and brand selectors on the same pages', async ({ page }) => {
   await prepare(page, bossSession)
+
+  await page.goto('/stores')
+  await expect(page.getByRole('button', { name: '清空全部数据' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '编辑' }).first()).toBeVisible()
+  await expect(page.getByRole('button', { name: '停用' }).first()).toBeVisible()
+  await expect(page.getByRole('button', { name: '删除' }).first()).toBeVisible()
 
   await page.goto('/store-detail')
   await expect(page.locator('.store-detail-page').getByLabel('品牌')).toBeVisible()

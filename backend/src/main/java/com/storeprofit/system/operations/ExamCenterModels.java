@@ -135,7 +135,8 @@ public final class ExamCenterModels {
       String completedAt,
       Long attemptId,
       BigDecimal score,
-      Boolean passed
+      Boolean passed,
+      String retakeAvailableAt
   ) {
   }
 

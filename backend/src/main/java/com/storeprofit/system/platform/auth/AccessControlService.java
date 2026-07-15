@@ -64,12 +64,75 @@ public class AccessControlService {
     requirePermission(user, PermissionCodes.FINANCE_PROFIT_READ, "查看经营数据");
   }
 
+  /**
+   * Profit data entry (manual save, monthly import commit, modify, delete) is limited to
+   * BOSS and FINANCE.  Store managers keep read-only access to their own store but can
+   * never write profit data — even if a stale personal ALLOW or legacy role template still
+   * carries {@link PermissionCodes#FINANCE_PROFIT_WRITE}.
+   */
   public void requireFinanceWrite(AuthUser user) {
     requirePermission(user, PermissionCodes.FINANCE_PROFIT_WRITE, "录入经营数据");
+    if (!isBoss(user) && !hasAnyRole(user, "FINANCE")) {
+      deny(
+          user,
+          "录入经营数据",
+          "API",
+          PermissionCodes.FINANCE_PROFIT_WRITE,
+          null,
+          "经营数据录入仅限财务或老板；店长可查看本店经营结果"
+      );
+    }
   }
 
+  /**
+   * Monthly imports can overwrite a complete accounting period, so they remain a finance-office
+   * responsibility. Store managers retain {@link #requireFinanceWrite(AuthUser)} for manual
+   * entry of their own store, but cannot use an import endpoint even if a personal override
+   * attempts to grant the dedicated import permission.
+   */
+  public void requireFinanceImport(AuthUser user) {
+    requirePermission(user, PermissionCodes.FINANCE_PROFIT_IMPORT, "导入经营数据");
+    if (!hasAnyRole(user, "FINANCE")) {
+      deny(
+          user,
+          "导入经营数据",
+          "API",
+          PermissionCodes.FINANCE_PROFIT_IMPORT,
+          null,
+          "月度经营数据导入仅限财务或老板"
+      );
+    }
+    // The eventual commit delegates to FinanceService.save(). Check the write permission here,
+    // before a file is accepted or a preview job is allocated, so a finance user with an
+    // explicit write DENY receives one clear, auditable refusal at the import boundary.
+    requireFinanceWrite(user);
+  }
+
+  /** Deletion of profit entries follows the same BOSS-or-FINANCE boundary as writes. */
   public void requireFinanceDelete(AuthUser user) {
     requirePermission(user, PermissionCodes.FINANCE_PROFIT_DELETE, "删除经营数据");
+    if (!isBoss(user) && !hasAnyRole(user, "FINANCE")) {
+      deny(
+          user,
+          "删除经营数据",
+          "API",
+          PermissionCodes.FINANCE_PROFIT_DELETE,
+          null,
+          "经营数据删除仅限财务或老板"
+      );
+    }
+  }
+
+  public void requireDailyLossRead(AuthUser user) {
+    requirePermission(user, PermissionCodes.DAILY_LOSS_READ, "查看每日报损");
+  }
+
+  public void requireDailyLossCreate(AuthUser user) {
+    requirePermission(user, PermissionCodes.DAILY_LOSS_CREATE, "提交每日报损");
+  }
+
+  public void requireDailyLossReview(AuthUser user) {
+    requirePermission(user, PermissionCodes.DAILY_LOSS_REVIEW, "复核每日报损");
   }
 
   public void requireExpenseRead(AuthUser user) {
@@ -191,7 +254,19 @@ public class AccessControlService {
   }
 
   public void requireStoreManage(AuthUser user) {
-    requirePermission(user, PermissionCodes.STORE_MANAGE, "维护门店档案");
+    // 门店档案会影响全租户的业务边界、供货仓关系与历史业务归属。即使旧角色模板
+    // 或个人 ALLOW 覆盖中仍有 store.manage，也不能把该管理能力下放给非老板账号。
+    if (isBoss(user)) {
+      return;
+    }
+    deny(
+        user,
+        "维护门店档案",
+        "API",
+        PermissionCodes.STORE_MANAGE,
+        null,
+        "门店档案管理仅限老板（系统管理员）"
+    );
   }
 
   public void requireEmployeeRead(AuthUser user) {
@@ -260,6 +335,25 @@ public class AccessControlService {
 
   public void requireAssistantUse(AuthUser user) {
     requirePermission(user, PermissionCodes.ASSISTANT_USE, "使用门店经营助手");
+  }
+
+  public void requireEmployeeAssistantUse(AuthUser user) {
+    requirePermission(user, PermissionCodes.EMPLOYEE_ASSISTANT_USE, "使用员工服务助手");
+  }
+
+  /** Knowledge approval is BOSS-only even if another role receives a mistaken ALLOW override. */
+  public void requireEmployeeAssistantKnowledgeManage(AuthUser user) {
+    requireBoss(user, "管理员工助手知识库");
+  }
+
+  /** Only authorized operations/supervisor users (canonical OPERATIONS) may process handoffs. */
+  public void requireEmployeeAssistantHandoffManage(AuthUser user) {
+    requirePermission(user, PermissionCodes.EMPLOYEE_ASSISTANT_HANDOFF_MANAGE, "处理员工助手人工事项");
+    if (hasAnyRole(user, "OPERATIONS")) {
+      return;
+    }
+    deny(user, "处理员工助手人工事项", "API", PermissionCodes.EMPLOYEE_ASSISTANT_HANDOFF_MANAGE, null,
+        "人工事项处理仅限运营或督导角色");
   }
 
   public void requireMigrationManage(AuthUser user) {

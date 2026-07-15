@@ -56,20 +56,39 @@ public class DeepSeekClient {
    * A timeout, HTTP 429, or temporary 5xx is retried once; permanent 4xx errors are never retried.
    */
   public DeepSeekCallResult analyze(String systemPrompt, String userPrompt) {
+    return analyze(systemPrompt, userPrompt, null);
+  }
+
+  /**
+   * Calls the provider within the supplied logical-analysis budget. The budget includes transport
+   * retries so a caller can bound a whole analysis without logging or exposing provider content.
+   * A {@code null} budget preserves the existing per-request timeout behavior for direct callers.
+   */
+  public DeepSeekCallResult analyze(
+      String systemPrompt,
+      String userPrompt,
+      Duration totalBudget
+  ) {
     requireConfigured();
     requireCircuitClosed();
     acquireRateLimitPermit();
+    long deadlineNanos = deadlineNanos(totalBudget);
 
     DeepSeekException lastFailure = null;
     for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        DeepSeekCallResult result = execute(systemPrompt, userPrompt);
+        DeepSeekCallResult result = execute(
+            systemPrompt,
+            userPrompt,
+            timeoutForAttempt(totalBudget, deadlineNanos)
+        );
         consecutiveTransientFailures.set(0);
         circuitOpenUntil = null;
         properties.markSuccess();
-        log.info("DeepSeek request succeeded provider={} requestId={} model={} status={} latencyMs={} attempt={}",
-            result.provider(), safeLogValue(result.requestId()), safeLogValue(result.model()),
-            result.httpStatus(), result.latencyMs(), attempt);
+        // Never log prompts, response content, model context, store scope, or credentials.
+        // requestId is retained only as a safe correlation handle for a real upstream response.
+        log.info("DeepSeek request succeeded requestId={} elapsedMs={}",
+            safeLogValue(result.requestId()), result.latencyMs());
         return result;
       } catch (DeepSeekException failure) {
         lastFailure = failure;
@@ -77,16 +96,24 @@ public class DeepSeekClient {
           recordFailure(failure);
           throw failure;
         }
-        log.warn("DeepSeek request retry code={} status={} attempt={}/{}",
-            failure.getCode(), failure.getHttpStatus(), attempt, MAX_ATTEMPTS);
-        waitBeforeRetry();
+        log.warn("DeepSeek request retry errorCode={}", failure.getCode());
+        try {
+          waitBeforeRetry(totalBudget, deadlineNanos);
+        } catch (DeepSeekException timeout) {
+          recordFailure(timeout);
+          throw timeout;
+        }
       }
     }
     recordFailure(lastFailure);
     throw lastFailure;
   }
 
-  private DeepSeekCallResult execute(String systemPrompt, String userPrompt) {
+  private DeepSeekCallResult execute(
+      String systemPrompt,
+      String userPrompt,
+      Duration requestTimeout
+  ) {
     long startedAt = System.nanoTime();
     HttpRequest request;
     try {
@@ -103,7 +130,7 @@ public class DeepSeekClient {
 
       request = HttpRequest.newBuilder()
           .uri(URI.create(properties.getBaseUrl() + "/chat/completions"))
-          .timeout(properties.getTimeout())
+          .timeout(requestTimeout)
           .header("Authorization", "Bearer " + properties.getApiKey())
           .header("Content-Type", "application/json")
           .header("Accept", "application/json")
@@ -234,16 +261,42 @@ public class DeepSeekClient {
       int failures = consecutiveTransientFailures.incrementAndGet();
       if (failures >= properties.getCircuitFailureThreshold()) {
         circuitOpenUntil = Instant.now().plus(properties.getCircuitOpenDuration());
-        log.warn("DeepSeek circuit opened code={} failures={} openSeconds={}",
-            failure.getCode(), failures, properties.getCircuitOpenDuration().toSeconds());
+        log.warn("DeepSeek circuit opened errorCode={}", failure.getCode());
       }
     }
-    log.warn("DeepSeek request failed code={} status={}", failure.getCode(), failure.getHttpStatus());
+    log.warn("DeepSeek request failed errorCode={}", failure.getCode());
   }
 
-  private void waitBeforeRetry() {
+  private long deadlineNanos(Duration totalBudget) {
+    if (totalBudget == null) return Long.MAX_VALUE;
+    if (totalBudget.isZero() || totalBudget.isNegative()) return System.nanoTime();
+    long now = System.nanoTime();
+    long budgetNanos;
     try {
-      Thread.sleep(RETRY_DELAY.toMillis());
+      budgetNanos = totalBudget.toNanos();
+    } catch (ArithmeticException ex) {
+      return Long.MAX_VALUE;
+    }
+    return now > Long.MAX_VALUE - budgetNanos ? Long.MAX_VALUE : now + budgetNanos;
+  }
+
+  private Duration timeoutForAttempt(Duration totalBudget, long deadlineNanos) {
+    if (totalBudget == null) return properties.getTimeout();
+    long remainingNanos = deadlineNanos - System.nanoTime();
+    if (remainingNanos <= 0) throw analysisTimeoutFailure();
+    Duration remaining = Duration.ofNanos(remainingNanos);
+    return remaining.compareTo(properties.getTimeout()) < 0 ? remaining : properties.getTimeout();
+  }
+
+  private void waitBeforeRetry(Duration totalBudget, long deadlineNanos) {
+    Duration delay = RETRY_DELAY;
+    if (totalBudget != null) {
+      long remainingNanos = deadlineNanos - System.nanoTime();
+      if (remainingNanos <= RETRY_DELAY.toNanos()) throw analysisTimeoutFailure();
+      delay = Duration.ofNanos(Math.min(remainingNanos, RETRY_DELAY.toNanos()));
+    }
+    try {
+      Thread.sleep(delay.toMillis());
     } catch (InterruptedException ex) {
       Thread.currentThread().interrupt();
       DeepSeekException failure = new DeepSeekException(
@@ -251,6 +304,14 @@ public class DeepSeekClient {
       properties.markFailure(failure.getCode());
       throw failure;
     }
+  }
+
+  private DeepSeekException analysisTimeoutFailure() {
+    return new DeepSeekException(
+        "DEEPSEEK_ANALYSIS_TIMEOUT",
+        "AI分析耗时较长，请稍后重试或先使用查数据。",
+        0
+    );
   }
 
   private String nullToEmpty(String value) {
