@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.storeprofit.system.platform.tenant.TenantDefaults;
 import com.storeprofit.system.storage.StorageService;
-import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.YearMonth;
@@ -13,12 +12,13 @@ import java.util.Arrays;
 import java.util.Iterator;
 import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.DependsOn;
 import org.springframework.core.env.Environment;
-import org.springframework.stereotype.Service;
 
-@Service
-@DependsOn("organizationSeedService")
+/**
+ * R1-03: Removed @Service, @DependsOn and @PostConstruct to prevent automatic runtime seed creation.
+ * The class remains as a utility for explicit dev/demo fixture use only.
+ * STAGING/PRODUCTION must never invoke seed methods via any path.
+ */
 public class FinanceSeedService {
   private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
   private final FinanceRepository financeRepository;
@@ -44,7 +44,7 @@ public class FinanceSeedService {
     this.migrationAutoRun = migrationAutoRun;
   }
 
-  @PostConstruct
+  // R1-03: @PostConstruct removed.
   public void seed() {
     if (!shouldSeedDemoData() && !migrationAutoRun) {
       return;

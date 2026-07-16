@@ -58,12 +58,16 @@ function Set-TestBossPassword([string]$DatabasePassword, [string]$TestPassword) 
   $env:MYSQL_PWD = $DatabasePassword
   try {
     $passwordHash = New-PasswordHash $TestPassword
-    $sql = "update auth_user set password_hash='$passwordHash' where tenant_id=1 and username='boss'; delete from auth_token where user_id in (select id from auth_user where tenant_id=1 and username='boss');"
-    $sql | & $mysql --host=127.0.0.1 --port=$MySqlPort --user=$DatabaseUser --database=$DatabaseName --batch --skip-column-names
+    $sql = "select count(*) from auth_user where tenant_id=1 and username='boss' and enabled=1; update auth_user set password_hash='$passwordHash' where tenant_id=1 and username='boss' and enabled=1; delete from auth_token where user_id in (select id from auth_user where tenant_id=1 and username='boss');"
+    $result = @($sql | & $mysql --host=127.0.0.1 --port=$MySqlPort --user=$DatabaseUser --database=$DatabaseName --batch --skip-column-names)
     if ($LASTEXITCODE -ne 0) { throw 'Temporary TEST boss password rotation failed.' }
+    if ($result.Count -lt 1 -or [int]$result[0] -ne 1) {
+      throw 'The TEST database must already contain one enabled BOSS account; Web startup no longer creates accounts.'
+    }
   } finally {
     $passwordHash = $null
     $sql = $null
+    $result = $null
     Remove-Item Env:MYSQL_PWD -ErrorAction SilentlyContinue
   }
 }
@@ -181,7 +185,7 @@ function Wait-Version([Diagnostics.Process]$Process) {
   throw 'Latest TEST backend did not become healthy within 120 seconds.'
 }
 
-function Start-Backend([string]$Jar, [string]$DatabasePassword, [string]$BootstrapPassword) {
+function Start-Backend([string]$Jar, [string]$DatabasePassword) {
   $env:APP_ENV = 'TEST'
   $env:MYSQL_HOST = '127.0.0.1'
   $env:MYSQL_PORT = [string]$MySqlPort
@@ -189,13 +193,6 @@ function Start-Backend([string]$Jar, [string]$DatabasePassword, [string]$Bootstr
   $env:MYSQL_USERNAME = $DatabaseUser
   $env:MYSQL_PASSWORD = $DatabasePassword
   $env:SERVER_PORT = [string]$BackendPort
-  if ($BootstrapPassword) {
-    $env:APP_BOOTSTRAP_DEFAULT_USERS_ENABLED = 'true'
-    $env:APP_BOOTSTRAP_DEFAULT_USERS_PASSWORD = $BootstrapPassword
-  } else {
-    $env:APP_BOOTSTRAP_DEFAULT_USERS_ENABLED = 'false'
-    Remove-Item Env:APP_BOOTSTRAP_DEFAULT_USERS_PASSWORD -ErrorAction SilentlyContinue
-  }
   Start-Process java.exe -ArgumentList @('-jar', $Jar) -PassThru -RedirectStandardOutput $backendOut -RedirectStandardError $backendErr
 }
 
@@ -230,14 +227,14 @@ try {
 } finally { Pop-Location }
 $jar = Join-Path $backendCopy 'target\store-profit-backend-0.1.0-SNAPSHOT.jar'
 
-$bootstrap = Start-Backend $jar $databasePassword $testPassword
-$bootstrapVersion = Wait-Version $bootstrap
-Stop-Process -Id $bootstrap.Id -Force
-$bootstrap.WaitForExit()
+$migration = Start-Backend $jar $databasePassword
+$migrationVersion = Wait-Version $migration
+Stop-Process -Id $migration.Id -Force
+$migration.WaitForExit()
 
 Set-TestBossPassword $databasePassword $testPassword
 
-$backend = Start-Backend $jar $databasePassword ''
+$backend = Start-Backend $jar $databasePassword
 $version = Wait-Version $backend
 if ([int]$version.databaseMigrationVersion -lt 34) { throw 'Flyway did not reach V34.' }
 

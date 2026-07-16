@@ -388,10 +388,10 @@ class DeepSeekIntegrationTest {
     }
 
     @Test
-    @DisplayName("整次经营分析默认受 75 秒总预算约束")
-    void defaultAnalysisTimeoutIsSeventyFiveSeconds() {
+    @DisplayName("整次经营分析默认受 30 秒总预算约束")
+    void defaultAnalysisTimeoutIsThirtySeconds() {
       DeepSeekProperties props = new DeepSeekProperties();
-      assertThat(props.getAnalysisTimeout()).isEqualTo(Duration.ofSeconds(75));
+      assertThat(props.getAnalysisTimeout()).isEqualTo(Duration.ofSeconds(30));
     }
   }
 }

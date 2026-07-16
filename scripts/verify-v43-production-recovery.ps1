@@ -398,7 +398,6 @@ function Start-VerifiedRuntime {
         APP_ENV = 'STAGING'; SERVER_PORT = [string]$ServerPort; MYSQL_HOST = $HostName; MYSQL_PORT = [string]$Port
         MYSQL_DATABASE = $Database; MYSQL_USERNAME = $UserName; MYSQL_PASSWORD = $Password; MYSQL_SSL_MODE = 'DISABLED'
         APP_SEED_DEMO_ENABLED = 'false'; APP_SEED_LEGACY_EMPLOYEE_ENABLED = 'false'
-        APP_BOOTSTRAP_DEFAULT_USERS_ENABLED = 'false'; APP_BOOTSTRAP_STORE_MANAGER_ACCOUNTS_ENABLED = 'false'
         APP_MIGRATION_AUTO_RUN = 'false'; APP_EXPENSE_SUPPLEMENT_STORAGE_ROOT = $storageRoot
     }
     $previous = @{}

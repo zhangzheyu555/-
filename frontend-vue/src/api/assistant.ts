@@ -1,8 +1,7 @@
 import { apiGet, apiPost } from './http'
 
-// DeepSeek can need a second structured-output repair pass. Keep this override scoped to the
-// operating-assistant chat endpoint so ordinary business APIs retain the 15 second default.
-export const ASSISTANT_CHAT_TIMEOUT_MS = 90_000
+// Backend analysis budget ≈ 30s. Frontend timeout = budget + 5s safety margin.
+export const ASSISTANT_CHAT_TIMEOUT_MS = 35_000
 
 export interface AssistantChatRequest {
   message: string

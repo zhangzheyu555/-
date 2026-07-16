@@ -52,11 +52,6 @@ app:
     demo-enabled: ${APP_SEED_DEMO_ENABLED:false}
     legacy-employee-enabled: ${APP_SEED_LEGACY_EMPLOYEE_ENABLED:false}
     legacy-employee-file: ${APP_SEED_LEGACY_EMPLOYEE_FILE:}
-  bootstrap:
-    default-users-enabled: ${APP_BOOTSTRAP_DEFAULT_USERS_ENABLED:false}
-    default-users-password: ${APP_BOOTSTRAP_DEFAULT_USERS_PASSWORD:}
-    store-manager-accounts-enabled: ${APP_BOOTSTRAP_STORE_MANAGER_ACCOUNTS_ENABLED:false}
-    store-manager-password: ${APP_BOOTSTRAP_STORE_MANAGER_PASSWORD:}
   migration:
     auto-run: ${APP_MIGRATION_AUTO_RUN:false}
   inspection:

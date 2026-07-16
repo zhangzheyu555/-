@@ -58,6 +58,8 @@
 
 第二十批已新增 `InspectionEvidencePhotoPolicy`，并扩展 `InspectionPhotoJsonCodec` 的历史证据解析边界：补传原图按服务端照片位置精确替换、追加附件去重以及“每张图片必须关联人工确认条款”的校验已从 `InspectionService` 拆出。权限、附件归属校验、存储重绑定、数据库更新和事务仍保留在主服务中，历史证据接口契约不变。
 
+第二十一批已新增 `InspectionDetectionRules` 与 `InspectionDetectionEvidenceNormalizer`：模型识别证据去重、IoU 边界、稳定识别编号、置信度归一化、正式条款匹配及 200 分制服务端扣分已从 `InspectionService` 拆出。主服务继续负责权限、正式标准读取、YOLO 调用、持久化、操作日志和事务，模型或浏览器传入的分数仍不能决定最终得分。
+
 ## 下一批拆分顺序
 
 1. **巡检页面**：继续提取照片识别结果与条款评分编辑区。每一步保留现有 API 契约，并覆盖创建、识别确认、历史证据补传、店长整改和运营复核。

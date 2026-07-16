@@ -22,7 +22,7 @@ public class DeepSeekProperties {
    * Hard budget for one business-analysis operation, including a possible schema repair call.
    * This is deliberately separate from {@link #timeout}, which bounds one HTTP request.
    */
-  private Duration analysisTimeout = Duration.ofSeconds(75);
+  private Duration analysisTimeout = Duration.ofSeconds(30);
   private int maxRequestsPerMinute = 30;
   private int circuitFailureThreshold = 3;
   private Duration circuitOpenDuration = Duration.ofSeconds(30);
@@ -114,7 +114,7 @@ public class DeepSeekProperties {
 
   public void setAnalysisTimeout(Duration analysisTimeout) {
     this.analysisTimeout = analysisTimeout == null || analysisTimeout.isZero() || analysisTimeout.isNegative()
-        ? Duration.ofSeconds(75)
+        ? Duration.ofSeconds(30)
         : analysisTimeout;
   }
 

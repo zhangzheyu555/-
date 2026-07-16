@@ -27,6 +27,9 @@ const storesLoading = ref(false)
 const storesLoaded = ref(false)
 const canUseAssistant = computed(() => auth.hasPermission(PERMISSIONS.ASSISTANT_USE))
 const canReadTodos = computed(() => auth.hasPermission(PERMISSIONS.TODO_READ))
+const hideTopbarStoreSelector = computed(() =>
+  businessScope.isBoss.value && route.path === '/assistant'
+)
 
 const updatedAt = computed(() => {
   const now = new Date()
@@ -243,7 +246,7 @@ onMounted(() => {
           </button>
           <div class="topbar-context">
             <span class="date-display"><CalendarDays :size="16" />{{ updatedAt }}</span>
-            <label v-if="!businessScope.isStoreManager.value" class="scope-display" :title="auth.scopeText">
+            <label v-if="!businessScope.isStoreManager.value && !hideTopbarStoreSelector" class="scope-display" :title="auth.scopeText">
               <select
                 :value="selectedStoreId"
                 aria-label="全局门店"

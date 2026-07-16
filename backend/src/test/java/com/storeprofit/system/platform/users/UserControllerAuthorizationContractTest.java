@@ -3,15 +3,47 @@ package com.storeprofit.system.platform.users;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.storeprofit.system.common.ApiResponse;
+import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.common.GlobalExceptionHandler;
+import com.storeprofit.system.common.RequestIdFilter;
 import com.storeprofit.system.platform.auth.AuthService;
 import com.storeprofit.system.platform.auth.AuthUser;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 class UserControllerAuthorizationContractTest {
+  @Test
+  void accountManagementWithoutTokenReturnsHttp401() throws Exception {
+    AuthService authService = mock(AuthService.class);
+    UserManagementService userManagementService = mock(UserManagementService.class);
+    when(authService.requireUser(null)).thenThrow(
+        new BusinessException("UNAUTHORIZED", "请先登录", HttpStatus.UNAUTHORIZED));
+    MockMvc mockMvc = MockMvcBuilders.standaloneSetup(
+            new UserController(authService, userManagementService))
+        .setControllerAdvice(new GlobalExceptionHandler())
+        .addFilters(new RequestIdFilter())
+        .build();
+
+    mockMvc.perform(get("/api/users"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(header().exists("X-Request-Id"))
+        .andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
+
+    verify(authService).requireUser(null);
+    verifyNoInteractions(userManagementService);
+  }
+
   @Test
   void controllerExposesCatalogReadAndAtomicAuthorizationUpdate() {
     AuthService authService = mock(AuthService.class);

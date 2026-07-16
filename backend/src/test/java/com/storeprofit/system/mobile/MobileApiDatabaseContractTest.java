@@ -83,9 +83,7 @@ class MobileApiDatabaseContractTest {
         auditRepository,
         authorizationService,
         dataScopeService,
-        12L,
-        false,
-        ""
+        12L
     );
     AccessControlService accessControl = new AccessControlService(
         authService, authRepository, auditRepository, authorizationService, dataScopeService);

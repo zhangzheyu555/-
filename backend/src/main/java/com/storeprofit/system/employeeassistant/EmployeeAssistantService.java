@@ -10,8 +10,11 @@ import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.Comparator;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -47,11 +50,16 @@ public class EmployeeAssistantService {
   private static final Pattern CUSTOMER_NAME_REFERENCE = Pattern.compile(
       "(?:(?:顾客|客户|收货人|联系人)(?:姓名|名字)?[：:]\\s*[\\p{IsHan}]{2,4}|(?:顾客|客户)(?:叫|名为|是|为)\\s*[\\p{IsHan}]{2,4})");
   private static final Pattern ORDER_OR_ADDRESS_REFERENCE = Pattern.compile(
-      "(?i)(?:订单(?:号|编号)?|取餐码|小票号)[：:#\\s]*[A-Z0-9-]{4,}|(?:收货地址|配送地址|家庭住址|详细地址)[：:]");
+      "(?i)(?:订单(?:号|编号)?|取餐码|小票号)(?:[：:#\\s]*|(?:是|为)\\s*)[A-Z0-9-]{4,}"
+          + "|(?:收货地址|配送地址|家庭住址|详细地址)(?:[：:]|(?:是|为)\\s*)");
   private static final Pattern REFUND_QUESTION = Pattern.compile("(?i)(退款|退货|退钱|退费|退款申请)");
+  private static final Pattern CACHE_SENSITIVE_TOPIC = Pattern.compile(
+      "(?i)(订单|退款|退货|金额|支付|姓名|电话|手机|地址|小票|附件|身份|银行卡|赔偿|赔付)");
   private static final Pattern UNSAFE_OUTPUT_PRIVACY_REQUEST = Pattern.compile(
-      "(?s)(?:请|麻烦|需要|提供|发送|告知|填写|上传|补充).{0,16}(?:顾客|客户)?.{0,8}"
-          + "(?:姓名|电话|手机号|订单号|订单编号|金额|地址|支付凭证|付款凭证|附件|身份证|身份信息)");
+      "(?s)(?:(?:请|麻烦|需要|提供|发送|告知|告诉|填写|上传|补充|提交|出示|登记|留下|把|将).{0,20}"
+          + "(?:顾客|客户)?.{0,8}(?:姓名|电话|联系电话|手机号|订单号|订单编号|金额|小票|支付记录|支付凭证|付款凭证|地址|附件|身份证|身份信息)"
+          + "|(?:姓名|电话|联系电话|手机号|订单号|订单编号|金额|小票|支付记录|支付凭证|付款凭证|地址|附件|身份证|身份信息)"
+          + ".{0,16}(?:发来|发过来|传来|传过来|告诉|告知|提供|提交|上传|出示|补充|填写|登记|留下))");
   private static final Duration ANSWER_CACHE_TTL = Duration.ofMinutes(5);
   private static final int ANSWER_CACHE_MAX_ENTRIES = 512;
   private static final Logger LOGGER = Logger.getLogger(EmployeeAssistantService.class.getName());
@@ -280,6 +288,10 @@ public class EmployeeAssistantService {
         timing.modelMillis = elapsedMillis(modelStarted);
       }
       if (!isSuccess(providerResponse.statusCode())) {
+        if (providerResponse.statusCode() == 408 || providerResponse.statusCode() == 504) {
+          outcome = "HUMAN_REQUIRED_TIMEOUT";
+          return timeoutResponse(requestId, conversationId);
+        }
         outcome = statusOutcome(providerResponse.statusCode());
         throw upstreamFailure(providerResponse.statusCode());
       }
@@ -346,10 +358,10 @@ public class EmployeeAssistantService {
       String handoffCategory
   ) {
     if (UNSAFE_OUTPUT_PRIVACY_REQUEST.matcher(answer == null ? "" : answer).find()) {
-      return response("请先安抚顾客，并在现有业务系统内按门店规则核验；不要在聊天中补充顾客或订单信息。\n\n"
-              + "操作原则：\n- 不索要或发送顾客姓名、电话、订单号、金额、地址、支付凭证、附件或身份信息。\n"
+      return response("可以这样说：\n我先帮您确认合适的处理方式，请稍等。\n\n"
+              + "员工怎么处理：\n- 不索要或发送顾客姓名、电话、订单号、金额、小票、支付记录、地址、附件或身份信息。\n"
               + "- 仅在现有业务系统内按门店规则核验。\n"
-              + "转人工条件：需要查询具体订单、身份或支付信息，或无法确认处理规则时，转值班负责人。",
+              + "什么时候转人工：\n- 需要查询具体订单、身份或支付信息，或无法确认处理规则时，转值班负责人。",
           requestId, conversationId, true, EmployeeAssistantAnswerSource.HUMAN_REQUIRED,
           null, null, null, "OUTPUT_SAFETY");
     }
@@ -358,11 +370,11 @@ public class EmployeeAssistantService {
   }
 
   private EmployeeAssistantChatResponse refundResponse(String requestId, String conversationId) {
-    return response("很抱歉给您带来不便，我会马上在现有业务系统内按门店规则核验并协助跟进。\n\n"
-            + "操作原则：\n- 不在聊天中索要或发送顾客姓名、电话、订单号、金额、地址、支付凭证、附件或身份信息。\n"
+    return response("可以这样说：\n很抱歉给您带来不便，我会马上按门店规则协助核验并跟进。\n\n"
+            + "员工怎么处理：\n- 不在聊天中索要或发送顾客姓名、电话、订单号、金额、小票、支付记录、地址、附件或身份信息。\n"
             + "- 仅在现有业务系统内按门店规则核验，不承诺退款金额或到账时间。\n"
             + "- 不自行判断具体订单是否符合退款条件。\n"
-            + "转人工条件：无法确认门店规则、顾客对处理有异议，或需要判断具体订单时，立即转值班负责人。",
+            + "什么时候转人工：\n- 无法确认门店规则、顾客对处理有异议，或需要判断具体订单时，立即转值班负责人。",
         requestId, conversationId, true, EmployeeAssistantAnswerSource.HUMAN_REQUIRED,
         null, null, null, "REFUND_REVIEW");
   }
@@ -374,7 +386,9 @@ public class EmployeeAssistantService {
     } catch (BusinessException ex) {
       conversationId = UUID.randomUUID().toString();
     }
-    return response("当前未能及时取得标准话术，请先安抚顾客并转值班负责人继续处理；不要在聊天中补充顾客或订单信息。",
+    return response("可以这样说：\n我正在确认合适的处理方式，请您稍等。\n\n"
+            + "员工怎么处理：\n- 当前未能及时取得标准话术，不在聊天中补充顾客或订单信息。\n"
+            + "什么时候转人工：\n- 立即转值班负责人继续处理。",
         requestId, conversationId, true, EmployeeAssistantAnswerSource.HUMAN_REQUIRED,
         null, null, null, "UPSTREAM_TIMEOUT");
   }
@@ -426,9 +440,9 @@ public class EmployeeAssistantService {
           .filter(knowledge -> isSafeKnowledgeContent(
               knowledge.category(), knowledge.title(), knowledge.keywords(), knowledge.standardAnswer()))
           .toList();
-      String versionKey = Integer.toHexString(safeKnowledge.stream()
+      String versionKey = stableHash(safeKnowledge.stream()
           .map(knowledge -> knowledge.id() + ":" + knowledge.currentVersion())
-          .sorted().reduce("", (left, right) -> left + "|" + right).hashCode());
+          .sorted().reduce("", (left, right) -> left + "|" + right));
       List<KnowledgeCandidate> matches = safeKnowledge.stream()
           .map(knowledge -> score(knowledge, normalizedQuestion))
           .filter(candidate -> candidate.score() > 0)
@@ -523,8 +537,8 @@ public class EmployeeAssistantService {
     if (user == null || inputRedacted || !isCacheableQuestion(sanitizedQuestion)) return null;
     String storeScope = user.storeId() == null || user.storeId().isBlank() ? "ALL" : user.storeId().trim();
     // The question itself is never retained as a cache key; only a hash of a low-risk normalized question is used.
-    return new AnswerCacheKey(user.tenantId(), storeScope, knowledgeVersion, Integer.toHexString(
-        normalizedForMatch(sanitizedQuestion).hashCode()));
+    return new AnswerCacheKey(user.tenantId(), storeScope, knowledgeVersion,
+        stableHash(normalizedForMatch(sanitizedQuestion)));
   }
 
   private boolean isCacheableQuestion(String question) {
@@ -532,6 +546,7 @@ public class EmployeeAssistantService {
         && !question.isBlank()
         && !isRefundQuestion(question)
         && mandatoryHandoffCategory(question) == null
+        && !CACHE_SENSITIVE_TOPIC.matcher(question).find()
         && !UNSAFE_OUTPUT_PRIVACY_REQUEST.matcher(question).find();
   }
 
@@ -592,6 +607,16 @@ public class EmployeeAssistantService {
 
   private static long elapsedMillis(long startedAt) {
     return Duration.ofNanos(System.nanoTime() - startedAt).toMillis();
+  }
+
+  private static String stableHash(String value) {
+    try {
+      byte[] digest = MessageDigest.getInstance("SHA-256")
+          .digest((value == null ? "" : value).getBytes(StandardCharsets.UTF_8));
+      return HexFormat.of().formatHex(digest);
+    } catch (NoSuchAlgorithmException ex) {
+      throw new IllegalStateException("SHA-256 unavailable", ex);
+    }
   }
 
   private static BusinessException safeFailure(String code, String message, HttpStatus status) {

@@ -45,9 +45,7 @@ class AuthServiceAuthorizationContractTest {
         mock(AuditRepository.class),
         authorizationService,
         dataScopeService,
-        12,
-        false,
-        ""
+        12
     );
 
     LoginResponse response = service.login(new LoginRequest("finance", "safe-password", 1L));
@@ -64,7 +62,7 @@ class AuthServiceAuthorizationContractTest {
   @Test
   void employeeUsesLearnerWorkspace() {
     AuthService service = new AuthService(
-        mock(AuthRepository.class), mock(PasswordService.class), mock(AuditRepository.class), 12, false, "");
+        mock(AuthRepository.class), mock(PasswordService.class), mock(AuditRepository.class), 12);
 
     assertThat(service.defaultWorkspace("EMPLOYEE")).isEqualTo("/learn/exams");
   }
@@ -89,9 +87,7 @@ class AuthServiceAuthorizationContractTest {
         mock(AuditRepository.class),
         authorizationService,
         dataScopeService,
-        12,
-        false,
-        ""
+        12
     );
 
     assertThat(service.toSessionUser(manager).defaultWorkspace()).isEqualTo("/store");
@@ -120,9 +116,7 @@ class AuthServiceAuthorizationContractTest {
         dataScopeService,
         new WorkspaceAccessResolver(),
         businessScopeResolver,
-        12,
-        false,
-        ""
+        12
     );
 
     var session = service.toSessionUser(manager);

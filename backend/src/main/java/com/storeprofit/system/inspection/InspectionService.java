@@ -16,15 +16,10 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Comparator;
-import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -59,8 +54,6 @@ public class InspectionService {
   private static final String DETECTION_PENDING = "PENDING_MANUAL_CONFIRMATION";
   private static final String DETECTION_CONFIRMED = "CONFIRMED";
   private static final String DETECTION_REVOKED = "REVOKED";
-  private static final String DETECTION_UNMATCHED = "UNMATCHED";
-  private static final BigDecimal DETECTION_IOU_THRESHOLD = new BigDecimal("0.90");
   private static final BigDecimal H_4_1_2_SERVER_DEDUCTION = new BigDecimal("4.00");
   private static final String H_4_1_2_DEDUCTION_POLICY = "LEGACY_100_TO_200_H412_V1";
   private static final String ACTIVE_CLAUSE_DEDUCTION_POLICY = "ACTIVE_CLAUSE_SCORE_V1";
@@ -1722,7 +1715,7 @@ public class InspectionService {
       );
     }
     return results.stream()
-        .map(result -> enrichDetectionSuggestion(result, request.fullScore(), standards))
+        .map(result -> InspectionDetectionRules.enrichSuggestion(result, standards))
         .toList();
   }
 
@@ -1795,8 +1788,7 @@ public class InspectionService {
           HttpStatus.CONFLICT);
     }
     Map<String, Object> evidence = authoritativeDetectionInput(storedDetection);
-    Map<String, Object> resolved = enrichDetectionSuggestion(
-        evidence, InspectionScoringRules.LEGACY_MAX_SCORE, standards);
+    Map<String, Object> resolved = InspectionDetectionRules.enrichSuggestion(evidence, standards);
     String storedKey = textValue(storedDetection, "detectionKey", "detection_key");
     if (!Objects.equals(storedKey, textValue(resolved, "detectionKey", "detection_key"))) {
       throw new BusinessException(
@@ -2103,8 +2095,7 @@ public class InspectionService {
         continue;
       }
       Map<String, Object> authoritativeInput = authoritativeDetectionInput(originalNode);
-      Map<String, Object> enriched = enrichDetectionSuggestion(
-          authoritativeInput, InspectionScoringRules.LEGACY_MAX_SCORE, standards);
+      Map<String, Object> enriched = InspectionDetectionRules.enrichSuggestion(authoritativeInput, standards);
       putIfPresent(enriched, "attachmentId", longValue(photo, "attachmentId", "attachment_id"));
       String reviewStatus = firstNonBlank(
           textValue(photo, "reviewStatus", "review_status", "decisionStatus"),
@@ -2539,336 +2530,6 @@ public class InspectionService {
     return request.results().stream()
         .filter(item -> item != null && !item.isEmpty())
         .toList();
-  }
-
-  private Map<String, Object> enrichDetectionSuggestion(
-      Map<String, Object> source,
-      BigDecimal sourceFullScore,
-      List<InspectionStandardItemResponse> standards
-  ) {
-    Map<String, Object> result = new LinkedHashMap<>(source);
-    result.remove("annotated_image");
-    result.remove("annotatedImage");
-    result.remove("original_image");
-    result.remove("originalImage");
-
-    List<Map<String, Object>> detections = deduplicateDetections(value(source, "detections"));
-    result.put("detections", detections);
-    result.put("detection_count", detections.size());
-    result.put("detectionCount", detections.size());
-
-    InspectionStandardItemResponse clause = matchDetectionClause(source, detections, standards).orElse(null);
-    // The recognition model's evidence is always interpreted by server rules.
-    // Client/model deduction numbers and a client-provided score scale never
-    // determine the persisted score.
-    BigDecimal sourceScale = InspectionScoringRules.LEGACY_MAX_SCORE;
-    BigDecimal standardDeduction = serverDetectionDeduction(clause);
-    BigDecimal legacyDeduction = standardDeduction
-        .multiply(InspectionScoringRules.LEGACY_MAX_SCORE)
-        .divide(InspectionScoringRules.MAX_SCORE, 2, RoundingMode.HALF_UP);
-    BigDecimal convertedDeduction = standardDeduction;
-    BigDecimal clauseDeduction = clause == null
-        ? ZERO_AMOUNT
-        : amountOrDefault(clause.suggestedScore(), ZERO_AMOUNT).abs()
-            .setScale(2, RoundingMode.HALF_UP);
-    BigDecimal scaleAdjustmentDeduction = standardDeduction.subtract(clauseDeduction)
-        .max(ZERO_AMOUNT).setScale(2, RoundingMode.HALF_UP);
-    String deductionPolicyVersion = clause != null && "H-4.1.2".equalsIgnoreCase(clause.code())
-        ? H_4_1_2_DEDUCTION_POLICY
-        : ACTIVE_CLAUSE_DEDUCTION_POLICY;
-    BigDecimal confidence = maximumConfidence(detections);
-    String detectionKey = detectionKey(source, detections);
-    String issueCode = detectionIssueCode(detections);
-    String issueName = firstNonBlank(
-        textValue(source, "deduction_content", "deductionContent"),
-        firstNonBlank(textValue(source, "auto_status", "autoStatus"), "模型识别到疑似现场问题")
-    );
-
-    result.put("detectionKey", detectionKey);
-    result.put("imageId", textValue(source, "image_id", "imageId"));
-    result.put("scoreScale", sourceScale.setScale(2, RoundingMode.HALF_UP));
-    result.put("persistedScoreScale", InspectionScoringRules.MAX_SCORE);
-    result.put("legacyDeduction", legacyDeduction);
-    result.put("convertedDeduction200", convertedDeduction);
-    result.put("standardDeduction", standardDeduction);
-    result.put("clauseDeduction", clauseDeduction);
-    result.put("scaleAdjustmentDeduction", scaleAdjustmentDeduction);
-    result.put("deductionPolicyVersion", deductionPolicyVersion);
-    result.put("suggestedDeduction", convertedDeduction);
-    result.put("finalDeduction", standardDeduction);
-    result.put("confirmedDeduction", standardDeduction);
-    result.put("confidence", confidence);
-    result.put("issueCode", issueCode);
-    result.put("issueName", issueName);
-    result.put("decisionStatus", clause == null ? DETECTION_UNMATCHED : DETECTION_PENDING);
-    result.put("revision", 0L);
-    // Compatibility: the old Vue preview reads this field. It now contains the
-    // server-resolved clause score, never the model/browser-provided final score.
-    result.put("deduction_score", standardDeduction);
-    if (clause != null) {
-      result.put("clauseId", clause.id());
-      result.put("clauseCode", clause.code());
-      result.put("clauseTitle", clause.title());
-    }
-    return result;
-  }
-
-  private BigDecimal serverDetectionDeduction(InspectionStandardItemResponse clause) {
-    if (clause == null) {
-      return ZERO_AMOUNT;
-    }
-    if ("H-4.1.2".equalsIgnoreCase(clause.code())) {
-      return H_4_1_2_SERVER_DEDUCTION.setScale(2, RoundingMode.HALF_UP);
-    }
-    return amountOrDefault(clause.suggestedScore(), ZERO_AMOUNT).abs()
-        .setScale(2, RoundingMode.HALF_UP);
-  }
-
-  private Optional<InspectionStandardItemResponse> matchDetectionClause(
-      Map<String, Object> source,
-      List<Map<String, Object>> detections,
-      List<InspectionStandardItemResponse> standards
-  ) {
-    Long explicitId = longValue(source, "standard_item_id", "standardItemId", "clause_id", "clauseId");
-    if (explicitId != null) {
-      Optional<InspectionStandardItemResponse> verified = standards.stream()
-          .filter(item -> item.id() == explicitId && item.enabled())
-          .findFirst();
-      if (verified.isPresent()) {
-        return verified;
-      }
-    }
-    String explicitCode = textValue(source, "standard_code", "standardCode", "clause_code", "clauseCode");
-    if (explicitCode != null) {
-      Optional<InspectionStandardItemResponse> verified = standards.stream()
-          .filter(item -> explicitCode.equalsIgnoreCase(item.code()) && item.enabled())
-          .findFirst();
-      if (verified.isPresent()) {
-        return verified;
-      }
-    }
-
-    Set<String> classes = detections.stream()
-        .map(item -> textValue(item, "class_name", "className", "label"))
-        .filter(Objects::nonNull)
-        .map(value -> value.toLowerCase(java.util.Locale.ROOT))
-        .collect(java.util.stream.Collectors.toSet());
-    if (classes.stream().anyMatch(value -> Set.of(
-        "paper_scrap", "paper", "stain", "floor_litter", "corner_dust").contains(value))) {
-      Optional<InspectionStandardItemResponse> floor = standards.stream()
-          .filter(item -> item.enabled() && "H-4.1.2".equalsIgnoreCase(item.code()))
-          .findFirst();
-      if (floor.isPresent()) {
-        return floor;
-      }
-    }
-
-    String project = normalizeMatchText(textValue(
-        source, "deduction_project", "deductionProject", "project", "suggested_project"));
-    String issue = normalizeMatchText(textValue(
-        source, "deduction_content", "deductionContent", "issue", "suggested_issue"));
-    return standards.stream()
-        .filter(InspectionStandardItemResponse::enabled)
-        .map(item -> Map.entry(item, detectionClauseMatchScore(item, project, issue, classes)))
-        .filter(entry -> entry.getValue() >= 20)
-        .sorted(Comparator
-            .<Map.Entry<InspectionStandardItemResponse, Integer>>comparingInt(Map.Entry::getValue)
-            .reversed()
-            .thenComparingInt(entry -> entry.getKey().sortOrder()))
-        .map(Map.Entry::getKey)
-        .findFirst();
-  }
-
-  private int detectionClauseMatchScore(
-      InspectionStandardItemResponse item,
-      String project,
-      String issue,
-      Set<String> classes
-  ) {
-    String title = normalizeMatchText(item.title());
-    String description = normalizeMatchText(item.description());
-    String method = normalizeMatchText(item.checkMethod());
-    int score = 0;
-    if (!project.isBlank() && project.equals(title)) {
-      score += 100;
-    } else if (!project.isBlank() && !title.isBlank()
-        && (project.contains(title) || title.contains(project))) {
-      score += 45;
-    }
-    if (!issue.isBlank() && !title.isBlank() && issue.contains(title)) {
-      score += 35;
-    }
-    if (!issue.isBlank() && (!description.isBlank() && description.contains(issue)
-        || !method.isBlank() && method.contains(issue))) {
-      score += 25;
-    }
-    if (!classes.isEmpty() && "HYGIENE".equals(category(item.dimension()))) {
-      score += 5;
-    }
-    return score;
-  }
-
-  private String normalizeMatchText(String value) {
-    if (value == null) {
-      return "";
-    }
-    return value.toLowerCase(java.util.Locale.ROOT)
-        .replaceAll("[^\\p{IsHan}a-z0-9]+", "")
-        .replace("检查标准", "")
-        .replace("标准", "");
-  }
-
-  private List<Map<String, Object>> deduplicateDetections(Object rawDetections) {
-    if (!(rawDetections instanceof Collection<?> collection)) {
-      return List.of();
-    }
-    List<Map<String, Object>> unique = new ArrayList<>();
-    for (Object value : collection) {
-      if (!(value instanceof Map<?, ?> raw)) {
-        continue;
-      }
-      Map<String, Object> candidate = new LinkedHashMap<>();
-      raw.forEach((key, item) -> candidate.put(String.valueOf(key), item));
-      int duplicateIndex = duplicateDetectionIndex(unique, candidate);
-      if (duplicateIndex < 0) {
-        unique.add(candidate);
-      } else if (confidence(candidate).compareTo(confidence(unique.get(duplicateIndex))) > 0) {
-        unique.set(duplicateIndex, candidate);
-      }
-    }
-    unique.sort(Comparator.comparing(this::detectionCanonicalValue));
-    return List.copyOf(unique);
-  }
-
-  private int duplicateDetectionIndex(List<Map<String, Object>> values, Map<String, Object> candidate) {
-    for (int index = 0; index < values.size(); index++) {
-      Map<String, Object> existing = values.get(index);
-      if (!Objects.equals(
-          normalizeMatchText(textValue(existing, "class_name", "className", "label")),
-          normalizeMatchText(textValue(candidate, "class_name", "className", "label")))) {
-        continue;
-      }
-      double[] first = detectionBox(existing);
-      double[] second = detectionBox(candidate);
-      if (first != null && second != null && intersectionOverUnion(first, second) >= DETECTION_IOU_THRESHOLD.doubleValue()) {
-        return index;
-      }
-      if (first == null && second == null
-          && detectionCanonicalValue(existing).equals(detectionCanonicalValue(candidate))) {
-        return index;
-      }
-    }
-    return -1;
-  }
-
-  private double[] detectionBox(Map<String, Object> detection) {
-    Object raw = value(detection, "box_xyxy", "boxXyxy", "bbox", "box");
-    if (!(raw instanceof List<?> values) || values.size() < 4) {
-      return null;
-    }
-    double[] box = new double[4];
-    for (int index = 0; index < 4; index++) {
-      Object coordinate = values.get(index);
-      if (!(coordinate instanceof Number number)) {
-        try {
-          box[index] = Double.parseDouble(String.valueOf(coordinate));
-        } catch (NumberFormatException ex) {
-          return null;
-        }
-      } else {
-        box[index] = number.doubleValue();
-      }
-    }
-    return box;
-  }
-
-  private double intersectionOverUnion(double[] first, double[] second) {
-    double x1 = Math.max(first[0], second[0]);
-    double y1 = Math.max(first[1], second[1]);
-    double x2 = Math.min(first[2], second[2]);
-    double y2 = Math.min(first[3], second[3]);
-    double intersection = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
-    double firstArea = Math.max(0, first[2] - first[0]) * Math.max(0, first[3] - first[1]);
-    double secondArea = Math.max(0, second[2] - second[0]) * Math.max(0, second[3] - second[1]);
-    double union = firstArea + secondArea - intersection;
-    return union <= 0 ? 0 : intersection / union;
-  }
-
-  private BigDecimal maximumConfidence(List<Map<String, Object>> detections) {
-    return detections.stream()
-        .map(this::confidence)
-        .max(BigDecimal::compareTo)
-        .orElse(ZERO_AMOUNT)
-        .setScale(4, RoundingMode.HALF_UP);
-  }
-
-  private BigDecimal confidence(Map<String, Object> detection) {
-    BigDecimal value = decimalValue(detection, "confidence", "score");
-    return value == null ? ZERO_AMOUNT : value.max(BigDecimal.ZERO);
-  }
-
-  private String detectionIssueCode(List<Map<String, Object>> detections) {
-    return detections.stream()
-        .map(item -> textValue(item, "class_name", "className", "label"))
-        .filter(Objects::nonNull)
-        .map(value -> value.toUpperCase(java.util.Locale.ROOT))
-        .distinct()
-        .sorted()
-        .collect(java.util.stream.Collectors.joining("+"));
-  }
-
-  private String detectionKey(Map<String, Object> source, List<Map<String, Object>> detections) {
-    String canonical = String.join("|",
-        Objects.toString(textValue(source, "image_id", "imageId"), ""),
-        Objects.toString(textValue(source, "filename", "fileName"), ""),
-        detections.stream().map(this::detectionCanonicalValue).sorted()
-            .collect(java.util.stream.Collectors.joining(";"))
-    );
-    try {
-      byte[] digest = MessageDigest.getInstance("SHA-256")
-          .digest(canonical.getBytes(StandardCharsets.UTF_8));
-      return "det-" + HexFormat.of().formatHex(digest, 0, 12);
-    } catch (NoSuchAlgorithmException impossible) {
-      throw new IllegalStateException("SHA-256 is unavailable", impossible);
-    }
-  }
-
-  private String detectionCanonicalValue(Map<String, Object> detection) {
-    double[] box = detectionBox(detection);
-    String coordinates = box == null ? "" : java.util.Arrays.stream(box)
-        .map(value -> Math.rint(value * 1000d) / 1000d)
-        .mapToObj(value -> BigDecimal.valueOf(value).stripTrailingZeros().toPlainString())
-        .collect(java.util.stream.Collectors.joining(","));
-    return String.join(":",
-        normalizeMatchText(textValue(detection, "class_name", "className", "label")),
-        coordinates,
-        Objects.toString(textValue(detection, "source"), ""),
-        Objects.toString(booleanValue(detection, "on_floor", "onFloor"), "")
-    );
-  }
-
-  private boolean resultPassed(Map<String, Object> result, Integer detectionCount, Object detections) {
-    Boolean passed = booleanValue(result, "passed");
-    if (passed != null) {
-      return passed;
-    }
-    if (detectionCount != null) {
-      return detectionCount <= 0;
-    }
-    return !hasDetections(detections);
-  }
-
-  private boolean hasDeduction(String project, String content, BigDecimal score) {
-    return (project != null && !project.isBlank())
-        || (content != null && !content.isBlank())
-        || (score != null && score.compareTo(BigDecimal.ZERO) != 0);
-  }
-
-  private boolean hasDetections(Object detections) {
-    if (detections instanceof List<?> list) {
-      return !list.isEmpty();
-    }
-    return detections != null;
   }
 
   private String toJson(List<Map<String, Object>> values) {

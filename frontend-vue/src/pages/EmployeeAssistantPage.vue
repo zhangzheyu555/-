@@ -68,6 +68,7 @@ const turns = ref<ChatTurn[]>([])
 const handoffNotice = ref('')
 const sessionId = createSessionId()
 const inputRef = ref<HTMLTextAreaElement | null>(null)
+const historyRef = ref<HTMLElement | null>(null)
 const waitingBeyondFiveSeconds = ref(false)
 let waitingTimer: ReturnType<typeof setTimeout> | undefined
 let nextTurnId = 0
@@ -141,6 +142,7 @@ async function send(retryTurn?: ChatTurn) {
   userTurn.failureMessage = ''
   sending.value = true
   startWaitingTimer()
+  scrollToBottom()
   try {
     const response = await askEmployeeAssistant({ sessionId, message: question })
     if (!response.configured) {
@@ -158,6 +160,8 @@ async function send(retryTurn?: ChatTurn) {
       needsHuman: Boolean(response.needsHuman), handoffCategory: response.handoffCategory,
       questionId: userTurn.id, handoffState: 'idle', feedbackState: 'idle',
     })
+    status.value = { ...(status.value || {}), enabled: true, configured: true, state: 'READY', canAsk: true }
+    scrollToBottom()
   } catch (error) {
     const failureMessage = error instanceof Error && error.message ? error.message : '员工服务助手暂时无法处理，请稍后再试。'
     pageError.value = failureMessage
@@ -293,15 +297,18 @@ function structureAssistantAnswer(raw: string, needsHuman: boolean): StructuredA
   for (const originalLine of raw.replace(/\r/g, '').split('\n')) {
     const line = originalLine.trim()
     if (!line) continue
-    const heading = line.replace(/^[#*\s]+|[:：*\s]+$/g, '')
-    if (/^(?:\d+[.、]\s*)?可以这样说/.test(heading)) {
-      current = 'speech'; recognizedHeading = true; continue
-    }
-    if (/^(?:\d+[.、]\s*)?(?:员工怎么处理|操作原则)/.test(heading)) {
-      current = 'steps'; recognizedHeading = true; continue
-    }
-    if (/^(?:\d+[.、]\s*)?(?:什么时候转人工|转人工条件)/.test(heading)) {
-      current = 'handoff'; recognizedHeading = true; continue
+    const headingMatch = line.replace(/^[#*\s]+/, '').match(
+      /^(?:\d+[.、]\s*)?(可以这样说|员工怎么处理|操作原则|什么时候转人工|转人工条件)(?:[:：]\s*(.*))?[*\s]*$/,
+    )
+    if (headingMatch) {
+      const title = headingMatch[1]
+      current = title === '可以这样说'
+        ? 'speech'
+        : title === '员工怎么处理' || title === '操作原则' ? 'steps' : 'handoff'
+      recognizedHeading = true
+      const inlineContent = cleanAnswerLine(headingMatch[2] || '')
+      if (inlineContent) sections[current].push(inlineContent)
+      continue
     }
     const cleaned = cleanAnswerLine(line)
     if (!cleaned) continue
@@ -349,6 +356,13 @@ function uniqueShortItems(values: string[], limit: number) {
 function isHandoffText(value: string) {
   return /(转人工|值班负责人|值班经理|负责人|无法确认|不能判断|不确定|超出.*权限)/.test(value)
 }
+
+function scrollToBottom() {
+  void nextTick(() => {
+    const history = historyRef.value
+    if (history) history.scrollTop = history.scrollHeight
+  })
+}
 </script>
 
 <template>
@@ -384,7 +398,7 @@ function isHandoffText(value: string) {
       </nav>
 
       <div class="ea-chat">
-        <div class="ea-chat__history" aria-live="polite">
+        <div ref="historyRef" class="ea-chat__history" aria-live="polite">
           <div v-if="!turns.length && !sending" class="ea-empty">
             <MessageSquare :size="28" />
             <h2>先说好第一句话</h2>
@@ -438,12 +452,14 @@ function isHandoffText(value: string) {
           <article v-if="sending" class="ea-msg ea-msg--assistant ea-msg--pending">
             <div class="ea-msg__avatar"><MessageSquare :size="16" /></div>
             <div class="ea-msg__body">
-              <p class="ea-msg__typing">正在查找标准话术<span class="ea-typing-dots" aria-hidden="true"><i></i><i></i><i></i></span></p>
-              <div v-if="waitingBeyondFiveSeconds" class="ea-waiting-slow" role="status">
-                <span>回复稍慢，仍在处理中</span>
-                <div class="ea-msg__acts">
-                  <UiButton variant="ghost" size="sm" @click="continueWaiting">继续等待</UiButton>
-                  <UiButton variant="secondary" size="sm" @click="createPendingHandoff">转人工</UiButton>
+              <div class="ea-msg__text">
+                <p class="ea-msg__typing">正在查找标准话术<span class="ea-typing-dots" aria-hidden="true"><i></i><i></i><i></i></span></p>
+                <div v-if="waitingBeyondFiveSeconds" class="ea-waiting-slow" role="status">
+                  <span>回复稍慢，仍在处理中</span>
+                  <div class="ea-msg__acts">
+                    <UiButton variant="ghost" size="sm" @click="continueWaiting">继续等待</UiButton>
+                    <UiButton variant="secondary" size="sm" @click="createPendingHandoff">转人工</UiButton>
+                  </div>
                 </div>
               </div>
             </div>
@@ -454,10 +470,10 @@ function isHandoffText(value: string) {
 
         <form class="ea-input" @submit.prevent="submitMessage">
           <div class="ea-input__row">
-            <textarea ref="inputRef" v-model="message" :disabled="!canAsk || sending" rows="2" maxlength="800" placeholder="例如：顾客说饮品太甜，怎样礼貌处理？" @keydown="onKeydown" />
+            <textarea ref="inputRef" v-model="message" :disabled="!canAsk || sending" rows="2" maxlength="800" name="employee-assistant-question" autocomplete="off" aria-label="服务问题" placeholder="例如：顾客说饮品太甜，怎样礼貌处理？" @keydown="onKeydown" />
             <UiButton variant="primary" type="submit" :loading="sending" :disabled="!canAsk || !message.trim()" aria-label="发送"><template #icon><Send :size="17" /></template>发送</UiButton>
           </div>
-          <p class="ea-input__hint">请勿发送顾客姓名、电话、订单号等信息 · Ctrl + Enter 发送</p>
+          <p class="ea-input__hint">请勿发送任何顾客、订单、支付、附件或身份信息 · Ctrl + Enter 发送</p>
         </form>
       </div>
     </div>
@@ -465,14 +481,15 @@ function isHandoffText(value: string) {
 </template>
 
 <style scoped>
-.ea-page { display: grid; grid-template-rows: auto auto minmax(0, 1fr); height: calc(100vh - 56px); height: calc(100dvh - 56px); min-height: 420px; overflow: hidden; background: var(--ds-bg, #fafbfc); }
+.ea-page { display: grid; grid-template-rows: auto auto minmax(0, 1fr); height: calc(100vh - 56px); height: calc(100dvh - 56px); min-height: 420px; overflow: hidden; background: var(--ds-bg, #fafbfc); font-family: inherit; }
+.ea-page :deep(*) { font-family: inherit; }
 
-.ea-topbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 20px; border-bottom: 1px solid var(--ds-line, #e2e8e7); background: #fff; flex-wrap: wrap; }
+.ea-topbar { grid-row: 1; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 20px; border-bottom: 1px solid var(--ds-line, #e2e8e7); background: #fff; flex-wrap: wrap; }
 .ea-topbar__left { display: flex; align-items: center; gap: 8px; color: var(--ds-primary, #2b8063); }
-.ea-topbar__title { margin: 0; font-size: 15px; font-weight: 750; color: var(--ds-ink, #1a2825); }
-.ea-topbar__hint { font-size: 12px; color: var(--ds-muted, #6b7e7a); }
+.ea-topbar__title { margin: 0; font-size: 15px; font-weight: 700; color: var(--ds-ink, #1a2825); }
+.ea-topbar__hint { font-size: 12px; color: #566b67; }
 .ea-topbar__right { display: flex; align-items: center; gap: 8px; }
-.ea-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 800; }
+.ea-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
 .ea-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; }
 .badge--ready { background: #e7f7ef; color: #237153; } .badge--ready::before { background: #237153; }
 .badge--checking { background: #edf2f3; color: #566f6b; } .badge--checking::before { background: #566f6b; }
@@ -482,11 +499,11 @@ function isHandoffText(value: string) {
 .ea-deploy-guide { font-size: 12px; color: #6a531e; }
 .ea-deploy-guide summary { cursor: pointer; font-weight: 700; color: #765816; }
 .ea-deploy-guide__body { padding: 6px 0; color: #6a5a35; }
-.ea-error { padding: 8px 20px; background: #fff5f5; border-bottom: 1px solid #efc9cf; color: #9f2734; font-size: 13px; font-weight: 650; }
+.ea-error { grid-row: 2; padding: 8px 20px; background: #fff5f5; border-bottom: 1px solid #efc9cf; color: #8f2430; font-size: 13px; font-weight: 600; }
 
-.ea-shell { display: grid; grid-template-columns: 260px 1fr; min-height: 0; overflow: hidden; }
+.ea-shell { grid-row: 3; display: grid; grid-template-columns: 236px minmax(0, 1fr); width: 100%; height: 100%; min-height: 0; overflow: hidden; }
 .ea-sidebar { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-right: 1px solid var(--ds-line); background: #f8fbfa; overflow-y: auto; }
-.ea-sidebar__label { margin: 0 0 4px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--ds-muted); }
+.ea-sidebar__label { margin: 0 0 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #566b67; }
 .ea-quick-btn { all: unset; display: block; padding: 8px 12px; border-radius: 6px; font-size: 13px; line-height: 1.4; color: var(--ds-secondary, #3a5a51); cursor: pointer; transition: background .12s; }
 .ea-quick-btn:hover:not(:disabled) { background: #e5f2ee; }
 .ea-quick-btn:disabled { opacity: .4; cursor: not-allowed; }
@@ -497,9 +514,9 @@ function isHandoffText(value: string) {
 .ea-tag:hover:not(:disabled) { background: #e7f4f1; }
 .ea-tag:disabled { opacity: .4; }
 
-.ea-chat { display: grid; grid-template-rows: 1fr auto auto; min-width: 0; min-height: 0; overflow: hidden; }
-.ea-chat__history { overflow-y: auto; padding: 16px 20px; display: grid; align-content: start; gap: 14px; scroll-behavior: smooth; }
-.ea-empty { display: grid; place-items: center; align-content: center; gap: 10px; padding: 60px 20px; color: var(--ds-muted); text-align: center; }
+.ea-chat { display: grid; grid-template-rows: minmax(0, 1fr) auto auto; min-width: 0; min-height: 0; overflow: hidden; }
+.ea-chat__history { min-height: 0; overflow-y: auto; padding: 16px 20px; display: grid; align-content: start; gap: 14px; scroll-behavior: smooth; }
+.ea-empty { display: grid; place-items: center; align-content: center; gap: 10px; padding: 60px 20px; color: #566b67; text-align: center; }
 .ea-empty h2 { margin: 0; color: var(--ds-ink); font-size: 18px; letter-spacing: -.01em; }
 .ea-empty p { max-width: 280px; margin: 0; font-size: 14px; line-height: 1.6; }
 .ea-empty__questions { display: grid; gap: 7px; width: min(100%, 350px); margin-top: 6px; }
@@ -507,24 +524,32 @@ function isHandoffText(value: string) {
 .ea-empty__question:hover:not(:disabled), .ea-empty__question:focus-visible { border-color: #73b6a9; background: #eff9f5; outline: none; }
 .ea-empty__question:disabled { opacity: .45; cursor: not-allowed; }
 
-.ea-msg { display: flex; gap: 10px; max-width: min(760px, 94%); }
+.ea-msg { display: flex; gap: 10px; max-width: min(700px, 94%); }
 .ea-msg--user { align-self: flex-end; flex-direction: row-reverse; }
 .ea-msg--assistant { align-self: flex-start; }
 .ea-msg__avatar { flex: 0 0 auto; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; }
 .ea-msg--user .ea-msg__avatar { background: #e5f4f1; color: #276b65; }
 .ea-msg--assistant .ea-msg__avatar { background: #eef5f3; color: #4a7b71; }
-.ea-msg__body { display: grid; gap: 6px; min-width: 0; }
-.ea-msg__text { padding: 10px 14px; border-radius: 10px; font-size: 14px; line-height: 1.65; word-break: break-word; }
+.ea-msg__body { display: grid; gap: 6px; width: 100%; min-width: 0; }
+.ea-msg__text { padding: 10px 14px; border-radius: 10px; font-size: 15px; font-weight: 400; line-height: 1.72; word-break: break-word; }
 .ea-msg--user .ea-msg__text { background: #e5f4f1; color: var(--ds-ink); border-bottom-right-radius: 4px; }
-.ea-msg--assistant .ea-msg__text { background: #fff; border: 1px solid var(--ds-line); color: var(--ds-ink); border-bottom-left-radius: 4px; }
-.ea-msg--pending .ea-msg__text { background: #f5f8f7; color: var(--ds-muted); }
-.ea-msg__text--md :deep(strong) { font-weight: 750; }
+.ea-msg--pending { max-width: min(700px, 94%); }
+.ea-msg--pending .ea-msg__text { border: 1px solid var(--ds-line); border-bottom-left-radius: 4px; background: #f5f8f7; color: #566b67; }
+.ea-msg__text--md, .ea-msg__text--md :deep(*) { font-family: inherit; font-size: 15px; font-weight: 400; line-height: 1.72; }
+.ea-msg__text--md :deep(strong) { font-weight: 700; }
 .ea-msg__text--md :deep(p) { margin: 0 0 6px; }
 .ea-msg__text--md :deep(p:last-child) { margin-bottom: 0; }
 .ea-msg__text--md :deep(.md-list) { margin: 4px 0; padding-left: 18px; }
 .ea-msg__text--md :deep(.md-list li) { margin-bottom: 3px; }
 .ea-msg__text--md :deep(br) { display: block; content: ''; margin-top: 4px; }
-.ea-msg__typing { margin: 0; color: var(--ds-muted); }
+.ea-answer { overflow: hidden; border: 1px solid var(--ds-line); border-radius: 10px; background: #fff; color: var(--ds-ink); }
+.ea-answer__section { display: grid; gap: 7px; padding: 12px 14px; }
+.ea-answer__section + .ea-answer__section { border-top: 1px solid #e5ecea; }
+.ea-answer__section h3 { margin: 0; color: #314b46; font-size: 13px; font-weight: 700; line-height: 1.4; }
+.ea-answer__section--speech { background: #f1f8f6; }
+.ea-answer__speech { padding-left: 10px; border-left: 3px solid #72aa9d; color: #183c35; }
+.ea-answer__content { color: #273b37; }
+.ea-msg__typing { margin: 0; color: #566b67; font-size: 14px; }
 .ea-typing-dots { display: inline-flex; gap: 3px; margin-left: 5px; vertical-align: middle; }
 .ea-typing-dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; animation: ea-typing 1.05s infinite ease-in-out; }
 .ea-typing-dots i:nth-child(2) { animation-delay: .15s; }
@@ -532,8 +557,8 @@ function isHandoffText(value: string) {
 .ea-waiting-slow, .ea-msg__recovery { display: grid; gap: 6px; padding: 8px 10px; border-left: 3px solid #e2b261; background: #fffbf3; color: #765816; font-size: 12px; line-height: 1.5; }
 .ea-msg__recovery { border-left-color: #d98791; background: #fff7f7; color: #8e3d4a; }
 .ea-msg__meta { display: flex; align-items: center; gap: 6px; padding: 0 4px; }
-.ea-msg__src { padding: 2px 7px; border-radius: 999px; background: #e7f4f1; color: #276b65; font-size: 11px; font-weight: 750; }
-.ea-msg__meta small { color: var(--ds-muted); font-size: 11px; }
+.ea-msg__src { padding: 2px 7px; border-radius: 999px; background: #e7f4f1; color: #276b65; font-size: 11px; font-weight: 700; }
+.ea-msg__meta small { color: #566b67; font-size: 11px; }
 .ea-msg__acts { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 0 2px; }
 .ea-msg__acts :deep(.ui-button) { height: 30px; min-width: auto; padding-inline: 9px; font-size: 12px; }
 .ea-msg__acts :deep(.ui-button--icon-only) { width: 30px; padding: 0; }
@@ -543,17 +568,18 @@ function isHandoffText(value: string) {
 
 .ea-input { padding: 12px 20px 14px; border-top: 1px solid var(--ds-line); background: #fff; }
 .ea-input__row { display: flex; align-items: flex-end; gap: 10px; }
-.ea-input textarea { flex: 1; min-height: 48px; max-height: 120px; resize: none; padding: 10px 13px; border: 1px solid var(--ds-line); border-radius: 8px; background: #fafcfb; color: var(--ds-ink); font: inherit; font-size: 14px; line-height: 1.5; }
+.ea-input textarea { flex: 1; min-height: 48px; max-height: 120px; resize: none; padding: 10px 13px; border: 1px solid var(--ds-line); border-radius: 8px; background: #fafcfb; color: var(--ds-ink); font: inherit; font-size: 15px; line-height: 1.6; }
 .ea-input textarea:focus { outline: 3px solid rgba(39,107,101,.14); border-color: var(--ds-primary); background: #fff; }
 .ea-input textarea:disabled { cursor: not-allowed; background: #f3f6f6; color: #71817e; }
-.ea-input__hint { margin: 6px 0 0; color: var(--ds-muted); font-size: 11px; line-height: 1.4; }
+.ea-input__hint { margin: 6px 0 0; color: #566b67; font-size: 11px; line-height: 1.4; }
 
 @keyframes ea-typing { 0%, 60%, 100% { transform: translateY(0); opacity: .35; } 30% { transform: translateY(-3px); opacity: 1; } }
 
 @media (max-width: 820px) {
-  .ea-shell { grid-template-columns: 1fr; }
+  .ea-shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
   .ea-sidebar { display: none; }
   .ea-quick-tags { display: flex; }
+  .ea-chat { grid-row: 2; }
   .ea-msg { max-width: 96%; }
 }
 @media (max-width: 560px) {
@@ -571,4 +597,11 @@ function isHandoffText(value: string) {
   .ea-chat__history { padding: 10px; }
   .ea-input { padding: 8px 10px 10px; }
 }
+@media (prefers-reduced-motion: reduce) {
+  .ea-chat__history { scroll-behavior: auto; }
+  .ea-typing-dots i { animation: none; opacity: .7; }
+}
+
+.ea-quick-btn:focus-visible,
+.ea-tag:focus-visible { outline: 3px solid rgba(39, 107, 101, .2); outline-offset: 2px; }
 </style>

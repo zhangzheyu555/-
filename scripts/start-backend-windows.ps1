@@ -113,8 +113,6 @@ try {
     $startInfo.Environment['SPRING_DATASOURCE_PASSWORD'] = $plainPassword
     $startInfo.Environment['APP_SEED_DEMO_ENABLED'] = 'false'
     $startInfo.Environment['APP_SEED_LEGACY_EMPLOYEE_ENABLED'] = 'false'
-    $startInfo.Environment['APP_BOOTSTRAP_DEFAULT_USERS_ENABLED'] = 'false'
-    $startInfo.Environment['APP_BOOTSTRAP_STORE_MANAGER_ACCOUNTS_ENABLED'] = 'false'
     $startInfo.Environment['APP_MIGRATION_AUTO_RUN'] = 'false'
     $startInfo.Environment['APP_EXPENSE_SUPPLEMENT_STORAGE_ROOT'] = $storageRoot
 

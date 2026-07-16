@@ -81,7 +81,10 @@ export function getEmployeeAssistantStatus() {
 }
 
 export function askEmployeeAssistant(payload: EmployeeAssistantChatRequest) {
-  return apiPost<EmployeeAssistantChatResponse, EmployeeAssistantChatRequest>('/api/employee-assistant/chat', payload)
+  // The backend budget is capped at 10s; leave a small transport margin, then surface retry/handoff.
+  return apiPost<EmployeeAssistantChatResponse, EmployeeAssistantChatRequest>(
+    '/api/employee-assistant/chat', payload, { timeout: 11_000 },
+  )
 }
 
 export function createEmployeeAssistantHandoff(payload: { question: string; storeId?: string }) {

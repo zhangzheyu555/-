@@ -16,12 +16,11 @@ spring:
     locations: classpath:db/migration-h2
 ```
 
-本地启动还需要引导环境变量（空库没有任何用户）：
+R1-01 起，本地 Web 应用启动和登录接口都不会创建业务账号。空库会保持 `auth_user` 为空；
+在 R1-02 的受控非 Web 初始化工具交付前，空库不提供登录能力。认证相关开发测试必须显式准备测试夹具，
+不得通过应用启动参数创建默认账号或店长账号。
 
 ```bash
-APP_BOOTSTRAP_DEFAULT_USERS_ENABLED=true APP_BOOTSTRAP_DEFAULT_USERS_PASSWORD=<密码> \
-APP_BOOTSTRAP_STORE_MANAGER_ACCOUNTS_ENABLED=true APP_BOOTSTRAP_STORE_MANAGER_PASSWORD=<密码> \
-APP_SEED_DEMO_ENABLED=true \
 mvn spring-boot:run -Dspring-boot.run.profiles=local
 ```
 

@@ -4,11 +4,13 @@ param(
   [ValidateRange(1, 65535)][int]$MySqlPort = $(if ($env:MYSQL_PORT) { [int]$env:MYSQL_PORT } else { 3307 }),
   [string]$MySqlDatabase = $env:MYSQL_DATABASE,
   [string]$MySqlUsername = $env:MYSQL_USERNAME,
+  [ValidateSet('DISABLED', 'REQUIRED', 'VERIFY_CA', 'VERIFY_IDENTITY')]
+  [string]$MySqlSslMode = $(if ($env:MYSQL_SSL_MODE) { $env:MYSQL_SSL_MODE } else { 'DISABLED' }),
   [Security.SecureString]$MySqlPasswordInput,
   [ValidateSet('LOCAL', 'TEST', 'STAGING')][string]$AppEnvironment = $(if ($env:APP_ENV) { $env:APP_ENV } else { 'STAGING' }),
   [ValidateRange(1, 65535)][int]$CandidatePort = 18082,
-  [string]$JarPath = (Join-Path $PSScriptRoot '..\backend\target\store-profit-backend-0.1.0-SNAPSHOT.jar'),
-  [string]$BackendWorkingDirectory = (Join-Path $PSScriptRoot '..\backend'),
+  [string]$JarPath,
+  [string]$BackendWorkingDirectory,
   [string]$RuntimeDirectory,
   [ValidateRange(5, 300)][int]$TimeoutSeconds = 45,
   [switch]$PromoteTo18081,
@@ -18,6 +20,12 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Net.Http
+if ([string]::IsNullOrWhiteSpace($JarPath)) {
+  $JarPath = Join-Path $PSScriptRoot '..\backend\target\store-profit-backend-0.1.0-SNAPSHOT.jar'
+}
+if ([string]::IsNullOrWhiteSpace($BackendWorkingDirectory)) {
+  $BackendWorkingDirectory = Join-Path $PSScriptRoot '..\backend'
+}
 . (Join-Path $PSScriptRoot 'assistant-runtime-config.ps1')
 
 function Read-RequiredText {
@@ -271,6 +279,74 @@ function Set-ChildBaseEnvironment {
   }
 }
 
+function New-ImmutableJarSnapshot {
+  param([Parameter(Mandatory)][string]$SourceJar)
+
+  $resolvedSource = [IO.Path]::GetFullPath($SourceJar)
+  if (-not (Test-Path -LiteralPath $resolvedSource -PathType Leaf)) {
+    throw '未找到后端 JAR。'
+  }
+  try {
+    $firstHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $resolvedSource).Hash
+    Start-Sleep -Milliseconds 500
+    $secondHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $resolvedSource).Hash
+  } catch {
+    throw '后端 JAR 正在被构建或其他进程占用，请等待构建完成后重新运行；18081 未改动。'
+  }
+  if ($firstHash -cne $secondHash) {
+    throw '后端 JAR 在快照前发生变化，请等待构建完成后重新运行；18081 未改动。'
+  }
+  $outputDirectory = Join-Path (Split-Path -Parent $resolvedSource) '..\output'
+  [void](New-Item -ItemType Directory -Path $outputDirectory -Force)
+  $snapshot = Join-Path $outputDirectory (
+    'store-profit-backend-snapshot-' + (Get-Date -Format 'yyyyMMdd-HHmmssfff') +
+    '-' + $firstHash.Substring(0, 12) + '.jar'
+  )
+  try {
+    Copy-Item -LiteralPath $resolvedSource -Destination $snapshot -ErrorAction Stop
+    $snapshotHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $snapshot).Hash
+    if ($snapshotHash -cne $firstHash) {
+      throw 'JAR 快照校验不一致。'
+    }
+    return [pscustomobject]@{ Path = $snapshot; SHA256 = $snapshotHash; SourceVersion = 'v0.1.0-SNAPSHOT' }
+  } catch {
+    if (Test-Path -LiteralPath $snapshot) {
+      Remove-Item -LiteralPath $snapshot -Force -ErrorAction SilentlyContinue
+    }
+    throw
+  }
+}
+
+function Assert-DeploymentContractProbe {
+  param([Parameter(Mandatory)][int]$Port, [Parameter(Mandatory)][string]$Label)
+  $handler = [System.Net.Http.HttpClientHandler]::new()
+  $handler.AllowAutoRedirect = $false
+  $client = [System.Net.Http.HttpClient]::new($handler)
+  $client.Timeout = [TimeSpan]::FromSeconds(3)
+  $content = [System.Net.Http.StringContent]::new(
+    '{"message":"probe"}', [Text.Encoding]::UTF8, 'application/json')
+  try {
+    try {
+      $response = $client.PostAsync(
+        "http://127.0.0.1:$Port/api/assistant/chat", $content).GetAwaiter().GetResult()
+    } catch {
+      throw "$Label 部署契约探针未在 3 秒内响应。"
+    }
+    try {
+      if ([int]$response.StatusCode -ne 401) {
+        throw "$Label 部署契约探针未返回 401；实际状态=$([int]$response.StatusCode)。"
+      }
+    } finally {
+      $response.Dispose()
+    }
+  } finally {
+    $content.Dispose()
+    $client.Dispose()
+    $handler.Dispose()
+  }
+  Write-Host "$Label 部署契约探针通过：post /api/assistant/chat 无认证 → 401（Jackson 可正常反序列化）。" -ForegroundColor Green
+}
+
 function Start-BackendChild {
   param(
     [Parameter(Mandatory)][string]$ResolvedJar,
@@ -325,11 +401,10 @@ function New-ChildEnvironment {
     MYSQL_DATABASE = $MySqlDatabase
     MYSQL_USERNAME = $MySqlUsername
     MYSQL_PASSWORD = $DatabasePassword
+    MYSQL_SSL_MODE = $MySqlSslMode
     APP_SEED_DEMO_ENABLED = 'false'
     APP_SEED_LEGACY_EMPLOYEE_ENABLED = 'false'
     APP_MIGRATION_AUTO_RUN = 'false'
-    APP_BOOTSTRAP_DEFAULT_USERS_ENABLED = 'false'
-    APP_BOOTSTRAP_STORE_MANAGER_ACCOUNTS_ENABLED = 'false'
   }
   if ($Port -eq $CandidatePort) {
     # Candidate acceptance must remain read-only against the real database.
@@ -383,6 +458,10 @@ try {
   $resolvedBackendDirectory = [IO.Path]::GetFullPath($BackendWorkingDirectory)
   if (-not (Test-Path -LiteralPath $resolvedJar -PathType Leaf)) { throw '未找到后端 JAR；请先完成隔离打包。' }
   if (-not (Test-Path -LiteralPath $resolvedBackendDirectory -PathType Container)) { throw '未找到本工作区 backend 运行目录。' }
+  # Create immutable snapshot so Maven cannot overwrite the running JAR.
+  $jarSnapshot = New-ImmutableJarSnapshot -SourceJar $resolvedJar
+  $resolvedJar = $jarSnapshot.Path
+  Write-Host ("JAR 快照已创建：SHA-256={0}" -f $jarSnapshot.SHA256) -ForegroundColor Cyan
   $MySqlDatabase = Read-RequiredText '请输入 MySQL 数据库名称' $MySqlDatabase
   $MySqlUsername = Read-RequiredText '请输入 MySQL 3307 独立应用账号' $MySqlUsername
   if ($MySqlUsername -match '^(?i:root)(?:@|$)') { throw '禁止使用 root 运行后端。' }
@@ -407,6 +486,7 @@ try {
   Write-SafeHealth $candidateHealth $CandidatePort
   Assert-UnauthenticatedAssistantGate $CandidatePort '/api/assistant/status' '门店经营助手'
   Assert-UnauthenticatedAssistantGate $CandidatePort '/api/employee-assistant/status' '员工服务助手'
+  Assert-DeploymentContractProbe $CandidatePort '门店经营助手'
 
   if (-not $PromoteTo18081) {
     $mysqlPlain = $null

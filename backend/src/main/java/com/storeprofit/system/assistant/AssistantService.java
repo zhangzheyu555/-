@@ -181,6 +181,16 @@ public class AssistantService {
       if (!quality.passed()) {
         log.warn("DeepSeek quality retry errorCode={} elapsedMs={}",
             quality.code(), elapsedMillis(startedAt));
+        // When local data is insufficient (cost=0, margin=100% or missing months),
+        // do NOT make a second model request. Use analysisFailure for user-facing message.
+        if (expectation.dataLimited()) {
+          AnalysisFailure failure = analysisFailure(quality, expectation);
+          properties.markAnalysisResponseRejected(failure.code());
+          return AssistantChatResponse.aiUnavailable(
+              question, data.localData(), selection.reason(),
+              failure.code(), failure.message()
+          );
+        }
         modelResponse = analyzeWithinBudget(
             repairPrompt(data.modelContext(), quality, expectation), modelQuestion, startedAt
         );
@@ -404,7 +414,7 @@ public class AssistantService {
     try {
       configuredNanos = configured.toNanos();
     } catch (ArithmeticException ex) {
-      return Duration.ofSeconds(75);
+      return Duration.ofSeconds(30);
     }
     long elapsedNanos = System.nanoTime() - startedAt;
     return elapsedNanos >= configuredNanos

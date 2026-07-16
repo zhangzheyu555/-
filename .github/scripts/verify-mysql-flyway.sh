@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 backend_jar="${1:-}"
-readonly expected_flyway_latest=54
+readonly expected_flyway_latest=56
 required_env=(
   APP_ENV SERVER_PORT MYSQL_HOST MYSQL_PORT MYSQL_DATABASE MYSQL_USERNAME
   MYSQL_PASSWORD MYSQL_CONTAINER_ID

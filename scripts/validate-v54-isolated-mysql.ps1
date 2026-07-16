@@ -94,7 +94,7 @@ function Remove-InheritedSensitiveEnvironment {
       'DEEPSEEK_API_KEY', 'DEEPSEEK_KEY', 'OPENAI_API_KEY', 'EMPLOYEE_ASSISTANT_API_TOKEN',
       'MYSQL_HOST', 'MYSQL_PORT', 'MYSQL_DATABASE', 'MYSQL_USERNAME', 'MYSQL_PASSWORD', 'MYSQL_ROOT_PASSWORD',
       'SPRING_DATASOURCE_URL', 'SPRING_DATASOURCE_USERNAME', 'SPRING_DATASOURCE_PASSWORD',
-      'APP_ENV', 'APP_BOOTSTRAP_DEFAULT_USERS_PASSWORD', 'APP_BOOTSTRAP_STORE_MANAGER_PASSWORD'
+      'APP_ENV'
     )) {
     # Do not retrieve the inherited value: isolated child processes receive no runtime database or model credentials.
     [void]$StartInfo.EnvironmentVariables.Remove($name)
@@ -244,8 +244,6 @@ function Start-BackendMigration {
   $variables = [ordered]@{
     APP_ENV = 'TEST'
     APP_SEED_DEMO_ENABLED = 'false'
-    APP_BOOTSTRAP_DEFAULT_USERS_ENABLED = 'false'
-    APP_BOOTSTRAP_STORE_MANAGER_ACCOUNTS_ENABLED = 'false'
     APP_MIGRATION_AUTO_RUN = 'false'
     MYSQL_HOST = '127.0.0.1'
     MYSQL_PORT = [string]$MySqlPort

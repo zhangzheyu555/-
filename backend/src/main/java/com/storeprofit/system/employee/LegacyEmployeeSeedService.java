@@ -15,15 +15,13 @@ import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.ApplicationArguments;
-import org.springframework.boot.ApplicationRunner;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
-import org.springframework.stereotype.Component;
 
 /**
- * One-time seed service to import employee records from a legacy database.js file.
+ * R1-03: Removed @Component and ApplicationRunner to prevent automatic runtime seed.
+ * The importSeed() method can be called explicitly for controlled dev/demo fixture use.
  *
  * <h3>Data source format</h3>
  * Reads a file containing JavaScript arrays:
@@ -38,22 +36,14 @@ import org.springframework.stereotype.Component;
  *   <li>Insert remaining unique employees via {@link EmployeeRepository#upsertSeed}</li>
  * </ol>
  *
- * <h3>194 / 181 / 13 breakdown</h3>
- * <ul>
- *   <li><b>194</b> = total raw rows parsed from SALARY_SEED + SALARY_SEED_Q1 (including multi-month duplicates)</li>
- *   <li><b>181</b> = unique (store_id + name) employees after deduplication and store validation</li>
- *   <li><b>13</b> = rows filtered out BEFORE deduplication due to blank storeId/name or store not found in DB</li>
- * </ul>
- * Not all 181 are "在岗": some may have "已离职" in position/remark and will be imported with status "离职".
- *
  * <h3>Production safety</h3>
  * This seed is DISABLED by default (app.seed.legacy-employee-enabled=false).
+ * importSeed() logs a message and returns immediately when disabled.
  * It must only be enabled in dev/demo environments with an explicit legacy file path.
  * When enabled, upsertSeed sets data_source='LEGACY_SEED' and will NOT overwrite
  * employees whose data_source is not LEGACY_SEED (e.g. MANUAL_ENTRY or IMPORT).
  */
-@Component
-public class LegacyEmployeeSeedService implements ApplicationRunner {
+public class LegacyEmployeeSeedService {
   private static final Logger log = LoggerFactory.getLogger(LegacyEmployeeSeedService.class);
   private static final long DEFAULT_TENANT_ID = 1L;
   private static final String SOURCE_LEGACY_SEED = "LEGACY_SEED";
@@ -77,8 +67,8 @@ public class LegacyEmployeeSeedService implements ApplicationRunner {
     this.legacyEmployeeSeedFile = legacyEmployeeSeedFile == null ? "" : legacyEmployeeSeedFile.trim();
   }
 
-  @Override
-  public void run(ApplicationArguments args) throws Exception {
+  // R1-03: renamed from run() to importSeed(); no longer auto-triggered by ApplicationRunner.
+  public void importSeed() throws Exception {
     if (!legacyEmployeeSeedEnabled) {
       log.info("Legacy employee seed is DISABLED (production-safe). Set APP_SEED_LEGACY_EMPLOYEE_ENABLED=true to enable for demo/dev only.");
       return;

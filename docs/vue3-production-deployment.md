@@ -208,8 +208,8 @@ http://127.0.0.1:5173/todos
 
 - 在隔离的非生产数据库中，为每个角色创建受控验收账号。
 - 账号密码只通过部署密钥或密码管理系统提供，不写入仓库、截图和发布记录。
-- 如需一次性引导账号，必须同时设置 `APP_BOOTSTRAP_DEFAULT_USERS_ENABLED=true` 和随机的 `APP_BOOTSTRAP_DEFAULT_USERS_PASSWORD`；生产环境保持该开关关闭。
-- 如需一次性引导店长账号，必须同时设置 `APP_BOOTSTRAP_STORE_MANAGER_ACCOUNTS_ENABLED=true` 和随机的 `APP_BOOTSTRAP_STORE_MANAGER_PASSWORD`；完成后立即关闭开关并轮换密码。
+- Web 应用启动和登录接口只验证已存在账号，不提供默认账号、店长账号或首管理员初始化能力。
+- R1-02 的受控非 Web 初始化工具交付前，空数据库不能登录；不得以启动参数或 HTTP 接口临时建号。
 
 完整上线验收清单见：
 

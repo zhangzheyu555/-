@@ -107,12 +107,10 @@ try {
   $startInfo.Environment['MYSQL_USERNAME'] = 'ai_profit_test'
   $startInfo.Environment['MYSQL_PASSWORD'] = $mysqlPlain
   $startInfo.Environment['SERVER_PORT'] = [string]$Port
-  $startInfo.Environment['APP_BOOTSTRAP_DEFAULT_USERS_ENABLED'] = 'true'
-  $startInfo.Environment['APP_BOOTSTRAP_DEFAULT_USERS_PASSWORD'] = $bossPlain
   $backend = [Diagnostics.Process]::new()
   $backend.StartInfo = $startInfo
   [void]$backend.Start()
-  foreach ($name in @('MYSQL_PASSWORD', 'APP_BOOTSTRAP_DEFAULT_USERS_PASSWORD')) { [void]$startInfo.Environment.Remove($name) }
+  [void]$startInfo.Environment.Remove('MYSQL_PASSWORD')
 
   $versionResponse = $null
   for ($attempt = 0; $attempt -lt 90; $attempt++) {

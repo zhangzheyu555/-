@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.catchThrowableOfType;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -238,12 +239,22 @@ class EmployeeAssistantServiceTest {
         () -> service.chat(user(), new EmployeeAssistantChatRequest(null, "顾客是张三，请帮我回复")),
         BusinessException.class
     );
+    BusinessException conversationalOrder = catchThrowableOfType(
+        () -> service.chat(user(), new EmployeeAssistantChatRequest(null, "订单号是ABCD1234，请帮我看一下")),
+        BusinessException.class
+    );
+    BusinessException conversationalAddress = catchThrowableOfType(
+        () -> service.chat(user(), new EmployeeAssistantChatRequest(null, "收货地址为上海市浦东新区测试路 1 号")),
+        BusinessException.class
+    );
 
     assertThat(order.getCode()).isEqualTo("EMPLOYEE_ASSISTANT_PRIVACY_BLOCKED");
     assertThat(address.getCode()).isEqualTo("EMPLOYEE_ASSISTANT_PRIVACY_BLOCKED");
     assertThat(customerName.getCode()).isEqualTo("EMPLOYEE_ASSISTANT_PRIVACY_BLOCKED");
+    assertThat(conversationalOrder.getCode()).isEqualTo("EMPLOYEE_ASSISTANT_PRIVACY_BLOCKED");
+    assertThat(conversationalAddress.getCode()).isEqualTo("EMPLOYEE_ASSISTANT_PRIVACY_BLOCKED");
     assertThat(chatCalls).hasValue(0);
-    verify(auditRepository, org.mockito.Mockito.times(3)).writeLog(any(AuthUser.class), any(AuditLogRequest.class));
+    verify(auditRepository, org.mockito.Mockito.times(5)).writeLog(any(AuthUser.class), any(AuditLogRequest.class));
   }
 
   @Test
@@ -373,6 +384,7 @@ class EmployeeAssistantServiceTest {
         .contains("employee-support-model")
         .contains("会话编号：2d77c1d7-1f23-4d11-a49e-2ca6e3f9d908")
         .contains("顾客投诉等待太久，怎么回应？")
+        .contains("可以这样说", "员工怎么处理", "什么时候转人工", "小票", "支付记录")
         .doesNotContain("DEEPSEEK_API_KEY")
         .doesNotContain("营业额");
   }
@@ -442,16 +454,20 @@ class EmployeeAssistantServiceTest {
     EmployeeAssistantService service = service("https://unused.example.test", "test-token", auditRepository,
         knowledgeRepository);
 
+    long startedAt = System.nanoTime();
     EmployeeAssistantChatResponse response = service.chat(user(),
         new EmployeeAssistantChatRequest(null, "漏发吸管处理时顾客电话是13800138000，怎么答复？"));
+    long totalMillis = Duration.ofNanos(System.nanoTime() - startedAt).toMillis();
 
     assertThat(response.answer()).isEqualTo("先致歉并立即补发，必要时请值班经理协助。");
     assertThat(response.answerSource()).isEqualTo(EmployeeAssistantAnswerSource.KNOWLEDGE);
     assertThat(response.knowledgeId()).isEqualTo(11L);
     assertThat(response.knowledgeVersion()).isEqualTo(2);
+    assertThat(totalMillis).isLessThan(800L);
     ArgumentCaptor<AuditLogRequest> capture = ArgumentCaptor.forClass(AuditLogRequest.class);
     verify(auditRepository).writeLog(any(AuthUser.class), capture.capture());
     assertThat(capture.getValue().reason()).contains("SUCCESS_KNOWLEDGE").contains("input_redacted=true")
+        .contains("model_ms=0", "total_ms=")
         .doesNotContain("13800138000");
   }
 
@@ -479,10 +495,14 @@ class EmployeeAssistantServiceTest {
       calls.incrementAndGet();
       respond(exchange, 200, "{\"answer\":\"should not be used\"}");
     });
-    EmployeeAssistantService service = service(baseUrl(), "test-token", mock(AuditRepository.class));
+    AuditRepository auditRepository = mock(AuditRepository.class);
+    EmployeeAssistantKnowledgeRepository knowledgeRepository = mock(EmployeeAssistantKnowledgeRepository.class);
+    EmployeeAssistantService service = service(baseUrl(), "test-token", auditRepository, knowledgeRepository);
 
+    long startedAt = System.nanoTime();
     EmployeeAssistantChatResponse response = service.chat(user(),
         new EmployeeAssistantChatRequest(null, "顾客申请退款时，员工应该怎么回复？"));
+    long totalMillis = Duration.ofNanos(System.nanoTime() - startedAt).toMillis();
 
     assertThat(response.answerSource()).isEqualTo(EmployeeAssistantAnswerSource.HUMAN_REQUIRED);
     assertThat(response.needsHuman()).isTrue();
@@ -490,12 +510,19 @@ class EmployeeAssistantServiceTest {
     assertThat(response.answer()).contains("现有业务系统内按门店规则核验", "值班负责人")
         .doesNotContain("请提供", "请发送", "请上传");
     assertThat(calls).hasValue(0);
+    verifyNoInteractions(knowledgeRepository);
+    assertThat(totalMillis).isLessThan(500L);
+    ArgumentCaptor<AuditLogRequest> audit = ArgumentCaptor.forClass(AuditLogRequest.class);
+    verify(auditRepository).writeLog(any(AuthUser.class), audit.capture());
+    assertThat(audit.getValue().reason())
+        .contains("HUMAN_REQUIRED_REFUND", "knowledge_ms=0", "model_ms=0", "total_ms=")
+        .doesNotContain("顾客申请退款");
   }
 
   @Test
   void unsafeProviderOutputIsReplacedWithAPrivacySafeHandoffReply() throws Exception {
     startServer(exchange -> respond(exchange, 200,
-        "{\"answer\":\"请提供顾客姓名、电话、订单号、金额和支付凭证\",\"needs_human\":false}"));
+        "{\"answer\":\"订单号发过来，再把小票、支付记录和附件传来\",\"needs_human\":false}"));
     EmployeeAssistantService service = service(baseUrl(), "test-token", mock(AuditRepository.class));
 
     EmployeeAssistantChatResponse response = service.chat(user(),
@@ -504,12 +531,12 @@ class EmployeeAssistantServiceTest {
     assertThat(response.answerSource()).isEqualTo(EmployeeAssistantAnswerSource.HUMAN_REQUIRED);
     assertThat(response.needsHuman()).isTrue();
     assertThat(response.handoffCategory()).isEqualTo("OUTPUT_SAFETY");
-    assertThat(response.answer()).contains("不要在聊天中补充顾客或订单信息", "转值班负责人")
-        .doesNotContain("请提供顾客姓名");
+    assertThat(response.answer()).contains("不索要或发送顾客姓名", "转值班负责人")
+        .doesNotContain("订单号发过来", "支付记录和附件传来");
   }
 
   @Test
-  void lowRiskProviderAnswerIsCachedByStoreScopeAndKnowledgeVersion() throws Exception {
+  void lowRiskProviderAnswerCacheIsIsolatedByStoreScope() throws Exception {
     AtomicInteger calls = new AtomicInteger();
     startServer(exchange -> {
       calls.incrementAndGet();
@@ -518,11 +545,50 @@ class EmployeeAssistantServiceTest {
     EmployeeAssistantService service = service(baseUrl(), "test-token", mock(AuditRepository.class));
     EmployeeAssistantChatRequest request = new EmployeeAssistantChatRequest(null, "顾客投诉等待太久，怎么回应？");
 
-    EmployeeAssistantChatResponse first = service.chat(user(), request);
-    EmployeeAssistantChatResponse second = service.chat(user(), request);
+    EmployeeAssistantChatResponse first = service.chat(user("s1"), request);
+    EmployeeAssistantChatResponse second = service.chat(user("s1"), request);
+    EmployeeAssistantChatResponse otherStore = service.chat(user("s2"), request);
 
     assertThat(first.answer()).isEqualTo(second.answer());
-    assertThat(calls).hasValue(1);
+    assertThat(otherStore.answer()).isEqualTo(first.answer());
+    assertThat(calls).hasValue(2);
+  }
+
+  @Test
+  void publishedKnowledgeVersionChangeInvalidatesLowRiskAnswerCache() throws Exception {
+    AtomicInteger calls = new AtomicInteger();
+    startServer(exchange -> {
+      calls.incrementAndGet();
+      respond(exchange, 200, "{\"answer\":\"先致歉并说明会立即跟进。\",\"needs_human\":false}");
+    });
+    AtomicReference<List<EmployeeAssistantKnowledgeRepository.KnowledgeRow>> published =
+        new AtomicReference<>(List.of(knowledge(31L, "交班规范", "交班")));
+    EmployeeAssistantKnowledgeRepository knowledgeRepository = mock(EmployeeAssistantKnowledgeRepository.class);
+    when(knowledgeRepository.publishedKnowledge(1L)).thenAnswer(ignored -> published.get());
+    EmployeeAssistantService service = service(baseUrl(), "test-token", mock(AuditRepository.class), knowledgeRepository);
+    EmployeeAssistantChatRequest request = new EmployeeAssistantChatRequest(null, "顾客投诉等待太久，怎么回应？");
+
+    service.chat(user(), request);
+    published.set(List.of(new EmployeeAssistantKnowledgeRepository.KnowledgeRow(
+        31L, 1L, "SERVICE", "交班规范", "交班", "更新后的交班话术", "PUBLISHED", 3, 9L, 9L,
+        LocalDateTime.of(2026, 7, 14, 9, 0), LocalDateTime.of(2026, 7, 15, 9, 0))));
+    service.chat(user(), request);
+
+    assertThat(calls).hasValue(2);
+  }
+
+  @Test
+  void upstreamGatewayTimeoutReturnsSafeHandoffInsteadOfAnError() throws Exception {
+    startServer(exchange -> respond(exchange, 504, "{\"detail\":\"internal gateway detail\"}"));
+    EmployeeAssistantService service = service(baseUrl(), "test-token", mock(AuditRepository.class));
+
+    EmployeeAssistantChatResponse response = service.chat(user(),
+        new EmployeeAssistantChatRequest(null, "顾客投诉等待太久，怎么回应？"));
+
+    assertThat(response.needsHuman()).isTrue();
+    assertThat(response.handoffCategory()).isEqualTo("UPSTREAM_TIMEOUT");
+    assertThat(response.answer()).contains("什么时候转人工", "值班负责人")
+        .doesNotContain("internal gateway detail");
   }
 
   @Test
@@ -543,7 +609,7 @@ class EmployeeAssistantServiceTest {
     assertThat(response.answerSource()).isEqualTo(EmployeeAssistantAnswerSource.HUMAN_REQUIRED);
     assertThat(response.needsHuman()).isTrue();
     assertThat(response.handoffCategory()).isEqualTo("UPSTREAM_TIMEOUT");
-    assertThat(response.answer()).contains("转值班负责人", "不要在聊天中补充顾客或订单信息");
+    assertThat(response.answer()).contains("转值班负责人", "不在聊天中补充顾客或订单信息");
   }
 
   @Test
@@ -577,6 +643,7 @@ class EmployeeAssistantServiceTest {
     EmployeeAssistantKnowledgeRepository knowledgeRepository = mock(EmployeeAssistantKnowledgeRepository.class);
     when(knowledgeRepository.publishedKnowledge(1L)).thenReturn(List.of(
         knowledge(1L, "客户联系方式", "漏发,处理", "客户电话 13800138000，请直接联系顾客"),
+        knowledge(3L, "订单查询要求", "漏发,处理", "订单号发过来，再把小票和支付记录传来"),
         knowledge(2L, "补发流程", "漏发,补发", "先致歉并立即补发。")
     ));
     EmployeeAssistantService service = service(baseUrl(), "test-token", mock(AuditRepository.class), knowledgeRepository);
@@ -585,7 +652,7 @@ class EmployeeAssistantServiceTest {
 
     assertThat(response.answerSource()).isEqualTo(EmployeeAssistantAnswerSource.ASSISTANT);
     assertThat(requestBody.get())
-        .doesNotContain("客户联系方式", "13800138000", "客户电话")
+        .doesNotContain("客户联系方式", "13800138000", "客户电话", "订单查询要求", "订单号发过来")
         .contains("补发流程");
   }
 
@@ -707,7 +774,11 @@ class EmployeeAssistantServiceTest {
   }
 
   private AuthUser user() {
-    return new AuthUser(8L, 1L, "测试租户", "test-user", "hash", "测试用户", "STORE_MANAGER", "s1", true, 3L);
+    return user("s1");
+  }
+
+  private AuthUser user(String storeId) {
+    return new AuthUser(8L, 1L, "测试租户", "test-user", "hash", "测试用户", "STORE_MANAGER", storeId, true, 3L);
   }
 
   @FunctionalInterface

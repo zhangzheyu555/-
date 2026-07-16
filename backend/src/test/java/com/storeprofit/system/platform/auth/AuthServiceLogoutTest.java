@@ -80,7 +80,7 @@ class AuthServiceLogoutTest {
   }
 
   private AuthService service(AuthRepository authRepository, AuditRepository auditRepository) {
-    return new AuthService(authRepository, mock(PasswordService.class), auditRepository, 12, false, "");
+    return new AuthService(authRepository, mock(PasswordService.class), auditRepository, 12);
   }
 
   private AuthUser user() {

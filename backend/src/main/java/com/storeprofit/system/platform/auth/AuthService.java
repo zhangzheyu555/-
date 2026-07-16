@@ -14,7 +14,6 @@ import com.storeprofit.system.platform.authorization.DataScopeModes;
 import com.storeprofit.system.platform.authorization.DataScopeService;
 import com.storeprofit.system.platform.authorization.WorkspaceAccessProfile;
 import com.storeprofit.system.platform.authorization.WorkspaceAccessResolver;
-import jakarta.annotation.PostConstruct;
 import java.security.SecureRandom;
 import java.time.OffsetDateTime;
 import java.util.Base64;
@@ -45,8 +44,6 @@ public class AuthService {
   private final WorkspaceAccessResolver workspaceAccessResolver;
   private final BusinessScopeResolver businessScopeResolver;
   private final long tokenTtlHours;
-  private final boolean bootstrapDefaultUsersEnabled;
-  private final String bootstrapDefaultUsersPassword;
   private final SecureRandom secureRandom = new SecureRandom();
   private final ConcurrentMap<String, FailedLoginWindow> failedLogins = new ConcurrentHashMap<>();
 
@@ -59,9 +56,7 @@ public class AuthService {
       DataScopeService dataScopeService,
       WorkspaceAccessResolver workspaceAccessResolver,
       BusinessScopeResolver businessScopeResolver,
-      @Value("${app.auth.token-ttl-hours:12}") long tokenTtlHours,
-      @Value("${app.bootstrap.default-users-enabled:false}") boolean bootstrapDefaultUsersEnabled,
-      @Value("${app.bootstrap.default-users-password:}") String bootstrapDefaultUsersPassword
+      @Value("${app.auth.token-ttl-hours:12}") long tokenTtlHours
   ) {
     this.authRepository = authRepository;
     this.passwordService = passwordService;
@@ -71,8 +66,6 @@ public class AuthService {
     this.workspaceAccessResolver = workspaceAccessResolver;
     this.businessScopeResolver = businessScopeResolver;
     this.tokenTtlHours = tokenTtlHours;
-    this.bootstrapDefaultUsersEnabled = bootstrapDefaultUsersEnabled;
-    this.bootstrapDefaultUsersPassword = bootstrapDefaultUsersPassword == null ? "" : bootstrapDefaultUsersPassword.trim();
   }
 
   /** Compatibility constructor retained for focused authorization tests. */
@@ -82,9 +75,7 @@ public class AuthService {
       AuditRepository auditRepository,
       AuthorizationService authorizationService,
       DataScopeService dataScopeService,
-      long tokenTtlHours,
-      boolean bootstrapDefaultUsersEnabled,
-      String bootstrapDefaultUsersPassword
+      long tokenTtlHours
   ) {
     this(
         authRepository,
@@ -94,9 +85,7 @@ public class AuthService {
         dataScopeService,
         new WorkspaceAccessResolver(),
         null,
-        tokenTtlHours,
-        bootstrapDefaultUsersEnabled,
-        bootstrapDefaultUsersPassword
+        tokenTtlHours
     );
   }
 
@@ -105,9 +94,7 @@ public class AuthService {
       AuthRepository authRepository,
       PasswordService passwordService,
       AuditRepository auditRepository,
-      long tokenTtlHours,
-      boolean bootstrapDefaultUsersEnabled,
-      String bootstrapDefaultUsersPassword
+      long tokenTtlHours
   ) {
     this(
         authRepository,
@@ -115,34 +102,8 @@ public class AuthService {
         auditRepository,
         null,
         null,
-        tokenTtlHours,
-        bootstrapDefaultUsersEnabled,
-        bootstrapDefaultUsersPassword
+        tokenTtlHours
     );
-  }
-
-  @PostConstruct
-  public void ensureDefaultUsers() {
-    if (!bootstrapDefaultUsersEnabled) {
-      return;
-    }
-    if (bootstrapDefaultUsersPassword.isBlank()) {
-      log.error("Default account bootstrap was requested without APP_BOOTSTRAP_DEFAULT_USERS_PASSWORD; no accounts were created.");
-      return;
-    }
-    log.warn("Default account bootstrap is enabled. Do not enable this setting in production.");
-    ensureDefaultUser("boss", bootstrapDefaultUsersPassword, "老板", "BOSS");
-    ensureDefaultUser("finance", bootstrapDefaultUsersPassword, "财务", "FINANCE");
-    ensureDefaultUser("supervisor", bootstrapDefaultUsersPassword, "运营", "OPERATIONS");
-    ensureDefaultUser("warehouse", bootstrapDefaultUsersPassword, "仓库管理员", "WAREHOUSE");
-    ensureDefaultUser("ops", bootstrapDefaultUsersPassword, "运营", "OPERATIONS");
-    ensureDefaultUser("operations", bootstrapDefaultUsersPassword, "运营", "OPERATIONS");
-  }
-
-  private void ensureDefaultUser(String username, String password, String displayName, String role) {
-    if (!authRepository.userExists(TenantDefaults.DEFAULT_TENANT_ID, username)) {
-      authRepository.createUser(TenantDefaults.DEFAULT_TENANT_ID, username, passwordService.hash(password), displayName, role, null);
-    }
   }
 
   public LoginResponse login(LoginRequest request) {

@@ -187,8 +187,6 @@ jobs:
       MYSQL_PASSWORD: ${{ format('app-ci-{0}-{1}', github.run_id, github.run_attempt) }}
       APP_SEED_DEMO_ENABLED: "false"
       APP_SEED_LEGACY_EMPLOYEE_ENABLED: "false"
-      APP_BOOTSTRAP_DEFAULT_USERS_ENABLED: "false"
-      APP_BOOTSTRAP_STORE_MANAGER_ACCOUNTS_ENABLED: "false"
       APP_MIGRATION_AUTO_RUN: "false"
       DEEPSEEK_ENABLED: "false"
     services:

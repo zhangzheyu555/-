@@ -1,11 +1,25 @@
 package com.storeprofit.system.config;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.env.MockEnvironment;
 
 class DatabaseEnvironmentGuardTest {
+  @Test
+  void pureConnectionTargetEntryReturnsNormalizedQaTarget() {
+    DatabaseEnvironmentGuard.ConnectionTarget target = DatabaseEnvironmentGuard.validateConnectionTarget(
+        " qa ",
+        "jdbc:mysql://LOCALHOST:3312/ai_profit_qa_r102?sslMode=DISABLED",
+        "bootstrap_user");
+
+    assertThat(target.environment()).isEqualTo("QA");
+    assertThat(target.host()).isEqualTo("localhost");
+    assertThat(target.port()).isEqualTo(3312);
+    assertThat(target.database()).isEqualTo("ai_profit_qa_r102");
+  }
+
   @Test
   void missingVariablesFailBeforeApplicationStartup() {
     assertThatThrownBy(() -> DatabaseEnvironmentGuard.validate(new MockEnvironment()))

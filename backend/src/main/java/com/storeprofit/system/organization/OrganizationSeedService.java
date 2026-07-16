@@ -3,15 +3,17 @@ package com.storeprofit.system.organization;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.storeprofit.system.platform.tenant.TenantDefaults;
-import jakarta.annotation.PostConstruct;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.env.Environment;
-import org.springframework.stereotype.Service;
 
-@Service
+/**
+ * R1-03: Removed @Service and @PostConstruct to prevent automatic runtime seed creation.
+ * The class remains as a utility for explicit dev/demo fixture use only.
+ * STAGING/PRODUCTION must never invoke seed methods via any path.
+ */
 public class OrganizationSeedService {
   private final OrganizationRepository repository;
   private final ObjectMapper objectMapper;
@@ -33,7 +35,8 @@ public class OrganizationSeedService {
     this.migrationAutoRun = migrationAutoRun;
   }
 
-  @PostConstruct
+  // R1-03: @PostConstruct removed. This method is no longer auto-triggered.
+  // Must be called explicitly for dev/test fixtures only.
   public void seed() {
     if (!shouldSeedDemoData() && !migrationAutoRun) {
       return;

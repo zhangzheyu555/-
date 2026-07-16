@@ -25,7 +25,9 @@ import {
   type AssistantStatus,
 } from '../api/assistant'
 import { getProfitEntries, getProfitMonths, type ProfitEntry } from '../api/finance'
+import { getProfitDashboard, type ProfitSummary } from '../api/profit'
 import { getStores, type StoreInfo } from '../api/operations'
+import { ApiError } from '../api/http'
 import { createManualBusinessTodo } from '../api/todos'
 import { useBusinessScope } from '../composables/useBusinessScope'
 import { useAuthStore } from '../stores/auth'
@@ -62,6 +64,12 @@ const months = ref<string[]>([])
 const selectedStoreId = ref('')
 const selectedMonth = ref('')
 const currentEntry = ref<ProfitEntry | null>(null)
+const entryState = ref<'idle' | 'loading' | 'ready' | 'empty' | 'error'>('idle')
+const entryError = ref('')
+const entryRequestId = ref('')
+const dashboardSummary = ref<ProfitSummary | null>(null)
+const dataIntegrityWarning = ref('')
+let entryAbortController: AbortController | null = null
 const pageLoading = ref(true)
 const metricLoading = ref(false)
 const sending = ref(false)
@@ -109,7 +117,9 @@ const accessibleStores = computed(() => {
   if (ids.length) return stores.value.filter((store) => ids.includes(store.id))
   return stores.value
 })
-const effectiveStoreId = computed(() => businessScope.scopedStoreId(selectedStoreId.value))
+const effectiveStoreId = computed(() =>
+  businessScope.isBoss.value ? '' : businessScope.scopedStoreId(selectedStoreId.value)
+)
 const selectedStore = computed(() => accessibleStores.value.find((store) => store.id === effectiveStoreId.value))
 const selectedStoreName = computed(() => selectedStore.value?.name || businessScope.boundStoreName.value || '当前门店')
 const mainMetrics = computed(() => metricCards(currentEntry.value))
@@ -232,6 +242,11 @@ function clearAssistantStatusRetryTimer() {
 }
 
 function applyDefaults() {
+  if (businessScope.isBoss.value) {
+    selectedStoreId.value = ''
+    selectedMonth.value = months.value[0] || currentMonth()
+    return
+  }
   const routeStore = String(route.query.storeId || '')
   const routeMonth = validMonth(String(route.query.month || ''))
   selectedStoreId.value = businessScope.isStoreManager.value
@@ -245,20 +260,77 @@ function applyDefaults() {
 }
 
 async function loadCurrentEntry() {
-  if (!effectiveStoreId.value || !selectedMonth.value) {
+  if (!selectedMonth.value) {
     currentEntry.value = null
+    entryState.value = 'idle'
+    entryError.value = ''
     return
   }
+  // Cancel any in-flight request from a previous store/month selection.
+  if (entryAbortController) { entryAbortController.abort() }
+  const controller = new AbortController()
+  entryAbortController = controller
+  entryState.value = 'loading'
+  entryError.value = ''
+  entryRequestId.value = ''
   metricLoading.value = true
   try {
-    const rows = await getProfitEntries({
-      storeId: effectiveStoreId.value,
-      brandId: businessScope.isStoreManager.value ? businessScope.brandId.value ?? undefined : undefined,
-      month: selectedMonth.value,
-    })
-    currentEntry.value = rows[0] || null
-  } catch {
+    if (businessScope.isBoss.value) {
+      // BOSS uses dashboard summary aggregating all authorized stores
+      const dashboard = await getProfitDashboard({ month: selectedMonth.value })
+      if (controller.signal.aborted) return
+      dashboardSummary.value = dashboard.summary
+      if (!dashboard.summary || dashboard.summary.entryCount === 0) {
+        currentEntry.value = null
+        entryState.value = 'empty'
+      } else {
+        currentEntry.value = {
+          storeId: '',
+          month: dashboard.summary.month,
+          sales: dashboard.summary.sales,
+          costSum: dashboard.summary.costSum,
+          expenseSum: dashboard.summary.expenseSum,
+          net: dashboard.summary.net,
+          margin: dashboard.summary.margin,
+        }
+        entryState.value = 'ready'
+        // Cost=0 with positive sales → data integrity warning
+        dataIntegrityWarning.value = ''
+        if (dashboard.summary.sales > 0 && (dashboard.summary.costSum === 0 || dashboard.summary.margin === 1)) {
+          dataIntegrityWarning.value = '成本或费用数据不完整，当前净利率可能不准确'
+        }
+      }
+    } else {
+      const rows = await getProfitEntries({
+        storeId: businessScope.isBoss.value ? '' : effectiveStoreId.value,
+        brandId: businessScope.isStoreManager.value ? businessScope.brandId.value ?? undefined : undefined,
+        month: selectedMonth.value,
+      })
+      if (controller.signal.aborted) return
+      if (!rows.length) {
+        currentEntry.value = null
+        entryState.value = 'empty'
+      } else {
+        currentEntry.value = rows[0]
+        entryState.value = 'ready'
+        dataIntegrityWarning.value = ''
+        if ((rows[0].sales ?? 0) > 0 && ((rows[0].costSum ?? 0) === 0 || (rows[0].margin ?? 0) === 1)) {
+          dataIntegrityWarning.value = '成本或费用数据不完整，当前净利率可能不准确'
+        }
+      }
+    }
+  } catch (error) {
+    if (controller.signal.aborted) return
     currentEntry.value = null
+    entryState.value = 'error'
+    if (error instanceof ApiError) {
+      if (error.status === 401) entryError.value = '登录已失效，请刷新后重新登录'
+      else if (error.status === 403) entryError.value = '无权查看该门店的经营数据'
+      else entryError.value = error.message || '经营数据加载失败，请稍后重试'
+      entryRequestId.value = error.requestId || ''
+    } else {
+      entryError.value = '经营数据加载失败，请稍后重试'
+    }
   } finally {
     metricLoading.value = false
   }
@@ -267,8 +339,12 @@ async function loadCurrentEntry() {
 async function submitQuestion(preset?: string) {
   const question = String(preset || input.value).trim()
   if (!question || sending.value) return
-  if (!effectiveStoreId.value || !selectedMonth.value) {
+  if (!effectiveStoreId.value && !businessScope.isBoss.value) {
     pageError.value = businessScope.configurationError.value || '请先选择门店和月份。'
+    return
+  }
+  if (!selectedMonth.value) {
+    pageError.value = '请先选择月份。'
     return
   }
   pageError.value = ''
@@ -288,7 +364,7 @@ async function submitQuestion(preset?: string) {
     run.response = await askAssistant({
       message: question,
       mode: requestMode,
-      storeId: effectiveStoreId.value,
+      storeId: businessScope.isBoss.value ? '' : effectiveStoreId.value,
       month: selectedMonth.value,
     })
     run.status = 'success'
@@ -311,7 +387,7 @@ async function requestAiAnalysis(run: AssistantRun) {
     run.response = await askAssistant({
       message: run.question,
       mode: 'AI',
-      storeId: effectiveStoreId.value,
+      storeId: businessScope.isBoss.value ? '' : effectiveStoreId.value,
       month: selectedMonth.value,
     })
     run.mode = 'AI'
@@ -340,7 +416,7 @@ async function retryRun(run: AssistantRun) {
     run.response = await askAssistant({
       message: run.question,
       mode: requestMode,
-      storeId: effectiveStoreId.value,
+      storeId: businessScope.isBoss.value ? '' : effectiveStoreId.value,
       month: selectedMonth.value,
     })
     run.status = 'success'
@@ -437,7 +513,7 @@ async function confirmAddTodo() {
     await createManualBusinessTodo({
       title: draft.action.action,
       summary: draft.action.action,
-      storeId: effectiveStoreId.value,
+      storeId: businessScope.isBoss.value ? '' : effectiveStoreId.value,
       month: selectedMonth.value,
       assigneeRole: todoOwnerRole(draft.action.ownerRole),
       dueAt: draft.action.deadline,
@@ -541,11 +617,12 @@ function handlePageKeydown(event: KeyboardEvent) {
 }
 
 function metricCards(entry: ProfitEntry | null) {
+  const marginIsSuspect = dataIntegrityWarning.value !== ''
   return [
     { label: '营业额', value: money(entry?.sales), tone: '' },
     { label: '成本', value: money(entry?.costSum), tone: '' },
-    { label: '净利润', value: money(entry?.net), tone: numberValue(entry?.net) < 0 ? 'bad' : 'good' },
-    { label: '净利率', value: percent(entry?.margin), tone: numberValue(entry?.margin) < 0.05 ? 'bad' : 'good' },
+    { label: '净利润', value: money(entry?.net), tone: numberValue(entry?.net) < 0 ? 'bad' : '' },
+    { label: '净利率', value: percent(entry?.margin), tone: marginIsSuspect ? '' : numberValue(entry?.margin) < 0.05 ? 'bad' : 'good' },
   ]
 }
 
@@ -817,7 +894,12 @@ function normalizeError(value: unknown, fallback: string) {
       :class="{ 'context-bar--single-store': businessScope.isStoreManager.value }"
       aria-label="当前分析范围"
     >
-      <label v-if="!businessScope.isStoreManager.value" class="context-field">
+      <label v-if="businessScope.isBoss.value" class="context-field boss-scope">
+        <span>范围</span>
+        <strong>全部门店</strong>
+        <span v-if="dashboardSummary" class="boss-store-count">{{ dashboardSummary.storeCount }} 家门店</span>
+      </label>
+      <label v-else-if="!businessScope.isStoreManager.value" class="context-field">
         <span>门店</span>
         <select v-model="selectedStoreId" :disabled="pageLoading || financeScope?.mode === 'OWN_STORE'">
           <option v-if="!accessibleStores.length" value="">暂无可选门店</option>
@@ -830,11 +912,28 @@ function normalizeError(value: unknown, fallback: string) {
           <option v-for="month in months" :key="month" :value="month">{{ month }}</option>
         </select>
       </label>
-      <div class="metric-strip" :class="{ muted: metricLoading }">
-        <article v-for="card in mainMetrics" :key="card.label" class="metric-item" :class="card.tone">
-          <span>{{ card.label }}</span>
-          <strong>{{ card.value }}</strong>
-        </article>
+      <div class="metric-strip" :class="{ muted: entryState === 'loading' }">
+        <template v-if="entryState === 'loading'">
+          <article v-for="i in 4" :key="'skel-'+i" class="metric-item metric-item--skeleton"><span>&nbsp;</span><strong>&nbsp;</strong></article>
+        </template>
+        <template v-else-if="entryState === 'error'">
+          <div class="metric-error">
+            <span>{{ entryError }}</span>
+            <UiButton variant="ghost" size="sm" @click="loadCurrentEntry()">重试</UiButton>
+          </div>
+        </template>
+        <template v-else-if="entryState === 'empty'">
+          <article class="metric-item metric-item--empty"><span>该门店本月尚未录入经营数据</span></article>
+        </template>
+        <template v-else>
+          <article v-for="card in mainMetrics" :key="card.label" class="metric-item" :class="card.tone">
+            <span>{{ card.label }}</span>
+            <strong>{{ card.value }}</strong>
+          </article>
+        </template>
+      </div>
+      <div v-if="dataIntegrityWarning && entryState === 'ready'" class="integrity-warning" role="alert">
+        <AlertTriangle :size="14" /> {{ dataIntegrityWarning }}
       </div>
     </section>
 
@@ -1180,6 +1279,14 @@ function normalizeError(value: unknown, fallback: string) {
 .metric-item strong { display: block; margin-top: 5px; overflow: hidden; font-size: 18px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
 .metric-item.good strong { color: var(--ds-success); }
 .metric-item.bad strong { color: var(--ds-danger); }
+.metric-item--skeleton { }
+.metric-item--skeleton span { background: var(--ds-soft); border-radius: 4px; min-height: 14px; width: 60%; }
+.metric-item--skeleton strong { background: var(--ds-soft); border-radius: 4px; min-height: 22px; width: 80%; margin-top: 6px; }
+.metric-item--empty { grid-column: 1 / -1; border-left: none; padding: 8px 14px; color: var(--ds-muted); }
+.metric-error { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; padding: 6px 14px; color: var(--ds-danger); font-size: 14px; }
+.boss-scope strong { font-size: 15px; color: var(--ds-ink); }
+.boss-store-count { margin-left: 8px; color: var(--ds-muted); font-size: 12px; }
+.integrity-warning { display: flex; align-items: center; gap: 6px; padding: 6px 14px; color: #b45309; background: #fffbeb; border-top: 1px solid var(--ds-line); font-size: 13px; }
 
 .assistant-workspace {
   position: relative;

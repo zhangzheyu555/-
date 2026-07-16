@@ -183,8 +183,6 @@ try {
   $startInfo.EnvironmentVariables['MYSQL_PASSWORD'] = $password
   $startInfo.EnvironmentVariables['MYSQL_SSL_MODE'] = 'DISABLED'
   $startInfo.EnvironmentVariables['APP_SEED_DEMO_ENABLED'] = 'false'
-  $startInfo.EnvironmentVariables['APP_BOOTSTRAP_DEFAULT_USERS_ENABLED'] = 'false'
-  $startInfo.EnvironmentVariables['APP_BOOTSTRAP_STORE_MANAGER_ACCOUNTS_ENABLED'] = 'false'
   $startInfo.EnvironmentVariables['DEEPSEEK_ENABLED'] = 'false'
   $startInfo.EnvironmentVariables['SERVER_TOMCAT_ACCESSLOG_ENABLED'] = 'false'
   $startInfo.EnvironmentVariables['SPRING_MVC_LOG_REQUEST_DETAILS'] = 'false'

@@ -30,21 +30,45 @@ public final class DatabaseEnvironmentGuard {
       throw new IllegalStateException("Missing required environment variables: " + String.join(", ", missing));
     }
 
-    String appEnvironment = environment.getProperty("app.environment").trim().toUpperCase(Locale.ROOT);
-    if (!ALLOWED_ENVIRONMENTS.contains(appEnvironment)) {
+    ConnectionTarget target = validateConnectionTarget(
+        environment.getRequiredProperty("app.environment"),
+        environment.getRequiredProperty("spring.datasource.url"),
+        environment.getRequiredProperty("spring.datasource.username"));
+    if (MYSQL8_ONLY_ENVIRONMENTS.contains(target.environment())) {
+      validateFlywayUsesApplicationDataSource(environment);
+    }
+  }
+
+  /**
+   * Validates a connection target without creating a Spring context or opening
+   * a database connection. Non-Web commands can reuse this policy before JDBC.
+   */
+  public static ConnectionTarget validateConnectionTarget(
+      String appEnvironment,
+      String datasourceUrl,
+      String username
+  ) {
+    if (isBlank(appEnvironment)) {
       throw new IllegalStateException("APP_ENV must be one of TEST, QA, STAGING or PRODUCTION");
     }
+    String normalizedEnvironment = appEnvironment.trim().toUpperCase(Locale.ROOT);
+    if (!ALLOWED_ENVIRONMENTS.contains(normalizedEnvironment)) {
+      throw new IllegalStateException("APP_ENV must be one of TEST, QA, STAGING or PRODUCTION");
+    }
+    if (isBlank(username)) {
+      throw new IllegalStateException("MYSQL_USERNAME is required");
+    }
 
-    String datasourceUrl = environment.getProperty("spring.datasource.url").trim();
-    MysqlTarget target = mysqlTarget(datasourceUrl);
-    String database = target.database();
-    if (("TEST".equals(appEnvironment) || "QA".equals(appEnvironment))
+    String normalizedDatasourceUrl = datasourceUrl == null ? "" : datasourceUrl.trim();
+    MysqlTarget parsedTarget = mysqlTarget(normalizedDatasourceUrl);
+    String database = parsedTarget.database();
+    if (("TEST".equals(normalizedEnvironment) || "QA".equals(normalizedEnvironment))
         && !database.contains("test") && !database.contains("qa")) {
       throw new IllegalStateException("TEST or QA environments require MYSQL_DATABASE to contain test or qa");
     }
 
-    if (MYSQL8_ONLY_ENVIRONMENTS.contains(appEnvironment)) {
-      if (!"127.0.0.1".equals(target.host()) || target.port() != EXPECTED_PORT) {
+    if (MYSQL8_ONLY_ENVIRONMENTS.contains(normalizedEnvironment)) {
+      if (!"127.0.0.1".equals(parsedTarget.host()) || parsedTarget.port() != EXPECTED_PORT) {
         throw new IllegalStateException(
             "STAGING and PRODUCTION require the approved local MySQL 8 endpoint on port 3307");
       }
@@ -52,14 +76,13 @@ public final class DatabaseEnvironmentGuard {
         throw new IllegalStateException(
             "MYSQL_DATABASE is not the approved STAGING/PRODUCTION database");
       }
-      if ("root".equalsIgnoreCase(environment.getRequiredProperty("spring.datasource.username").trim())) {
+      if ("root".equalsIgnoreCase(username.trim())) {
         throw new IllegalStateException("STAGING and PRODUCTION forbid the MySQL root account");
       }
-      validateFlywayUsesApplicationDataSource(environment);
     }
 
-    if ("PRODUCTION".equals(appEnvironment)) {
-      String normalizedUrl = datasourceUrl.toLowerCase(Locale.ROOT);
+    if ("PRODUCTION".equals(normalizedEnvironment)) {
+      String normalizedUrl = normalizedDatasourceUrl.toLowerCase(Locale.ROOT);
       if (!normalizedUrl.contains("sslmode=verify_identity")) {
         throw new IllegalStateException(
             "PRODUCTION requires MYSQL_SSL_MODE=VERIFY_IDENTITY for database certificate and hostname verification");
@@ -69,6 +92,12 @@ public final class DatabaseEnvironmentGuard {
             "PRODUCTION must not enable MYSQL_ALLOW_PUBLIC_KEY_RETRIEVAL");
       }
     }
+
+    return new ConnectionTarget(
+        normalizedEnvironment,
+        parsedTarget.host(),
+        parsedTarget.port(),
+        parsedTarget.database());
   }
 
   private static void validateFlywayUsesApplicationDataSource(Environment environment) {
@@ -129,5 +158,8 @@ public final class DatabaseEnvironmentGuard {
   }
 
   private record MysqlTarget(String host, int port, String database) {
+  }
+
+  public record ConnectionTarget(String environment, String host, int port, String database) {
   }
 }

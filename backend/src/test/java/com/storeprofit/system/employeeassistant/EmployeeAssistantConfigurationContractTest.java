@@ -1,14 +1,20 @@
 package com.storeprofit.system.employeeassistant;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.storeprofit.system.audit.AuditRepository;
+import java.net.http.HttpClient;
 import java.lang.reflect.Constructor;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.Properties;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.config.YamlPropertiesFactoryBean;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.test.util.ReflectionTestUtils;
 
 class EmployeeAssistantConfigurationContractTest {
   @Test
@@ -29,6 +35,9 @@ class EmployeeAssistantConfigurationContractTest {
 
     assertThat(properties)
         .containsEntry("app.employee-assistant.provider", "${EMPLOYEE_ASSISTANT_PROVIDER:}")
+        .containsEntry("app.employee-assistant.connect-timeout", "${EMPLOYEE_ASSISTANT_CONNECT_TIMEOUT:3s}")
+        .containsEntry("app.employee-assistant.timeout", "${EMPLOYEE_ASSISTANT_TIMEOUT:10s}")
+        .containsEntry("app.employee-assistant.runtime-secured", "${ASSISTANT_RUNTIME_SECURED:false}")
         .containsKeys(
             "app.employee-assistant.upstream-url",
             "app.employee-assistant.api-token",
@@ -36,5 +45,22 @@ class EmployeeAssistantConfigurationContractTest {
             "app.employee-assistant.model-api-key",
             "app.employee-assistant.model-name"
         );
+  }
+
+  @Test
+  void productionConstructorClampsConnectionAndRequestTimeoutBudgets() {
+    EmployeeAssistantService minimums = new EmployeeAssistantService(
+        "https://assistant.example.test", "token", Duration.ofMillis(1), Duration.ofSeconds(1),
+        "REMOTE", "", "", "", true, new ObjectMapper(), mock(AuditRepository.class), null);
+    EmployeeAssistantService maximums = new EmployeeAssistantService(
+        "https://assistant.example.test", "token", Duration.ofSeconds(30), Duration.ofSeconds(30),
+        "REMOTE", "", "", "", true, new ObjectMapper(), mock(AuditRepository.class), null);
+
+    assertThat((Duration) ReflectionTestUtils.getField(minimums, "timeout")).isEqualTo(Duration.ofSeconds(8));
+    assertThat((Duration) ReflectionTestUtils.getField(maximums, "timeout")).isEqualTo(Duration.ofSeconds(10));
+    HttpClient minimumClient = (HttpClient) ReflectionTestUtils.getField(minimums, "httpClient");
+    HttpClient maximumClient = (HttpClient) ReflectionTestUtils.getField(maximums, "httpClient");
+    assertThat(minimumClient.connectTimeout()).contains(Duration.ofSeconds(2));
+    assertThat(maximumClient.connectTimeout()).contains(Duration.ofSeconds(3));
   }
 }
