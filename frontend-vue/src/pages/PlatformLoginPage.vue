@@ -4,6 +4,7 @@ import { ExternalLink, X } from 'lucide-vue-next'
 import PageHeader from '../components/common/PageHeader.vue'
 import { apiGet, apiPut } from '../api/http'
 import { useAuthStore } from '../stores/auth'
+import { FRUIT_YIELD, RECIPES } from '../data/fruitUsage'
 
 interface QmaiConfigView {
   configured: boolean
@@ -288,7 +289,7 @@ const sortArrow = (key: SortKey) =>
   sortKey.value === key ? (sortAsc.value ? ' ▲' : ' ▼') : ''
 
 /* ---------------- 企迈商品销售（同一次刷新的数据，切标签即看） ---------------- */
-const activeTab = ref<'turnover' | 'items'>('turnover')
+const activeTab = ref<'turnover' | 'items' | 'usage'>('turnover')
 
 // 门店筛选：'' = 全部门店
 const itemShopFilter = ref('')
@@ -421,6 +422,141 @@ const itemTotals = computed(() => {
   }
   return t
 })
+
+/* ---------------- 物料用量测算：配方（5月产品用量核算表）× 杯数 → 水果采购斤数 ---------------- */
+// 每个配方产品的杯数：可手输，也可用当月企迈商品销量一键填充后再改
+const cupInputs = reactive<Record<string, number>>({})
+const usageFillMsg = ref('')
+// 企迈卖了但配方表里没有的饮品（不参与测算，列出来给用户看缺口）
+const usageUnmatched = ref<{ name: string; num: number }[]>([])
+
+// 名称归一：去空格/反引号/标点，便于企迈商品名和配方名对上
+const usageNorm = (s: string) => (s || '').replace(/[\s`·.。()（）【】[\]-]/g, '')
+// 中/大杯变体：企迈名带「大杯」找大杯配方，否则默认填中杯
+const USAGE_SIZE = /(中|大)杯?/
+
+function fillCupsFromQmai() {
+  const items = turnover.value?.items ?? []
+  if (!items.length) {
+    usageFillMsg.value = '请先在所选月份点「刷新」拉取企迈商品销量。'
+    return
+  }
+  // 全门店按商品聚合杯数（饮品口径）
+  const sold = new Map<string, number>()
+  for (const it of items) {
+    if (!isDrink(it.itemName)) continue
+    sold.set(it.itemName, (sold.get(it.itemName) || 0) + (Number(it.num) || 0))
+  }
+  // 配方索引：精确名 + 基础名(中/大杯变体归到同一基础名)
+  const exact = new Map<string, string>()
+  const byBase = new Map<string, { 中?: string; 大?: string; single?: string }>()
+  for (const r of RECIPES) {
+    exact.set(usageNorm(r.name), r.name)
+    const base = usageNorm(r.baseName || r.name.replace(/[（(](中|大)杯?[)）]/g, ''))
+    const slot = byBase.get(base) || {}
+    if (/[（(]中/.test(r.name)) slot.中 = r.name
+    else if (/[（(]大/.test(r.name)) slot.大 = r.name
+    else slot.single = r.name
+    byBase.set(base, slot)
+  }
+  for (const r of RECIPES) cupInputs[r.name] = 0
+  let matched = 0
+  const unmatched: { name: string; num: number }[] = []
+  for (const [qName, num] of sold) {
+    const qn = usageNorm(qName)
+    let target = exact.get(qn)
+    if (!target) {
+      const sizeHit = qn.match(USAGE_SIZE)
+      const slot = byBase.get(qn.replace(USAGE_SIZE, ''))
+      if (slot) target = (sizeHit?.[1] === '大' ? slot.大 : slot.中) || slot.single || slot.中 || slot.大
+    }
+    if (target) {
+      cupInputs[target] = (cupInputs[target] || 0) + num
+      matched++
+    } else if (num > 0) {
+      unmatched.push({ name: qName, num })
+    }
+  }
+  unmatched.sort((a, b) => b.num - a.num)
+  usageUnmatched.value = unmatched
+  usageFillMsg.value = `已按 ${monthLabel.value} 全门店销量填充 ${matched} 个商品；` +
+    (unmatched.length ? `${unmatched.length} 个售卖商品配方表里没有（见下方清单），杯数可手动调整。` : '全部对上。')
+}
+
+function clearCups() {
+  for (const r of RECIPES) cupInputs[r.name] = 0
+  usageFillMsg.value = ''
+  usageUnmatched.value = []
+}
+
+interface FruitUsageRow { fruit: string; netG: number; rawG: number; approx: boolean }
+const usageResult = computed(() => {
+  const fruits = new Map<string, FruitUsageRow>()
+  const others = new Map<string, number>()
+  let cups = 0
+  let products = 0
+  for (const r of RECIPES) {
+    const n = Number(cupInputs[r.name]) || 0
+    if (n <= 0) continue
+    cups += n
+    products++
+    for (const ing of r.ingredients) {
+      const g = ing.grams * n
+      if (!ing.fruit) {
+        others.set(ing.label, (others.get(ing.label) || 0) + g)
+        continue
+      }
+      const row = fruits.get(ing.fruit) || { fruit: ing.fruit, netG: 0, rawG: 0, approx: false }
+      row.netG += g
+      if (ing.kind === 'juice') {
+        row.rawG += g * (ing.factor || 1)
+      } else if (ing.kind === 'flesh' && FRUIT_YIELD[ing.fruit]) {
+        row.rawG += g / FRUIT_YIELD[ing.fruit]
+      } else {
+        // 无出肉率数据（百香果/耙耙柑/羊角蜜/榴莲/羽衣甘蓝等）按 1:1，偏保守
+        row.rawG += g
+        row.approx = true
+      }
+      fruits.set(ing.fruit, row)
+    }
+  }
+  return {
+    cups,
+    products,
+    fruits: [...fruits.values()].sort((a, b) => b.rawG - a.rawG),
+    others: [...others.entries()].map(([label, g]) => ({ label, g })).sort((a, b) => b.g - a.g),
+  }
+})
+// 斤 = 500 克
+const jin = (g: number) => (g / 500).toFixed(1)
+const kg = (g: number) => (g / 1000).toFixed(1)
+
+function exportUsageExcel() {
+  const u = usageResult.value
+  if (!u.fruits.length) return
+  const lines: string[] = []
+  lines.push(`物料用量测算,${monthLabel.value},共 ${u.products} 个产品 ${qtyFmt(u.cups)} 杯`.split(',').join(','))
+  lines.push('')
+  lines.push(['水果', '配方用量(公斤)', '出肉率', '折算采购毛重(斤)', '备注'].join(','))
+  for (const f of u.fruits) {
+    lines.push([
+      f.fruit, kg(f.netG),
+      FRUIT_YIELD[f.fruit] ? (FRUIT_YIELD[f.fruit] * 100).toFixed(1) + '%' : '—',
+      jin(f.rawG),
+      f.approx ? '无出肉率数据,按1:1折算' : '',
+    ].join(','))
+  }
+  lines.push('')
+  lines.push(['其他物料', '用量(公斤)'].join(','))
+  for (const o of u.others) lines.push([o.label, kg(o.g)].join(','))
+  lines.push('')
+  lines.push(['产品', '杯数'].join(','))
+  for (const r of RECIPES) {
+    const n = Number(cupInputs[r.name]) || 0
+    if (n > 0) lines.push([`"${r.name}"`, n].join(','))
+  }
+  downloadCsv(lines, `${brandLabel.value}_物料用量测算_${monthLabel.value}.csv`)
+}
 
 function shiftMonth(delta: number) {
   const [y, m] = month.value.split('-').map(Number)
@@ -567,6 +703,8 @@ function exportActive() {
     exportIncomeExcel()
   } else if (activeTab.value === 'items') {
     exportItemsExcel()
+  } else if (activeTab.value === 'usage') {
+    exportUsageExcel()
   } else {
     exportExcel()
   }
@@ -629,6 +767,9 @@ onMounted(loadQmai)
           <button v-if="!isConsoleBrand" :class="{ active: activeTab === 'items' }" @click="activeTab = 'items'">
             企迈商品销售
           </button>
+          <button v-if="!isConsoleBrand" :class="{ active: activeTab === 'usage' }" @click="activeTab = 'usage'">
+            物料用量
+          </button>
         </div>
         <div class="range-tabs">
           <button :disabled="anyLoading" @click="shiftMonth(-12)">◀◀ 上一年</button>
@@ -642,7 +783,8 @@ onMounted(loadQmai)
           <button
             class="export"
             :disabled="isConsoleBrand ? !income?.channels?.length
-              : activeTab === 'items' ? !sortedItems.length : !turnover?.shops?.length"
+              : activeTab === 'items' ? !sortedItems.length
+                : activeTab === 'usage' ? !usageResult.fruits.length : !turnover?.shops?.length"
             @click="exportActive"
           >
             导出 Excel
@@ -842,6 +984,71 @@ onMounted(loadQmai)
         <p v-else-if="turnover && !turnoverLoading && !turnoverError" class="msg muted">
           所选时间范围内暂无商品销售数据（旧数据请点「刷新」重新拉取）。
         </p>
+      </template>
+
+      <template v-else-if="activeTab === 'usage'">
+        <div class="items-toolbar">
+          <button class="refresh" :disabled="!turnover?.items?.length" @click="fillCupsFromQmai">
+            用 {{ monthLabel }} 企迈销量填充杯数
+          </button>
+          <button @click="clearCups">清空</button>
+          <span class="msg muted">配方来自《5月产品用量核算表·单杯用量》，共 {{ RECIPES.length }} 个产品；杯数可手动输入或修改，结果实时更新。</span>
+        </div>
+        <p v-if="usageFillMsg" class="msg muted">{{ usageFillMsg }}</p>
+
+        <div class="usage-grid">
+          <label v-for="r in RECIPES" :key="r.name" class="usage-cell">
+            <span class="usage-name">{{ r.name }}</span>
+            <input v-model.number="cupInputs[r.name]" type="number" min="0" placeholder="0" />
+          </label>
+        </div>
+
+        <details v-if="usageUnmatched.length" class="usage-unmatched">
+          <summary>配方表没有的售卖商品（{{ usageUnmatched.length }} 个，未计入测算）</summary>
+          <p class="msg muted">
+            <span v-for="u in usageUnmatched" :key="u.name" class="unmatched-item">{{ u.name }}（{{ qtyFmt(u.num) }}杯）</span>
+          </p>
+        </details>
+
+        <template v-if="usageResult.fruits.length">
+          <h4 class="usage-title">
+            水果采购测算 · {{ usageResult.products }} 个产品 · {{ qtyFmt(usageResult.cups) }} 杯
+          </h4>
+          <table class="turnover-table">
+            <thead>
+              <tr>
+                <th>水果</th>
+                <th class="num">配方用量（公斤）</th>
+                <th class="num">出肉率</th>
+                <th class="num">折算采购毛重（斤）</th>
+                <th>备注</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="f in usageResult.fruits" :key="f.fruit">
+                <td>{{ f.fruit }}</td>
+                <td class="num">{{ kg(f.netG) }}</td>
+                <td class="num">{{ FRUIT_YIELD[f.fruit] ? (FRUIT_YIELD[f.fruit] * 100).toFixed(1) + '%' : '—' }}</td>
+                <td class="num income">{{ jin(f.rawG) }}</td>
+                <td class="muted">{{ f.approx ? '无出肉率数据，按 1:1 折算' : '' }}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h4 v-if="usageResult.others.length" class="usage-title">其他物料（非水果）</h4>
+          <table v-if="usageResult.others.length" class="turnover-table usage-others">
+            <thead>
+              <tr><th>物料</th><th class="num">用量（公斤）</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="o in usageResult.others" :key="o.label">
+                <td>{{ o.label }}</td>
+                <td class="num">{{ kg(o.g) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </template>
+        <p v-else class="msg muted">输入杯数（或点上方按钮用企迈销量填充）后，这里会算出每种水果的配方用量和折算采购毛重。</p>
       </template>
 
       </template>
@@ -1057,6 +1264,85 @@ onMounted(loadQmai)
 .range-tabs {
   display: flex;
   gap: 6px;
+}
+
+/* 物料用量测算 */
+.usage-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px 14px;
+  margin: 12px 0;
+}
+
+.usage-cell {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  color: #374151;
+}
+
+.usage-cell .usage-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-cell input {
+  width: 76px;
+  padding: 5px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 13px;
+  text-align: right;
+}
+
+.usage-title {
+  margin: 18px 0 8px;
+  font-size: 14px;
+  color: #111827;
+}
+
+.usage-others {
+  max-width: 480px;
+}
+
+.usage-unmatched summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: #92400e;
+}
+
+.unmatched-item {
+  display: inline-block;
+  margin-right: 12px;
+}
+
+.items-toolbar button {
+  padding: 6px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.items-toolbar button.refresh {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
+
+.items-toolbar button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+td.muted {
+  color: #9ca3af;
+  font-size: 12px;
 }
 
 .range-tabs button {
