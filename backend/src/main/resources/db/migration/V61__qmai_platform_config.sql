@@ -1,5 +1,7 @@
 -- 企迈开放平台凭证配置（按租户单条）。
 -- open_key 为签名密钥，仅后端使用，绝不下发前端；读取接口只返回是否已配置与掩码。
+-- 本分支 V60 旧版企迈实现建过同名表（tenant_id+brand_code 主键，无凭证列），旧代码已随本次替换删除，先清掉旧表再建新结构。
+drop table if exists qmai_platform_config;
 create table if not exists qmai_platform_config (
   id bigint not null auto_increment primary key,
   tenant_id bigint not null,
