@@ -14,6 +14,7 @@ const ProfitOverviewPage = () => import('../pages/ProfitOverviewPage.vue')
 const ProfitTablePage = () => import('../pages/ProfitTablePage.vue')
 const StoreDetailPage = () => import('../pages/StoreDetailPage.vue')
 const StoreManagementPage = () => import('../pages/StoreManagementPage.vue')
+const StaffProfilePage = () => import('../pages/StaffProfilePage.vue')
 const SupervisorWorkbenchPage = () => import('../pages/SupervisorWorkbenchPage.vue')
 const InspectionRectificationPage = () => import('../pages/InspectionRectificationPage.vue')
 const InspectionReviewQueuePage = () => import('../pages/InspectionReviewQueuePage.vue')
@@ -77,6 +78,7 @@ const appChildren: RouteRecordRaw[] = [
   { path: 'export', name: 'export', component: DataExportPage, meta: permissionMeta(PERMISSIONS.FINANCE_EXPORT, { menuKey: 'data-export', title: '数据导出' }) },
   { path: 'store-detail', name: 'store-detail', component: StoreDetailPage, meta: permissionMeta(PERMISSIONS.STORE_READ, { menuKey: 'store-detail', title: '门店详情' }) },
   { path: 'stores', name: 'stores', component: StoreManagementPage, meta: permissionMeta(PERMISSIONS.STORE_MANAGE, { menuKey: 'store-management', title: '门店管理', bossOnly: true }) },
+  { path: 'staff', name: 'staff-profiles', component: StaffProfilePage, meta: permissionMeta(PERMISSIONS.EMPLOYEE_READ, { menuKey: 'staff-profiles', title: '员工档案' }) },
   { path: 'logs', name: 'logs', component: OperationLogPage, meta: permissionMeta(PERMISSIONS.SYSTEM_AUDIT_READ, { menuKey: 'operation-logs', title: '操作日志' }) },
   { path: 'platform-login', name: 'platform-login', component: PlatformLoginPage, meta: permissionMeta(PERMISSIONS.PLATFORM_READ, { menuKey: 'platform-settings', title: '平台配置', allowedRoles: ['OPERATIONS'] }) },
   { path: 'users', name: 'users', component: UserPermissionPage, meta: permissionMeta(PERMISSIONS.SYSTEM_USER_MANAGE, { menuKey: 'user-permissions', title: '账号权限' }) },

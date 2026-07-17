@@ -173,6 +173,7 @@ export const MENU_GROUP_CONFIG: PermissionMenuGroup[] = [
     title: '系统管理',
     items: [
       { key: 'store-management', label: '门店管理', to: '/stores', icon: 'store', requiredPermission: PERMISSIONS.STORE_MANAGE, bossOnly: true },
+      { key: 'staff-profiles', label: '员工档案', to: '/staff', icon: 'users', requiredPermission: PERMISSIONS.EMPLOYEE_READ },
       { key: 'user-permissions', label: '账号权限', to: '/users', icon: 'users', requiredPermission: PERMISSIONS.SYSTEM_USER_MANAGE },
       { key: 'operation-logs', label: '操作日志', to: '/logs', icon: 'log', requiredPermission: PERMISSIONS.SYSTEM_AUDIT_READ },
     ],
