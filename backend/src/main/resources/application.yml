@@ -74,14 +74,15 @@ app:
     webhook-event-id-header: ${ELEME_WEBHOOK_EVENT_ID_HEADER:X-Eleme-Event-Id}
     webhook-max-payload-bytes: ${ELEME_WEBHOOK_MAX_PAYLOAD_BYTES:1048576}
   qmai:
-    # 企迈凭证只允许由部署环境注入，禁止通过网页或数据库保存明文密钥。
+    # 企迈开放平台凭证：只在后端注入，禁止写入前端与仓库。留空时接口返回未配置状态，不生成示例数据。
     open-id: ${QMAI_OPEN_ID:}
     grant-code: ${QMAI_GRANT_CODE:}
     open-key: ${QMAI_OPEN_KEY:}
     base-url: ${QMAI_BASE_URL:https://openapi.qmai.cn}
+    version: ${QMAI_VERSION:1.0}
     timeout: ${QMAI_TIMEOUT:20s}
-    max-retries: ${QMAI_MAX_RETRIES:4}
-    concurrency: ${QMAI_CONCURRENCY:4}
+    # 已授权门店（shopCode:门店名:本系统storeId），逗号分隔
+    shops: ${QMAI_SHOPS:}
   auth:
     token-ttl-hours: 12
   training:
