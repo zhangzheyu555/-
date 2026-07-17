@@ -5,6 +5,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -286,6 +287,54 @@ public class SalaryRepository {
         params,
         this::mapRecord
     );
+    return rows.stream().findFirst();
+  }
+
+  public Optional<SalaryRecordResponse> latestEmployeeRecord(
+      long tenantId,
+      String storeId,
+      Collection<String> employeeIds,
+      String employeeName
+  ) {
+    List<String> normalizedEmployeeIds = employeeIds == null ? List.of() : employeeIds.stream()
+        .filter(value -> value != null && !value.isBlank())
+        .map(String::trim)
+        .distinct()
+        .toList();
+    String normalizedEmployeeName = employeeName == null || employeeName.isBlank() ? null : employeeName.trim();
+    if ((storeId == null || storeId.isBlank())
+        || (normalizedEmployeeIds.isEmpty() && normalizedEmployeeName == null)) {
+      return Optional.empty();
+    }
+
+    ArrayList<String> conditions = new ArrayList<>();
+    MapSqlParameterSource params = new MapSqlParameterSource()
+        .addValue("tenantId", tenantId)
+        .addValue("storeId", storeId.trim());
+    if (!normalizedEmployeeIds.isEmpty()) {
+      conditions.add("sr.employee_id in (:employeeIds)");
+      params.addValue("employeeIds", normalizedEmployeeIds);
+    }
+    if (normalizedEmployeeName != null) {
+      conditions.add("sr.employee_name = :employeeName");
+      params.addValue("employeeName", normalizedEmployeeName);
+    }
+
+    StringBuilder sql = new StringBuilder("select ")
+        .append(RECORD_COLUMNS)
+        .append(RECORD_FROM)
+        .append(" and sr.store_id = :storeId and (")
+        .append(String.join(" or ", conditions))
+        .append(") order by case");
+    if (!normalizedEmployeeIds.isEmpty()) {
+      sql.append(" when sr.employee_id in (:employeeIds) then 0");
+    }
+    if (normalizedEmployeeName != null) {
+      sql.append(" when sr.employee_name = :employeeName then 1");
+    }
+    sql.append(" else 2 end, sr.month desc, sr.updated_at desc, sr.id limit 1");
+
+    List<SalaryRecordResponse> rows = namedJdbcTemplate.query(sql.toString(), params, this::mapRecord);
     return rows.stream().findFirst();
   }
 

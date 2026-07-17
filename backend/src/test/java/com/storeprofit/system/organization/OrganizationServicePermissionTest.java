@@ -3,8 +3,9 @@ package com.storeprofit.system.organization;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.storeprofit.system.common.BusinessException;
@@ -48,6 +49,35 @@ class OrganizationServicePermissionTest {
     verify(accessControl).requireStoreManage(user);
     verify(accessControl).requireStoreAccess(user, DataScopeDomains.STORE, "rg1", "维护门店档案");
     verify(repository).upsertStore(1L, request);
+  }
+
+  @Test
+  void deleteUsesManagePermissionAndExplicitStoreScope() {
+    StoreResponse store = new StoreResponse(
+        "rg1", "RG1", "一店", 1L, "如果", "荆州", "店长", "2026-01-01", "停用", "");
+    when(repository.store(1L, "rg1")).thenReturn(java.util.Optional.of(store));
+    when(repository.deleteStore(1L, "rg1")).thenReturn(1);
+
+    service.deleteStore(user, "rg1");
+
+    verify(accessControl).requireStoreManage(user);
+    verify(accessControl).requireStoreAccess(user, DataScopeDomains.STORE, "rg1", "删除门店档案");
+    verify(repository).storeHasLinkedData(1L, "rg1");
+    verify(repository).deleteStore(1L, "rg1");
+  }
+
+  @Test
+  void deleteRejectsStoreWithLinkedBusinessData() {
+    StoreResponse store = new StoreResponse(
+        "rg1", "RG1", "一店", 1L, "如果", "荆州", "店长", "2026-01-01", "停用", "");
+    when(repository.store(1L, "rg1")).thenReturn(java.util.Optional.of(store));
+    when(repository.storeHasLinkedData(1L, "rg1")).thenReturn(true);
+
+    assertThatThrownBy(() -> service.deleteStore(user, "rg1"))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("STORE_HAS_LINKED_DATA"));
+
+    verify(repository, never()).deleteStore(1L, "rg1");
   }
 
   @Test

@@ -66,7 +66,45 @@ class DataScopeServiceTest {
     assertThat(scope.allowsStore("2")).isFalse();
   }
 
+  @Test
+  void supervisorOnlyUsesStoreListForStoreAndInspectionDomains() {
+    AuthUser supervisor = user("SUPERVISOR");
+    when(repository.assignmentsForUser(1L, 7L)).thenReturn(List.of(
+        new DataScopeAssignmentRow(DataScopeDomains.STORE, DataScopeModes.STORE_LIST, "[\"rg1\"]"),
+        new DataScopeAssignmentRow(DataScopeDomains.INSPECTION, DataScopeModes.STORE_LIST, "[\"rg1\"]"),
+        new DataScopeAssignmentRow(DataScopeDomains.PLATFORM, DataScopeModes.ALL, null),
+        new DataScopeAssignmentRow(DataScopeDomains.WAREHOUSE, DataScopeModes.STORE_LIST, "[\"rg2\"]")
+    ));
+
+    Map<String, DataScope> scopes = service.dataScopes(supervisor);
+
+    assertThat(scopes.get(DataScopeDomains.STORE).storeIds()).containsExactly("rg1");
+    assertThat(scopes.get(DataScopeDomains.INSPECTION).storeIds()).containsExactly("rg1");
+    assertThat(scopes.get(DataScopeDomains.PLATFORM).allowsAllStores()).isFalse();
+    assertThat(scopes.get(DataScopeDomains.PLATFORM).storeIds()).isEmpty();
+    assertThat(scopes.get(DataScopeDomains.WAREHOUSE).storeIds()).isEmpty();
+  }
+
+  @Test
+  void supervisorFallbackUsesAssignedStoresOnlyAndNeverAllStores() {
+    AuthUser supervisor = user("SUPERVISOR");
+    when(repository.assignmentsForUser(1L, 7L)).thenReturn(List.of());
+    when(authRepository.assignedStoreScope(1L, 7L)).thenReturn(List.of("rg1", "rg2"));
+
+    Map<String, DataScope> scopes = service.dataScopes(supervisor);
+
+    assertThat(scopes.get(DataScopeDomains.STORE).mode()).isEqualTo(DataScopeModes.STORE_LIST);
+    assertThat(scopes.get(DataScopeDomains.STORE).storeIds()).containsExactly("rg1", "rg2");
+    assertThat(scopes.get(DataScopeDomains.INSPECTION).storeIds()).containsExactly("rg1", "rg2");
+    assertThat(scopes.get(DataScopeDomains.WAREHOUSE).storeIds()).isEmpty();
+    assertThat(scopes.get(DataScopeDomains.EXAM).storeIds()).isEmpty();
+  }
+
   private AuthUser user(long id, String role, String storeId) {
     return new AuthUser(id, 1L, "测试租户", "user-" + id, "hash", "测试账号", role, storeId, true, 2L);
+  }
+
+  private AuthUser user(String role) {
+    return new AuthUser(7L, 1L, "测试企业", "supervisor", "hash", "督导", role, null, true);
   }
 }

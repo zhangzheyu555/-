@@ -82,6 +82,7 @@ async function prepare(page: Page) {
   await page.route('**/api/stores', (route) => route.fulfill(ok([
     { id: 'JZ-STAR', code: 'JZ-STAR', name: '荆州之星店', brandName: '茹菓' },
   ])))
+  await page.route('**/api/warehouse/warehouses', (route) => route.fulfill(ok([])))
   await page.route('**/api/users/authorization/catalog', (route) => route.fulfill(ok({
     permissions: [{
       permissionCode: 'store.read',
@@ -100,6 +101,40 @@ async function prepare(page: Page) {
     return route.fulfill(ok(authorization(userId)))
   })
 }
+
+test('account row actions stay visible and open permission controls without horizontal scrolling', async ({ page }) => {
+  await prepare(page)
+
+  await page.goto('/users')
+  const tableWrap = page.locator('.table-wrap').first()
+  await expect(tableWrap).toBeVisible()
+  await tableWrap.evaluate((element) => { element.scrollLeft = 0 })
+
+  const managerRow = page.getByRole('row').filter({ hasText: 'rg1' })
+  const actionButtons = managerRow.locator('.actions-cell-inner .icon-button')
+  await expect(actionButtons).toHaveCount(3)
+
+  const wrapBox = await tableWrap.boundingBox()
+  expect(wrapBox).not.toBeNull()
+  for (let index = 0; index < 3; index += 1) {
+    const buttonBox = await actionButtons.nth(index).boundingBox()
+    expect(buttonBox).not.toBeNull()
+    expect(buttonBox!.x).toBeGreaterThanOrEqual(wrapBox!.x)
+    expect(buttonBox!.x + buttonBox!.width).toBeLessThanOrEqual(wrapBox!.x + wrapBox!.width + 1)
+  }
+
+  await actionButtons.nth(0).click()
+  await expect(actionButtons.nth(0)).toHaveClass(/selected/)
+  await expect(page.locator('.authorization-sections')).toBeVisible()
+
+  await actionButtons.nth(1).click()
+  await expect(page.locator('.account-editor')).toBeVisible()
+  await page.locator('.account-editor .editor-head button').click()
+  await expect(page.locator('.account-editor')).toBeHidden()
+
+  await actionButtons.nth(2).click()
+  await expect(page.locator('.password-dialog')).toBeVisible()
+})
 
 test('account list exposes workspace readiness and blocks enabling a manager without a workspace', async ({ page }) => {
   await prepare(page)

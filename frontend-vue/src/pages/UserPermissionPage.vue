@@ -1008,7 +1008,7 @@ onBeforeUnmount(() => {
                   <th>可用工作台</th>
                   <th>有效权限状态</th>
                   <th>状态</th>
-                  <th v-if="canManage" class="r">操作</th>
+                  <th v-if="canManage" class="r sticky-actions-col">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -1025,23 +1025,25 @@ onBeforeUnmount(() => {
                     <small>{{ effectivePermissionDetail(user) }}</small>
                   </td>
                   <td><span class="status-badge" :class="user.enabled ? 'ok' : 'bad'">{{ user.enabled ? '启用' : '停用' }}</span></td>
-                  <td v-if="canManage" class="r actions-cell">
-                    <button
-                      class="icon-button"
-                      :class="{ selected: selectedAuthorizationUser?.id === user.id }"
-                      type="button"
-                      title="配置角色模板、数据范围和个人权限"
-                      :aria-label="`配置 ${user.username} 的账号授权`"
-                      @click="requestOpenAuthorization(user)"
-                    ><Shield :size="15" /></button>
-                    <button class="icon-button" type="button" title="编辑账号" @click="openEdit(user)"><Pencil :size="15" /></button>
-                    <button
-                      v-if="canResetPassword(user)"
-                      class="icon-button"
-                      type="button"
-                      :title="isBossRole(user.role) ? '修改本人密码' : '安全重置密码'"
-                      @click="openPasswordReset(user)"
-                    ><KeyRound :size="15" /></button>
+                  <td v-if="canManage" class="r actions-cell sticky-actions-col">
+                    <div class="actions-cell-inner">
+                      <button
+                        class="icon-button"
+                        :class="{ selected: selectedAuthorizationUser?.id === user.id }"
+                        type="button"
+                        title="配置角色模板、数据范围和个人权限"
+                        :aria-label="`配置 ${user.username} 的账号授权`"
+                        @click="requestOpenAuthorization(user)"
+                      ><Shield :size="15" /></button>
+                      <button class="icon-button" type="button" title="编辑账号" @click="openEdit(user)"><Pencil :size="15" /></button>
+                      <button
+                        v-if="canResetPassword(user)"
+                        class="icon-button"
+                        type="button"
+                        :title="isBossRole(user.role) ? '修改本人密码' : '安全重置密码'"
+                        @click="openPasswordReset(user)"
+                      ><KeyRound :size="15" /></button>
+                    </div>
                   </td>
                 </tr>
               </tbody>
@@ -1425,7 +1427,7 @@ onBeforeUnmount(() => {
 }
 
 .page-actions,
-.actions-cell {
+.actions-cell-inner {
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -1438,7 +1440,11 @@ onBeforeUnmount(() => {
   gap: 14px;
 }
 
-.table-wrap { overflow-x: auto; }
+.table-wrap {
+  position: relative;
+  overflow-x: auto;
+  scrollbar-gutter: stable;
+}
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .table-wrap table { min-width: 1180px; }
 th, td { padding: 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
@@ -1448,6 +1454,33 @@ th { color: var(--muted); font-size: 12px; font-weight: 800; }
 .permission-status-cell { display: grid; min-width: 190px; gap: 5px; }
 .permission-status-cell .status-badge { width: fit-content; }
 .permission-status-cell small { color: var(--muted); line-height: 1.45; }
+.actions-cell {
+  width: 146px;
+  min-width: 146px;
+}
+.sticky-actions-col {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  background: #fff;
+  box-shadow: -8px 0 12px -12px rgba(22, 26, 34, .36);
+}
+th.sticky-actions-col {
+  z-index: 4;
+  background: #f7f8fa;
+}
+tbody tr:hover .sticky-actions-col {
+  background: #fcfcfd;
+}
+.actions-cell-inner {
+  min-width: max-content;
+  white-space: nowrap;
+}
+.actions-cell .icon-button {
+  width: 34px;
+  flex: 0 0 34px;
+  padding: 0;
+}
 
 .panel-title { display: flex; align-items: center; gap: 8px; }
 .panel-title h3, .table-heading h3 { margin: 0; font-size: 16px; }

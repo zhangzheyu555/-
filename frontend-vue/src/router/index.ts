@@ -19,6 +19,8 @@ const InspectionRectificationPage = () => import('../pages/InspectionRectificati
 const InspectionReviewQueuePage = () => import('../pages/InspectionReviewQueuePage.vue')
 const AssistantPage = () => import('../pages/AssistantPage.vue')
 const EmployeeAssistantPage = () => import('../pages/EmployeeAssistantPage.vue')
+const EmployeeWorkbenchPage = () => import('../pages/EmployeeWorkbenchPage.vue')
+const EmployeeProfilePage = () => import('../pages/EmployeeProfilePage.vue')
 const DailyLossPage = () => import('../pages/DailyLossPage.vue')
 const OperationLogPage = () => import('../pages/OperationLogPage.vue')
 const NoPermissionPage = () => import('../pages/NoPermissionPage.vue')
@@ -45,12 +47,15 @@ const permissionMeta = (permission: PermissionCode, extras: Record<string, unkno
 
 const appChildren: RouteRecordRaw[] = [
   { path: '', name: 'home', component: PlaceholderPage, meta: { title: '正在进入工作台', subtitle: '系统会根据当前账号权限进入对应首页。' } },
-  { path: 'boss', name: 'boss-workspace', component: BossWorkspace, meta: permissionMeta(PERMISSIONS.SYSTEM_DASHBOARD_READ, { menuKey: 'boss-workspace', title: '老板工作台' }) },
-  { path: 'finance', name: 'finance-workspace', component: FinanceWorkspace, meta: permissionMeta(PERMISSIONS.FINANCE_PROFIT_READ, { menuKey: 'finance-workspace', title: '财务工作台' }) },
+  { path: 'boss', name: 'boss-workspace', component: BossWorkspace, meta: permissionMeta(PERMISSIONS.SYSTEM_DASHBOARD_READ, { menuKey: 'boss-workspace', title: '老板工作台', bossOnly: true }) },
+  { path: 'finance', name: 'finance-workspace', component: FinanceWorkspace, meta: permissionMeta(PERMISSIONS.FINANCE_PROFIT_READ, { menuKey: 'finance-workspace', title: '财务工作台', allowedRoles: ['FINANCE'] }) },
   { path: 'warehouse', name: 'warehouse-overview', component: WarehouseWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_READ, { moduleKey: 'warehouse', menuKey: 'warehouse-center', warehouseTab: 'overview', title: '仓库中心' }) },
   { path: 'warehouse/workspace', redirect: '/warehouse' },
-  { path: 'store', name: 'store-workspace', component: StoreManagerWorkspace, meta: permissionMeta(PERMISSIONS.STORE_READ, { menuKey: 'store-workspace', title: '门店工作台' }) },
-  { path: 'operations', name: 'operations-workspace', component: OperationsWorkspace, meta: permissionMeta(PERMISSIONS.OPERATIONS_DASHBOARD_READ, { menuKey: 'operations-workspace', title: '运营工作台' }) },
+  { path: 'store', name: 'store-workspace', component: StoreManagerWorkspace, meta: permissionMeta(PERMISSIONS.STORE_READ, { menuKey: 'store-workspace', title: '门店工作台', allowedRoles: ['STORE_MANAGER'] }) },
+  { path: 'operations', name: 'operations-workspace', component: OperationsWorkspace, meta: permissionMeta(PERMISSIONS.OPERATIONS_DASHBOARD_READ, { menuKey: 'operations-workspace', title: '运营工作台', allowedRoles: ['OPERATIONS'] }) },
+  { path: 'employee', name: 'employee-workspace', component: EmployeeWorkbenchPage, meta: permissionMeta(PERMISSIONS.EXAM_LEARN, { menuKey: 'employee-workspace', title: '员工工作台', allowedRoles: ['EMPLOYEE'] }) },
+  { path: 'employee/profile', name: 'employee-profile', component: EmployeeProfilePage, meta: permissionMeta(PERMISSIONS.EXAM_LEARN, { menuKey: 'employee-profile', title: '我的资料', allowedRoles: ['EMPLOYEE'] }) },
+  { path: 'employee/exams', name: 'employee-exams', component: ExamProgressWorkspace, meta: permissionMeta(PERMISSIONS.EXAM_LEARN, { moduleKey: 'exam', menuKey: 'employee-exams', title: '培训考试', allowedRoles: ['EMPLOYEE'] }) },
 
   { path: 'assistant', name: 'assistant', component: AssistantPage, meta: permissionMeta(PERMISSIONS.ASSISTANT_USE, { menuKey: 'assistant', title: '门店经营助手' }) },
   { path: 'employee-assistant', name: 'employee-assistant', component: EmployeeAssistantPage, meta: permissionMeta(PERMISSIONS.EMPLOYEE_ASSISTANT_USE, { menuKey: 'employee-assistant', title: '员工服务助手' }) },
@@ -74,7 +79,7 @@ const appChildren: RouteRecordRaw[] = [
   { path: 'store-detail', name: 'store-detail', component: StoreDetailPage, meta: permissionMeta(PERMISSIONS.STORE_READ, { menuKey: 'store-detail', title: '门店详情' }) },
   { path: 'stores', name: 'stores', component: StoreManagementPage, meta: permissionMeta(PERMISSIONS.STORE_MANAGE, { menuKey: 'store-management', title: '门店管理', bossOnly: true }) },
   { path: 'logs', name: 'logs', component: OperationLogPage, meta: permissionMeta(PERMISSIONS.SYSTEM_AUDIT_READ, { menuKey: 'operation-logs', title: '操作日志' }) },
-  { path: 'platform-login', name: 'platform-login', component: PlatformLoginPage, meta: permissionMeta(PERMISSIONS.PLATFORM_READ, { menuKey: 'platform-settings', title: '平台配置' }) },
+  { path: 'platform-login', name: 'platform-login', component: PlatformLoginPage, meta: permissionMeta(PERMISSIONS.PLATFORM_READ, { menuKey: 'platform-settings', title: '平台配置', allowedRoles: ['OPERATIONS'] }) },
   { path: 'qmai-business', name: 'qmai-business', component: QmaiBusinessPage, meta: permissionMeta(PERMISSIONS.FINANCE_PROFIT_READ, { menuKey: 'qmai-business', title: '企迈经营数据' }) },
   { path: 'users', name: 'users', component: UserPermissionPage, meta: permissionMeta(PERMISSIONS.SYSTEM_USER_MANAGE, { menuKey: 'user-permissions', title: '账号权限' }) },
 
@@ -116,13 +121,13 @@ const appChildren: RouteRecordRaw[] = [
     component: InspectionReviewQueuePage,
     meta: permissionMeta(PERMISSIONS.INSPECTION_MANAGE, {
       menuKey: 'inspection-review-queue',
-      allowedRoles: ['OPERATIONS'],
+      allowedRoles: ['SUPERVISOR', 'OPERATIONS'],
       title: '整改复核',
     }),
   },
   { path: 'operations/inspection/standards', name: 'inspection-standards', component: SupervisorWorkbenchPage, meta: permissionMeta(PERMISSIONS.INSPECTION_MANAGE, { menuKey: 'inspection-management', inspectionTab: 'standards', title: '稽核标准' }) },
-  { path: 'operations/exams', name: 'exam-admin', component: ExamAdminWorkspace, meta: permissionMeta(PERMISSIONS.EXAM_MANAGE, { moduleKey: 'exam', menuKey: 'exam-center', title: '培训考试' }) },
-  { path: 'store/exams', name: 'exam-progress', component: ExamProgressWorkspace, meta: permissionMeta(PERMISSIONS.EXAM_REPORT, { moduleKey: 'exam', menuKey: 'exam-center', title: '培训考试' }) },
+  { path: 'operations/exams', name: 'exam-admin', component: ExamAdminWorkspace, meta: permissionMeta(PERMISSIONS.EXAM_MANAGE, { moduleKey: 'exam', menuKey: 'exam-center', title: '培训考试', allowedRoles: ['OPERATIONS'] }) },
+  { path: 'store/exams', name: 'exam-progress', component: ExamProgressWorkspace, meta: permissionMeta(PERMISSIONS.EXAM_REPORT, { moduleKey: 'exam', menuKey: 'exam-center', title: '培训考试', allowedRoles: ['STORE_MANAGER'] }) },
 ]
 
 const routes: RouteRecordRaw[] = [
@@ -156,7 +161,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/inspection/rules', redirect: '/operations/inspection/standards' },
   { path: '/inspection/standards', redirect: '/operations/inspection/standards' },
   { path: '/finance-data-check', redirect: '/finance' },
-  { path: '/supervisor/:pathMatch(.*)*', redirect: '/operations' },
+  { path: '/supervisor/:pathMatch(.*)*', redirect: '/operations/inspection' },
   { path: '/operations/:pathMatch(.*)*', redirect: '/operations' },
 ]
 
@@ -181,6 +186,7 @@ function examRouteForSession(): RouteLocationRaw {
   const auth = useAuthStore()
   if (auth.hasPermission(PERMISSIONS.EXAM_MANAGE)) return '/operations/exams'
   if (auth.hasPermission(PERMISSIONS.EXAM_REPORT)) return '/store/exams'
+  if (auth.role === 'EMPLOYEE' && auth.hasPermission(PERMISSIONS.EXAM_LEARN)) return '/employee/exams'
   if (auth.hasPermission(PERMISSIONS.EXAM_LEARN)) return '/learn/exams'
   return '/no-permission'
 }
@@ -302,7 +308,13 @@ router.beforeEach(async (to) => {
     .reverse()
     .map((record) => record.meta.permission)
     .find((permission): permission is string => typeof permission === 'string' && Boolean(permission))
-  if (requiredPermission && !auth.hasPermission(requiredPermission)) {
+  const hasRequiredPermission = !requiredPermission
+    || auth.hasPermission(requiredPermission)
+    || (
+      requiredPermission === PERMISSIONS.WAREHOUSE_READ
+      && auth.hasPermission(PERMISSIONS.WAREHOUSE_CENTRAL_READ)
+    )
+  if (!hasRequiredPermission) {
     return { name: 'no-permission', query: { from: to.fullPath } }
   }
   return true

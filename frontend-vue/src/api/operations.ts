@@ -1,4 +1,4 @@
-import { apiGet } from './http'
+import { apiDelete, apiGet, apiPut } from './http'
 
 export interface OperationLog {
   id: number
@@ -24,6 +24,9 @@ export interface StoreInfo {
   openDate?: string
   status?: string
   note?: string
+  regionCode?: string
+  supplyWarehouseId?: number
+  supplyWarehouseName?: string
 }
 
 export interface BrandInfo {
@@ -32,6 +35,19 @@ export interface BrandInfo {
   name: string
   color?: string
   sortOrder?: number
+}
+
+export interface StorePayload {
+  id: string
+  code?: string
+  name: string
+  brandId: number
+  area?: string
+  manager?: string
+  openDate?: string
+  status?: string
+  note?: string
+  regionCode?: string
 }
 
 export function getAuditLogs(limit = 80) {
@@ -44,4 +60,12 @@ export function getStores() {
 
 export function getBrands() {
   return apiGet<BrandInfo[]>('/api/brands')
+}
+
+export function updateStore(payload: StorePayload) {
+  return apiPut<void, StorePayload>('/api/stores', payload)
+}
+
+export function deleteStore(id: string) {
+  return apiDelete<void>(`/api/stores/${encodeURIComponent(id)}`)
 }

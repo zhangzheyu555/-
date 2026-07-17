@@ -37,7 +37,20 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class UserManagementService {
   private static final Set<String> ALLOWED_ROLES = Set.of(
-      "BOSS", "FINANCE", "STORE_MANAGER", "WAREHOUSE", "OPERATIONS", "EMPLOYEE");
+      "BOSS", "FINANCE", "STORE_MANAGER", "WAREHOUSE", "OPERATIONS", "SUPERVISOR", "EMPLOYEE");
+  private static final Set<String> SUPERVISOR_PERMISSION_DENYLIST = Set.of(
+      PermissionCodes.OPERATIONS_DASHBOARD_READ,
+      PermissionCodes.PLATFORM_READ,
+      PermissionCodes.PLATFORM_MANAGE,
+      PermissionCodes.INVENTORY_MANAGE,
+      PermissionCodes.INVENTORY_REVIEW,
+      PermissionCodes.EXAM_MANAGE,
+      PermissionCodes.EXAM_REPORT
+  );
+  private static final Set<String> SUPERVISOR_SCOPE_DOMAINS = Set.of(
+      DataScopeDomains.STORE,
+      DataScopeDomains.INSPECTION
+  );
 
   private final AuthRepository authRepository;
   private final PasswordService passwordService;
@@ -153,13 +166,16 @@ public class UserManagementService {
     AuthUser created = authRepository.findByUsername(currentUser.tenantId(), username)
         .orElseThrow(() -> new BusinessException("USER_CREATE_FAILED", "账号创建失败", HttpStatus.INTERNAL_SERVER_ERROR));
     authRepository.replaceStoreScope(currentUser.tenantId(), created.id(), profile.storeScope());
-    if ("STORE_MANAGER".equals(profile.role()) && dataScopeService != null) {
-      dataScopeService.replaceAssignments(
-          currentUser.tenantId(),
-          created.id(),
-          restrictedRoleTransitionScopes(profile.role()),
-          currentUser.id()
-      );
+    if (dataScopeService != null) {
+      List<DataScopeAssignment> restrictedScopes = restrictedRoleTransitionScopes(profile.role(), profile.storeScope());
+      if (!restrictedScopes.isEmpty()) {
+        dataScopeService.replaceAssignments(
+            currentUser.tenantId(),
+            created.id(),
+            restrictedScopes,
+            currentUser.id()
+        );
+      }
     }
     requireAvailableWorkspace(created);
     writeAudit(currentUser, "创建账号", created.id(), profile.storeId(), "创建 " + created.username() + "（" + roleLabel(profile.role()) + "）");
@@ -193,7 +209,7 @@ public class UserManagementService {
     authRepository.replaceStoreScope(currentUser.tenantId(), target.id(), profile.storeScope());
     boolean roleChanged = !AccessControlService.canonicalRole(target.role()).equals(profile.role());
     if (roleChanged && dataScopeService != null) {
-      List<DataScopeAssignment> restrictedScopes = restrictedRoleTransitionScopes(profile.role());
+      List<DataScopeAssignment> restrictedScopes = restrictedRoleTransitionScopes(profile.role(), profile.storeScope());
       if (!restrictedScopes.isEmpty()) {
         dataScopeService.replaceAssignments(
             currentUser.tenantId(), target.id(), restrictedScopes, currentUser.id());
@@ -434,12 +450,22 @@ public class UserManagementService {
         throw new BusinessException(
             "FINANCE_IMPORT_FINANCE_ONLY", "月度经营数据导入仅限财务或老板，不能授予其他账号", HttpStatus.BAD_REQUEST);
       }
-      if ("EMPLOYEE".equals(AccessControlService.canonicalRole(target.role()))
+      String targetRole = AccessControlService.canonicalRole(target.role());
+      if ("SUPERVISOR".equals(targetRole)
           && effect == PermissionEffect.ALLOW
-          && !PermissionCodes.EXAM_LEARN.equals(permissionCode)) {
+          && SUPERVISOR_PERMISSION_DENYLIST.contains(permissionCode)) {
+        throw new BusinessException(
+            "SUPERVISOR_PERMISSION_BOUNDARY",
+            "督导角色只能配置巡店、整改、待办、附件和助手相关权限，不能授予运营高风险权限",
+            HttpStatus.BAD_REQUEST
+        );
+      }
+      if ("EMPLOYEE".equals(targetRole)
+          && effect == PermissionEffect.ALLOW
+          && !Set.of(PermissionCodes.EXAM_LEARN, PermissionCodes.EMPLOYEE_ASSISTANT_USE).contains(permissionCode)) {
         throw new BusinessException(
             "EMPLOYEE_PERMISSION_CEILING",
-            "学员账号只能授予本人培训考试权限",
+              "员工账号只能授予本人培训考试和员工服务助手权限",
             HttpStatus.BAD_REQUEST
         );
       }
@@ -580,12 +606,28 @@ public class UserManagementService {
           : DataScopeModes.NONE.equals(mode);
       if (!valid) {
         throw new BusinessException(
-            "EMPLOYEE_SCOPE_CEILING", "学员账号只能访问本人培训考试数据", HttpStatus.BAD_REQUEST);
+            "EMPLOYEE_SCOPE_CEILING", "员工账号只能访问本人培训考试数据", HttpStatus.BAD_REQUEST);
+      }
+    }
+    if ("SUPERVISOR".equals(role)) {
+      boolean valid = SUPERVISOR_SCOPE_DOMAINS.contains(domain)
+          ? Set.of(DataScopeModes.STORE_LIST, DataScopeModes.NONE).contains(mode)
+          : DataScopeModes.NONE.equals(mode);
+      if (!valid) {
+        throw new BusinessException(
+            "SUPERVISOR_SCOPE_BOUNDARY",
+            "督导角色只能配置门店列表范围，且仅用于门店和巡检业务",
+            HttpStatus.BAD_REQUEST
+        );
       }
     }
   }
 
   private List<DataScopeAssignment> restrictedRoleTransitionScopes(String role) {
+    return restrictedRoleTransitionScopes(role, List.of());
+  }
+
+  private List<DataScopeAssignment> restrictedRoleTransitionScopes(String role, List<String> storeScope) {
     if ("STORE_MANAGER".equals(role)) {
       return List.of(
           DataScopeDomains.STORE,
@@ -596,6 +638,14 @@ public class UserManagementService {
           DataScopeDomains.EXAM
       ).stream()
           .map(domain -> new DataScopeAssignment(domain, DataScopeModes.OWN_STORE, List.of()))
+          .toList();
+    }
+    if ("SUPERVISOR".equals(role)) {
+      List<String> storeIds = normalizedStoreIds(storeScope);
+      return DataScopeDomains.ALL.stream()
+          .map(domain -> SUPERVISOR_SCOPE_DOMAINS.contains(domain) && !storeIds.isEmpty()
+              ? new DataScopeAssignment(domain, DataScopeModes.STORE_LIST, storeIds)
+              : new DataScopeAssignment(domain, DataScopeModes.NONE, List.of()))
           .toList();
     }
     if ("EMPLOYEE".equals(role)) {
@@ -895,7 +945,7 @@ public class UserManagementService {
       case "STORE_MANAGER" -> "店长";
       case "WAREHOUSE" -> "仓库管理员";
       case "OPERATIONS" -> "运营";
-      case "EMPLOYEE" -> "学员（兼容身份）";
+      case "EMPLOYEE" -> "员工";
       default -> role;
     };
   }

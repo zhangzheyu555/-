@@ -123,9 +123,12 @@ public class AuthService {
     long tenantId = request.tenantId() == null ? TenantDefaults.DEFAULT_TENANT_ID : request.tenantId();
     String username = request.username().trim();
     List<String> attemptKeys = loginAttemptKeys(tenantId, username, sourceIp);
-    requireLoginAllowed(attemptKeys);
     AuthUser user = authRepository.findByUsername(tenantId, username).orElse(null);
-    if (user == null || !user.enabled() || !passwordService.matches(request.password(), user.passwordHash())) {
+    boolean passwordAccepted = user != null
+        && user.enabled()
+        && passwordService.matches(request.password(), user.passwordHash());
+    if (!passwordAccepted) {
+      requireLoginAllowed(attemptKeys);
       recordLoginFailure(attemptKeys);
       throw new BusinessException("LOGIN_FAILED", "账号或密码错误", HttpStatus.UNAUTHORIZED);
     }
@@ -328,7 +331,7 @@ public class AuthService {
       case "STORE_MANAGER" -> "店长";
       case "WAREHOUSE" -> "仓库管理员";
       case "OPERATIONS" -> "运营";
-      case "EMPLOYEE" -> "学员（兼容身份）";
+      case "EMPLOYEE" -> "员工";
       default -> role;
     };
   }

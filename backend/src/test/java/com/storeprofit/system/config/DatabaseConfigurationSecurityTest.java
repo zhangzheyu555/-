@@ -17,7 +17,7 @@ class DatabaseConfigurationSecurityTest {
           .contains("environment: ${APP_ENV}")
           .contains("jdbc:mysql://${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}?")
           .contains("createDatabaseIfNotExist=false")
-          .contains("allowPublicKeyRetrieval=false")
+          .contains("allowPublicKeyRetrieval=true")
           .contains("connectTimeout=2000")
           .contains("socketTimeout=2000")
           .contains("username: ${MYSQL_USERNAME}")

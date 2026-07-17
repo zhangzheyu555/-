@@ -4,7 +4,9 @@ import com.storeprofit.system.common.ApiResponse;
 import com.storeprofit.system.platform.auth.AuthService;
 import jakarta.validation.Valid;
 import java.util.List;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -45,6 +47,15 @@ public class StoreController {
       @Valid @RequestBody StoreUpsertRequest request
   ) {
     organizationService.upsertStore(authService.requireUser(authorization), request);
+    return ApiResponse.ok();
+  }
+
+  @DeleteMapping("/{id}")
+  public ApiResponse<Void> delete(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id
+  ) {
+    organizationService.deleteStore(authService.requireUser(authorization), id);
     return ApiResponse.ok();
   }
 }

@@ -1,6 +1,8 @@
 package com.storeprofit.system.organization;
 
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.audit.AuditLogRequest;
+import com.storeprofit.system.audit.AuditRepository;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
 import com.storeprofit.system.platform.authorization.DataScope;
@@ -12,6 +14,7 @@ import com.storeprofit.system.platform.authorization.DataScopeService;
 import com.storeprofit.system.warehouse.WarehouseTopologyRepository.FacilityRow;
 import com.storeprofit.system.warehouse.WarehouseTopologyService;
 import java.util.List;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -24,6 +27,7 @@ public class OrganizationService {
   private final AccessControlService accessControl;
   private final BusinessScopeResolver businessScopeResolver;
   private final WarehouseTopologyService warehouseTopologyService;
+  private final AuditRepository auditRepository;
 
   @Autowired
   public OrganizationService(
@@ -31,13 +35,15 @@ public class OrganizationService {
       DataScopeService dataScopeService,
       AccessControlService accessControl,
       BusinessScopeResolver businessScopeResolver,
-      WarehouseTopologyService warehouseTopologyService
+      WarehouseTopologyService warehouseTopologyService,
+      AuditRepository auditRepository
   ) {
     this.organizationRepository = organizationRepository;
     this.dataScopeService = dataScopeService;
     this.accessControl = accessControl;
     this.businessScopeResolver = businessScopeResolver;
     this.warehouseTopologyService = warehouseTopologyService;
+    this.auditRepository = auditRepository;
   }
 
   public OrganizationService(
@@ -45,11 +51,11 @@ public class OrganizationService {
       DataScopeService dataScopeService,
       AccessControlService accessControl
   ) {
-    this(organizationRepository, dataScopeService, accessControl, null, null);
+    this(organizationRepository, dataScopeService, accessControl, null, null, null);
   }
 
   public OrganizationService(OrganizationRepository organizationRepository) {
-    this(organizationRepository, null, null, null, null);
+    this(organizationRepository, null, null, null, null, null);
   }
 
   public List<BrandResponse> brands(AuthUser user) {
@@ -120,11 +126,75 @@ public class OrganizationService {
         request.manager(), request.openDate(), request.status(), request.note(), regionCode, null);
     organizationRepository.upsertStore(
         user.tenantId(), normalized, supplyWarehouse == null ? null : supplyWarehouse.id());
+    auditStore(
+        user,
+        existing == null ? "新增门店档案" : "保存门店档案",
+        request.id(),
+        "门店档案已保存，状态：" + (request.status() == null || request.status().isBlank() ? "营业中" : request.status().trim())
+    );
+  }
+
+  @Transactional
+  public void deleteStore(AuthUser user, String storeId) {
+    requireStoreManage(user);
+    String normalizedStoreId = normalizeStoreId(storeId);
+    StoreResponse existing = organizationRepository.store(user.tenantId(), normalizedStoreId)
+        .orElseThrow(() -> new BusinessException("STORE_NOT_FOUND", "门店不存在或不属于当前企业", HttpStatus.NOT_FOUND));
+    if (businessScopeResolver != null) {
+      businessScopeResolver.resolve(
+          user, DataScopeDomains.STORE, normalizedStoreId, existing.brandId(), "删除门店档案");
+    }
+    if (accessControl != null) {
+      accessControl.requireStoreAccess(user, DataScopeDomains.STORE, normalizedStoreId, "删除门店档案");
+    }
+    if (organizationRepository.storeHasLinkedData(user.tenantId(), normalizedStoreId)) {
+      throw storeHasLinkedDataException();
+    }
+    try {
+      int deleted = organizationRepository.deleteStore(user.tenantId(), normalizedStoreId);
+      if (deleted == 0) {
+        throw new BusinessException("STORE_NOT_FOUND", "门店不存在或不属于当前企业", HttpStatus.NOT_FOUND);
+      }
+    } catch (DataIntegrityViolationException exception) {
+      throw storeHasLinkedDataException();
+    }
+    auditStore(user, "删除门店档案", normalizedStoreId, "已删除未产生业务关联的门店档案");
   }
 
   private boolean enabledStatus(String status) {
     String value = status == null || status.isBlank() ? "营业中" : status.trim();
     return "营业中".equals(value) || "ACTIVE".equalsIgnoreCase(value);
+  }
+
+  private String normalizeStoreId(String storeId) {
+    if (storeId == null || storeId.isBlank()) {
+      throw new BusinessException("STORE_ID_REQUIRED", "请选择门店", HttpStatus.BAD_REQUEST);
+    }
+    return storeId.trim();
+  }
+
+  private BusinessException storeHasLinkedDataException() {
+    return new BusinessException(
+        "STORE_HAS_LINKED_DATA",
+        "该门店已有经营、仓库、工资、报销、巡店或账号关联数据，不能删除；请改为停用门店。",
+        HttpStatus.CONFLICT
+    );
+  }
+
+  private void auditStore(AuthUser user, String action, String storeId, String reason) {
+    if (auditRepository == null) {
+      return;
+    }
+    auditRepository.writeLog(user, new AuditLogRequest(
+        action,
+        "store_branch",
+        storeId,
+        storeId,
+        null,
+        reason,
+        null,
+        null
+    ));
   }
 
   private void requireStoreRead(AuthUser user) {

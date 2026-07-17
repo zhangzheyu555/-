@@ -22,6 +22,10 @@ import org.springframework.stereotype.Service;
 public class DataScopeService {
   private static final Logger log = LoggerFactory.getLogger(DataScopeService.class);
   private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {};
+  private static final Set<String> SUPERVISOR_SCOPE_DOMAINS = Set.of(
+      DataScopeDomains.STORE,
+      DataScopeDomains.INSPECTION
+  );
 
   private final DataScopeRepository repository;
   private final AuthRepository authRepository;
@@ -52,13 +56,20 @@ public class DataScopeService {
       applyConservativeCompatibilityFallback(result, user);
       return Map.copyOf(result);
     }
-    boolean storeManager = "STORE_MANAGER".equals(AccessControlService.canonicalRole(user.role()));
+    String role = AccessControlService.canonicalRole(user.role());
+    boolean storeManager = "STORE_MANAGER".equals(role);
+    boolean supervisor = "SUPERVISOR".equals(role);
     for (DataScopeAssignmentRow row : rows) {
       String domain = normalizeDomain(row.domainCode());
       if (!DataScopeDomains.ALL.contains(domain)) {
         continue;
       }
       String mode = normalizeMode(row.scopeType());
+      if (supervisor && (!SUPERVISOR_SCOPE_DOMAINS.contains(domain)
+          || !DataScopeModes.STORE_LIST.equals(mode))) {
+        result.put(domain, DataScope.none());
+        continue;
+      }
       if (DataScopeModes.WAREHOUSE_LIST.equals(mode)
           && !DataScopeDomains.WAREHOUSE.equals(domain)) {
         log.warn("Ignoring WAREHOUSE_LIST outside WAREHOUSE domain. tenantId={} userId={} domain={}",
@@ -209,6 +220,12 @@ public class DataScopeService {
       return;
     }
     DataScope scoped = new DataScope(DataScopeModes.STORE_LIST, assignedStores);
+    if ("SUPERVISOR".equals(role)) {
+      for (String domain : SUPERVISOR_SCOPE_DOMAINS) {
+        result.put(domain, scoped);
+      }
+      return;
+    }
     if ("FINANCE".equals(role)) {
       for (String domain : List.of(
           DataScopeDomains.STORE,

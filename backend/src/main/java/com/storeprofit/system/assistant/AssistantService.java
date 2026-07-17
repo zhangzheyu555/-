@@ -58,7 +58,7 @@ public class AssistantService {
       "\"summary\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"", Pattern.DOTALL
   );
   private static final Pattern NUMERIC_REFERENCE = Pattern.compile(
-      "(?<![\\d.])(?:¥\\s*[-+]?\\d[\\d,]*(?:\\.\\d+)?|[-+]?\\d[\\d,]*(?:\\.\\d+)?\\s*(?:元|块)|[-+]?\\d[\\d,]*(?:\\.\\d+)?\\s*%)(?![\\d.])"
+      "(?<![\\d.])(?:[¥￥]\\s*[-+]?\\d[\\d,]*(?:\\.\\d+)?|[-+]?\\d[\\d,]*(?:\\.\\d+)?\\s*(?:元|块)|[-+]?\\d[\\d,]*(?:\\.\\d+)?\\s*%)(?!\\d)"
   );
   private static final List<String> DEFAULT_BLOCKED_WORDS = List.of(
       "赌博", "博彩", "色情", "黄色", "裸聊", "约炮", "毒品", "枪支", "爆炸", "恐怖",
@@ -204,7 +204,7 @@ public class AssistantService {
       );
       ParsedAnalysis parsed = parseAnalysis(modelResponse, data.limitations());
       logSchemaInvalidDiagnostic(parsed, startedAt);
-      QualityResult quality = qualityGate(localData, parsed, expectation);
+      QualityResult quality = qualityGate(localData, parsed, expectation, data.modelContext());
 
       if (!quality.passed()) {
         log.warn("DeepSeek quality retry errorCode={} elapsedMs={}",
@@ -224,7 +224,11 @@ public class AssistantService {
         );
         parsed = parseAnalysis(modelResponse, data.limitations());
         logSchemaInvalidDiagnostic(parsed, startedAt);
-        quality = qualityGate(localData, parsed, expectation);
+        quality = qualityGate(localData, parsed, expectation, data.modelContext());
+        if ("UNKNOWN_AMOUNT".equals(quality.code())) {
+          parsed = sanitizeUnknownNumericReferences(parsed, localData, data.modelContext());
+          quality = qualityGate(localData, parsed, expectation, data.modelContext());
+        }
         if (!quality.passed()) {
           AnalysisFailure failure = analysisFailure(quality, expectation);
           properties.markAnalysisResponseRejected(failure.code());
@@ -443,12 +447,12 @@ public class AssistantService {
       requireAllTopLevelFields(root);
       String analysisType = requireAnalysisType(root.path("analysisType"));
       String summary = requireText(root.path("summary"));
-      List<String> findings = requiredTextList(root.path("findings"), 5);
-      List<AssistantChatResponse.Risk> risks = riskList(root.path("risks"));
-      List<AssistantChatResponse.PossibleCause> causes = causeList(root.path("possibleCauses"));
-      List<AssistantChatResponse.Action> actions = actionList(root.path("actions"));
+      List<String> findings = requiredTextList(limitedArray(root.path("findings"), 5), 5);
+      List<AssistantChatResponse.Risk> risks = riskList(limitedArray(root.path("risks"), 3));
+      List<AssistantChatResponse.PossibleCause> causes = causeList(limitedArray(root.path("possibleCauses"), 5));
+      List<AssistantChatResponse.Action> actions = actionList(limitedArray(root.path("actions"), 3));
       String confidence = requireConfidence(root.path("confidence"));
-      List<String> modelLimitations = requiredTextList(root.path("limitations"), 6);
+      List<String> modelLimitations = requiredTextList(limitedArray(root.path("limitations"), 6), 6);
       List<String> limitations = new ArrayList<>(modelLimitations);
       if (localLimitations != null) {
         localLimitations.stream().filter(value -> !limitations.contains(value)).forEach(limitations::add);
@@ -652,6 +656,16 @@ public class AssistantService {
     return List.copyOf(values);
   }
 
+  private JsonNode limitedArray(JsonNode node, int limit) {
+    if (node == null || !node.isArray() || node.size() <= limit) return node;
+    com.fasterxml.jackson.databind.node.ArrayNode values = objectMapper.createArrayNode();
+    for (JsonNode item : node) {
+      if (values.size() >= limit) break;
+      values.add(item);
+    }
+    return values;
+  }
+
   private List<AssistantChatResponse.Risk> riskList(JsonNode node) {
     if (node == null || !node.isArray()) throw new IllegalArgumentException("risks必须是数组");
     if (node.size() > 3) throw new IllegalArgumentException("risks最多3项");
@@ -764,7 +778,8 @@ public class AssistantService {
   private QualityResult qualityGate(
       AssistantChatResponse.LocalData localData,
       ParsedAnalysis parsed,
-      AnalysisExpectation expectation
+      AnalysisExpectation expectation,
+      String modelContext
   ) {
     if (!parsed.valid()) return QualityResult.failed(parsed.errorCode(), parsed.errorMessage());
     AssistantChatResponse.AiAnalysis analysis = parsed.analysis();
@@ -825,7 +840,7 @@ public class AssistantService {
       return QualityResult.failed("LOCAL_COPY", "AI核心判断与本地摘要高度相似");
     }
     String combined = analysisText(analysis);
-    if (!referencedNumbersMatchLocalData(localData, combined)) {
+    if (!referencedNumbersMatchLocalData(localData, factualAnalysisText(analysis), modelContext)) {
       return QualityResult.failed("UNKNOWN_AMOUNT", "AI输出包含经营快照中不存在的金额或比例");
     }
     if (contradictsSnapshot(localData, combined)) {
@@ -890,6 +905,106 @@ public class AssistantService {
     return String.join("\n", sections);
   }
 
+  private String factualAnalysisText(AssistantChatResponse.AiAnalysis analysis) {
+    List<String> sections = new ArrayList<>();
+    sections.add(analysis.summary());
+    sections.addAll(analysis.findings());
+    analysis.risks().forEach(risk -> {
+      sections.add(risk.title());
+      sections.add(risk.evidence());
+    });
+    analysis.possibleCauses().forEach(cause -> {
+      sections.add(cause.cause());
+      sections.add(cause.basis());
+    });
+    sections.addAll(analysis.limitations());
+    return String.join("\n", sections);
+  }
+
+  private ParsedAnalysis sanitizeUnknownNumericReferences(
+      ParsedAnalysis parsed,
+      AssistantChatResponse.LocalData localData,
+      String modelContext
+  ) {
+    if (parsed == null || !parsed.valid()) return parsed;
+    Map<String, List<BigDecimal>> allowed = allowedNumericValues(localData, modelContext);
+    AssistantChatResponse.AiAnalysis analysis = parsed.analysis();
+    SanitizedText summary = sanitizeUnknownNumericReferences(analysis.summary(), allowed);
+    List<SanitizedText> findings = analysis.findings().stream()
+        .map(value -> sanitizeUnknownNumericReferences(value, allowed))
+        .toList();
+    List<AssistantChatResponse.Risk> risks = analysis.risks().stream()
+        .map(risk -> {
+          SanitizedText title = sanitizeUnknownNumericReferences(risk.title(), allowed);
+          SanitizedText evidence = sanitizeUnknownNumericReferences(risk.evidence(), allowed);
+          return new AssistantChatResponse.Risk(title.value(), evidence.value(), risk.severity());
+        })
+        .toList();
+    List<AssistantChatResponse.PossibleCause> causes = analysis.possibleCauses().stream()
+        .map(cause -> {
+          SanitizedText value = sanitizeUnknownNumericReferences(cause.cause(), allowed);
+          SanitizedText basis = sanitizeUnknownNumericReferences(cause.basis(), allowed);
+          return new AssistantChatResponse.PossibleCause(value.value(), cause.confidence(), basis.value());
+        })
+        .toList();
+    List<AssistantChatResponse.Action> actions = analysis.actions().stream()
+        .map(action -> {
+          SanitizedText value = sanitizeUnknownNumericReferences(action.action(), allowed);
+          SanitizedText expectedImpact = sanitizeUnknownNumericReferences(action.expectedImpact(), allowed);
+          SanitizedText verificationMetric = sanitizeUnknownNumericReferences(action.verificationMetric(), allowed);
+          return new AssistantChatResponse.Action(
+              value.value(),
+              action.ownerRole(),
+              action.deadline(),
+              expectedImpact.value(),
+              verificationMetric.value()
+          );
+        })
+        .toList();
+    List<SanitizedText> limitations = analysis.limitations().stream()
+        .map(value -> sanitizeUnknownNumericReferences(value, allowed))
+        .toList();
+    int replacementCount = summary.replacementCount()
+        + findings.stream().mapToInt(SanitizedText::replacementCount).sum()
+        + limitations.stream().mapToInt(SanitizedText::replacementCount).sum();
+    if (replacementCount > 0) {
+      log.warn("DeepSeek analysis sanitized unknownNumericReferences={}", replacementCount);
+    }
+    AssistantChatResponse.AiAnalysis sanitized = new AssistantChatResponse.AiAnalysis(
+        analysis.available(),
+        analysis.provider(),
+        analysis.model(),
+        analysis.requestId(),
+        analysis.latencyMs(),
+        analysis.analysisType(),
+        summary.value(),
+        findings.stream().map(SanitizedText::value).toList(),
+        risks,
+        causes,
+        actions,
+        analysis.confidence(),
+        limitations.stream().map(SanitizedText::value).toList()
+    );
+    return ParsedAnalysis.valid(sanitized, parsed.modelLimitationsCount());
+  }
+
+  private SanitizedText sanitizeUnknownNumericReferences(
+      String value,
+      Map<String, List<BigDecimal>> allowed
+  ) {
+    Matcher matcher = NUMERIC_REFERENCE.matcher(value == null ? "" : value);
+    StringBuffer sanitized = new StringBuffer();
+    int replacementCount = 0;
+    while (matcher.find()) {
+      NumericReference reference = NumericReference.parse(matcher.group());
+      if (reference != null && matchesAllowedNumericReference(reference, allowed)) continue;
+      matcher.appendReplacement(sanitized, Matcher.quoteReplacement("未核验数值"));
+      replacementCount++;
+    }
+    matcher.appendTail(sanitized);
+    return new SanitizedText(sanitized.toString(), replacementCount);
+  }
+
   private boolean contradictsSnapshot(
       AssistantChatResponse.LocalData localData,
       String analysisText
@@ -924,35 +1039,64 @@ public class AssistantService {
 
   private boolean referencedNumbersMatchLocalData(
       AssistantChatResponse.LocalData localData,
-      String analysisText
+      String analysisText,
+      String modelContext
   ) {
-    Map<String, List<BigDecimal>> allowed = allowedNumericValues(localData);
+    Map<String, List<BigDecimal>> allowed = allowedNumericValues(localData, modelContext);
     Matcher matcher = NUMERIC_REFERENCE.matcher(analysisText == null ? "" : analysisText);
     while (matcher.find()) {
       NumericReference reference = NumericReference.parse(matcher.group());
       if (reference == null) return false;
-      boolean matchesLocalValue = allowed.getOrDefault(reference.unit(), List.of()).stream()
-          .anyMatch(value -> value.compareTo(reference.value()) == 0);
-      if (!matchesLocalValue) return false;
+      if (!matchesAllowedNumericReference(reference, allowed)) return false;
     }
     return true;
   }
 
-  private Map<String, List<BigDecimal>> allowedNumericValues(AssistantChatResponse.LocalData localData) {
+  private boolean matchesAllowedNumericReference(
+      NumericReference reference,
+      Map<String, List<BigDecimal>> allowed
+  ) {
+    return allowed.getOrDefault(reference.unit(), List.of()).stream()
+        .anyMatch(value -> matchesAllowedNumericValue(reference, value));
+  }
+
+  private boolean matchesAllowedNumericValue(NumericReference reference, BigDecimal allowedValue) {
+    BigDecimal delta = allowedValue.subtract(reference.value()).abs();
+    BigDecimal tolerance = "PERCENT".equals(reference.unit())
+        ? new BigDecimal("0.1")
+        : BigDecimal.ONE;
+    return delta.compareTo(tolerance) <= 0;
+  }
+
+  private Map<String, List<BigDecimal>> allowedNumericValues(
+      AssistantChatResponse.LocalData localData,
+      String modelContext
+  ) {
     Map<String, List<BigDecimal>> allowed = new LinkedHashMap<>();
     allowed.put("CNY", new ArrayList<>());
     allowed.put("PERCENT", new ArrayList<>());
-    if (localData == null || localData.metrics() == null) return allowed;
-    localData.metrics().forEach(metric -> {
-      if (metric == null || metric.value() == null) return;
-      String unit = clean(metric.unit()).toUpperCase(Locale.ROOT);
-      if ("CNY".equals(unit)) {
-        allowed.get("CNY").add(metric.value());
-      } else if ("PERCENT".equals(unit)) {
-        allowed.get("PERCENT").add(metric.value().multiply(BigDecimal.valueOf(100)));
-      }
-    });
+    if (localData != null && localData.metrics() != null) {
+      localData.metrics().forEach(metric -> {
+        if (metric == null || metric.value() == null) return;
+        String unit = clean(metric.unit()).toUpperCase(Locale.ROOT);
+        if ("CNY".equals(unit)) {
+          allowed.get("CNY").add(metric.value());
+        } else if ("PERCENT".equals(unit)) {
+          allowed.get("PERCENT").add(metric.value().multiply(BigDecimal.valueOf(100)));
+        }
+      });
+    }
+    addAllowedNumericValuesFromText(allowed, modelContext);
     return allowed;
+  }
+
+  private void addAllowedNumericValuesFromText(Map<String, List<BigDecimal>> allowed, String text) {
+    Matcher matcher = NUMERIC_REFERENCE.matcher(text == null ? "" : text);
+    while (matcher.find()) {
+      NumericReference reference = NumericReference.parse(matcher.group());
+      if (reference == null) continue;
+      allowed.computeIfAbsent(reference.unit(), ignored -> new ArrayList<>()).add(reference.value());
+    }
   }
 
   private String cacheKey(
@@ -1022,6 +1166,9 @@ public class AssistantService {
         5. 每项推测的confidence以及整体confidence只能为HIGH、MEDIUM或LOW。
         6. 数据不足时写入limitations，禁止编造不存在的同比、环比、原因、金额或比例。
         7. 金额和比例必须与输入完全一致，禁止重新计算或改写数值。
+           如需提到金额或比例，只能逐字复制“当前权限过滤后的经营数据”里已经出现的展示值；
+           禁止写差额、目标金额、预计金额、预计提升比例、费用占比、环比同比等未在输入中出现的数字。
+           没有可引用数字时，写“需核对明细”或“需补充数据”，不要写具体数值。
         8. 禁止输出或索要密码、Token、手机号、员工姓名、员工工资明细、API Key等敏感信息。
         9. 仅输出一个合法JSON对象，不要Markdown代码块，不要额外解释；每个字段类型必须严格符合下方结构。
 
@@ -1041,7 +1188,15 @@ public class AssistantService {
   ) {
     return systemPrompt(dataContext, expectation) + "\n\n"
         + "上次输出未通过质量门禁（" + quality.code() + "：" + quality.message() + "）。"
+        + numericRepairInstruction(quality)
         + "请重新生成完整JSON；不要解释错误，不要使用Markdown围栏，不要遗漏任何必填字段。";
+  }
+
+  private String numericRepairInstruction(QualityResult quality) {
+    if (!"UNKNOWN_AMOUNT".equals(quality.code())) return "";
+    return "上次输出包含快照里不存在的金额或比例。"
+        + "本次不要写差额、目标金额、预计金额、预计提升比例、费用占比、同比或环比数字；"
+        + "如必须引用金额或比例，只能逐字复制输入快照中已有的展示值。";
   }
 
   private boolean hasBlockedWord(String value) {
@@ -1198,7 +1353,7 @@ public class AssistantService {
       if (raw == null || raw.isBlank()) return null;
       String normalized = raw.replace(",", "").replace(" ", "");
       String unit = normalized.contains("%") ? "PERCENT" : "CNY";
-      String numeric = normalized.replace("¥", "").replace("元", "")
+      String numeric = normalized.replace("¥", "").replace("￥", "").replace("元", "")
           .replace("块", "").replace("%", "");
       try {
         return new NumericReference(unit, new BigDecimal(numeric));
@@ -1217,6 +1372,8 @@ public class AssistantService {
       return new QualityResult(false, code, message);
     }
   }
+
+  private record SanitizedText(String value, int replacementCount) {}
 
   private record CachedAnalysis(AssistantChatResponse.AiAnalysis analysis, Instant expiresAt) {}
 

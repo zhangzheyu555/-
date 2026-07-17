@@ -216,8 +216,11 @@ public class AuthRepository {
 
   public void createUser(long tenantId, String username, String passwordHash, String displayName, String role, String storeId) {
     jdbcTemplate.update("""
-        insert into auth_user(tenant_id, username, password_hash, display_name, role, store_id, enabled, created_at)
-        values (?, ?, ?, ?, ?, ?, 1, current_timestamp)
+        insert into auth_user(
+          tenant_id, username, password_hash, display_name, role, store_id,
+          enabled, permission_version, created_at
+        )
+        values (?, ?, ?, ?, ?, ?, 1, 1, current_timestamp)
         """, tenantId, username, passwordHash, displayName, role, storeId);
   }
 

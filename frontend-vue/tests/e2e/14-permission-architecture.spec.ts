@@ -15,8 +15,8 @@ test('session and role contracts preserve effective authorization fields', () =>
     expect(authApi).toContain(field)
     expect(authStore).toContain(field)
   }
-  expect(roleSource).toContain("SUPERVISOR: 'OPERATIONS'")
-  expect(roleSource).toContain("EMPLOYEE: '学员'")
+  expect(roleSource).toContain("SUPERVISOR: '督导'")
+  expect(roleSource).toContain("EMPLOYEE: '员工'")
   expect(roles.map((role) => role.key)).toEqual([
     'boss', 'finance', 'warehouse', 'store', 'operations', 'learner',
   ])
@@ -55,7 +55,7 @@ test('account access summaries and atomic access-profile updates are wired', () 
 test('all management workspaces and learner-only route are wired', () => {
   const router = source('src/router/index.ts')
   const workspacePermissions = source('src/permissions/workspaces.ts')
-  for (const path of ['/boss', '/finance', '/warehouse', '/store', '/operations', '/learn/exams']) {
+  for (const path of ['/boss', '/finance', '/warehouse', '/store', '/operations', '/employee', '/learn/exams']) {
     expect(`${router}\n${workspacePermissions}`).toContain(`'${path}'`)
   }
   for (const workspace of [

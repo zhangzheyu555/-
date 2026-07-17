@@ -12,41 +12,62 @@ const roleContracts: Record<string, { permissions: string[]; dataScopes: Record<
   BOSS: { permissions: [], dataScopes: { STORE: { mode: 'ALL', storeIds: [] }, FINANCE: { mode: 'ALL', storeIds: [] }, SALARY: { mode: 'ALL', storeIds: [] }, WAREHOUSE: { mode: 'ALL', storeIds: [] }, INSPECTION: { mode: 'ALL', storeIds: [] }, EXAM: { mode: 'ALL', storeIds: [] } }, defaultWorkspace: '/boss' },
   FINANCE: { permissions: ['system.dashboard.read', 'store.read', 'finance.profit.read', 'finance.profit.write', 'finance.export', 'expense.read', 'expense.create', 'expense.review', 'salary.read', 'salary.edit', 'assistant.use'], dataScopes: { STORE: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] }, FINANCE: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] }, SALARY: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] } }, defaultWorkspace: '/finance' },
   STORE_MANAGER: { permissions: ['system.dashboard.read', 'store.read', 'finance.profit.read', 'finance.profit.write', 'expense.read', 'expense.create', 'salary.read', 'warehouse.store.read', 'warehouse.requisition.create', 'warehouse.requisition.receive', 'inspection.read', 'exam.learn', 'exam.report', 'assistant.use'], dataScopes: { STORE: { mode: 'OWN_STORE', storeIds: ['TEST-STORE'] }, FINANCE: { mode: 'OWN_STORE', storeIds: ['TEST-STORE'] }, SALARY: { mode: 'OWN_STORE', storeIds: ['TEST-STORE'] }, WAREHOUSE: { mode: 'OWN_STORE', storeIds: ['TEST-STORE'] }, INSPECTION: { mode: 'OWN_STORE', storeIds: ['TEST-STORE'] }, EXAM: { mode: 'OWN_STORE', storeIds: ['TEST-STORE'] } }, defaultWorkspace: '/store' },
-  WAREHOUSE: { permissions: ['system.dashboard.read', 'warehouse.central.read', 'warehouse.central.manage', 'assistant.use'], dataScopes: { WAREHOUSE: { mode: 'CENTRAL_WAREHOUSE', storeIds: [] } }, defaultWorkspace: '/warehouse' },
+  WAREHOUSE: { permissions: ['system.dashboard.read', 'warehouse.read', 'warehouse.purchase', 'warehouse.transfer.request', 'warehouse.transfer.approve', 'warehouse.transfer.ship', 'warehouse.transfer.receive', 'warehouse.requisition.process', 'warehouse.configure', 'warehouse.central.read', 'warehouse.central.manage', 'assistant.use'], dataScopes: { WAREHOUSE: { mode: 'CENTRAL_WAREHOUSE', storeIds: [] } }, defaultWorkspace: '/warehouse' },
   OPERATIONS: { permissions: ['system.dashboard.read', 'operations.dashboard.read', 'store.read', 'warehouse.store.read', 'inspection.read', 'inspection.manage', 'exam.learn', 'exam.manage', 'exam.report', 'platform.read', 'platform.manage', 'assistant.use'], dataScopes: { STORE: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] }, WAREHOUSE: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] }, INSPECTION: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] }, EXAM: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] } }, defaultWorkspace: '/operations' },
 }
 
 async function seedSession(page: Page, item: typeof roleCases[number]) {
-  await page.addInitScript(({ session, contract }) => {
+  const contract = roleContracts[item.role]
+  const sessionUser = {
+    id: 100,
+    tenantId: 1,
+    tenantName: 'TEST 租户',
+    displayName: item.name,
+    role: item.role,
+    roleLabel: item.label,
+    storeScope: item.role === 'STORE_MANAGER' ? ['TEST-STORE'] : ['all'],
+    permissions: contract.permissions,
+    dataScopes: contract.dataScopes,
+    boundStoreId: item.role === 'STORE_MANAGER' ? 'TEST-STORE' : null,
+    boundStoreName: item.role === 'STORE_MANAGER' ? '测试门店' : null,
+    defaultWorkspace: contract.defaultWorkspace,
+    permissionVersion: 1,
+  }
+  await page.addInitScript(({ role, user }) => {
     if (sessionStorage.getItem('TEST_AUTH_SEEDED') === '1') return
     sessionStorage.setItem('TEST_AUTH_SEEDED', '1')
-    localStorage.setItem('ai_profit_vue_token', `TEST-${session.role}-TOKEN`)
-    localStorage.setItem('ai_profit_vue_user', JSON.stringify({
-      id: 100,
-      tenantId: 1,
-      tenantName: 'TEST 租户',
-      displayName: session.name,
-      role: session.role,
-      roleLabel: session.label,
-      storeScope: session.role === 'STORE_MANAGER' ? ['TEST-STORE'] : ['all'],
-      permissions: contract.permissions,
-      dataScopes: contract.dataScopes,
-      defaultWorkspace: contract.defaultWorkspace,
-      permissionVersion: 1,
-    }))
-  }, { session: item, contract: roleContracts[item.role] })
+    localStorage.setItem('ai_profit_vue_token', `TEST-${role}-TOKEN`)
+    localStorage.setItem('ai_profit_vue_user', JSON.stringify(user))
+  }, { role: item.role, user: sessionUser })
+  return sessionUser
 }
 
 async function openProtectedShell(page: Page, item: typeof roleCases[number], width = 1366, height = 768) {
   await page.setViewportSize({ width, height })
-  await seedSession(page, item)
-  await page.route('**/api/**', (route) => {
+  const sessionUser = await seedSession(page, item)
+  await page.route('**/*', (route) => {
     const pathname = new URL(route.request().url()).pathname
+    if (!pathname.startsWith('/api/')) return route.continue()
+    if (pathname === '/api/auth/me') {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: sessionUser }),
+      })
+    }
     if (pathname === '/api/auth/logout' || pathname === '/api/test-protected') return route.fallback()
-    return route.abort('failed')
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, data: [] }),
+    })
   })
   await page.goto(roleContracts[item.role].defaultWorkspace)
-  await expect(page.locator('.app-sidebar--desktop')).toBeVisible()
+  if (width <= 768) {
+    await expect(page.locator('.mobile-menu-button')).toBeVisible()
+  } else {
+    await expect(page.locator('.app-sidebar--desktop')).toBeVisible()
+  }
 }
 
 test.describe('sidebar structure and role visibility', () => {
@@ -69,7 +90,7 @@ test.describe('sidebar structure and role visibility', () => {
       if (item.assistant) {
         const utility = sidebar.locator('.sidebar-navigation-utility')
         await expect(utility.locator('.sidebar-navigation-title')).toHaveText('辅助工具')
-        await expect(utility.locator('.sidebar-navigation-link')).toHaveText(/门店经营助手/)
+        await expect(utility.getByRole('link', { name: '门店经营助手', exact: true })).toBeVisible()
         const gap = await sidebar.evaluate((element) => {
           const primary = element.querySelector('.sidebar-navigation-primary')?.getBoundingClientRect()
           const utilityBox = element.querySelector('.sidebar-navigation-utility')?.getBoundingClientRect()

@@ -22,7 +22,7 @@ spring:
           no-cache: true
           must-revalidate: true
   datasource:
-    url: jdbc:mysql://${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}?createDatabaseIfNotExist=false&useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&sslMode=${MYSQL_SSL_MODE:DISABLED}&allowPublicKeyRetrieval=false&connectTimeout=2000&socketTimeout=2000
+    url: jdbc:mysql://${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}?createDatabaseIfNotExist=false&useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&sslMode=${MYSQL_SSL_MODE:DISABLED}&allowPublicKeyRetrieval=true&connectTimeout=2000&socketTimeout=2000
     username: ${MYSQL_USERNAME}
     password: ${MYSQL_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver

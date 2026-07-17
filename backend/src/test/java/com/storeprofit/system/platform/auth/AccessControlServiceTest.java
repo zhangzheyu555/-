@@ -226,6 +226,45 @@ class AccessControlServiceTest {
   }
 
   @Test
+  void supervisorIsNoLongerCanonicalizedToOperations() {
+    assertThat(AccessControlService.canonicalRole("SUPERVISOR")).isEqualTo("SUPERVISOR");
+    assertThat(AccessControlService.canonicalRole("OPS")).isEqualTo("OPERATIONS");
+    assertThat(AccessControlService.hasAnyRole(user("SUPERVISOR", "rg1"), "OPERATIONS")).isFalse();
+    assertThat(AccessControlService.hasAnyRole(user("SUPERVISOR", "rg1"), "SUPERVISOR")).isTrue();
+  }
+
+  @Test
+  void employeeCanUseOwnLearningAndAssistantButCannotEnterHighRiskModules() {
+    AuthUser employee = user("EMPLOYEE", "rg1");
+
+    service.requireExamRead(employee);
+    service.requireEmployeeAssistantUse(employee);
+    service.requireEmployeeWorkbench(employee);
+
+    assertThatThrownBy(() -> service.requireFinanceRead(employee))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getStatus()).isEqualTo(HttpStatus.FORBIDDEN));
+    assertThatThrownBy(() -> service.requireWarehouseRead(employee))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getStatus()).isEqualTo(HttpStatus.FORBIDDEN));
+    assertThatThrownBy(() -> service.requirePlatformManage(employee))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getStatus()).isEqualTo(HttpStatus.FORBIDDEN));
+    assertThatThrownBy(() -> service.requireUserManagementWrite(employee))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getStatus()).isEqualTo(HttpStatus.FORBIDDEN));
+  }
+
+  @Test
+  void nonEmployeeRoleCannotOpenEmployeeWorkbenchEvenWithExamPermission() {
+    AuthUser manager = user("STORE_MANAGER", "rg1");
+
+    assertThatThrownBy(() -> service.requireEmployeeWorkbench(manager))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
+  }
+
+  @Test
   void ordinaryRoleCannotManageUserPermissions() {
     AuthUser finance = user("FINANCE", null);
 

@@ -6,8 +6,14 @@ export const WORKSPACE_PERMISSIONS: Record<string, PermissionCode> = {
   '/finance': PERMISSIONS.FINANCE_PROFIT_READ,
   '/warehouse': PERMISSIONS.WAREHOUSE_READ,
   '/store': PERMISSIONS.STORE_READ,
+  '/operations/inspection': PERMISSIONS.INSPECTION_READ,
   '/operations': PERMISSIONS.OPERATIONS_DASHBOARD_READ,
+  '/employee': PERMISSIONS.EXAM_LEARN,
   '/learn/exams': PERMISSIONS.EXAM_LEARN,
+}
+
+const WORKSPACE_ALTERNATIVE_PERMISSIONS: Partial<Record<string, PermissionCode[]>> = {
+  '/warehouse': [PERMISSIONS.WAREHOUSE_CENTRAL_READ],
 }
 
 export const RECOMMENDED_WORKSPACE_BY_ROLE: Record<string, string> = {
@@ -15,8 +21,9 @@ export const RECOMMENDED_WORKSPACE_BY_ROLE: Record<string, string> = {
   FINANCE: '/finance',
   WAREHOUSE: '/warehouse',
   STORE_MANAGER: '/store',
+  SUPERVISOR: '/operations/inspection',
   OPERATIONS: '/operations',
-  EMPLOYEE: '/learn/exams',
+  EMPLOYEE: '/employee',
 }
 
 const WORKSPACE_ORDER_BY_ROLE: Record<string, string[]> = {
@@ -24,8 +31,9 @@ const WORKSPACE_ORDER_BY_ROLE: Record<string, string[]> = {
   FINANCE: ['/finance'],
   WAREHOUSE: ['/warehouse'],
   STORE_MANAGER: ['/store'],
+  SUPERVISOR: ['/operations/inspection'],
   OPERATIONS: ['/operations'],
-  EMPLOYEE: ['/learn/exams'],
+  EMPLOYEE: ['/employee'],
 }
 
 interface WorkspaceAccess {
@@ -46,10 +54,17 @@ export function resolveAvailableWorkspace(access: WorkspaceAccess): string | nul
 export function listAvailableWorkspaces(access: WorkspaceAccess): string[] {
   const role = normalizeRoleCode(access.role)
   return (WORKSPACE_ORDER_BY_ROLE[role] || [])
-    .filter((path) => access.hasPermission(WORKSPACE_PERMISSIONS[path]))
+    .filter((path) => canAccessWorkspace(access, path))
 }
 
 function normalizeWorkspace(value?: string) {
   const path = String(value || '').trim().replace(/\/$/, '') || '/'
   return WORKSPACE_PERMISSIONS[path] ? path : ''
+}
+
+function canAccessWorkspace(access: WorkspaceAccess, path: string) {
+  const primary = WORKSPACE_PERMISSIONS[path]
+  if (primary && access.hasPermission(primary)) return true
+  return (WORKSPACE_ALTERNATIVE_PERMISSIONS[path] || [])
+    .some((permission) => access.hasPermission(permission))
 }

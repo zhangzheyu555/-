@@ -146,8 +146,9 @@ function normalizeDefaultWorkspace(value: unknown, role: string) {
     FINANCE: '/finance',
     WAREHOUSE: '/warehouse',
     STORE_MANAGER: '/store',
+    SUPERVISOR: '/operations/inspection',
     OPERATIONS: '/operations',
-    EMPLOYEE: '/learn/exams',
+    EMPLOYEE: '/employee',
   }
   return fallbacks[role] || '/no-permission'
 }

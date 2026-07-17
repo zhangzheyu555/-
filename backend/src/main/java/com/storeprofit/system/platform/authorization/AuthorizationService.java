@@ -16,6 +16,15 @@ public class AuthorizationService {
       PermissionCodes.EXAM_LEARN,
       PermissionCodes.EMPLOYEE_ASSISTANT_USE
   );
+  private static final Set<String> SUPERVISOR_PERMISSION_DENYLIST = Set.of(
+      PermissionCodes.OPERATIONS_DASHBOARD_READ,
+      PermissionCodes.PLATFORM_READ,
+      PermissionCodes.PLATFORM_MANAGE,
+      PermissionCodes.INVENTORY_MANAGE,
+      PermissionCodes.INVENTORY_REVIEW,
+      PermissionCodes.EXAM_MANAGE,
+      PermissionCodes.EXAM_REPORT
+  );
 
   private final AuthorizationRepository repository;
 
@@ -41,6 +50,9 @@ public class AuthorizationService {
     // only attached to FINANCE; preserve that boundary even if a legacy role template was edited.
     if (!"FINANCE".equals(canonicalRole)) {
       permissions.remove(PermissionCodes.FINANCE_PROFIT_IMPORT);
+    }
+    if ("SUPERVISOR".equals(canonicalRole)) {
+      permissions.removeAll(SUPERVISOR_PERMISSION_DENYLIST);
     }
     return Set.copyOf(permissions);
   }
@@ -89,6 +101,9 @@ public class AuthorizationService {
     effective.removeAll(denied);
     if ("EMPLOYEE".equals(role)) {
       effective.retainAll(EMPLOYEE_PERMISSION_CEILING);
+    }
+    if ("SUPERVISOR".equals(role)) {
+      effective.removeAll(SUPERVISOR_PERMISSION_DENYLIST);
     }
     // Personal ALLOW overrides are evaluated above, then this hard BOSS-only boundary is
     // applied. DENY still wins for every ordinary permission, and cannot be bypassed here.
@@ -207,6 +222,18 @@ public class AuthorizationService {
           PermissionCodes.EXAM_REPORT,
           PermissionCodes.PLATFORM_READ,
           PermissionCodes.PLATFORM_MANAGE,
+          PermissionCodes.ATTACHMENT_READ,
+          PermissionCodes.ATTACHMENT_WRITE,
+          PermissionCodes.TODO_READ,
+          PermissionCodes.TODO_TRANSITION,
+          PermissionCodes.ASSISTANT_USE,
+          PermissionCodes.EMPLOYEE_ASSISTANT_USE,
+          PermissionCodes.EMPLOYEE_ASSISTANT_HANDOFF_MANAGE
+      );
+      case "SUPERVISOR" -> Set.of(
+          PermissionCodes.STORE_READ,
+          PermissionCodes.INSPECTION_READ,
+          PermissionCodes.INSPECTION_MANAGE,
           PermissionCodes.ATTACHMENT_READ,
           PermissionCodes.ATTACHMENT_WRITE,
           PermissionCodes.TODO_READ,

@@ -430,9 +430,9 @@ class AssistantAnalysisPipelineTest {
     AssistantChatResponse result = service.chat(boss, request("7月净利润为什么变化"));
 
     assertThat(calls).hasValue(2);
-    assertThat(result.error().code()).isEqualTo("ANALYSIS_UNKNOWN_NUMERIC");
-    assertThat(result.error().message()).isEqualTo("模型引用了当前经营数据中没有的金额或比例，系统已拦截该结果，请核对数据后重新分析。");
-    assertThat(result.aiAnalysis().available()).isFalse();
+    assertThat(result.error()).isNull();
+    assertThat(result.aiAnalysis().available()).isTrue();
+    assertThat(result.aiAnalysis().risks().getFirst().evidence()).contains("未核验数值");
   }
 
   @Test

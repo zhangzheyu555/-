@@ -123,6 +123,92 @@ class AuthorizationServiceTest {
   }
 
   @Test
+  void supervisorHasIndependentTemplateAndCannotInheritOperationsHighRiskPermissions() {
+    AuthUser supervisor = user(10L, "SUPERVISOR");
+    when(repository.roleTemplatePermissions(1L, "SUPERVISOR"))
+        .thenReturn(Set.of(
+            PermissionCodes.INSPECTION_READ,
+            PermissionCodes.INSPECTION_MANAGE,
+            PermissionCodes.ATTACHMENT_READ,
+            PermissionCodes.OPERATIONS_DASHBOARD_READ,
+            PermissionCodes.PLATFORM_MANAGE,
+            PermissionCodes.INVENTORY_MANAGE,
+            PermissionCodes.EXAM_MANAGE
+        ));
+    when(repository.enabledPermissionCodes()).thenReturn(Set.of(
+        PermissionCodes.INSPECTION_READ,
+        PermissionCodes.INSPECTION_MANAGE,
+        PermissionCodes.ATTACHMENT_READ,
+        PermissionCodes.TODO_READ,
+        PermissionCodes.OPERATIONS_DASHBOARD_READ,
+        PermissionCodes.PLATFORM_MANAGE,
+        PermissionCodes.INVENTORY_MANAGE,
+        PermissionCodes.EXAM_MANAGE
+    ));
+    when(repository.userOverrides(1L, 10L)).thenReturn(List.of(
+        new UserPermissionOverride(PermissionCodes.TODO_READ, PermissionEffect.ALLOW),
+        new UserPermissionOverride(PermissionCodes.PLATFORM_MANAGE, PermissionEffect.ALLOW)
+    ));
+
+    assertThat(service.roleTemplatePermissions(1L, "SUPERVISOR"))
+        .contains(PermissionCodes.INSPECTION_READ, PermissionCodes.INSPECTION_MANAGE, PermissionCodes.ATTACHMENT_READ)
+        .doesNotContain(
+            PermissionCodes.OPERATIONS_DASHBOARD_READ,
+            PermissionCodes.PLATFORM_MANAGE,
+            PermissionCodes.INVENTORY_MANAGE,
+            PermissionCodes.EXAM_MANAGE
+        );
+    assertThat(service.effectivePermissions(supervisor))
+        .contains(PermissionCodes.INSPECTION_READ, PermissionCodes.INSPECTION_MANAGE, PermissionCodes.TODO_READ)
+        .doesNotContain(
+            PermissionCodes.OPERATIONS_DASHBOARD_READ,
+            PermissionCodes.PLATFORM_MANAGE,
+            PermissionCodes.INVENTORY_MANAGE,
+            PermissionCodes.EXAM_MANAGE
+        );
+    assertThat(AuthorizationService.legacyTemplatePermissions("SUPERVISOR"))
+        .contains(PermissionCodes.INSPECTION_READ, PermissionCodes.INSPECTION_MANAGE, PermissionCodes.TODO_TRANSITION)
+        .doesNotContain(PermissionCodes.OPERATIONS_DASHBOARD_READ, PermissionCodes.PLATFORM_MANAGE);
+  }
+
+  @Test
+  void operationsKeepsOperationsTemplateAfterSupervisorSplit() {
+    AuthUser operations = user(11L, "OPERATIONS");
+    when(repository.roleTemplatePermissions(1L, "OPERATIONS"))
+        .thenReturn(Set.of(
+            PermissionCodes.OPERATIONS_DASHBOARD_READ,
+            PermissionCodes.PLATFORM_MANAGE,
+            PermissionCodes.INVENTORY_MANAGE,
+            PermissionCodes.EXAM_MANAGE,
+            PermissionCodes.TODO_READ
+        ));
+    when(repository.enabledPermissionCodes()).thenReturn(Set.of(
+        PermissionCodes.OPERATIONS_DASHBOARD_READ,
+        PermissionCodes.PLATFORM_MANAGE,
+        PermissionCodes.INVENTORY_MANAGE,
+        PermissionCodes.EXAM_MANAGE,
+        PermissionCodes.TODO_READ
+    ));
+    when(repository.userOverrides(1L, 11L)).thenReturn(List.of());
+
+    assertThat(service.effectivePermissions(operations))
+        .contains(
+            PermissionCodes.OPERATIONS_DASHBOARD_READ,
+            PermissionCodes.PLATFORM_MANAGE,
+            PermissionCodes.INVENTORY_MANAGE,
+            PermissionCodes.EXAM_MANAGE,
+            PermissionCodes.TODO_READ
+        );
+    assertThat(AuthorizationService.legacyTemplatePermissions("OPERATIONS"))
+        .contains(
+            PermissionCodes.OPERATIONS_DASHBOARD_READ,
+            PermissionCodes.PLATFORM_MANAGE,
+            PermissionCodes.INVENTORY_MANAGE,
+            PermissionCodes.EXAM_MANAGE
+        );
+  }
+
+  @Test
   void unknownOverridePermissionIsRejectedBeforePersistence() {
     when(repository.enabledPermissionCodes()).thenReturn(Set.of(PermissionCodes.EXAM_LEARN));
 

@@ -1,17 +1,25 @@
 package com.storeprofit.system.organization;
 
 import com.storeprofit.system.platform.authorization.DataScope;
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 @Repository
 public class OrganizationRepository {
+  private static final List<String> STORE_LINK_COLUMNS = List.of("store_id", "return_store_id");
+  private static final List<String> STORE_DELETE_LINK_EXCLUDED_TABLES = List.of("store_branch", "operation_log");
+
   private final JdbcTemplate jdbcTemplate;
 
   public OrganizationRepository(JdbcTemplate jdbcTemplate) {
@@ -122,6 +130,28 @@ public class OrganizationRepository {
     return stores(tenantId).stream().filter(store -> store.id().equals(storeId)).findFirst();
   }
 
+  public int deleteStore(long tenantId, String storeId) {
+    return jdbcTemplate.update(
+        "delete from store_branch where tenant_id = ? and id = ?",
+        tenantId,
+        storeId
+    );
+  }
+
+  public boolean storeHasLinkedData(long tenantId, String storeId) {
+    Boolean linked = jdbcTemplate.execute((ConnectionCallback<Boolean>) connection -> {
+      DatabaseMetaData metadata = connection.getMetaData();
+      List<StoreLinkColumn> columns = storeLinkColumns(metadata, connection.getCatalog(), connection.getSchema());
+      for (StoreLinkColumn column : columns) {
+        if (hasLinkedRows(connection, column, tenantId, storeId)) {
+          return true;
+        }
+      }
+      return false;
+    });
+    return Boolean.TRUE.equals(linked);
+  }
+
   public Optional<Long> supplyWarehouseIdForRegion(long tenantId, String regionCode) {
     if (regionCode == null || regionCode.isBlank()) {
       return Optional.empty();
@@ -216,6 +246,97 @@ public class OrganizationRepository {
     return value == null || value.isBlank() ? null : value;
   }
 
+  private List<StoreLinkColumn> storeLinkColumns(DatabaseMetaData metadata, String catalog, String schema)
+      throws SQLException {
+    List<StoreLinkColumn> columns = new ArrayList<>();
+    int scannedTables = collectStoreLinkColumns(metadata, catalog, schema, columns);
+    if (scannedTables == 0 && (catalog != null || schema != null)) {
+      collectStoreLinkColumns(metadata, null, null, columns);
+    }
+    return columns;
+  }
+
+  private int collectStoreLinkColumns(
+      DatabaseMetaData metadata,
+      String catalog,
+      String schema,
+      List<StoreLinkColumn> columns
+  ) throws SQLException {
+    int scannedTables = 0;
+    try (ResultSet tables = metadata.getTables(catalog, schema, "%", new String[] {"TABLE"})) {
+      while (tables.next()) {
+        scannedTables++;
+        String tableName = tables.getString("TABLE_NAME");
+        if (isStoreDeleteLinkExcluded(tableName)) {
+          continue;
+        }
+        collectStoreLinkColumns(metadata, catalog, schema, tableName, columns);
+      }
+    }
+    return scannedTables;
+  }
+
+  private void collectStoreLinkColumns(
+      DatabaseMetaData metadata,
+      String catalog,
+      String schema,
+      String tableName,
+      List<StoreLinkColumn> columns
+  ) throws SQLException {
+    boolean tenantScoped = false;
+    List<String> linkedColumns = new ArrayList<>();
+    try (ResultSet tableColumns = metadata.getColumns(catalog, schema, tableName, null)) {
+      while (tableColumns.next()) {
+        String columnName = tableColumns.getString("COLUMN_NAME");
+        String normalized = normalizeIdentifier(columnName);
+        if ("tenant_id".equals(normalized)) {
+          tenantScoped = true;
+        }
+        if (STORE_LINK_COLUMNS.contains(normalized)) {
+          linkedColumns.add(columnName);
+        }
+      }
+    }
+    for (String columnName : linkedColumns) {
+      StoreLinkColumn column = new StoreLinkColumn(tableName, columnName, tenantScoped);
+      if (!columns.contains(column)) {
+        columns.add(column);
+      }
+    }
+  }
+
+  private boolean hasLinkedRows(Connection connection, StoreLinkColumn column, long tenantId, String storeId)
+      throws SQLException {
+    String sql = "select count(*) from " + safeIdentifier(column.tableName())
+        + " where " + safeIdentifier(column.columnName()) + " = ?"
+        + (column.tenantScoped() ? " and tenant_id = ?" : "");
+    try (PreparedStatement statement = connection.prepareStatement(sql)) {
+      statement.setString(1, storeId);
+      if (column.tenantScoped()) {
+        statement.setLong(2, tenantId);
+      }
+      try (ResultSet rows = statement.executeQuery()) {
+        return rows.next() && rows.getInt(1) > 0;
+      }
+    }
+  }
+
+  private boolean isStoreDeleteLinkExcluded(String tableName) {
+    return STORE_DELETE_LINK_EXCLUDED_TABLES.contains(normalizeIdentifier(tableName));
+  }
+
+  private String normalizeIdentifier(String identifier) {
+    return String.valueOf(identifier == null ? "" : identifier).trim().toLowerCase(Locale.ROOT);
+  }
+
+  private String safeIdentifier(String identifier) throws SQLException {
+    String value = String.valueOf(identifier == null ? "" : identifier).trim();
+    if (!value.matches("[A-Za-z0-9_]+")) {
+      throw new SQLException("Unsafe database identifier: " + identifier);
+    }
+    return value;
+  }
+
   private void appendBrandScope(StringBuilder sql, List<Object> params, DataScope dataScope) {
     if (dataScope == null || dataScope.allowsAllStores()) {
       return;
@@ -254,5 +375,8 @@ public class OrganizationRepository {
 
   private String placeholders(int count) {
     return String.join(", ", java.util.Collections.nCopies(count, "?"));
+  }
+
+  private record StoreLinkColumn(String tableName, String columnName, boolean tenantScoped) {
   }
 }

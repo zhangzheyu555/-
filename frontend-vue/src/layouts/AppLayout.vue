@@ -28,7 +28,7 @@ const storesLoaded = ref(false)
 const canUseAssistant = computed(() => auth.hasPermission(PERMISSIONS.ASSISTANT_USE))
 const canReadTodos = computed(() => auth.hasPermission(PERMISSIONS.TODO_READ))
 const hideTopbarStoreSelector = computed(() =>
-  businessScope.isBoss.value && route.path === '/assistant'
+  auth.role === 'EMPLOYEE' || (businessScope.isBoss.value && route.path === '/assistant')
 )
 
 const updatedAt = computed(() => {

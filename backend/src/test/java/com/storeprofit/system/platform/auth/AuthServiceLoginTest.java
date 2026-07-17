@@ -14,6 +14,7 @@ import static org.mockito.Mockito.when;
 import com.storeprofit.system.audit.AuditRepository;
 import com.storeprofit.system.common.BusinessException;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -163,6 +164,43 @@ class AuthServiceLoginTest {
         BusinessException.class);
 
     assertThat(limited.getStatus()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+  }
+
+  @Test
+  void correctPasswordCanRecoverAfterSourceRateLimitIsReached() {
+    AuthRepository repository = mock(AuthRepository.class);
+    PasswordService passwordService = mock(PasswordService.class);
+    when(repository.findByUsername(eq(1L), anyString())).thenReturn(Optional.empty());
+    AuthUser manager = new AuthUser(
+        2L, 1L, "测试租户", "rg1", "stored-hash", "店长", "STORE_MANAGER", "rg1", true);
+    when(repository.findByUsername(1L, "rg1")).thenReturn(Optional.of(manager));
+    when(repository.storeScope(1L, 2L, "STORE_MANAGER", "rg1")).thenReturn(List.of("rg1"));
+    when(repository.assignedStoreScope(1L, 2L)).thenReturn(List.of("rg1"));
+    when(passwordService.matches("correct-password", "stored-hash")).thenReturn(true);
+    AuthService service = service(repository, passwordService, mock(AuditRepository.class));
+
+    for (int attempt = 0; attempt < 5; attempt++) {
+      String username = "unknown-user-" + attempt;
+      BusinessException error = catchThrowableOfType(
+          () -> service.login(
+              new LoginRequest(username, "submitted-password", null),
+              "198.51.100.10"),
+          BusinessException.class);
+      assertThat(error.getStatus()).isEqualTo(HttpStatus.UNAUTHORIZED);
+    }
+
+    LoginResponse response = service.login(
+        new LoginRequest("rg1", "correct-password", null),
+        "198.51.100.10");
+
+    assertThat(response.token()).isNotBlank();
+    assertThat(response.user().role()).isEqualTo("STORE_MANAGER");
+    BusinessException nextFailure = catchThrowableOfType(
+        () -> service.login(
+            new LoginRequest("another-missing-user", "submitted-password", null),
+            "198.51.100.10"),
+        BusinessException.class);
+    assertThat(nextFailure.getStatus()).isEqualTo(HttpStatus.UNAUTHORIZED);
   }
 
   @Test

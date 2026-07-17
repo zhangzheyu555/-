@@ -123,10 +123,8 @@ public class StorageService {
 
   /**
    * Historical inspection evidence is deliberately not accepted through the generic storage
-   * controller. The caller must be the boss or a supervisor. In this codebase the historical
-   * SUPERVISOR role is normalized to OPERATIONS by AccessControlService, so both values are
-   * accepted here only as that canonical supervisor identity (not as a separate operations grant), and
-   * must already have passed inspection-store authorization at the specialised endpoint.
+   * controller. The caller must be the boss, a supervisor, or an operations user, and must already
+   * have passed inspection-store authorization at the specialised endpoint.
    */
   @Transactional
   public StorageUploadResponse uploadHistoricalInspectionEvidence(
@@ -391,12 +389,7 @@ public class StorageService {
       requireInspectionDraftOwner(
           user, attachment.storeId(), attachment.businessType(), attachment.businessId(), attachment.uploadedBy());
       requireBusinessReference(user.tenantId(), attachment.storeId(), attachment.businessType(), attachment.businessId());
-      if ("DAILY_LOSS".equals(attachment.businessType())) {
-        logAttachmentDownload(user, attachment.storeId(), attachment.businessId());
-      }
-      if ("INSPECTION_RECTIFICATION".equals(attachment.businessType())) {
-        logInspectionRectificationAttachmentDownload(user, attachment.storeId(), attachment.businessId());
-      }
+      logAttachmentDownload(user, attachment);
       return Optional.of(new AttachmentContent(
           attachment.fileName(), attachment.contentType(), attachment.fileSize(), attachment.content()));
     } catch (EmptyResultDataAccessException ex) {
@@ -780,7 +773,7 @@ public class StorageService {
       case "DAILY_LOSS" -> "select count(*) from daily_loss_record where tenant_id = ? and store_id = ? and id = ?";
       case "WAREHOUSE_DELIVERY" -> "select count(*) from warehouse_delivery_order where tenant_id = ? and store_id = ? and id = ?";
       case "STORE_RECEIPT" -> "select count(*) from store_receipt where tenant_id = ? and store_id = ? and id = ?";
-      case "WAREHOUSE_RETURN" -> "select count(*) from warehouse_return_order where tenant_id = ? and return_store_id = ? and id = ?";
+      case "WAREHOUSE_RETURN", "RETURN_ORDER" -> "select count(*) from warehouse_return_order where tenant_id = ? and return_store_id = ? and id = ?";
       case "STORE_REQUISITION" -> "select count(*) from store_requisition where tenant_id = ? and store_id = ? and id = ?";
       default -> throw new BusinessException(
           "ATTACHMENT_BUSINESS_UNSUPPORTED",
@@ -919,19 +912,29 @@ public class StorageService {
     }
   }
 
-  private void logAttachmentDownload(AuthUser user, String storeId, String businessId) {
+  private void logAttachmentDownload(AuthUser user, AttachmentMetadata attachment) {
+    String action = "attachment_download";
+    String targetType = attachment.businessType();
+    String reason = "下载业务附件：" + attachment.fileName();
+    if ("DAILY_LOSS".equals(attachment.businessType())) {
+      targetType = "daily_loss_record";
+      reason = "下载每日报损附件";
+    } else if ("INSPECTION_RECTIFICATION".equals(attachment.businessType())) {
+      action = "inspection_rectification_evidence_download";
+      targetType = "inspection_rectification";
+      reason = "下载巡检整改证据";
+    }
     jdbcTemplate.update("""
         insert into operation_log(tenant_id, operator_id, operator_name, action, target_type, target_id, store_id, reason, created_at)
-        values (?, ?, ?, 'attachment_download', 'daily_loss_record', ?, ?, '下载每日报损附件', current_timestamp)
+        values (?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
         """,
-        user.tenantId(), user.id(), user.displayName(), businessId, storeId);
-  }
-
-  private void logInspectionRectificationAttachmentDownload(AuthUser user, String storeId, String rectificationId) {
-    jdbcTemplate.update("""
-        insert into operation_log(tenant_id, operator_id, operator_name, action, target_type, target_id, store_id, reason, created_at)
-        values (?, ?, ?, 'inspection_rectification_evidence_download', 'inspection_rectification', ?, ?, '下载巡检整改证据', current_timestamp)
-        """,
-        user.tenantId(), user.id(), user.displayName(), rectificationId, storeId);
+        user.tenantId(),
+        user.id(),
+        user.displayName(),
+        action,
+        targetType,
+        attachment.businessId(),
+        attachment.storeId(),
+        reason);
   }
 }

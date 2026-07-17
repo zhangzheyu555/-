@@ -598,7 +598,7 @@ public class WarehouseService {
           draft.note()
       );
     }
-    saveReturnAttachments(user, returnNo, request.attachments());
+    saveReturnAttachments(user, storeId, returnNo, request.attachments());
     warehouseRepository.logAction(user.tenantId(), user.id(), user.displayName(), "提交配送退货单", returnNo, storeId, request.note());
     WarehouseReturnResponse saved = warehouseRepository.returnOrder(user.tenantId(), returnNo)
         .orElseThrow(() -> new BusinessException("RETURN_SAVE_FAILED", "配送退货单保存失败", HttpStatus.INTERNAL_SERVER_ERROR));
@@ -1756,7 +1756,7 @@ public class WarehouseService {
     }
   }
 
-  private void saveReturnAttachments(AuthUser user, String returnId, List<WarehouseReturnAttachmentRequest> attachments) {
+  private void saveReturnAttachments(AuthUser user, String storeId, String returnId, List<WarehouseReturnAttachmentRequest> attachments) {
     if (attachments == null || attachments.isEmpty()) {
       return;
     }
@@ -1776,7 +1776,8 @@ public class WarehouseService {
           : attachment.contentType().trim();
       warehouseRepository.insertWarehouseAttachment(
           user.tenantId(),
-          "RETURN_ORDER",
+          storeId,
+          "WAREHOUSE_RETURN",
           returnId,
           fileName,
           contentType,
@@ -1803,8 +1804,11 @@ public class WarehouseService {
   private WarehouseReadScope requireWarehouseRead(AuthUser user) {
     BusinessScope managerScope = resolveManagerScope(user, null, "访问仓库中心");
     if (accessControl != null) {
+      boolean warehousePermission = accessControl.hasPermission(user, PermissionCodes.WAREHOUSE_READ);
       boolean centralPermission = accessControl.hasPermission(user, PermissionCodes.WAREHOUSE_CENTRAL_READ);
-      if (centralPermission) {
+      if (warehousePermission) {
+        accessControl.requireWarehouseRead(user);
+      } else if (centralPermission) {
         accessControl.requireWarehouseCentralRead(user);
       } else {
         accessControl.requireWarehouseStoreRead(user);
@@ -1814,9 +1818,11 @@ public class WarehouseService {
         dataScope = managerScope.dataScope();
       }
       if (dataScope.allowsAllStores()) {
-        return new WarehouseReadScope(centralPermission, true, List.of());
+        return new WarehouseReadScope(warehousePermission || centralPermission, true, List.of());
       }
-      if (centralPermission && DataScopeModes.CENTRAL_WAREHOUSE.equals(dataScope.mode())) {
+      if ((warehousePermission || centralPermission)
+          && (DataScopeModes.CENTRAL_WAREHOUSE.equals(dataScope.mode())
+          || DataScopeModes.WAREHOUSE_LIST.equals(dataScope.mode()))) {
         return new WarehouseReadScope(true, false, List.of());
       }
       if (!dataScope.storeIds().isEmpty()) {
@@ -1830,7 +1836,8 @@ public class WarehouseService {
       );
       throw new BusinessException("FORBIDDEN", "当前账号未配置仓库数据范围", HttpStatus.FORBIDDEN);
     }
-    if (hasLegacyPermission(user, PermissionCodes.WAREHOUSE_CENTRAL_READ)) {
+    if (hasLegacyPermission(user, PermissionCodes.WAREHOUSE_READ)
+        || hasLegacyPermission(user, PermissionCodes.WAREHOUSE_CENTRAL_READ)) {
       return new WarehouseReadScope(true, true, List.of());
     }
     requireLegacyPermission(user, PermissionCodes.WAREHOUSE_STORE_READ, "无权访问仓库中心");

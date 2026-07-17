@@ -5,6 +5,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -45,7 +46,7 @@ class StoreControllerHttpAuthorizationTest {
       .build();
 
   @Test
-  void storeManagerPostAndPutAreMappedToHttp403ByTheGlobalExceptionHandler() throws Exception {
+  void storeManagerWriteEndpointsAreMappedToHttp403ByTheGlobalExceptionHandler() throws Exception {
     AuthUser manager = user("STORE_MANAGER", "rg1");
     when(authService.requireUser("Bearer manager-token")).thenReturn(manager);
 
@@ -65,7 +66,13 @@ class StoreControllerHttpAuthorizationTest {
         .andExpect(header().exists("X-Request-Id"))
         .andExpect(jsonPath("$.code").value("FORBIDDEN"));
 
-    verify(authService, times(2)).requireUser("Bearer manager-token");
+    mockMvc.perform(delete("/api/stores/rg1")
+            .header("Authorization", "Bearer manager-token"))
+        .andExpect(status().isForbidden())
+        .andExpect(header().exists("X-Request-Id"))
+        .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+
+    verify(authService, times(3)).requireUser("Bearer manager-token");
     verifyNoInteractions(repository);
   }
 
@@ -88,6 +95,25 @@ class StoreControllerHttpAuthorizationTest {
         .andExpect(jsonPath("$.code").value("OK"));
 
     verify(repository).upsertStore(1L, request);
+  }
+
+  @Test
+  void bossCanDeleteStoreThroughTheControllerAndRealServiceFallback() throws Exception {
+    AuthUser boss = user("BOSS", null);
+    when(authService.requireUser("Bearer boss-token")).thenReturn(boss);
+    when(repository.store(1L, "rg1")).thenReturn(Optional.of(new StoreResponse(
+        "rg1", "RG1", "一店", 1L, "如果", "荆州", "店长", "2026-01-01", "停用", "")));
+    when(repository.deleteStore(1L, "rg1")).thenReturn(1);
+
+    mockMvc.perform(delete("/api/stores/rg1")
+            .header("Authorization", "Bearer boss-token"))
+        .andExpect(status().isOk())
+        .andExpect(header().exists("X-Request-Id"))
+        .andExpect(jsonPath("$.success").value(true))
+        .andExpect(jsonPath("$.code").value("OK"));
+
+    verify(repository).storeHasLinkedData(1L, "rg1");
+    verify(repository).deleteStore(1L, "rg1");
   }
 
   private AuthUser user(String role, String storeId) {

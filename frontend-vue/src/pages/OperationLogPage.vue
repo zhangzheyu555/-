@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
 import PageHeader from '../components/common/PageHeader.vue'
 import { getAuditLogs, type OperationLog } from '../api/operations'
+import { formatAuditAction, formatAuditReason, formatAuditTarget, rawAuditTarget } from '../utils/auditLogDisplay'
 
 const logs = ref<OperationLog[]>([])
 const loading = ref(false)
@@ -56,11 +57,11 @@ onMounted(() => {
             <tr v-for="log in logs" :key="log.id">
               <td>{{ log.createdAt || '-' }}</td>
               <td>{{ log.operatorName || log.operatorId || '-' }}</td>
-              <td>{{ log.action }}</td>
-              <td>{{ log.targetType || '-' }} {{ log.targetId || '' }}</td>
+              <td>{{ formatAuditAction(log.action) }}</td>
+              <td :title="rawAuditTarget(log)">{{ formatAuditTarget(log) }}</td>
               <td>{{ log.storeId || '全部门店' }}</td>
               <td>{{ log.month || '-' }}</td>
-              <td>{{ log.reason || '-' }}</td>
+              <td>{{ formatAuditReason(log.reason) }}</td>
             </tr>
             <tr v-if="!logs.length">
               <td colspan="7" class="empty-cell">暂无操作日志。</td>

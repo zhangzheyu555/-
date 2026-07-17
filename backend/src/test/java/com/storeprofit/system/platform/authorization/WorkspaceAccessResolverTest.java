@@ -74,6 +74,64 @@ class WorkspaceAccessResolverTest {
   }
 
   @Test
+  void warehouseWorkspaceAcceptsCurrentReadPermissionAndLegacyCentralReadPermission() {
+    AuthUser warehouse = user("WAREHOUSE", null, true);
+    WorkspaceAccessProfile current = resolver.resolve(
+        warehouse,
+        Set.of(PermissionCodes.WAREHOUSE_READ),
+        Map.of(DataScopeDomains.WAREHOUSE,
+            new DataScope(DataScopeModes.WAREHOUSE_LIST, List.of("1", "2"))),
+        List.of()
+    );
+    WorkspaceAccessProfile legacy = resolver.resolve(
+        warehouse,
+        Set.of(PermissionCodes.WAREHOUSE_CENTRAL_READ),
+        Map.of(DataScopeDomains.WAREHOUSE,
+            new DataScope(DataScopeModes.CENTRAL_WAREHOUSE, List.of())),
+        List.of()
+    );
+
+    assertThat(current.availableWorkspaces()).containsExactly("/warehouse");
+    assertThat(current.defaultWorkspace()).isEqualTo("/warehouse");
+    assertThat(current.status()).isEqualTo(WorkspaceAccessProfile.READY);
+    assertThat(legacy.availableWorkspaces()).containsExactly("/warehouse");
+    assertThat(legacy.defaultWorkspace()).isEqualTo("/warehouse");
+  }
+
+  @Test
+  void supervisorDefaultsToInspectionWorkspaceWithoutOperationsDashboard() {
+    AuthUser supervisor = user("SUPERVISOR", null, true);
+    WorkspaceAccessProfile profile = resolver.resolve(
+        supervisor,
+        Set.of(PermissionCodes.STORE_READ, PermissionCodes.INSPECTION_READ, PermissionCodes.INSPECTION_MANAGE),
+        Map.of(
+            DataScopeDomains.STORE, new DataScope(DataScopeModes.STORE_LIST, List.of("rg1")),
+            DataScopeDomains.INSPECTION, new DataScope(DataScopeModes.STORE_LIST, List.of("rg1"))
+        ),
+        List.of("rg1")
+    );
+
+    assertThat(profile.availableWorkspaces()).containsExactly("/operations/inspection", "/store");
+    assertThat(profile.defaultWorkspace()).isEqualTo("/operations/inspection");
+    assertThat(resolver.recommendedWorkspace("SUPERVISOR")).isEqualTo("/operations/inspection");
+  }
+
+  @Test
+  void employeeDefaultsToEmployeeWorkbenchAndKeepsLearningWorkspaceAvailable() {
+    AuthUser employee = user("EMPLOYEE", "rg1", true);
+    WorkspaceAccessProfile profile = resolver.resolve(
+        employee,
+        Set.of(PermissionCodes.EXAM_LEARN, PermissionCodes.EMPLOYEE_ASSISTANT_USE),
+        Map.of(DataScopeDomains.EXAM, new DataScope(DataScopeModes.SELF, List.of())),
+        List.of("rg1")
+    );
+
+    assertThat(profile.availableWorkspaces()).containsExactly("/employee", "/learn/exams");
+    assertThat(profile.defaultWorkspace()).isEqualTo("/employee");
+    assertThat(resolver.recommendedWorkspace("EMPLOYEE")).isEqualTo("/employee");
+  }
+
+  @Test
   void disabledAccountNeverHasAvailableWorkspace() {
     WorkspaceAccessProfile profile = resolver.resolve(
         user("BOSS", null, false), PermissionCodes.ALL, Map.of(), List.of());

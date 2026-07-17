@@ -81,10 +81,10 @@ export const roles: RoleConfig[] = [
     key: 'learner',
     username: env.E2E_LEARNER_USERNAME || '',
     password: env.E2E_LEARNER_PASSWORD || '',
-    expectedPath: '/learn/exams',
-    expectedMenus: ['我的学习与考试'],
+    expectedPath: '/employee',
+    expectedMenus: ['员工工作台', '培训考试', '员工服务助手'],
     forbiddenMenus: ['老板工作台', '财务工作台', '仓库工作台', '门店工作台', '运营工作台', '账号权限', '导入月度汇总'],
-    layout: 'learner',
+    layout: 'app',
   },
 ]
 

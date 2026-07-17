@@ -232,13 +232,10 @@ public class AccessControlService {
     );
   }
 
-  /**
-   * Supervisors are represented by the canonical OPERATIONS role in the current role catalog.
-   * Review remains separate from a store manager's submit permission.
-   */
+  /** Review remains separate from a store manager's submit permission. */
   public void requireInspectionRectificationReview(AuthUser user) {
     requireInspectionManage(user);
-    if (isBoss(user) || hasAnyRole(user, "OPERATIONS")) {
+    if (isBoss(user) || hasAnyRole(user, "SUPERVISOR", "OPERATIONS")) {
       return;
     }
     deny(
@@ -315,6 +312,14 @@ public class AccessControlService {
     requirePermission(user, PermissionCodes.EMPLOYEE_MANAGE, "维护员工档案");
   }
 
+  public void requireEmployeeWorkbench(AuthUser user) {
+    requirePermission(user, PermissionCodes.EXAM_LEARN, "查看员工工作台");
+    if ("EMPLOYEE".equals(canonicalRole(user == null ? null : user.role()))) {
+      return;
+    }
+    deny(user, "查看员工工作台", "API", PermissionCodes.EXAM_LEARN, null, "员工工作台仅限员工账号查看");
+  }
+
   public void requireWarehouseCentralRead(AuthUser user) {
     requirePermission(user, PermissionCodes.WAREHOUSE_CENTRAL_READ, "查看总仓库存");
   }
@@ -384,10 +389,10 @@ public class AccessControlService {
     requireBoss(user, "管理员工助手知识库");
   }
 
-  /** Only authorized operations/supervisor users (canonical OPERATIONS) may process handoffs. */
+  /** Only authorized operations or supervisor users may process handoffs. */
   public void requireEmployeeAssistantHandoffManage(AuthUser user) {
     requirePermission(user, PermissionCodes.EMPLOYEE_ASSISTANT_HANDOFF_MANAGE, "处理员工助手人工事项");
-    if (hasAnyRole(user, "OPERATIONS")) {
+    if (hasAnyRole(user, "SUPERVISOR", "OPERATIONS")) {
       return;
     }
     deny(user, "处理员工助手人工事项", "API", PermissionCodes.EMPLOYEE_ASSISTANT_HANDOFF_MANAGE, null,
@@ -606,7 +611,7 @@ public class AccessControlService {
     String normalized = role == null ? "" : role.trim().toUpperCase(Locale.ROOT);
     return switch (normalized) {
       case "ADMIN", "OWNER" -> BOSS_ROLE;
-      case "OPS", "SUPERVISOR" -> "OPERATIONS";
+      case "OPS" -> "OPERATIONS";
       default -> normalized;
     };
   }

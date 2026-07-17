@@ -6,7 +6,6 @@ export function normalizeRoleCode(role?: string) {
     ADMIN: BOSS_ROLE,
     OWNER: BOSS_ROLE,
     OPS: 'OPERATIONS',
-    SUPERVISOR: 'OPERATIONS',
     STORE: 'STORE_MANAGER',
     MANAGER: 'STORE_MANAGER',
   }
@@ -33,9 +32,10 @@ export function roleName(role?: string) {
     BOSS: '老板（系统管理员）',
     FINANCE: '财务',
     WAREHOUSE: '仓库管理员',
+    SUPERVISOR: '督导',
     STORE_MANAGER: '店长',
     OPERATIONS: '运营',
-    EMPLOYEE: '学员',
+    EMPLOYEE: '员工',
   }
   const normalized = normalizeRoleCode(role)
   return names[normalized] || normalized || '未登录'

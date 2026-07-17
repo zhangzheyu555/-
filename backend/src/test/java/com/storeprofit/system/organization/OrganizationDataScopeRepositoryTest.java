@@ -12,6 +12,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 public class OrganizationDataScopeRepositoryTest {
+  private JdbcTemplate jdbc;
   private OrganizationRepository repository;
 
   @BeforeEach
@@ -21,7 +22,7 @@ public class OrganizationDataScopeRepositoryTest {
         "sa",
         ""
     );
-    JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+    jdbc = new JdbcTemplate(dataSource);
     jdbc.execute("create alias if not exists date_format for '"
         + OrganizationDataScopeRepositoryTest.class.getName() + ".dateFormat'");
     jdbc.execute("""
@@ -65,6 +66,30 @@ public class OrganizationDataScopeRepositoryTest {
     assertThat(repository.brands(1L, scope)).extracting(BrandResponse::id).containsExactly(2L);
     assertThat(repository.stores(1L, DataScope.none())).isEmpty();
     assertThat(repository.brands(1L, DataScope.none())).isEmpty();
+  }
+
+  @Test
+  void storeDeleteLinkCheckFindsBusinessRowsButIgnoresAuditRows() {
+    assertThat(repository.storeHasLinkedData(1L, "s1")).isFalse();
+
+    jdbc.execute("""
+        create table operation_log (
+          id bigint not null primary key, tenant_id bigint not null, store_id varchar(64)
+        )
+        """);
+    jdbc.update("insert into operation_log(id, tenant_id, store_id) values (1, 1, 's1')");
+    assertThat(repository.storeHasLinkedData(1L, "s1")).isFalse();
+
+    jdbc.execute("""
+        create table business_todo (
+          id varchar(64) not null primary key, tenant_id bigint not null, store_id varchar(64)
+        )
+        """);
+    jdbc.update("insert into business_todo(id, tenant_id, store_id) values ('todo-1', 1, 's1')");
+    jdbc.update("insert into business_todo(id, tenant_id, store_id) values ('todo-2', 2, 's2')");
+
+    assertThat(repository.storeHasLinkedData(1L, "s1")).isTrue();
+    assertThat(repository.storeHasLinkedData(1L, "s2")).isFalse();
   }
 
   public static String dateFormat(java.sql.Date value, String ignoredPattern) {

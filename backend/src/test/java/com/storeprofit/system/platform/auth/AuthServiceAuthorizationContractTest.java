@@ -60,11 +60,11 @@ class AuthServiceAuthorizationContractTest {
   }
 
   @Test
-  void employeeUsesLearnerWorkspace() {
+  void employeeUsesEmployeeWorkspace() {
     AuthService service = new AuthService(
         mock(AuthRepository.class), mock(PasswordService.class), mock(AuditRepository.class), 12);
 
-    assertThat(service.defaultWorkspace("EMPLOYEE")).isEqualTo("/learn/exams");
+    assertThat(service.defaultWorkspace("EMPLOYEE")).isEqualTo("/employee");
   }
 
   @Test

@@ -836,32 +836,58 @@ public class WarehouseRepository {
         : jdbcTemplate.query(sql, this::mapHeader, tenantId, blankToNull(storeId), blankToNull(storeId), warehouseId);
     ArrayList<WarehouseRequisitionResponse> rows = new ArrayList<>();
     for (WarehouseRequisitionHeaderRow header : headers) {
-      rows.add(new WarehouseRequisitionResponse(
-          header.id(),
-          header.storeId(),
-          header.storeName(),
-          header.warehouseId(),
-          header.warehouseName(),
-          header.status(),
-          statusLabel(header.status()),
-          header.totalAmount(),
-          header.note(),
-          header.submittedBy(),
-          header.reviewedBy(),
-          header.shippedBy(),
-          header.receivedBy(),
-          header.submittedAt(),
-          header.reviewedAt(),
-          header.shippedAt(),
-          header.receivedAt(),
-          requisitionLines(tenantId, header.id())
-      ));
+      rows.add(requisitionResponse(tenantId, header));
     }
     return rows;
   }
 
   public Optional<WarehouseRequisitionResponse> requisition(long tenantId, String requisitionId) {
-    return requisitions(tenantId, null).stream().filter(item -> item.id().equals(requisitionId)).findFirst();
+    boolean facilityAware = hasColumn("store_requisition", "supply_warehouse_id");
+    String sql = """
+        select r.id, r.store_id, s.name as store_name, r.status, r.total_amount, r.note,
+        """ + (facilityAware
+            ? " r.supply_warehouse_id as warehouse_id, facility.name as warehouse_name,\n"
+            : " cast(null as bigint) as warehouse_id, cast(null as varchar(160)) as warehouse_name,\n") + """
+               sub.display_name as submitted_by, rev.display_name as reviewed_by, ship.display_name as shipped_by,
+               rec.display_name as received_by, r.submitted_at, r.reviewed_at, r.shipped_at, r.received_at
+        from store_requisition r
+        join store_branch s on s.tenant_id = r.tenant_id and s.id = r.store_id
+        """ + (facilityAware
+            ? " left join warehouse_facility facility on facility.tenant_id = r.tenant_id and facility.id = r.supply_warehouse_id\n"
+            : "") + """
+        left join auth_user sub on sub.tenant_id = r.tenant_id and sub.id = r.submitted_by
+        left join auth_user rev on rev.tenant_id = r.tenant_id and rev.id = r.reviewed_by
+        left join auth_user ship on ship.tenant_id = r.tenant_id and ship.id = r.shipped_by
+        left join auth_user rec on rec.tenant_id = r.tenant_id and rec.id = r.received_by
+        where r.tenant_id = ? and r.id = ?
+        limit 1
+        """;
+    return jdbcTemplate.query(sql, this::mapHeader, tenantId, requisitionId).stream()
+        .findFirst()
+        .map(header -> requisitionResponse(tenantId, header));
+  }
+
+  private WarehouseRequisitionResponse requisitionResponse(long tenantId, WarehouseRequisitionHeaderRow header) {
+    return new WarehouseRequisitionResponse(
+        header.id(),
+        header.storeId(),
+        header.storeName(),
+        header.warehouseId(),
+        header.warehouseName(),
+        header.status(),
+        statusLabel(header.status()),
+        header.totalAmount(),
+        header.note(),
+        header.submittedBy(),
+        header.reviewedBy(),
+        header.shippedBy(),
+        header.receivedBy(),
+        header.submittedAt(),
+        header.reviewedAt(),
+        header.shippedAt(),
+        header.receivedAt(),
+        requisitionLines(tenantId, header.id())
+    );
   }
 
   public void reviewRequisition(
@@ -1244,7 +1270,7 @@ public class WarehouseRepository {
                o.reason, o.note, o.review_note, o.received_note,
                o.return_date, o.reviewed_at, o.received_at, o.created_at, o.updated_at,
                (select count(*) from warehouse_return_order_line l where l.tenant_id = o.tenant_id and l.return_order_id = o.id) as line_count,
-               (select count(*) from warehouse_attachment a where a.tenant_id = o.tenant_id and a.business_type = 'RETURN_ORDER' and a.business_id = o.id) as attachment_count
+               (select count(*) from warehouse_attachment a where a.tenant_id = o.tenant_id and a.business_type in ('RETURN_ORDER', 'WAREHOUSE_RETURN') and a.business_id = o.id) as attachment_count
         from warehouse_return_order o
         where o.tenant_id = ?
           and (? is null or o.return_store_id = ?)
@@ -1392,6 +1418,7 @@ public class WarehouseRepository {
 
   public void insertWarehouseAttachment(
       long tenantId,
+      String storeId,
       String businessType,
       String businessId,
       String fileName,
@@ -1402,12 +1429,13 @@ public class WarehouseRepository {
   ) {
     jdbcTemplate.update("""
         insert into warehouse_attachment(
-          tenant_id, business_type, business_id, file_name, content_type,
+          tenant_id, store_id, business_type, business_id, file_name, content_type,
           file_size, storage_path, content, uploaded_by, uploaded_at
         )
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
         """,
         tenantId,
+        blankToNull(storeId),
         businessType,
         businessId,
         fileName,

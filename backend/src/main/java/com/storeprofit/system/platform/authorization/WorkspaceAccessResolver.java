@@ -13,20 +13,25 @@ import org.springframework.stereotype.Component;
 public class WorkspaceAccessResolver {
   private static final String NO_PERMISSION = "/no-permission";
   private static final List<WorkspaceRule> RULES = List.of(
-      new WorkspaceRule("/boss", PermissionCodes.SYSTEM_DASHBOARD_READ, null),
-      new WorkspaceRule("/finance", PermissionCodes.FINANCE_PROFIT_READ, DataScopeDomains.FINANCE),
-      new WorkspaceRule("/warehouse", PermissionCodes.WAREHOUSE_CENTRAL_READ, DataScopeDomains.WAREHOUSE),
-      new WorkspaceRule("/store", PermissionCodes.STORE_READ, DataScopeDomains.STORE),
-      new WorkspaceRule("/operations", PermissionCodes.OPERATIONS_DASHBOARD_READ, DataScopeDomains.STORE),
-      new WorkspaceRule("/learn/exams", PermissionCodes.EXAM_LEARN, DataScopeDomains.EXAM)
+      new WorkspaceRule("/boss", List.of(PermissionCodes.SYSTEM_DASHBOARD_READ), null),
+      new WorkspaceRule("/finance", List.of(PermissionCodes.FINANCE_PROFIT_READ), DataScopeDomains.FINANCE),
+      new WorkspaceRule(
+          "/warehouse",
+          List.of(PermissionCodes.WAREHOUSE_READ, PermissionCodes.WAREHOUSE_CENTRAL_READ),
+          DataScopeDomains.WAREHOUSE),
+      new WorkspaceRule("/store", List.of(PermissionCodes.STORE_READ), DataScopeDomains.STORE),
+      new WorkspaceRule("/operations/inspection", List.of(PermissionCodes.INSPECTION_READ), DataScopeDomains.INSPECTION),
+      new WorkspaceRule("/operations", List.of(PermissionCodes.OPERATIONS_DASHBOARD_READ), DataScopeDomains.STORE),
+      new WorkspaceRule("/learn/exams", List.of(PermissionCodes.EXAM_LEARN), DataScopeDomains.EXAM)
   );
   private static final Map<String, String> RECOMMENDED_BY_ROLE = Map.of(
       "BOSS", "/boss",
       "FINANCE", "/finance",
       "WAREHOUSE", "/warehouse",
       "STORE_MANAGER", "/store",
+      "SUPERVISOR", "/operations/inspection",
       "OPERATIONS", "/operations",
-      "EMPLOYEE", "/learn/exams"
+      "EMPLOYEE", "/employee"
   );
 
   public WorkspaceAccessProfile resolve(
@@ -45,6 +50,9 @@ public class WorkspaceAccessResolver {
 
     if ("STORE_MANAGER".equals(role)) {
       return resolveStoreManager(user, permissions, scopes, assignedStoreIds);
+    }
+    if ("EMPLOYEE".equals(role)) {
+      return resolveEmployee(permissions, scopes);
     }
 
     LinkedHashSet<String> available = new LinkedHashSet<>();
@@ -104,12 +112,35 @@ public class WorkspaceAccessResolver {
         List.of("/store"), "/store", WorkspaceAccessProfile.READY, "店长工作台权限正常");
   }
 
+  private WorkspaceAccessProfile resolveEmployee(
+      Set<String> permissions,
+      Map<String, DataScope> scopes
+  ) {
+    LinkedHashSet<String> available = new LinkedHashSet<>();
+    if (permissions.contains(PermissionCodes.EXAM_LEARN)
+        || permissions.contains(PermissionCodes.EMPLOYEE_ASSISTANT_USE)) {
+      available.add("/employee");
+    }
+    WorkspaceRule learningRule = rule("/learn/exams");
+    if (learningRule != null && canAccess(learningRule, permissions, scopes)) {
+      available.add("/learn/exams");
+    }
+    if (available.isEmpty()) {
+      return new WorkspaceAccessProfile(
+          List.of(), NO_PERMISSION, WorkspaceAccessProfile.NO_WORKSPACE,
+          "员工账号没有可用工作台，请联系老板检查培训考试或员工助手权限");
+    }
+    List<String> workspaces = List.copyOf(available);
+    return new WorkspaceAccessProfile(
+        workspaces, workspaces.getFirst(), WorkspaceAccessProfile.READY, "员工工作台权限正常");
+  }
+
   private boolean canAccess(
       WorkspaceRule rule,
       Set<String> permissions,
       Map<String, DataScope> scopes
   ) {
-    if (!permissions.contains(rule.permissionCode())) {
+    if (rule.permissionCodes().stream().noneMatch(permissions::contains)) {
       return false;
     }
     if (rule.domainCode() == null) {
@@ -150,6 +181,6 @@ public class WorkspaceAccessResolver {
     return storeId == null ? "" : storeId.trim();
   }
 
-  private record WorkspaceRule(String path, String permissionCode, String domainCode) {
+  private record WorkspaceRule(String path, List<String> permissionCodes, String domainCode) {
   }
 }

@@ -46,6 +46,21 @@ class WarehousePermissionDelegationTest {
   }
 
   @Test
+  void currentWarehouseReadPermissionOpensWarehouseListScope() {
+    when(repository.items(1L)).thenReturn(List.of());
+    AuthUser warehouse = user("WAREHOUSE", null);
+    when(accessControl.hasPermission(warehouse, PermissionCodes.WAREHOUSE_READ)).thenReturn(true);
+    when(accessControl.dataScope(warehouse, DataScopeDomains.WAREHOUSE))
+        .thenReturn(new DataScope(DataScopeModes.WAREHOUSE_LIST, List.of("1", "2")));
+
+    service.items(warehouse);
+
+    verify(accessControl).requireWarehouseRead(warehouse);
+    verify(accessControl, never()).requireWarehouseCentralRead(warehouse);
+    verify(accessControl, never()).requireWarehouseStoreRead(warehouse);
+  }
+
+  @Test
   void sensitiveActionsUseDedicatedWarehousePermissionWrappers() {
     AuthUser warehouse = user("WAREHOUSE", null);
     AuthUser storeManager = user("STORE_MANAGER", "rg1");

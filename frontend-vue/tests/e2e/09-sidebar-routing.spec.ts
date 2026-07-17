@@ -6,10 +6,10 @@ const contracts: Record<TestRole, { permissions: string[]; dataScopes: Record<st
   BOSS: { permissions: [], dataScopes: { STORE: { mode: 'ALL', storeIds: [] }, FINANCE: { mode: 'ALL', storeIds: [] }, SALARY: { mode: 'ALL', storeIds: [] }, WAREHOUSE: { mode: 'ALL', storeIds: [] }, INSPECTION: { mode: 'ALL', storeIds: [] }, EXAM: { mode: 'ALL', storeIds: [] } }, defaultWorkspace: '/boss' },
   FINANCE: { permissions: ['system.dashboard.read', 'store.read', 'finance.profit.read', 'finance.profit.write', 'finance.export', 'expense.create', 'expense.read', 'expense.review', 'salary.read', 'salary.edit', 'assistant.use'], dataScopes: { STORE: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] }, FINANCE: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] }, SALARY: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] } }, defaultWorkspace: '/finance' },
   STORE_MANAGER: { permissions: ['system.dashboard.read', 'store.read', 'finance.profit.read', 'finance.profit.write', 'expense.create', 'expense.read', 'salary.read', 'warehouse.store.read', 'warehouse.requisition.create', 'warehouse.requisition.receive', 'inspection.read', 'exam.learn', 'exam.report', 'assistant.use'], dataScopes: { STORE: { mode: 'OWN_STORE', storeIds: ['TEST-STORE'] }, FINANCE: { mode: 'OWN_STORE', storeIds: ['TEST-STORE'] }, SALARY: { mode: 'OWN_STORE', storeIds: ['TEST-STORE'] }, WAREHOUSE: { mode: 'OWN_STORE', storeIds: ['TEST-STORE'] }, INSPECTION: { mode: 'OWN_STORE', storeIds: ['TEST-STORE'] }, EXAM: { mode: 'OWN_STORE', storeIds: ['TEST-STORE'] } }, defaultWorkspace: '/store' },
-  WAREHOUSE: { permissions: ['system.dashboard.read', 'warehouse.central.read', 'warehouse.central.manage', 'assistant.use'], dataScopes: { WAREHOUSE: { mode: 'CENTRAL_WAREHOUSE', storeIds: [] } }, defaultWorkspace: '/warehouse' },
+  WAREHOUSE: { permissions: ['system.dashboard.read', 'warehouse.read', 'warehouse.purchase', 'warehouse.transfer.request', 'warehouse.transfer.approve', 'warehouse.transfer.ship', 'warehouse.transfer.receive', 'warehouse.requisition.process', 'warehouse.configure', 'warehouse.central.read', 'warehouse.central.manage', 'assistant.use'], dataScopes: { WAREHOUSE: { mode: 'CENTRAL_WAREHOUSE', storeIds: [] } }, defaultWorkspace: '/warehouse' },
   OPERATIONS: { permissions: ['system.dashboard.read', 'operations.dashboard.read', 'store.read', 'warehouse.store.read', 'inspection.read', 'inspection.manage', 'exam.learn', 'exam.manage', 'exam.report', 'platform.read', 'platform.manage', 'assistant.use'], dataScopes: { STORE: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] }, WAREHOUSE: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] }, INSPECTION: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] }, EXAM: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] } }, defaultWorkspace: '/operations' },
   SUPERVISOR: { permissions: ['system.dashboard.read', 'operations.dashboard.read', 'inspection.read', 'inspection.manage', 'exam.learn', 'exam.manage', 'exam.report', 'assistant.use'], dataScopes: { INSPECTION: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] }, EXAM: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] } }, defaultWorkspace: '/operations' },
-  EMPLOYEE: { permissions: ['exam.learn'], dataScopes: { EXAM: { mode: 'SELF', storeIds: [] } }, defaultWorkspace: '/learn/exams' },
+  EMPLOYEE: { permissions: ['exam.learn', 'employee_assistant.use'], dataScopes: { EXAM: { mode: 'SELF', storeIds: [] } }, defaultWorkspace: '/employee' },
 }
 
 async function seedSession(page: Page, role: TestRole, permissionOverride?: string[]) {
@@ -21,10 +21,12 @@ async function seedSession(page: Page, role: TestRole, permissionOverride?: stri
     tenantName: 'TEST 租户',
     displayName: `TEST ${role}`,
     role,
-    roleLabel: role,
+    roleLabel: role === 'EMPLOYEE' ? '员工' : role,
     storeScope: role === 'STORE_MANAGER' ? ['TEST-STORE'] : ['all'],
     permissions,
     dataScopes: contract.dataScopes,
+    boundStoreId: ['STORE_MANAGER', 'EMPLOYEE'].includes(role) ? 'TEST-STORE' : null,
+    boundStoreName: ['STORE_MANAGER', 'EMPLOYEE'].includes(role) ? '测试门店' : null,
     defaultWorkspace: contract.defaultWorkspace,
     permissionVersion: 1,
   }
@@ -32,6 +34,22 @@ async function seedSession(page: Page, role: TestRole, permissionOverride?: stri
   await page.route('**/*', (route) => {
     const path = new URL(route.request().url()).pathname
     if (!path.startsWith('/api/')) return route.continue()
+    if (path === '/api/employee/workbench') {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: {
+            profile: { userId: sessionUser.id, displayName: sessionUser.displayName, role },
+            store: { storeId: 'TEST-STORE', storeName: '测试门店', brandName: '测试品牌' },
+            workItems: [],
+            workSummary: { total: 0, pending: 0, overdue: 0, completed: 0, retakePending: 0 },
+            assistant: { enabled: true, state: 'READY', message: '员工服务助手可用', route: '/employee-assistant' },
+          },
+        }),
+      })
+    }
     return route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -46,7 +64,7 @@ async function seedSession(page: Page, role: TestRole, permissionOverride?: stri
   }, { roleCode: role, user: sessionUser })
 }
 
-test('management roles have permission-driven navigation while learners never receive AppLayout', async ({ page }) => {
+test('management roles and employee workbench have permission-driven navigation', async ({ page }) => {
   for (const role of ['BOSS', 'FINANCE', 'STORE_MANAGER', 'WAREHOUSE', 'OPERATIONS'] as const) {
     await seedSession(page, role)
     await page.goto('/')
@@ -57,15 +75,23 @@ test('management roles have permission-driven navigation while learners never re
 
   await seedSession(page, 'EMPLOYEE')
   await page.goto('/')
-  await expect(page).toHaveURL(/\/learn\/exams$/)
-  await expect(page.locator('.app-sidebar--desktop')).toHaveCount(0)
-  await expect(page.locator('.learner-header')).toContainText('学习中心')
+  await expect(page).toHaveURL(/\/employee$/)
+  const employeeNav = page.locator('.app-sidebar--desktop')
+  await expect(employeeNav).toBeVisible()
+  await expect(employeeNav).toContainText('员工工作台')
+  await expect(employeeNav).toContainText('培训考试')
+  await expect(employeeNav).toContainText('员工服务助手')
+  await expect(employeeNav).not.toContainText('老板工作台')
+  await expect(employeeNav).not.toContainText('仓库中心')
+  await expect(employeeNav).not.toContainText('平台配置')
 })
 
 test('warehouse and migrated supervisor routes keep the matching permission menu active', async ({ page }) => {
   await seedSession(page, 'WAREHOUSE')
   await page.goto('/warehouse/items')
-  await expect(page.locator('.app-sidebar--desktop').getByRole('link', { name: '仓库中心', exact: true })).toHaveClass(/router-link-active/)
+  const warehouseSidebar = page.locator('.app-sidebar--desktop')
+  await expect(warehouseSidebar.getByRole('link', { name: '仓库工作台', exact: true })).toBeVisible()
+  await expect(warehouseSidebar.getByRole('link', { name: '仓库中心', exact: true })).toHaveClass(/router-link-active/)
 
   await seedSession(page, 'SUPERVISOR')
   await page.goto('/inspection/records')

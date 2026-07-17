@@ -217,6 +217,45 @@ class UserAuthorizationManagementTest {
   }
 
   @Test
+  void supervisorCannotReceiveOperationsHighRiskPermission() {
+    AuthUser supervisor = user(9L, "supervisor", "SUPERVISOR", null, 2L);
+    stubAuthorizationSnapshot(supervisor);
+    when(authorizationService.catalog()).thenReturn(List.of(catalogEntry(PermissionCodes.PLATFORM_MANAGE)));
+
+    assertThatThrownBy(() -> service.updateAuthorization(
+        boss,
+        9L,
+        new UserAuthorizationUpdateRequest(
+            List.of(new UserPermissionOverrideRequest(PermissionCodes.PLATFORM_MANAGE, "ALLOW")),
+            List.of())))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode())
+            .isEqualTo("SUPERVISOR_PERMISSION_BOUNDARY"));
+
+    verify(authorizationService, never()).replaceUserOverrides(
+        eq(1L), eq(9L), org.mockito.ArgumentMatchers.anyList(), eq(1L));
+  }
+
+  @Test
+  void supervisorDataScopeIsLimitedToStoreListForStoreAndInspection() {
+    AuthUser supervisor = user(10L, "supervisor2", "SUPERVISOR", null, 2L);
+    stubAuthorizationSnapshot(supervisor);
+
+    assertThatThrownBy(() -> service.updateAuthorization(
+        boss,
+        10L,
+        new UserAuthorizationUpdateRequest(
+            List.of(),
+            List.of(new UserDataScopeRequest(DataScopeDomains.PLATFORM, DataScopeModes.ALL, List.of())))))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode())
+            .isEqualTo("SUPERVISOR_SCOPE_BOUNDARY"));
+
+    verify(dataScopeService, never()).replaceAssignments(
+        eq(1L), eq(10L), org.mockito.ArgumentMatchers.anyList(), eq(1L));
+  }
+
+  @Test
   void bossAuthorizationIsFixedAndCannotBeOverridden() {
     when(authRepository.user(1L, 1L)).thenReturn(Optional.of(boss));
 

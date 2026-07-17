@@ -47,8 +47,8 @@ test.describe('role login and default routing', () => {
     expect(operations.user.role).toBe('OPERATIONS')
   })
 
-  test('legacy supervisor role is normalized to operations without affecting employee identity', () => {
-    expect(normalizeRoleCode('SUPERVISOR')).toBe('OPERATIONS')
+  test('supervisor and employee keep independent role identities', () => {
+    expect(normalizeRoleCode('SUPERVISOR')).toBe('SUPERVISOR')
     expect(normalizeRoleCode('EMPLOYEE')).toBe('EMPLOYEE')
   })
 

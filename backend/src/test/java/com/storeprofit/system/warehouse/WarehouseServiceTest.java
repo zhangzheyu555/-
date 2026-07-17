@@ -11,8 +11,15 @@ import com.storeprofit.system.platform.auth.AuthUser;
 import java.math.BigDecimal;
 import java.sql.Date;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -268,6 +275,75 @@ class WarehouseServiceTest {
         Integer.class
     )).isEqualTo(requisitionCountAfterBoss + 1);
     assertThat(operationLogCount("提交叫货", first.id())).isEqualTo(1);
+  }
+
+  @Test
+  void bossAndWarehouseManagerCanCreateDifferentItemsConcurrentlyWithMockData() throws Exception {
+    runConcurrentSaves(
+        itemRequest("CONC-BOSS", "Boss concurrent item"),
+        itemRequest("CONC-WH", "Warehouse concurrent item")
+    );
+
+    assertThat(service.items(boss()))
+        .extracting(WarehouseItemResponse::code)
+        .contains("CONC-BOSS", "CONC-WH");
+    assertThat(itemCountByCode("CONC-BOSS")).isEqualTo(1);
+    assertThat(itemCountByCode("CONC-WH")).isEqualTo(1);
+  }
+
+  @Test
+  void concurrentSameCodeItemSaveDoesNotCreateDuplicateCatalogRows() throws Exception {
+    runConcurrentSaves(
+        itemRequest("CONC-SAME", "Boss same code item"),
+        itemRequest("CONC-SAME", "Warehouse same code item")
+    );
+
+    assertThat(itemCountByCode("CONC-SAME")).isEqualTo(1);
+    assertThat(operationLogCountByTargetId("CONC-SAME")).isEqualTo(2);
+    WarehouseItemResponse saved = service.items(boss()).stream()
+        .filter(row -> "CONC-SAME".equals(row.code()))
+        .findFirst()
+        .orElseThrow();
+    assertThat(saved.name()).isIn("Boss same code item", "Warehouse same code item");
+  }
+
+  @Test
+  void createRequisitionReturnsSavedRowWhenRecentListWindowIsFull() {
+    java.sql.Timestamp future = java.sql.Timestamp.valueOf("2099-01-01 00:00:00");
+    for (int i = 0; i < 85; i++) {
+      jdbcTemplate.update("""
+          insert into store_requisition(
+            id, tenant_id, store_id, supply_warehouse_id, status, total_amount, note, submitted_by, submitted_at
+          ) values (?, 1, 'rg1', 1, 'SUBMITTED', 0, ?, 3, ?)
+          """,
+          "future-window-" + i,
+          "recent list filler",
+          new java.sql.Timestamp(future.getTime() + i * 1000L)
+      );
+    }
+
+    WarehouseRequisitionResponse created = service.createRequisition(
+        storeManager(),
+        new WarehouseRequisitionRequest(
+            "rg1",
+            List.of(new WarehouseRequisitionLineRequest(1L, BigDecimal.ONE, "new request outside list window")),
+            "new request outside list window",
+            "req-outside-recent-window"
+        )
+    );
+
+    assertThat(created.id()).isNotBlank();
+    assertThat(created.storeId()).isEqualTo("rg1");
+    assertThat(jdbcTemplate.queryForObject(
+        "select count(*) from store_requisition where tenant_id = 1 and id = ?",
+        Integer.class,
+        created.id()
+    )).isEqualTo(1);
+    assertThat(jdbcTemplate.queryForObject(
+        "select count(*) from store_requisition_line where tenant_id = 1 and requisition_id = ?",
+        Integer.class,
+        created.id()
+    )).isEqualTo(1);
   }
 
   @Test
@@ -851,6 +927,61 @@ class WarehouseServiceTest {
     return count == null ? 0 : count;
   }
 
+  private int operationLogCountByTargetId(String targetId) {
+    Integer count = jdbcTemplate.queryForObject(
+        "select count(*) from operation_log where target_id = ?",
+        Integer.class,
+        targetId
+    );
+    return count == null ? 0 : count;
+  }
+
+  private int itemCountByCode(String code) {
+    Integer count = jdbcTemplate.queryForObject(
+        "select count(*) from warehouse_item where tenant_id = 1 and code = ?",
+        Integer.class,
+        code
+    );
+    return count == null ? 0 : count;
+  }
+
+  private void runConcurrentSaves(
+      WarehouseItemRequest bossRequest,
+      WarehouseItemRequest warehouseRequest
+  ) throws Exception {
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    List<Throwable> errors = Collections.synchronizedList(new ArrayList<>());
+    try {
+      Future<?> bossSave = executor.submit(() -> {
+        ready.countDown();
+        start.await(5, TimeUnit.SECONDS);
+        service.saveItem(boss(), bossRequest);
+        return null;
+      });
+      Future<?> warehouseSave = executor.submit(() -> {
+        ready.countDown();
+        start.await(5, TimeUnit.SECONDS);
+        service.saveItem(warehouseManager(), warehouseRequest);
+        return null;
+      });
+
+      assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+      start.countDown();
+      for (Future<?> future : List.of(bossSave, warehouseSave)) {
+        try {
+          future.get(10, TimeUnit.SECONDS);
+        } catch (Exception error) {
+          errors.add(error);
+        }
+      }
+    } finally {
+      executor.shutdownNow();
+    }
+    assertThat(errors).isEmpty();
+  }
+
   private void assertForbidden(org.assertj.core.api.ThrowableAssert.ThrowingCallable action) {
     assertThatThrownBy(action)
         .isInstanceOfSatisfying(BusinessException.class, error -> {
@@ -1136,6 +1267,7 @@ class WarehouseServiceTest {
         create table warehouse_attachment (
           id bigint auto_increment primary key,
           tenant_id bigint not null,
+          store_id varchar(64),
           business_type varchar(80) not null,
           business_id varchar(120) not null,
           file_name varchar(255) not null,
