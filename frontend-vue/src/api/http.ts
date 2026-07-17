@@ -134,6 +134,11 @@ http.interceptors.response.use(
     }
     if (requestId) logPayload.requestId = requestId
     if (shouldLogApiError(error.config?.method, error.config?.url, status, requestId)) {
+      // In development, emit a flat summary so the console never shows [API Error] Object.
+      if (import.meta.env.DEV) {
+        const flat = `${error.config?.method || '?'} ${error.config?.url || '?'} → ${status} code=${code} msg=${String(rawMessage).slice(0, 120)}${requestId ? ` requestId=${requestId}` : ''}`
+        console.error('[API Error]', flat)
+      }
       console.error('[API Error]', logPayload)
     }
 

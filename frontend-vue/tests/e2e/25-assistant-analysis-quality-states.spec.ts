@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { seedAuth } from './auth.setup'
+import { operatingSnapshot, withSnapshotLocalData } from './assistant-snapshot.fixture'
 
 const ok = (data: unknown) => ({
   status: 200,
@@ -28,6 +29,7 @@ const assistantUser = {
   defaultWorkspace: '/boss',
   permissionVersion: 1,
 }
+const snapshot = operatingSnapshot({ expectedStoreCount: 2, reportedStoreCount: 1, missingStoreNames: ['待补门店'] })
 
 type AssistantState = 'NOT_CONFIGURED' | 'CONFIGURED' | 'READY' | 'RESPONSE_REJECTED' | 'UPSTREAM_ERROR'
 
@@ -46,54 +48,42 @@ function assistantStatus(state: AssistantState, lastErrorCode: string | null = n
   }
 }
 
-function localData() {
-  return {
-    summary: '本月真实经营数据已查询完成。',
-    metrics: [{ key: 'sales', label: '营业额', value: 68967, unit: 'CNY', displayValue: '¥68,967', changeRate: null, comparison: '' }],
-    dataPeriod: '2026-07',
-    dataScope: '测试门店',
-    source: '经营数据库',
-    dataVersion: 'test-v1',
-    calculationVersion: 'test-v1',
-    updatedAt: '2026-07-14T00:00:00Z',
-  }
+function localData(aiInvocation = 'NOT_REQUESTED') {
+  return withSnapshotLocalData(snapshot, {
+    metrics: [{ key: 'sales', label: '实收收入', value: '68967', unit: 'CNY', displayValue: '¥68,967', changeRate: null, comparison: '' }],
+    aiInvocation,
+  })
 }
 
 function dataLimitedAnswer(question: string) {
   return {
     question,
-    selectedMode: 'AI',
-    selectionReason: '当前经营数据不足，改为提供数据补全建议。',
-    localData: localData(),
+    selectedMode: 'LOCAL',
+    selectionReason: '当前经营数据不足，仅返回数据补全建议。',
+    localData: {
+      ...localData('NOT_CALLED_INSUFFICIENT'),
+      insufficientData: {
+        kind: 'INSUFFICIENT_DATA',
+        verifiedFacts: ['当前范围已有可验证的收入、成本、费用和经营利润汇总。'],
+        cannotDetermine: ['当前数据不足以支持经营原因、趋势或门店结论归因。'],
+        missingItems: ['businessAsOf', 'dailyOperatingCoverage', 'otherIncomeExpense', 'tax'],
+        nextSteps: ['补录本月原材料、包材和损耗成本。', '补齐至少一个可比历史月份的经营数据。'],
+        modelInvoked: false,
+      },
+    },
     aiAnalysis: {
-      available: true,
-      analysisType: 'DATA_LIMITED',
-      provider: 'DeepSeek',
-      model: 'approved-model',
-      requestId: 'quality-data-limited',
-      latencyMs: 400,
-      summary: '当前成本和历史月份数据不完整，无法可靠判断利润变化原因。',
-      findings: ['本月成本为 0，不能据此推断利润结构。'],
+      available: false,
+      provider: '',
+      model: '',
+      requestId: '',
+      latencyMs: 0,
+      summary: '',
+      findings: [],
       risks: [],
       possibleCauses: [],
-      actions: [
-        {
-          action: '补录本月原材料、包材和损耗成本。',
-          ownerRole: 'STORE_MANAGER',
-          deadline: '本周',
-          expectedImpact: '形成完整成本口径',
-          verificationMetric: '成本合计不再为 0',
-        },
-        {
-          action: '补齐至少一个可比历史月份的经营数据。',
-          ownerRole: 'FINANCE',
-          deadline: '本周',
-          expectedImpact: '支持趋势对比',
-          verificationMetric: '可比月份数量',
-        },
-      ],
-      confidence: 'HIGH',
-      limitations: ['成本数据缺失', '缺少可比历史月份'],
+      actions: [],
+      confidence: '',
+      limitations: [],
     },
     fallbackUsed: false,
     error: null,
@@ -105,7 +95,7 @@ function schemaRejectedAnswer(question: string) {
     question,
     selectedMode: 'AI',
     selectionReason: '用户请求原因分析。',
-    localData: localData(),
+    localData: localData('FAILED'),
     aiAnalysis: {
       available: false,
       analysisType: undefined,
@@ -139,6 +129,7 @@ async function prepareAssistantPage(page: Page) {
   ])))
   await page.route('**/api/finance/months', (route) => route.fulfill(ok(['2026-07'])))
   await page.route('**/api/finance/entries**', (route) => route.fulfill(ok([])))
+  await page.route('**/api/assistant/operating-snapshot**', (route) => route.fulfill(ok(snapshot)))
   await seedAuth(page, { token: 'e2e-assistant-quality-token', user: assistantUser })
 }
 
@@ -154,7 +145,7 @@ test.describe('store assistant quality state presentation', () => {
 
     await page.goto('/assistant')
     await expect(page.getByTestId('assistant-service-status')).toHaveText('分析服务正常')
-    await page.getByRole('button', { name: 'AI分析', exact: true }).click()
+    await page.getByRole('button', { name: '深度分析', exact: true }).click()
     await page.getByLabel('经营问题').fill('为什么本月利润看起来很高？')
     await page.getByRole('button', { name: '发送', exact: true }).click()
 
@@ -182,7 +173,7 @@ test.describe('store assistant quality state presentation', () => {
 
     await page.goto('/assistant')
     await expect(page.getByTestId('assistant-service-status')).toHaveText('分析服务正常')
-    await page.getByRole('button', { name: 'AI分析', exact: true }).click()
+    await page.getByRole('button', { name: '深度分析', exact: true }).click()
     await page.getByLabel('经营问题').fill('为什么本月利润变化？')
     await page.getByRole('button', { name: '发送', exact: true }).click()
 
@@ -196,7 +187,7 @@ test.describe('store assistant quality state presentation', () => {
     {
       code: 'DATA_LIMITED_REQUIRED',
       message: '经营数据不足，暂不能判断原因，请先补全成本、费用或历史月份数据。',
-      status: '经营数据待补全',
+      status: 'DeepSeek 已配置',
     },
     {
       code: 'ANALYSIS_UNKNOWN_NUMERIC',
@@ -230,7 +221,7 @@ test.describe('store assistant quality state presentation', () => {
       })
 
       await page.goto('/assistant')
-      await page.getByRole('button', { name: 'AI分析', exact: true }).click()
+    await page.getByRole('button', { name: '深度分析', exact: true }).click()
       await page.getByLabel('经营问题').fill('为什么本月利润变化？')
       await page.getByRole('button', { name: '发送', exact: true }).click()
 

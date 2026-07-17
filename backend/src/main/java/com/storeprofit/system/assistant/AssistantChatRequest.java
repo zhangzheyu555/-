@@ -11,8 +11,21 @@ public record AssistantChatRequest(
     @Size(max = 20000) String dataContext,
     @Pattern(regexp = "AUTO|LOCAL|AI", flags = {Pattern.Flag.CASE_INSENSITIVE}) String mode,
     @Size(max = 64) String storeId,
-    @Pattern(regexp = "\\d{4}-\\d{2}") @Size(max = 7) String month
+    @Pattern(regexp = "\\d{4}-\\d{2}") @Size(max = 7) String month,
+    @Size(max = 128) String snapshotId
 ) {
+  /** Source-compatible constructor for clients that predate the snapshot contract. */
+  public AssistantChatRequest(
+      String message,
+      List<AssistantChatTurn> history,
+      String dataContext,
+      String mode,
+      String storeId,
+      String month
+  ) {
+    this(message, history, dataContext, mode, storeId, month, null);
+  }
+
   public String modeOrDefault() {
     if (mode == null || mode.isBlank()) return "AUTO";
     return mode.toUpperCase();

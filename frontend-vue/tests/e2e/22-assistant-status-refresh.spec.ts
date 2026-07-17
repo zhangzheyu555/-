@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { seedAuth } from './auth.setup'
+import { operatingSnapshot, withSnapshotLocalData } from './assistant-snapshot.fixture'
 
 const ok = (data: unknown) => ({
   status: 200,
@@ -28,6 +29,7 @@ const assistantUser = {
   defaultWorkspace: '/boss',
   permissionVersion: 1,
 }
+const snapshot = operatingSnapshot()
 
 async function prepareAssistantPage(page: Page) {
   await page.route('**/api/auth/me', (route) => route.fulfill(ok(assistantUser)))
@@ -36,6 +38,7 @@ async function prepareAssistantPage(page: Page) {
   ])))
   await page.route('**/api/finance/months', (route) => route.fulfill(ok(['2026-07'])))
   await page.route('**/api/finance/entries**', (route) => route.fulfill(ok([])))
+  await page.route('**/api/assistant/operating-snapshot**', (route) => route.fulfill(ok(snapshot)))
   await seedAuth(page, { token: 'e2e-assistant-status-token', user: assistantUser })
 }
 
@@ -61,16 +64,10 @@ function localFallbackAnswer() {
     question: '本月净利润怎么样？',
     selectedMode: 'LOCAL',
     selectionReason: 'AI服务未配置，仅查询真实经营数据。',
-    localData: {
-      summary: '本月真实经营数据已查询完成。',
-      metrics: [{ key: 'net-profit', label: '净利润', value: 12800, unit: 'CNY', displayValue: '¥12,800', changeRate: null, comparison: '' }],
-      dataPeriod: '2026-07',
-      dataScope: '测试门店',
-      source: '经营数据库',
-      dataVersion: 'test-v1',
-      calculationVersion: 'test-v1',
-      updatedAt: '2026-07-14T00:00:00Z',
-    },
+    localData: withSnapshotLocalData(snapshot, {
+      metrics: [{ key: 'net-profit', label: '净利润', value: '12800', unit: 'CNY', displayValue: '¥12,800', changeRate: null, comparison: '' }],
+      aiInvocation: 'NOT_CALLED_UNAVAILABLE',
+    }),
     aiAnalysis: {
       available: false,
       provider: '',
@@ -171,7 +168,8 @@ test.describe('store assistant status refresh', () => {
     await page.getByRole('button', { name: '发送' }).click()
 
     await expect(page.getByText('经营数据', { exact: true })).toBeVisible()
-    await expect(page.getByText('本月真实经营数据已查询完成。')).toBeVisible()
+    await expect(page.locator('.run-facts')).toHaveAttribute('data-snapshot-id', snapshot.snapshotId)
+    await expect(page.locator('.run-facts')).toContainText('经营利润率 28.0%')
     await expect(page.getByText('AI分析服务尚未配置，本地经营数据仍可正常查询。')).toBeVisible()
   })
 

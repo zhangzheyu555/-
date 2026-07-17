@@ -29,13 +29,16 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class AuthService {
   private static final Logger log = LoggerFactory.getLogger(AuthService.class);
   private static final int MAX_FAILED_LOGIN_ATTEMPTS = 5;
   private static final long FAILED_LOGIN_WINDOW_MILLIS = 5 * 60 * 1000L;
+  private static final int MAX_TRACKED_LOGIN_FAILURE_KEYS = 10_000;
   private final AuthRepository authRepository;
   private final PasswordService passwordService;
   private final AuditRepository auditRepository;
@@ -106,21 +109,32 @@ public class AuthService {
     );
   }
 
+  @Transactional
   public LoginResponse login(LoginRequest request) {
+    return loginInternal(request, "unknown");
+  }
+
+  @Transactional
+  public LoginResponse login(LoginRequest request, String sourceIp) {
+    return loginInternal(request, sourceIp);
+  }
+
+  private LoginResponse loginInternal(LoginRequest request, String sourceIp) {
     long tenantId = request.tenantId() == null ? TenantDefaults.DEFAULT_TENANT_ID : request.tenantId();
     String username = request.username().trim();
-    String attemptKey = tenantId + ":" + username.toLowerCase(Locale.ROOT);
-    requireLoginAllowed(attemptKey);
+    List<String> attemptKeys = loginAttemptKeys(tenantId, username, sourceIp);
+    requireLoginAllowed(attemptKeys);
     AuthUser user = authRepository.findByUsername(tenantId, username).orElse(null);
     if (user == null || !user.enabled() || !passwordService.matches(request.password(), user.passwordHash())) {
-      recordLoginFailure(attemptKey);
+      recordLoginFailure(attemptKeys);
       throw new BusinessException("LOGIN_FAILED", "账号或密码错误", HttpStatus.UNAUTHORIZED);
     }
-    failedLogins.remove(attemptKey);
+    attemptKeys.forEach(failedLogins::remove);
     // Resolve permissions and the effective single-store context before issuing a token. A store
     // manager with an invalid binding must not receive a usable session token.
     SessionUser sessionUser = toSessionUser(user);
     String token = newToken();
+    authRepository.deleteTokensForUser(user.tenantId(), user.id());
     authRepository.createToken(
         token,
         user.tenantId(),
@@ -131,26 +145,59 @@ public class AuthService {
     return new LoginResponse(token, sessionUser);
   }
 
-  private void requireLoginAllowed(String attemptKey) {
-    FailedLoginWindow state = failedLogins.get(attemptKey);
-    long now = System.currentTimeMillis();
-    if (state == null || now - state.startedAtMillis() >= FAILED_LOGIN_WINDOW_MILLIS) {
-      if (state != null) failedLogins.remove(attemptKey, state);
-      return;
+  private List<String> loginAttemptKeys(long tenantId, String username, String sourceIp) {
+    String normalizedUsername = username.toLowerCase(Locale.ROOT);
+    if (normalizedUsername.length() > 160) {
+      normalizedUsername = normalizedUsername.substring(0, 160);
     }
-    if (state.attempts() >= MAX_FAILED_LOGIN_ATTEMPTS) {
-      throw new BusinessException("LOGIN_RATE_LIMITED", "登录尝试过多，请稍后再试", HttpStatus.TOO_MANY_REQUESTS);
+    String normalizedIp = sourceIp == null ? "unknown" : sourceIp.trim().toLowerCase(Locale.ROOT);
+    if (normalizedIp.isBlank()) {
+      normalizedIp = "unknown";
+    } else if (normalizedIp.length() > 64) {
+      normalizedIp = normalizedIp.substring(0, 64);
+    }
+    return List.of(
+        "account:" + tenantId + ':' + normalizedUsername,
+        "source:" + normalizedIp
+    );
+  }
+
+  private void requireLoginAllowed(List<String> attemptKeys) {
+    long now = System.currentTimeMillis();
+    for (String attemptKey : attemptKeys) {
+      FailedLoginWindow state = failedLogins.get(attemptKey);
+      if (state == null || now - state.startedAtMillis() >= FAILED_LOGIN_WINDOW_MILLIS) {
+        if (state != null) {
+          failedLogins.remove(attemptKey, state);
+        }
+        continue;
+      }
+      if (state.attempts() >= MAX_FAILED_LOGIN_ATTEMPTS) {
+        throw new BusinessException(
+            "LOGIN_RATE_LIMITED", "登录尝试过多，请稍后再试", HttpStatus.TOO_MANY_REQUESTS);
+      }
     }
   }
 
-  private void recordLoginFailure(String attemptKey) {
+  private void recordLoginFailure(List<String> attemptKeys) {
     long now = System.currentTimeMillis();
-    failedLogins.compute(attemptKey, (key, state) -> {
-      if (state == null || now - state.startedAtMillis() >= FAILED_LOGIN_WINDOW_MILLIS) {
-        return new FailedLoginWindow(1, now);
-      }
-      return new FailedLoginWindow(state.attempts() + 1, state.startedAtMillis());
-    });
+    for (String attemptKey : attemptKeys) {
+      failedLogins.compute(attemptKey, (key, state) -> {
+        if (state == null && failedLogins.size() >= MAX_TRACKED_LOGIN_FAILURE_KEYS) {
+          return null;
+        }
+        if (state == null || now - state.startedAtMillis() >= FAILED_LOGIN_WINDOW_MILLIS) {
+          return new FailedLoginWindow(1, now);
+        }
+        return new FailedLoginWindow(state.attempts() + 1, state.startedAtMillis());
+      });
+    }
+  }
+
+  @Scheduled(fixedDelay = FAILED_LOGIN_WINDOW_MILLIS)
+  public void deleteExpiredLoginFailures() {
+    long cutoff = System.currentTimeMillis() - FAILED_LOGIN_WINDOW_MILLIS;
+    failedLogins.entrySet().removeIf(entry -> entry.getValue().startedAtMillis() <= cutoff);
   }
 
   public void logout(String authorization) {

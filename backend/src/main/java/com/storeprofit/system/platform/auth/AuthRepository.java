@@ -1,16 +1,23 @@
 package com.storeprofit.system.platform.auth;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Repository;
 
 @Repository
 public class AuthRepository {
+  private static final int EXPIRED_TOKEN_CLEANUP_BATCH_SIZE = 500;
   private final JdbcTemplate jdbcTemplate;
 
   public AuthRepository(JdbcTemplate jdbcTemplate) {
@@ -39,13 +46,13 @@ public class AuthRepository {
           from auth_token t
           join auth_user u on u.id = t.user_id
           join tenant ten on ten.id = u.tenant_id
-          where t.token = ?
+          where t.token_hash = ?
             and t.tenant_id = u.tenant_id
             and t.permission_version = u.permission_version
             and t.expires_at > current_timestamp
             and u.enabled = 1
             and ten.status = 'ACTIVE'
-          """, this::mapUser, token));
+          """, this::mapUser, hashToken(token)));
     } catch (EmptyResultDataAccessException ex) {
       return Optional.empty();
     }
@@ -78,15 +85,22 @@ public class AuthRepository {
       long permissionVersion,
       OffsetDateTime expiresAt
   ) {
-    jdbcTemplate.update("delete from auth_token where expires_at <= current_timestamp");
     jdbcTemplate.update("""
-        insert into auth_token(token, tenant_id, user_id, permission_version, expires_at, created_at)
+        insert into auth_token(token_hash, tenant_id, user_id, permission_version, expires_at, created_at)
         values (?, ?, ?, ?, ?, current_timestamp)
-        """, token, tenantId, userId, permissionVersion, java.sql.Timestamp.from(expiresAt.toInstant()));
+        """, hashToken(token), tenantId, userId, permissionVersion,
+        java.sql.Timestamp.from(expiresAt.toInstant()));
   }
 
   public void deleteToken(String token) {
-    jdbcTemplate.update("delete from auth_token where token = ?", token);
+    jdbcTemplate.update("delete from auth_token where token_hash = ?", hashToken(token));
+  }
+
+  /** Keeps expired session cleanup out of the login transaction and bounds each database run. */
+  @Scheduled(fixedDelayString = "${app.auth.expired-token-cleanup-ms:3600000}")
+  public void deleteExpiredTokens() {
+    jdbcTemplate.update("delete from auth_token where expires_at <= current_timestamp limit "
+        + EXPIRED_TOKEN_CLEANUP_BATCH_SIZE);
   }
 
   public List<String> storeScope(long tenantId, long userId, String role, String directStoreId) {
@@ -241,6 +255,17 @@ public class AuthRepository {
 
   public void deleteTokensForUser(long tenantId, long userId) {
     jdbcTemplate.update("delete from auth_token where tenant_id = ? and user_id = ?", tenantId, userId);
+  }
+
+  private static String hashToken(String token) {
+    Objects.requireNonNull(token, "token");
+    try {
+      byte[] digest = MessageDigest.getInstance("SHA-256")
+          .digest(token.getBytes(StandardCharsets.UTF_8));
+      return HexFormat.of().formatHex(digest);
+    } catch (NoSuchAlgorithmException ex) {
+      throw new IllegalStateException("SHA-256 is not available", ex);
+    }
   }
 
   private AuthUser mapUser(ResultSet rs, int rowNum) throws SQLException {

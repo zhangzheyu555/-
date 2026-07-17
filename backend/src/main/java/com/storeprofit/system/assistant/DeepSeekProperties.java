@@ -14,7 +14,9 @@ public class DeepSeekProperties {
   private String apiKey = "";
   private String baseUrl = "https://api.deepseek.com";
   private String model = "deepseek-v4-flash";
+  private String fastModel = "deepseek-v4-flash";
   private int maxTokens = 1200;
+  private int fastMaxTokens = 700;
   private double temperature = 0.2;
   private Duration connectTimeout = Duration.ofSeconds(5);
   private Duration timeout = Duration.ofSeconds(45);
@@ -76,12 +78,28 @@ public class DeepSeekProperties {
     this.model = model == null || model.isBlank() ? "deepseek-v4-flash" : model.trim();
   }
 
+  public String getFastModel() {
+    return fastModel;
+  }
+
+  public void setFastModel(String fastModel) {
+    this.fastModel = fastModel == null || fastModel.isBlank() ? "deepseek-v4-flash" : fastModel.trim();
+  }
+
   public int getMaxTokens() {
     return maxTokens;
   }
 
   public void setMaxTokens(int maxTokens) {
     this.maxTokens = maxTokens;
+  }
+
+  public int getFastMaxTokens() {
+    return fastMaxTokens;
+  }
+
+  public void setFastMaxTokens(int fastMaxTokens) {
+    this.fastMaxTokens = Math.max(256, fastMaxTokens);
   }
 
   public double getTemperature() {

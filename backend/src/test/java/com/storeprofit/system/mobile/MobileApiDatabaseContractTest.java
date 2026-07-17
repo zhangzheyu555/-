@@ -246,8 +246,19 @@ class MobileApiDatabaseContractTest {
     regionalWarehouseId = requiredLong("""
         select id from warehouse_facility where tenant_id = 1 and code = 'SD-REGIONAL'
         """);
+    jdbc.update("""
+        insert into warehouse_item(
+          tenant_id, code, name, category, unit, purchase_unit, stock_unit, ingredient_unit,
+          spec, unit_price, shelf_life_days, cups_per_unit, daily_usage_estimate,
+          min_stock_days, max_stock_days, min_stock_quantity, alert_enabled,
+          expiry_alert_days, active, sort_order, created_at
+        ) values (
+          1, 'MOBILE-DB-ITEM', '移动契约测试物料', '测试', '件', '件', '件', '件',
+          '测试规格', 10, 365, 1, 0, 1, 30, 0, 1, 3, 1, 999, current_timestamp
+        )
+        """);
     cupItemId = requiredLong("""
-        select id from warehouse_item where tenant_id = 1 and code = 'CUP-700'
+        select id from warehouse_item where tenant_id = 1 and code = 'MOBILE-DB-ITEM'
         """);
 
     jdbc.update("""

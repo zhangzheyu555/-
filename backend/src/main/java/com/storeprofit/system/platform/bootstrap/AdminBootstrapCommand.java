@@ -22,7 +22,7 @@ import java.util.Set;
 public final class AdminBootstrapCommand {
   public static final String COMMAND_ARGUMENT = "--admin-bootstrap";
   public static final String ENABLED_ENVIRONMENT = "APP_BOOTSTRAP_ADMIN_ENABLED";
-  static final int EXPECTED_FLYWAY_VERSION = 56;
+  static final int EXPECTED_FLYWAY_VERSION = 60;
 
   private final PasswordService passwordService;
   private final ConnectionFactory connectionFactory;
@@ -340,7 +340,7 @@ public final class AdminBootstrapCommand {
         "select id, name, status from tenant where 1 = 0",
         "select id, tenant_id, username, password_hash, display_name, role, store_id, "
             + "enabled, permission_version from auth_user where 1 = 0",
-        "select token, tenant_id, user_id, permission_version from auth_token where 1 = 0",
+        "select token_hash, tenant_id, user_id, permission_version from auth_token where 1 = 0",
         "select id, tenant_id, operator_id, operator_name, action, target_type, target_id, "
             + "after_json, reason from operation_log where 1 = 0",
         "select tenant_id, role_code, permission_code from role_permission where 1 = 0",

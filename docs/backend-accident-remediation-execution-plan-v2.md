@@ -1,7 +1,8 @@
 # AI Profit OS 后端事故整改执行计划 v2
 
-状态：BR2-00 证据包已完成；当前 remote HEAD 不具备发布/系统验收通过状态。
-远程基线：codex/deepseek-assistant @ 3d37ef6b3cc37f70fad9c328a360dd6aab97f7a1。
+状态：BR2-00-R1 的正式阻断基线已签署并实时复核；BR2-A-DF2 设计冻结草案待逐项签署，当前仍不具备发布/系统验收通过状态。
+正式阻断基线：codex/deepseek-assistant @ c83383ef2cbd8992ba8cbf6314ec5de758456530 / tree 4d14a9c8dc85bacec2f0e906417a84b9c0bd3673。
+历史说明：原 3d37 基线与 V54/V55 表述仅保留为历史审计输入；BR2-A 当前事实以 BR2-00-R1 和 BR2-A-DF2 为准。
 本计划不替代生产变更审批，也不授权连接生产、3306 或 3307。
 
 ## 0. BR2-00 完成记录
@@ -25,19 +26,35 @@
 证据目录：output/release-evidence/BR2-00-20260716-105934/。
 旧方案处置：保留为历史输入，当前执行以 backend-accident-remediation-blueprint-v2.md 为准。
 
+## 0.1 BR2-00-R1 基线替换与 DF2 状态
+
+| 项目 | 状态 |
+|---|---|
+| 正式阻断基线 | 已由张哲宇签署：c83383e / 4d14a9c / JAR 157B02F0…9074；不是发布通过 |
+| 远程复核 | 2026-07-16 已实时 PASS；记录见 output/release-evidence/BR2-A-DF2-20260716-140913/remote-baseline-reverification.md |
+| MySQL 当前事故 | V1–V39 成功，V40 第 263 行 HY000/1267 失败；V1–V57 是当前 MySQL 源链 |
+| BR2-A-DF2 | 已创建设计冻结草案 docs/backend-accident-remediation-br2-a-df2.md，待 DF2-D01 至 DF2-D08 签署 |
+| DF2 签署包 | 已生成 output/release-evidence/BR2-A-DF2-20260716-140913/df2-decision-signoff-pack.md；D06/D07/D08 含必须由负责人填写的生产决策 |
+| DF2 签署完整性 | 未通过：收到“DF2 已签署”声明，但现有签署包仍为空模板；详见 output/release-evidence/BR2-A-DF2-20260716-140913/df2-signoff-completeness-audit.md |
+| DF2 文档门禁 | 已通过：范围内 diff --check、尾随空白、决策/章节完整性和秘密字面量扫描；未运行代码构建或 MySQL，因为本次只有文档变更 |
+| BR2-A 编码/Flyway | 继续锁定；本次只修改文档和证据说明 |
+| BR2-B/C/D | 继续锁定 |
+
 ## 1. 包状态
 
 | 包 | 状态 | 解锁条件 |
 |---|---|---|
 | BR2-00 | 已完成（基线证据冻结） | 不适用 |
-| BR2-A 启动/迁移/发布 | 锁定（待书面设计冻结），不开始编码 | D-BR2-03、04、05、08 与 BR2-A 变更方案批准 |
+| BR2-A 启动/迁移/发布 | 设计冻结草案待签署，不开始编码 | DF2-D01 至 DF2-D08 和单独的 BR2-A 实施授权 |
 | BR2-B 身份/授权/租户 | 锁定 | BR2-A 真实 MySQL 通过，且 D-BR2-06、09 已决 |
 | BR2-C 库存/单据一致性 | 锁定 | BR2-A 真实 MySQL 通过，且 D-BR2-05、07 已决 |
 | BR2-D 财务/审批/异步 | 锁定 | BR2-A 真实 MySQL 通过，且 D-BR2-07、08 已决 |
 
-本次没有开始 BR2-A/B/C/D 代码。
+本次没有开始 BR2-A/B/C/D 代码；仅完成 BR2-A-DF2 书面设计草案和远程基线复核。
 
 ## 2. BR2-A 设计冻结清单
+
+正式草案见 docs/backend-accident-remediation-br2-a-df2.md。该文档以 c833/V57 事实替代本节中旧的 V54/V55 历史描述；未签署前不授权编码。
 
 在任何 Java、Vue、配置、脚本或 Flyway 改动前，发布、数据库、安全和业务负责人必须签署：
 
@@ -52,7 +69,7 @@
 ## 3. BR2-A 实施和验收门禁（未来）
 
 1. 记录 git status before，创建远程 HEAD clean worktree；不覆盖任何本地 overlay。
-2. 只以 append-only 迁移修复/治理；不改 V1-V55。
+2. 历史 V1–V57 不改写；未来新增迁移只能高于 V57，且不能替代 V40 前置兼容/恢复方案。
 3. 为 V40 增加真实 MySQL 8 空库、V39 升级、受影响历史数据、不同批准 collation 的测试。
 4. 实现并测试真实 runtime identity guard；按真实连接校验 version、port、database、current_user、SHOW GRANTS。
 5. 生产启动 fail closed：所有 seed/bootstrap/legacy/migration-auto 开关拒绝，正常 Web 不能建账号/样例数据。
@@ -86,5 +103,5 @@
 
 ## 6. 当前唯一建议
 
-仅推进 BR2-A 的书面设计冻结与最小启动/迁移恢复包。
+当前仅推进 BR2-A-DF2 的逐项签署和后续实施授权申请；签署前不得启动最小启动/迁移恢复包编码。
 BR2-B、BR2-C、BR2-D 继续锁定；不得因 BR2-00 完成而自动开始编码。

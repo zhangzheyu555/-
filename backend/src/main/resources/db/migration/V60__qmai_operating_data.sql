@@ -1,0 +1,100 @@
+create table qmai_platform_config (
+  tenant_id bigint not null,
+  brand_code varchar(40) not null default 'ruguo',
+  display_name varchar(120) not null default '企迈',
+  enabled tinyint(1) not null default 0,
+  updated_by bigint null,
+  updated_at timestamp not null default current_timestamp on update current_timestamp,
+  primary key (tenant_id, brand_code),
+  constraint fk_qmai_platform_config_tenant foreign key (tenant_id) references tenant(id),
+  constraint fk_qmai_platform_config_user foreign key (updated_by) references auth_user(id) on delete set null
+) engine=InnoDB default charset=utf8mb4 collate=utf8mb4_unicode_ci;
+
+create table qmai_store_mapping (
+  id bigint not null auto_increment primary key,
+  tenant_id bigint not null,
+  brand_code varchar(40) not null default 'ruguo',
+  qmai_shop_id varchar(80) not null,
+  qmai_shop_name varchar(160) not null,
+  store_id varchar(64) not null,
+  created_at timestamp not null default current_timestamp,
+  updated_at timestamp not null default current_timestamp on update current_timestamp,
+  unique key uk_qmai_shop_mapping (tenant_id, brand_code, qmai_shop_id),
+  unique key uk_qmai_store_mapping (tenant_id, brand_code, store_id),
+  index idx_qmai_mapping_store (tenant_id, store_id),
+  constraint fk_qmai_mapping_tenant foreign key (tenant_id) references tenant(id),
+  constraint fk_qmai_mapping_store foreign key (store_id) references store_branch(id)
+) engine=InnoDB default charset=utf8mb4 collate=utf8mb4_unicode_ci;
+
+create table qmai_sync_batch (
+  id bigint not null auto_increment primary key,
+  tenant_id bigint not null,
+  brand_code varchar(40) not null default 'ruguo',
+  target_month char(7) not null,
+  status varchar(24) not null,
+  requested_by bigint null,
+  requested_by_name varchar(120) null,
+  total_tasks int not null default 0,
+  completed_tasks int not null default 0,
+  failed_tasks int not null default 0,
+  daily_rows int not null default 0,
+  product_rows int not null default 0,
+  error_summary varchar(1000) null,
+  created_at timestamp not null default current_timestamp,
+  started_at timestamp null,
+  finished_at timestamp null,
+  index idx_qmai_batch_month (tenant_id, brand_code, target_month, created_at),
+  index idx_qmai_batch_status (tenant_id, status, created_at),
+  constraint chk_qmai_batch_status check (status in ('QUEUED', 'RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED')),
+  constraint fk_qmai_batch_tenant foreign key (tenant_id) references tenant(id),
+  constraint fk_qmai_batch_user foreign key (requested_by) references auth_user(id) on delete set null
+) engine=InnoDB default charset=utf8mb4 collate=utf8mb4_unicode_ci;
+
+create table qmai_daily_sales (
+  id bigint not null auto_increment primary key,
+  tenant_id bigint not null,
+  brand_code varchar(40) not null default 'ruguo',
+  qmai_shop_id varchar(80) not null,
+  store_id varchar(64) not null,
+  business_date date not null,
+  source_row_count int not null default 0,
+  receivable_amount decimal(18,2) not null default 0,
+  received_amount decimal(18,2) not null default 0,
+  cost_amount decimal(18,2) not null default 0,
+  refund_amount decimal(18,2) not null default 0,
+  sync_batch_id bigint not null,
+  synced_at timestamp not null default current_timestamp,
+  unique key uk_qmai_daily_sales (tenant_id, brand_code, qmai_shop_id, business_date),
+  index idx_qmai_daily_store_date (tenant_id, store_id, business_date),
+  constraint fk_qmai_daily_tenant foreign key (tenant_id) references tenant(id),
+  constraint fk_qmai_daily_store foreign key (store_id) references store_branch(id),
+  constraint fk_qmai_daily_batch foreign key (sync_batch_id) references qmai_sync_batch(id)
+) engine=InnoDB default charset=utf8mb4 collate=utf8mb4_unicode_ci;
+
+create table qmai_product_sales (
+  id bigint not null auto_increment primary key,
+  tenant_id bigint not null,
+  brand_code varchar(40) not null default 'ruguo',
+  qmai_shop_id varchar(80) not null,
+  store_id varchar(64) not null,
+  business_date date not null,
+  product_key varchar(128) not null,
+  product_id varchar(120) null,
+  sku_id varchar(120) null,
+  item_name varchar(300) not null,
+  category_name varchar(160) null,
+  quantity decimal(18,3) not null default 0,
+  refund_quantity decimal(18,3) not null default 0,
+  receivable_amount decimal(18,2) not null default 0,
+  received_amount decimal(18,2) not null default 0,
+  cost_amount decimal(18,2) not null default 0,
+  refund_amount decimal(18,2) not null default 0,
+  sync_batch_id bigint not null,
+  synced_at timestamp not null default current_timestamp,
+  unique key uk_qmai_product_sales (tenant_id, brand_code, qmai_shop_id, business_date, product_key),
+  index idx_qmai_product_store_date (tenant_id, store_id, business_date),
+  index idx_qmai_product_name (tenant_id, item_name),
+  constraint fk_qmai_product_tenant foreign key (tenant_id) references tenant(id),
+  constraint fk_qmai_product_store foreign key (store_id) references store_branch(id),
+  constraint fk_qmai_product_batch foreign key (sync_batch_id) references qmai_sync_batch(id)
+) engine=InnoDB default charset=utf8mb4 collate=utf8mb4_unicode_ci;

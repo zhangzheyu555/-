@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.MultipartException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -132,6 +133,22 @@ public class GlobalExceptionHandler {
     }
     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
         .body(ApiResponse.fail("INTERNAL_ERROR", "服务器处理失败，请稍后重试", requestId));
+  }
+
+  @ExceptionHandler(NoResourceFoundException.class)
+  public ResponseEntity<ApiResponse<Void>> handleMissingResource(
+      NoResourceFoundException ex,
+      HttpServletRequest request
+  ) {
+    String requestId = RequestIdFilter.getRequestId(request);
+    log.info("Requested resource is unavailable: {} {} requestId={}",
+        request.getMethod(), request.getRequestURI(), requestId);
+    return ResponseEntity.status(HttpStatus.NOT_FOUND)
+        .body(ApiResponse.fail(
+            "API_ENDPOINT_UNAVAILABLE",
+            "请求的服务当前不可用，请确认前后端版本一致后重试。",
+            requestId
+        ));
   }
 
   @ExceptionHandler(Throwable.class)

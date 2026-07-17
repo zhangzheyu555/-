@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
@@ -69,6 +70,24 @@ class DeepSeekClientTest {
   }
 
   @Test
+  void automaticProfileUsesFastModelAndSmallerResponseBudget() {
+    AtomicReference<String> requestBody = new AtomicReference<>();
+    properties.setFastModel("fast-model");
+    properties.setFastMaxTokens(640);
+    server.createContext("/chat/completions", exchange -> {
+      requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+      respond(exchange, 200, successResponse("req-fast", "fast-model", "{\"summary\":\"ok\"}"));
+    });
+
+    new DeepSeekClient(properties, objectMapper)
+        .analyzeFast("system prompt", "user prompt", Duration.ofSeconds(1));
+
+    JsonNode sent = readTree(requestBody.get());
+    assertThat(sent.path("model").asText()).isEqualTo("fast-model");
+    assertThat(sent.path("max_tokens").asInt()).isEqualTo(640);
+  }
+
+  @Test
   void retriesRateLimitOnlyOnceThenSucceeds() {
     AtomicInteger calls = new AtomicInteger();
     server.createContext("/chat/completions", exchange -> {
@@ -85,6 +104,40 @@ class DeepSeekClientTest {
 
     assertThat(calls).hasValue(2);
     assertThat(result.requestId()).isEqualTo("req-after-retry");
+  }
+
+  @Test
+  void retriesWithoutJsonResponseFormatWhenJsonModeReturnsEmptyContent() {
+    AtomicInteger calls = new AtomicInteger();
+    List<JsonNode> requests = new ArrayList<>();
+    server.createContext("/chat/completions", exchange -> {
+      requests.add(readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)));
+      if (calls.incrementAndGet() == 1) {
+        respond(exchange, 200, objectMapper.writeValueAsString(Map.of(
+            "id", "empty-json-mode",
+            "model", "deepseek-v4-pro",
+            "choices", List.of(Map.of(
+                "finish_reason", "length",
+                "message", Map.of(
+                    "content", "",
+                    "reasoning_content", "reasoning consumed the response budget"
+                )
+            ))
+        )));
+      } else {
+        respond(exchange, 200, successResponse(
+            "fallback-without-json-mode", "deepseek-v4-pro", "{\"status\":\"OK\"}"));
+      }
+    });
+
+    DeepSeekCallResult result = new DeepSeekClient(properties, objectMapper)
+        .analyze("system", "user");
+
+    assertThat(calls).hasValue(2);
+    assertThat(requests.get(0).path("response_format").path("type").asText()).isEqualTo("json_object");
+    assertThat(requests.get(1).has("response_format")).isFalse();
+    assertThat(result.requestId()).isEqualTo("fallback-without-json-mode");
+    assertThat(result.content()).isEqualTo("{\"status\":\"OK\"}");
   }
 
   @Test

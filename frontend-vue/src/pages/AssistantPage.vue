@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   AlertTriangle,
   CheckCircle2,
   ClipboardPlus,
-  Database,
   Maximize2,
   Minimize2,
   RefreshCcw,
@@ -33,7 +32,7 @@ import { useBusinessScope } from '../composables/useBusinessScope'
 import { useAuthStore } from '../stores/auth'
 
 type AssistantMode = 'AUTO' | 'LOCAL' | 'AI'
-type RunStatus = 'loading' | 'success' | 'error'
+type RunStatus = 'loading-data' | 'loading-ai' | 'success' | 'error' | 'partial-error'
 type AssistantServiceTone = 'ready' | 'configured' | 'warning'
 
 interface AssistantServicePresentation {
@@ -46,6 +45,7 @@ interface AssistantRun {
   question: string
   mode: AssistantMode
   status: RunStatus
+  startedAt: number
   response?: AssistantChatResponse
   error?: string
 }
@@ -89,6 +89,7 @@ const workspaceToggle = ref<HTMLButtonElement | null>(null)
 const workspaceFullscreen = ref(false)
 const fullscreenStyle = ref<Record<string, string>>({})
 const followLatest = ref(true)
+const progressClock = ref(Date.now())
 let appMainScrollTop = 0
 let bodyOverflow = ''
 let documentOverflow = ''
@@ -100,6 +101,7 @@ let assistantStatusRetryTimer: number | null = null
 let lastAssistantStatusFocusRefreshAt = 0
 let assistantStatusUnconfiguredRetryUsed = false
 let pageDisposed = false
+let progressTimer: number | null = null
 
 // A fresh backend process does not inherit the previous Java process environment. Recheck once
 // after a known "not configured" result and whenever the operator returns to this page, without
@@ -125,8 +127,8 @@ const selectedStoreName = computed(() => selectedStore.value?.name || businessSc
 const mainMetrics = computed(() => metricCards(currentEntry.value))
 const modeHint = computed(() => {
   if (assistantMode.value === 'LOCAL') return '只查数据库，不调用AI'
-  if (assistantMode.value === 'AI') return '必须取得真实AI分析，失败会明确提示'
-  return '数字查询走数据库，原因与建议走AI'
+  if (assistantMode.value === 'AI') return '深度模型分析更完整，但等待时间会更长'
+  return '数字查询走数据库，原因与建议优先使用快速AI'
 })
 const assistantServicePresentation = computed<AssistantServicePresentation | null>(() => {
   if (!assistantStatus.value) return null
@@ -150,6 +152,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', handlePageKeydown)
   window.removeEventListener('focus', refreshAssistantStatusOnFocus)
   clearAssistantStatusRetryTimer()
+  stopProgressClock()
   releaseFullscreenLayout(false)
 })
 
@@ -350,84 +353,162 @@ async function submitQuestion(preset?: string) {
   pageError.value = ''
   input.value = ''
   const requestMode = assistantRequestMode(question, assistantMode.value)
-  const run: AssistantRun = {
+  const run = reactive<AssistantRun>({
     id: ++runId,
     question,
     mode: requestMode,
-    status: 'loading',
-  }
+    status: 'loading-data',
+    startedAt: Date.now(),
+  })
   runs.value.push(run)
   sending.value = true
+  startProgressClock()
   followLatest.value = true
   await nextTick(() => scrollToBottom(true))
   try {
-    run.response = await askAssistant({
+    const localResponse = await askAssistant({
       message: question,
-      mode: requestMode,
+      mode: 'LOCAL',
       storeId: businessScope.isBoss.value ? '' : effectiveStoreId.value,
       month: selectedMonth.value,
     })
+    run.response = localResponse
+
+    if (requestMode !== 'LOCAL') {
+      run.status = 'loading-ai'
+      await nextTick(() => scrollToBottom())
+      run.response = await askAssistant({
+        message: question,
+        mode: requestMode,
+        storeId: businessScope.isBoss.value ? '' : effectiveStoreId.value,
+        month: selectedMonth.value,
+        snapshotId: localResponse.localData.snapshotId,
+      })
+    }
     run.status = 'success'
   } catch (error) {
-    run.status = 'error'
+    run.status = run.response ? 'partial-error' : 'error'
     run.error = normalizeError(error, '经营助手暂时无法完成请求，请稍后重试。')
   } finally {
-    refreshAssistantStatusAfterAnalysis(requestMode, run.response)
+    refreshAssistantStatusAfterAnalysis(requestMode === 'LOCAL' ? 'LOCAL' : 'AI', run.response)
     sending.value = false
-    await nextTick(() => scrollToBottom())
+    stopProgressClock()
+    await nextTick(() => focusCompletedAnswer(run))
   }
 }
 
 async function requestAiAnalysis(run: AssistantRun) {
   if (sending.value) return
-  run.status = 'loading'
+  run.status = 'loading-ai'
+  run.startedAt = Date.now()
   run.error = ''
   sending.value = true
+  startProgressClock()
   try {
     run.response = await askAssistant({
       message: run.question,
       mode: 'AI',
       storeId: businessScope.isBoss.value ? '' : effectiveStoreId.value,
       month: selectedMonth.value,
+      snapshotId: run.response?.localData.snapshotId,
     })
     run.mode = 'AI'
     run.status = 'success'
   } catch (error) {
-    run.status = 'error'
+    run.status = run.response ? 'partial-error' : 'error'
     run.error = normalizeError(error, 'AI分析请求失败，请稍后重试。')
   } finally {
     refreshAssistantStatusAfterAnalysis('AI', run.response)
     sending.value = false
-    await nextTick(() => scrollToBottom())
+    stopProgressClock()
+    await nextTick(() => focusCompletedAnswer(run))
   }
 }
 
 async function retryRun(run: AssistantRun) {
-  if (run.mode === 'AI' || run.response?.selectedMode === 'AI') {
+  if (run.status === 'partial-error' || run.mode === 'AI' || run.response?.selectedMode === 'AI') {
     await requestAiAnalysis(run)
     return
   }
   if (sending.value) return
-  run.status = 'loading'
+  run.status = 'loading-data'
+  run.startedAt = Date.now()
   run.error = ''
   sending.value = true
+  startProgressClock()
   const requestMode = assistantRequestMode(run.question, run.mode)
   try {
     run.response = await askAssistant({
       message: run.question,
-      mode: requestMode,
+      mode: 'LOCAL',
       storeId: businessScope.isBoss.value ? '' : effectiveStoreId.value,
       month: selectedMonth.value,
     })
+    if (requestMode !== 'LOCAL') {
+      run.status = 'loading-ai'
+      await nextTick(() => scrollToBottom())
+      run.response = await askAssistant({
+        message: run.question,
+        mode: requestMode,
+        storeId: businessScope.isBoss.value ? '' : effectiveStoreId.value,
+        month: selectedMonth.value,
+        snapshotId: run.response.localData.snapshotId,
+      })
+    }
     run.status = 'success'
   } catch (error) {
-    run.status = 'error'
+    run.status = run.response ? 'partial-error' : 'error'
     run.error = normalizeError(error, '经营助手暂时无法完成请求，请稍后重试。')
   } finally {
-    refreshAssistantStatusAfterAnalysis(requestMode, run.response)
+    refreshAssistantStatusAfterAnalysis(requestMode === 'LOCAL' ? 'LOCAL' : 'AI', run.response)
     sending.value = false
-    await nextTick(() => scrollToBottom())
+    stopProgressClock()
+    await nextTick(() => focusCompletedAnswer(run))
   }
+}
+
+function startProgressClock() {
+  progressClock.value = Date.now()
+  if (progressTimer !== null) return
+  progressTimer = window.setInterval(() => {
+    progressClock.value = Date.now()
+  }, 1_000)
+}
+
+function stopProgressClock() {
+  if (progressTimer === null) return
+  window.clearInterval(progressTimer)
+  progressTimer = null
+  progressClock.value = Date.now()
+}
+
+function elapsedSeconds(run: AssistantRun) {
+  return Math.max(0, Math.floor((progressClock.value - run.startedAt) / 1_000))
+}
+
+function aiProgressText(run: AssistantRun) {
+  return elapsedSeconds(run) >= 8
+    ? '正在整理原因与行动建议'
+    : '正在分析经营变化与风险'
+}
+
+function focusCompletedAnswer(run: AssistantRun) {
+  const container = resultScroll.value
+  if (!container || !run.response?.aiAnalysis.available) {
+    scrollToBottom()
+    return
+  }
+  const target = container.querySelector<HTMLElement>(`[data-run-id="${run.id}"] .ai-result`)
+  if (!target) {
+    scrollToBottom()
+    return
+  }
+  const containerRect = container.getBoundingClientRect()
+  const targetRect = target.getBoundingClientRect()
+  container.scrollTo({
+    top: Math.max(0, container.scrollTop + targetRect.top - containerRect.top - 12),
+    behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+  })
 }
 
 function refreshAssistantStatusAfterAnalysis(
@@ -891,7 +972,10 @@ function normalizeError(value: unknown, fallback: string) {
 
     <section
       class="context-bar"
-      :class="{ 'context-bar--single-store': businessScope.isStoreManager.value }"
+      :class="{
+        'context-bar--single-store': businessScope.isStoreManager.value,
+        'context-bar--conversation': runs.length,
+      }"
       aria-label="当前分析范围"
     >
       <label v-if="businessScope.isBoss.value" class="context-field boss-scope">
@@ -954,6 +1038,7 @@ function normalizeError(value: unknown, fallback: string) {
       >
         <Minimize2 v-if="workspaceFullscreen" :size="18" />
         <Maximize2 v-else :size="18" />
+        <span>{{ workspaceFullscreen ? '退出展开' : '展开' }}</span>
       </button>
 
       <div ref="resultScroll" class="result-stream" aria-live="polite" @scroll.passive="handleResultScroll">
@@ -968,16 +1053,16 @@ function normalizeError(value: unknown, fallback: string) {
           </div>
         </div>
 
-        <article v-for="run in runs" :key="run.id" class="assistant-run">
+        <article v-for="run in runs" :key="run.id" class="assistant-run" :data-run-id="run.id">
           <div class="question-row">
             <span>我的问题</span>
             <p>{{ run.question }}</p>
           </div>
 
-          <div v-if="run.status === 'loading'" class="analysis-loading" role="status">
+          <div v-if="run.status === 'loading-data' && !run.response" class="analysis-loading" role="status">
             <span class="loading-line wide"></span>
             <span class="loading-line"></span>
-            <p>{{ run.mode === 'LOCAL' ? '正在查询经营数据库…' : '正在整理真实数据并请求AI分析…' }}</p>
+            <p>正在读取当前范围的经营数据…</p>
           </div>
 
           <div v-else-if="run.status === 'error'" class="run-error" role="alert">
@@ -986,47 +1071,63 @@ function normalizeError(value: unknown, fallback: string) {
             <button type="button" :disabled="sending" @click="retryRun(run)">重试</button>
           </div>
 
-          <template v-else-if="run.response">
+          <div v-else-if="run.response" class="assistant-answer">
             <section class="data-result" aria-label="经营数据">
               <header class="result-heading">
                 <div>
-                  <Database :size="18" />
-                  <h3>经营数据</h3>
+                  <CheckCircle2 :size="18" />
+                  <h3>经营数据已就绪</h3>
                 </div>
                 <span>{{ run.response.localData.dataPeriod }} · {{ run.response.localData.dataScope }}</span>
               </header>
-              <div class="data-meta" aria-label="数据口径">
-                <span><strong>来源</strong>{{ run.response.localData.source }}</span>
-                <span><strong>更新时间</strong>{{ formatUpdatedAt(run.response.localData.updatedAt) }}</span>
-                <span><strong>处理方式</strong>{{ run.response.selectedMode === 'AI' ? '数据库计算 + AI分析' : '仅数据库计算' }}</span>
-              </div>
               <p class="data-summary">{{ run.response.localData.summary }}</p>
               <div v-if="run.response.localData.metrics.length" class="local-metrics">
                 <article v-for="metric in visibleLocalMetrics(run.response.localData.metrics)" :key="metric.key">
                   <span>{{ metric.label }}</span>
                   <strong>{{ metric.displayValue }}</strong>
                   <small v-if="metric.comparison && metric.changeRate !== null">
-                    {{ metric.comparison }} {{ metric.changeRate >= 0 ? '+' : '' }}{{ (metric.changeRate * 100).toFixed(1) }}%
+                    {{ metric.comparison }} {{ Number(metric.changeRate) >= 0 ? '+' : '' }}{{ (Number(metric.changeRate) * 100).toFixed(1) }}%
                   </small>
                 </article>
               </div>
-              <footer>
-                {{ run.response.selectionReason }}
-                <span v-if="run.response.localData.calculationVersion"> · 计算版本 {{ run.response.localData.calculationVersion }}</span>
-              </footer>
+              <div class="data-meta" aria-label="数据口径">
+                <span><strong>来源</strong>{{ run.response.localData.source }}</span>
+                <span><strong>更新时间</strong>{{ formatUpdatedAt(run.response.localData.updatedAt) }}</span>
+                <span><strong>处理方式</strong>{{ run.response.selectedMode === 'AI' ? '数据库计算 + AI分析' : '仅数据库计算' }}</span>
+              </div>
             </section>
 
-            <section v-if="run.response.aiAnalysis.available" class="ai-result" aria-label="AI经营分析">
+            <section
+              v-if="run.status === 'loading-ai'"
+              class="ai-progress"
+              role="status"
+              data-testid="assistant-ai-progress"
+            >
+              <div class="ai-progress-copy">
+                <span class="ai-progress-icon"><Sparkles :size="18" /></span>
+                <div>
+                  <strong>经营数据已显示，AI 继续分析</strong>
+                  <p>{{ aiProgressText(run) }}</p>
+                </div>
+              </div>
+              <span class="elapsed-time">已等待 {{ elapsedSeconds(run) }} 秒</span>
+            </section>
+
+            <section v-else-if="run.status === 'partial-error'" class="ai-unavailable" role="alert">
+              <div><AlertTriangle :size="18" /><strong>经营数据已保留，AI 分析未完成</strong></div>
+              <p>{{ run.error }}</p>
+              <button type="button" :disabled="sending" @click="requestAiAnalysis(run)">
+                <RefreshCcw :size="15" />重新分析
+              </button>
+            </section>
+
+            <section v-else-if="run.response.aiAnalysis.available" class="ai-result" aria-label="AI经营分析">
               <header class="result-heading ai-heading">
                 <div>
                   <Sparkles :size="18" />
                   <h3>AI经营分析</h3>
                   <span v-if="isDataLimitedAnalysis(run.response.aiAnalysis)" class="analysis-type-tag">经营数据不足</span>
                 </div>
-                <span>
-                  {{ run.response.aiAnalysis.provider }} · {{ run.response.aiAnalysis.model }} · {{ latencyText(run.response.aiAnalysis.latencyMs) }}
-                  <template v-if="maskedRequestId(run.response.aiAnalysis.requestId)"> · 请求 {{ maskedRequestId(run.response.aiAnalysis.requestId) }}</template>
-                </span>
               </header>
               <section v-if="isDataLimitedAnalysis(run.response.aiAnalysis)" class="analysis-data-limited" role="status" data-testid="assistant-data-limited">
                 <div><AlertTriangle :size="18" /><strong>经营数据不足</strong></div>
@@ -1051,15 +1152,18 @@ function normalizeError(value: unknown, fallback: string) {
                   </ul>
                 </section>
               </div>
-              <section v-if="run.response.aiAnalysis.possibleCauses.length" class="analysis-block">
-                <h4>可能原因 <small>以下为推测，需结合业务核实</small></h4>
+              <details v-if="run.response.aiAnalysis.possibleCauses.length" class="analysis-disclosure">
+                <summary>
+                  <span>可能原因</span>
+                  <small>需业务核实 · {{ run.response.aiAnalysis.possibleCauses.length }} 项</small>
+                </summary>
                 <ul class="cause-list">
                   <li v-for="item in run.response.aiAnalysis.possibleCauses" :key="`${item.cause}-${item.basis}`">
                     <div><strong>{{ item.cause }}</strong><span class="confidence-tag">可信度{{ confidenceText(item.confidence) }}</span></div>
                     <p>{{ item.basis }}</p>
                   </li>
                 </ul>
-              </section>
+              </details>
               <section class="analysis-block action-block">
                 <h4>{{ isDataLimitedAnalysis(run.response.aiAnalysis) ? '请先补全以下经营数据' : '本周行动建议' }}</h4>
                 <ol class="action-list">
@@ -1091,7 +1195,11 @@ function normalizeError(value: unknown, fallback: string) {
                 <strong>数据限制</strong>
                 <span>{{ run.response.aiAnalysis.limitations.join('；') }}</span>
               </section>
-              <footer>判断可信度：{{ confidenceText(run.response.aiAnalysis.confidence) }}</footer>
+              <footer class="analysis-meta">
+                <span>判断可信度：{{ confidenceText(run.response.aiAnalysis.confidence) }}</span>
+                <span>{{ run.response.aiAnalysis.provider }} · {{ run.response.aiAnalysis.model }} · {{ latencyText(run.response.aiAnalysis.latencyMs) }}</span>
+                <span v-if="maskedRequestId(run.response.aiAnalysis.requestId)">请求 {{ maskedRequestId(run.response.aiAnalysis.requestId) }}</span>
+              </footer>
             </section>
 
             <section v-else-if="run.response.error" class="ai-unavailable" role="status">
@@ -1105,17 +1213,17 @@ function normalizeError(value: unknown, fallback: string) {
             <div v-else-if="run.mode === 'LOCAL' || run.mode === 'AUTO'" class="local-followup">
               <span>当前只查询了真实经营数据。</span>
               <button type="button" :disabled="sending" @click="requestAiAnalysis(run)">
-                <Sparkles :size="15" />让AI分析原因和建议
+                <Sparkles :size="15" />使用深度分析原因和建议
               </button>
             </div>
-          </template>
+          </div>
         </article>
       </div>
 
       <footer class="assistant-composer">
         <div class="mode-switch" aria-label="回答模式">
           <button
-            v-for="mode in ([['LOCAL', '查数据'], ['AI', 'AI分析'], ['AUTO', '自动']] as const)"
+            v-for="mode in ([['LOCAL', '查数据'], ['AI', '深度分析'], ['AUTO', '自动']] as const)"
             :key="mode[0]"
             type="button"
             :class="{ active: assistantMode === mode[0] }"
@@ -1213,7 +1321,7 @@ function normalizeError(value: unknown, fallback: string) {
   height: 100%;
   min-height: 0;
   grid-template-rows: auto auto minmax(0, 1fr);
-  gap: 12px;
+  gap: 10px;
   overflow: hidden !important;
   container-type: inline-size;
 }
@@ -1253,10 +1361,10 @@ function normalizeError(value: unknown, fallback: string) {
 
 .context-bar {
   display: grid;
-  grid-template-columns: minmax(220px, 1.3fr) 160px minmax(480px, 2fr);
+  grid-template-columns: minmax(190px, 1fr) 150px minmax(520px, 2.4fr);
   gap: 12px;
   align-items: end;
-  padding: 12px;
+  padding: 10px 12px;
   border: 1px solid var(--ds-line);
   border-radius: 6px;
   background: var(--ds-surface);
@@ -1312,14 +1420,19 @@ function normalizeError(value: unknown, fallback: string) {
   top: 8px;
   right: 8px;
   display: inline-flex;
-  width: 44px;
+  width: auto;
+  min-width: 44px;
   height: 44px;
+  padding: 0 12px;
   align-items: center;
   justify-content: center;
   border: 1px solid var(--ds-line-strong);
   border-radius: 6px;
   background: var(--ds-surface);
   color: var(--ds-secondary);
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .workspace-toggle:hover {
@@ -1338,7 +1451,7 @@ function normalizeError(value: unknown, fallback: string) {
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
-  padding: 16px;
+  padding: 20px 24px 28px;
   background: var(--ds-surface-muted);
 }
 .assistant-empty { display: grid; width: 100%; max-width: 680px; min-height: 100%; margin: 0 auto; padding: 48px 16px 24px; place-content: center; justify-items: center; text-align: center; }
@@ -1349,10 +1462,17 @@ function normalizeError(value: unknown, fallback: string) {
 .empty-questions button { min-height: 40px; padding: 0 14px; }
 .empty-questions button:hover { border-color: var(--ds-primary-hover); background: var(--ds-primary-soft); }
 
-.assistant-run { max-width: 1160px; margin: 0 auto 16px; }
-.question-row { display: flex; align-items: flex-start; justify-content: flex-end; gap: 10px; margin-bottom: 10px; }
+.assistant-run { width: min(1280px, 100%); margin: 0 auto 28px; }
+.question-row { display: flex; align-items: flex-start; justify-content: flex-start; gap: 10px; margin-bottom: 10px; }
 .question-row span { padding-top: 10px; color: var(--ds-muted); font-size: 12px; }
-.question-row p { max-width: 70%; margin: 0; padding: 10px 14px; border-radius: 6px; background: var(--ds-primary-hover); color: #fff; line-height: 1.55; }
+.question-row p { max-width: min(760px, 86%); margin: 0; padding: 10px 14px; border-radius: 6px; background: #e5f4f1; color: var(--ds-ink); line-height: 1.6; }
+
+.assistant-answer {
+  overflow: hidden;
+  border: 1px solid var(--ds-line);
+  border-radius: 8px;
+  background: var(--ds-surface);
+}
 
 .data-result,
 .ai-result,
@@ -1364,15 +1484,25 @@ function normalizeError(value: unknown, fallback: string) {
   border-radius: 6px;
   background: var(--ds-surface);
 }
+.assistant-answer > .data-result,
+.assistant-answer > .ai-result,
+.assistant-answer > .ai-unavailable,
+.assistant-answer > .local-followup {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
 .data-result,
-.ai-result { padding: 18px; }
-.ai-result { margin-top: 12px; }
+.ai-result { padding: 20px 22px; }
+.assistant-answer > .ai-result,
+.assistant-answer > .ai-unavailable,
+.assistant-answer > .local-followup { border-top: 1px solid var(--ds-line); }
 .result-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .result-heading > div { display: flex; align-items: center; gap: 8px; }
 .result-heading h3 { margin: 0; font-size: 16px; }
 .result-heading > span { color: var(--ds-muted); font-size: 12px; }
-.data-summary { margin: 14px 0; color: var(--ds-ink); line-height: 1.65; }
-.data-meta { display: flex; margin-top: 12px; padding: 9px 0; gap: 20px; flex-wrap: wrap; border-block: 1px solid var(--ds-line); color: var(--ds-secondary); font-size: 12px; }
+.data-summary { max-width: 76ch; margin: 14px 0; color: var(--ds-ink); font-size: 15px; line-height: 1.7; text-wrap: pretty; }
+.data-meta { display: flex; margin-top: 12px; padding-top: 10px; gap: 20px; flex-wrap: wrap; border-top: 1px solid var(--ds-line); color: var(--ds-secondary); font-size: 12px; }
 .data-meta span { display: inline-flex; gap: 5px; }
 .data-meta strong { color: var(--ds-muted); font-weight: 500; }
 .local-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-block: 1px solid var(--ds-line); }
@@ -1395,10 +1525,13 @@ function normalizeError(value: unknown, fallback: string) {
 .analysis-block p,
 .analysis-block ul,
 .analysis-block ol { margin: 0; color: var(--ds-secondary); line-height: 1.75; }
+.analysis-block p,
+.analysis-block li { max-width: 78ch; text-wrap: pretty; }
 .analysis-block ul,
 .analysis-block ol { padding-left: 22px; }
-.conclusion-block { padding: 14px; border: 1px solid var(--ds-line); border-radius: 6px; background: var(--ds-primary-soft); }
-.analysis-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.conclusion-block { padding: 16px 18px; border-radius: 6px; background: var(--ds-primary-soft); }
+.conclusion-block p { color: var(--ds-ink); font-size: 15px; }
+.analysis-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 36px; }
 .risk-block { color: var(--ds-warning); }
 .risk-list,
 .cause-list,
@@ -1418,6 +1551,10 @@ function normalizeError(value: unknown, fallback: string) {
 .cause-list li > div { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
 .cause-list strong { color: var(--ds-ink); font-size: 13px; }
 .confidence-tag { background: var(--ds-surface-muted); color: var(--ds-secondary); }
+.analysis-disclosure { margin-top: 18px; border-top: 1px solid var(--ds-line); }
+.analysis-disclosure summary { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 16px; cursor: pointer; color: var(--ds-ink); font-size: 14px; font-weight: 700; }
+.analysis-disclosure summary small { color: var(--ds-muted); font-size: 12px; font-weight: 400; }
+.analysis-disclosure .cause-list { margin: 0 0 6px; }
 .action-list { counter-reset: action-counter; }
 .action-list > li { display: flex; padding: 14px 0; align-items: flex-start; gap: 16px; border-top: 1px solid var(--ds-line); counter-increment: action-counter; }
 .action-list > li::before { content: counter(action-counter); display: grid; width: 26px; height: 26px; flex: none; place-items: center; border-radius: 50%; background: var(--ds-primary-soft); color: var(--ds-primary-hover); font-size: 12px; font-weight: 700; }
@@ -1437,6 +1574,23 @@ function normalizeError(value: unknown, fallback: string) {
 .action-add-button.added { border-color: var(--ds-line); color: var(--ds-success); }
 .action-add-button:disabled { cursor: not-allowed; opacity: .72; }
 .analysis-limitations { display: flex; margin-top: 18px; gap: 8px; padding-top: 12px; border-top: 1px solid var(--ds-line); color: var(--ds-muted); font-size: 12px; }
+.analysis-meta { display: flex; gap: 6px 18px; flex-wrap: wrap; padding-top: 12px; border-top: 1px solid var(--ds-line); }
+
+.ai-progress {
+  display: flex;
+  min-height: 96px;
+  padding: 18px 22px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  border-top: 1px solid var(--ds-line);
+  background: var(--ds-primary-soft);
+}
+.ai-progress-copy { display: flex; min-width: 0; align-items: center; gap: 12px; }
+.ai-progress-icon { display: grid; width: 38px; height: 38px; flex: none; place-items: center; border-radius: 50%; background: var(--ds-surface); color: var(--ds-primary-hover); animation: pulse 1.4s ease-in-out infinite; }
+.ai-progress-copy strong { display: block; color: var(--ds-ink); font-size: 14px; }
+.ai-progress-copy p { margin: 4px 0 0; color: var(--ds-secondary); font-size: 13px; }
+.elapsed-time { flex: none; color: var(--ds-primary-hover); font-size: 13px; font-variant-numeric: tabular-nums; }
 
 .ai-unavailable { margin-top: 12px; padding: 16px; background: var(--ds-warning-soft); }
 .ai-unavailable > div { display: flex; align-items: center; gap: 8px; color: #8a560c; }
@@ -1453,7 +1607,7 @@ function normalizeError(value: unknown, fallback: string) {
 .loading-line { width: 52%; height: 12px; border-radius: 4px; background: #e7efed; animation: pulse 1.2s ease-in-out infinite; }
 .loading-line.wide { width: 86%; }
 
-.assistant-composer { flex: none; padding: 12px 16px 16px; border-top: 1px solid var(--ds-line); background: var(--ds-surface); }
+.assistant-composer { position: relative; z-index: 3; flex: none; padding: 12px 16px 16px; border-top: 1px solid var(--ds-line); background: var(--ds-surface); }
 .mode-switch { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
 .mode-switch button { min-height: 34px; padding: 0 12px; }
 .mode-switch button.active { border-color: var(--ds-primary-hover); background: var(--ds-primary-hover); color: #fff; }
@@ -1492,17 +1646,30 @@ function normalizeError(value: unknown, fallback: string) {
 }
 
 @media (max-width: 720px) {
+  .store-assistant-page {
+    height: auto;
+    min-height: 100%;
+    grid-template-rows: auto auto minmax(560px, 1fr);
+    overflow-y: auto !important;
+  }
+  .assistant-workspace { min-height: 560px; }
   .context-bar { grid-template-columns: 1fr; }
+  .context-bar.context-bar--conversation { grid-template-columns: minmax(0, 1fr) 132px; align-items: end; }
+  .context-bar--conversation .metric-strip,
+  .context-bar--conversation .integrity-warning { display: none; }
+  .context-bar--conversation .boss-store-count { display: none; }
   .metric-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .metric-item:nth-child(odd) { border-left: 0; }
   .result-stream { padding: 12px; }
+  .workspace-toggle span { display: none; }
+  .workspace-toggle { padding: 0; }
   .question-row p { max-width: 88%; }
   .local-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .local-metrics article:nth-child(5n) { border-right: 1px solid var(--ds-line); }
   .local-followup { align-items: stretch; flex-direction: column; }
   .mode-switch { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
   .mode-switch button { padding: 0 8px; }
-  .mode-switch > span:not(.service-status) { grid-column: 1 / -1; margin-left: 0; }
+  .mode-switch > span:not(.service-status) { display: none; }
   .mode-switch .service-status { grid-column: 1 / -1; margin-left: 0; }
   .question-form { gap: 8px; }
   .question-form button { min-width: 88px; padding: 0 12px; }
@@ -1510,10 +1677,16 @@ function normalizeError(value: unknown, fallback: string) {
   .todo-dialog-content dl { grid-template-columns: 1fr; }
   .action-add-button { width: calc(100% - 42px); justify-content: center; }
   .assistant-run:first-of-type { padding-top: 44px; }
+  .data-result,
+  .ai-result { padding: 16px; }
+  .ai-progress { min-height: 0; padding: 15px 16px; align-items: flex-start; flex-direction: column; gap: 10px; }
+  .elapsed-time { padding-left: 50px; }
+  .result-heading { align-items: flex-start; flex-direction: column; gap: 6px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .loading-line,
+  .ai-progress-icon,
   .assistant-workspace.is-fullscreen { animation: none; }
 }
 </style>

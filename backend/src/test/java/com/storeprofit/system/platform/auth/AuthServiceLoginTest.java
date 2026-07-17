@@ -32,6 +32,7 @@ class AuthServiceLoginTest {
 
     assertThat(response.token()).isNotBlank();
     assertThat(response.user().role()).isEqualTo("BOSS");
+    verify(repository).deleteTokensForUser(1L, 1L);
     verify(repository).createToken(
         anyString(), eq(1L), eq(1L), eq(1L), any(OffsetDateTime.class));
     verify(repository, never()).createUser(
@@ -136,6 +137,32 @@ class AuthServiceLoginTest {
         BusinessException.class);
     assertThat(limited.getStatus()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
     assertThat(limited.getMessage()).isEqualTo("登录尝试过多，请稍后再试");
+  }
+
+  @Test
+  void repeatedFailuresFromOneSourceAreRateLimitedAcrossUsernames() {
+    AuthRepository repository = mock(AuthRepository.class);
+    when(repository.findByUsername(eq(1L), anyString())).thenReturn(Optional.empty());
+    AuthService service = service(
+        repository, mock(PasswordService.class), mock(AuditRepository.class));
+
+    for (int attempt = 0; attempt < 5; attempt++) {
+      String username = "unknown-user-" + attempt;
+      BusinessException error = catchThrowableOfType(
+          () -> service.login(
+              new LoginRequest(username, "submitted-password", null),
+              "198.51.100.10"),
+          BusinessException.class);
+      assertThat(error.getStatus()).isEqualTo(HttpStatus.UNAUTHORIZED);
+    }
+
+    BusinessException limited = catchThrowableOfType(
+        () -> service.login(
+            new LoginRequest("different-user", "submitted-password", null),
+            "198.51.100.10"),
+        BusinessException.class);
+
+    assertThat(limited.getStatus()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
   }
 
   @Test

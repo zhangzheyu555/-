@@ -24,6 +24,7 @@ const OperationLogPage = () => import('../pages/OperationLogPage.vue')
 const NoPermissionPage = () => import('../pages/NoPermissionPage.vue')
 const PlaceholderPage = () => import('../pages/PlaceholderPage.vue')
 const PlatformLoginPage = () => import('../pages/PlatformLoginPage.vue')
+const QmaiBusinessPage = () => import('../pages/QmaiBusinessPage.vue')
 const UserPermissionPage = () => import('../pages/UserPermissionPage.vue')
 const BossWorkspace = () => import('../pages/workspaces/BossWorkspace.vue')
 const FinanceWorkspace = () => import('../pages/workspaces/FinanceWorkspace.vue')
@@ -74,6 +75,7 @@ const appChildren: RouteRecordRaw[] = [
   { path: 'stores', name: 'stores', component: StoreManagementPage, meta: permissionMeta(PERMISSIONS.STORE_MANAGE, { menuKey: 'store-management', title: '门店管理', bossOnly: true }) },
   { path: 'logs', name: 'logs', component: OperationLogPage, meta: permissionMeta(PERMISSIONS.SYSTEM_AUDIT_READ, { menuKey: 'operation-logs', title: '操作日志' }) },
   { path: 'platform-login', name: 'platform-login', component: PlatformLoginPage, meta: permissionMeta(PERMISSIONS.PLATFORM_READ, { menuKey: 'platform-settings', title: '平台配置' }) },
+  { path: 'qmai-business', name: 'qmai-business', component: QmaiBusinessPage, meta: permissionMeta(PERMISSIONS.FINANCE_PROFIT_READ, { menuKey: 'qmai-business', title: '企迈经营数据' }) },
   { path: 'users', name: 'users', component: UserPermissionPage, meta: permissionMeta(PERMISSIONS.SYSTEM_USER_MANAGE, { menuKey: 'user-permissions', title: '账号权限' }) },
 
   { path: 'finance/salary', name: 'finance-salary', component: FinanceSalaryWorkspace, meta: permissionMeta(PERMISSIONS.SALARY_READ, { menuKey: 'finance-salary', title: '员工工资' }) },

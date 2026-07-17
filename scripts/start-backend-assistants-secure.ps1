@@ -14,7 +14,8 @@ param(
   [string]$RuntimeDirectory,
   [ValidateRange(5, 300)][int]$TimeoutSeconds = 45,
   [switch]$PromoteTo18081,
-  [switch]$PauseBeforePromotion
+  [switch]$PauseBeforePromotion,
+  [switch]$ApprovedUnattendedPromotion
 )
 
 Set-StrictMode -Version Latest
@@ -27,6 +28,8 @@ if ([string]::IsNullOrWhiteSpace($BackendWorkingDirectory)) {
   $BackendWorkingDirectory = Join-Path $PSScriptRoot '..\backend'
 }
 . (Join-Path $PSScriptRoot 'assistant-runtime-config.ps1')
+. (Join-Path $PSScriptRoot 'qmai-runtime-config.ps1')
+. (Join-Path $PSScriptRoot 'database-runtime-config.ps1')
 
 function Read-RequiredText {
   param([Parameter(Mandatory)][string]$Prompt, [AllowNull()][string]$Value)
@@ -225,12 +228,17 @@ function Get-VerifiedWorkspaceJavaOn18081 {
 }
 
 function Stop-VerifiedWorkspaceJavaOn18081 {
-  param([Parameter(Mandatory)][string]$ExpectedBackendDirectory)
+  param(
+    [Parameter(Mandatory)][string]$ExpectedBackendDirectory,
+    [switch]$ApprovedUnattended
+  )
   $verified = Get-VerifiedWorkspaceJavaOn18081 $ExpectedBackendDirectory
   if (-not $verified) { return $false }
-  $confirmation = Read-Host '候选与两套上游门禁均已通过。输入 REPLACE_18081_CONFIRM 才会替换当前 18081'
-  if ($confirmation -cne 'REPLACE_18081_CONFIRM') {
-    throw '未获得明确维护确认；未停止 18081 服务。'
+  if (-not $ApprovedUnattended) {
+    $confirmation = Read-Host '候选与两套上游门禁均已通过。输入 REPLACE_18081_CONFIRM 才会替换当前 18081'
+    if ($confirmation -cne 'REPLACE_18081_CONFIRM') {
+      throw '未获得明确维护确认；未停止 18081 服务。'
+    }
   }
   Stop-Process -Id $verified.ProcessId -ErrorAction Stop
   for ($attempt = 1; $attempt -le 15; $attempt++) {
@@ -382,7 +390,7 @@ function Start-BackendChild {
 function Remove-LaunchSecrets {
   param([Parameter(Mandatory)]$Launch, [Parameter(Mandatory)][hashtable]$Environment)
   foreach ($name in @($Launch.StartInfo.Environment.Keys | Where-Object {
-      $_ -match '^(?i:DEEPSEEK_|EMPLOYEE_ASSISTANT_)' -or $_ -eq 'MYSQL_PASSWORD'
+      $_ -match '^(?i:DEEPSEEK_|EMPLOYEE_ASSISTANT_|QMAI_)' -or $_ -eq 'MYSQL_PASSWORD'
   })) { [void]$Launch.StartInfo.Environment.Remove($name) }
   foreach ($name in @($Environment.Keys)) { [void]$Environment.Remove($name) }
 }
@@ -415,10 +423,16 @@ function New-ChildEnvironment {
     $environment[$name] = $providerEnvironment[$name]
   }
   $providerEnvironment.Clear()
+  $qmaiEnvironment = New-QmaiProviderEnvironment $Configuration
+  foreach ($name in $qmaiEnvironment.Keys) {
+    $environment[$name] = $qmaiEnvironment[$name]
+  }
+  $qmaiEnvironment.Clear()
   # Mark that variables were injected by the secure launcher through DPAPI.
   # Without this marker the backend treats EMPLOYEE_ASSISTANT_* as untrusted (UNCONFIGURED).
   $environment['ASSISTANT_RUNTIME_SECURED'] = 'true'
   Assert-AssistantProviderEnvironment $environment
+  Assert-QmaiProviderEnvironment $environment
   return $environment
 }
 
@@ -454,6 +468,12 @@ $production = $null
 $oldServiceStopped = $false
 
 try {
+  if ($ApprovedUnattendedPromotion -and -not $PromoteTo18081) {
+    throw '无人值守替换只允许与 PromoteTo18081 同时使用。'
+  }
+  if ($ApprovedUnattendedPromotion -and $PauseBeforePromotion) {
+    throw '无人值守替换不能与 PauseBeforePromotion 同时使用。'
+  }
   $resolvedJar = [IO.Path]::GetFullPath($JarPath)
   $resolvedBackendDirectory = [IO.Path]::GetFullPath($BackendWorkingDirectory)
   if (-not (Test-Path -LiteralPath $resolvedJar -PathType Leaf)) { throw '未找到后端 JAR；请先完成隔离打包。' }
@@ -462,6 +482,15 @@ try {
   $jarSnapshot = New-ImmutableJarSnapshot -SourceJar $resolvedJar
   $resolvedJar = $jarSnapshot.Path
   Write-Host ("JAR 快照已创建：SHA-256={0}" -f $jarSnapshot.SHA256) -ForegroundColor Cyan
+  $candidateConfiguration = Read-AssistantRuntimeConfig -RuntimeDirectory $RuntimeDirectory
+  $databaseRuntime = Assert-CompleteDatabaseRuntimeConfig $candidateConfiguration
+  if ([string]::IsNullOrWhiteSpace($MySqlDatabase)) { $MySqlDatabase = $databaseRuntime.Name }
+  if ([string]::IsNullOrWhiteSpace($MySqlUsername)) { $MySqlUsername = $databaseRuntime.Username }
+  if (-not $MySqlPasswordInput) {
+    $MySqlPasswordInput = ConvertTo-SecureString -String $databaseRuntime.Password -AsPlainText -Force
+  }
+  Clear-DatabaseRuntimeConfigPlaintext $candidateConfiguration
+  $databaseRuntime = $null
   $MySqlDatabase = Read-RequiredText '请输入 MySQL 数据库名称' $MySqlDatabase
   $MySqlUsername = Read-RequiredText '请输入 MySQL 3307 独立应用账号' $MySqlUsername
   if ($MySqlUsername -match '^(?i:root)(?:@|$)') { throw '禁止使用 root 运行后端。' }
@@ -470,7 +499,6 @@ try {
   $mysqlPlain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($mysqlPointer)
   if ([string]::IsNullOrWhiteSpace($mysqlPlain)) { throw '数据库密码不能为空。' }
 
-  $candidateConfiguration = Read-AssistantRuntimeConfig -RuntimeDirectory $RuntimeDirectory
   Test-AllAssistantUpstreams -Configuration $candidateConfiguration -Timeout ([Math]::Min($TimeoutSeconds, 30))
   $jarHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $resolvedJar).Hash
   Write-Host ("候选 JAR SHA-256={0}" -f $jarHash) -ForegroundColor Cyan
@@ -479,6 +507,8 @@ try {
   $candidate = Start-BackendChild $resolvedJar $resolvedBackendDirectory $CandidatePort $candidateEnvironment
   Remove-LaunchSecrets $candidate $candidateEnvironment
   Clear-AssistantRuntimeConfigPlaintext $candidateConfiguration
+  Clear-QmaiRuntimeConfigPlaintext $candidateConfiguration
+  Clear-DatabaseRuntimeConfigPlaintext $candidateConfiguration
   $candidateConfiguration = $null
 
   $candidateHealth = Wait-ForBackendHealth $CandidatePort $candidate.Process
@@ -486,6 +516,7 @@ try {
   Write-SafeHealth $candidateHealth $CandidatePort
   Assert-UnauthenticatedAssistantGate $CandidatePort '/api/assistant/status' '门店经营助手'
   Assert-UnauthenticatedAssistantGate $CandidatePort '/api/employee-assistant/status' '员工服务助手'
+  Assert-UnauthenticatedAssistantGate $CandidatePort '/api/qmai/status' '企迈营业数据'
   Assert-DeploymentContractProbe $CandidatePort '门店经营助手'
 
   if (-not $PromoteTo18081) {
@@ -507,13 +538,17 @@ try {
   # Re-read and validate the current-user DPAPI source before touching 18081.
   # This guards against a deleted/corrupt/changed configuration after the candidate was started.
   $productionConfiguration = Read-AssistantRuntimeConfig -RuntimeDirectory $RuntimeDirectory
+  [void](Assert-CompleteDatabaseRuntimeConfig $productionConfiguration)
+  Clear-DatabaseRuntimeConfigPlaintext $productionConfiguration
   Test-AllAssistantUpstreams -Configuration $productionConfiguration -Timeout ([Math]::Min($TimeoutSeconds, 30))
   $productionEnvironment = New-ChildEnvironment 18081 $mysqlPlain $productionConfiguration
-  $oldServiceStopped = Stop-VerifiedWorkspaceJavaOn18081 $resolvedBackendDirectory
+  $oldServiceStopped = Stop-VerifiedWorkspaceJavaOn18081 $resolvedBackendDirectory -ApprovedUnattended:$ApprovedUnattendedPromotion
   Write-Host '候选所有门禁已通过，正在从安全配置源启动新的 18081 实例；候选 18082 暂时保留。' -ForegroundColor Cyan
   $production = Start-BackendChild $resolvedJar $resolvedBackendDirectory 18081 $productionEnvironment
   Remove-LaunchSecrets $production $productionEnvironment
   Clear-AssistantRuntimeConfigPlaintext $productionConfiguration
+  Clear-QmaiRuntimeConfigPlaintext $productionConfiguration
+  Clear-DatabaseRuntimeConfigPlaintext $productionConfiguration
   $productionConfiguration = $null
   $mysqlPlain = $null
   [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($mysqlPointer); $mysqlPointer = [IntPtr]::Zero
@@ -524,6 +559,7 @@ try {
   Write-SafeHealth $productionHealth 18081
   Assert-UnauthenticatedAssistantGate 18081 '/api/assistant/status' '门店经营助手'
   Assert-UnauthenticatedAssistantGate 18081 '/api/employee-assistant/status' '员工服务助手'
+  Assert-UnauthenticatedAssistantGate 18081 '/api/qmai/status' '企迈营业数据'
   if ($candidate -and -not $candidate.Process.HasExited) {
     Stop-Process -Id $candidate.Process.Id -ErrorAction Stop
     $candidate.Process.WaitForExit()
@@ -547,6 +583,10 @@ try {
   if ($mysqlPassword) { $mysqlPassword.Dispose() }
   if ($candidateConfiguration) { Clear-AssistantRuntimeConfigPlaintext $candidateConfiguration }
   if ($productionConfiguration) { Clear-AssistantRuntimeConfigPlaintext $productionConfiguration }
+  if ($candidateConfiguration) { Clear-QmaiRuntimeConfigPlaintext $candidateConfiguration }
+  if ($productionConfiguration) { Clear-QmaiRuntimeConfigPlaintext $productionConfiguration }
+  if ($candidateConfiguration) { Clear-DatabaseRuntimeConfigPlaintext $candidateConfiguration }
+  if ($productionConfiguration) { Clear-DatabaseRuntimeConfigPlaintext $productionConfiguration }
   if ($candidateEnvironment) { $candidateEnvironment.Clear() }
   if ($productionEnvironment) { $productionEnvironment.Clear() }
   if ($candidate) { $candidate.Process.Dispose() }

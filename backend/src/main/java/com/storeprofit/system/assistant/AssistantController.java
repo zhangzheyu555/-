@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -55,6 +56,18 @@ public class AssistantController {
     AuthUser user = authService.requireUser(authorization);
     requireAssistantUse(user);
     return ApiResponse.ok(assistantService.chat(user, request));
+  }
+
+  /** Read-only source of truth for all operating KPI and assistant analysis on one page. */
+  @GetMapping("/operating-snapshot")
+  public ApiResponse<OperatingSnapshot> operatingSnapshot(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @RequestParam(value = "storeId", required = false) String storeId,
+      @RequestParam(value = "month", required = false) String month
+  ) {
+    AuthUser user = authService.requireUser(authorization);
+    requireAssistantUse(user);
+    return ApiResponse.ok(assistantService.operatingSnapshot(user, storeId, month));
   }
 
   @GetMapping("/status")

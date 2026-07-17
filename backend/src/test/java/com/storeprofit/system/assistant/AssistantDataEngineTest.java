@@ -19,6 +19,9 @@ import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
 import com.storeprofit.system.platform.authorization.PermissionCodes;
 import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -26,7 +29,13 @@ import org.springframework.http.HttpStatus;
 class AssistantDataEngineTest {
   private final FinanceService financeService = mock(FinanceService.class);
   private final InspectionService inspectionService = mock(InspectionService.class);
-  private final AssistantDataEngine engine = new AssistantDataEngine(financeService, inspectionService);
+  private final AssistantDataEngine engine = new AssistantDataEngine(
+      financeService,
+      inspectionService,
+      null,
+      null,
+      Clock.fixed(Instant.parse("2026-07-16T03:00:00Z"), ZoneId.of("Asia/Shanghai"))
+  );
   private final AuthUser boss = new AuthUser(
       1L, 1L, "测试企业", "boss", "hash", "老板", "BOSS", null, true
   );
@@ -61,8 +70,11 @@ class AssistantDataEngineTest {
     assertThat(metric(result, "labor").value()).isEqualByComparingTo("12000");
     assertThat(metric(result, "brandAverageMargin").value()).isNotNull();
     assertThat(metric(result, "allStoreAverageNet").value()).isEqualByComparingTo("25000");
-    assertThat(metric(result, "net").changeRate()).isEqualByComparingTo("0.5000");
-    assertThat(metric(result, "momSalesChange").value()).isEqualByComparingTo("0.2000");
+    assertThat(metric(result, "net").changeRate()).isNull();
+    assertThat(result.localData().metrics()).noneMatch(item -> item.key().startsWith("mom"));
+    assertThat(result.snapshot().isMTD()).isTrue();
+    assertThat(result.snapshot().capabilities().canCompare()).isFalse();
+    assertThat(result.snapshot().comparisonBasis().explanation()).contains("不能与完整上月直接环比");
     assertThat(result.modelContext()).contains("2026-05", "2026-06", "2026-07");
     assertThat(result.modelContext()).doesNotContain("其他门店");
     assertThat(result.dataVersion()).hasSize(64);

@@ -30,6 +30,7 @@ spring:
       connection-timeout: 2000
       validation-timeout: 1000
       initialization-fail-timeout: 2000
+      connection-init-sql: SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci
   flyway:
     enabled: true
     locations: classpath:db/migration
@@ -72,6 +73,15 @@ app:
     webhook-signature-header: ${ELEME_WEBHOOK_SIGNATURE_HEADER:X-Eleme-Signature}
     webhook-event-id-header: ${ELEME_WEBHOOK_EVENT_ID_HEADER:X-Eleme-Event-Id}
     webhook-max-payload-bytes: ${ELEME_WEBHOOK_MAX_PAYLOAD_BYTES:1048576}
+  qmai:
+    # 企迈凭证只允许由部署环境注入，禁止通过网页或数据库保存明文密钥。
+    open-id: ${QMAI_OPEN_ID:}
+    grant-code: ${QMAI_GRANT_CODE:}
+    open-key: ${QMAI_OPEN_KEY:}
+    base-url: ${QMAI_BASE_URL:https://openapi.qmai.cn}
+    timeout: ${QMAI_TIMEOUT:20s}
+    max-retries: ${QMAI_MAX_RETRIES:4}
+    concurrency: ${QMAI_CONCURRENCY:4}
   auth:
     token-ttl-hours: 12
   training:
@@ -122,12 +132,15 @@ app:
       api-key: ${DEEPSEEK_API_KEY:}
       base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
       model: ${DEEPSEEK_MODEL:deepseek-v4-flash}
+      # 自动模式始终走快速模型；显式“深度分析”仍使用上面的 DEEPSEEK_MODEL。
+      fast-model: ${DEEPSEEK_FAST_MODEL:deepseek-v4-flash}
       max-tokens: ${DEEPSEEK_MAX_TOKENS:1200}
+      fast-max-tokens: ${DEEPSEEK_FAST_MAX_TOKENS:700}
       temperature: ${DEEPSEEK_TEMPERATURE:0.2}
       connect-timeout: ${DEEPSEEK_CONNECT_TIMEOUT:5s}
       timeout: ${DEEPSEEK_TIMEOUT_SECONDS:45}s
       # 一次经营分析（含最多一次结构修复）的总耗时上限；单次请求仍使用 timeout。
-      analysis-timeout: ${DEEPSEEK_ANALYSIS_TIMEOUT:75s}
+      analysis-timeout: ${DEEPSEEK_ANALYSIS_TIMEOUT:30s}
       max-requests-per-minute: ${DEEPSEEK_MAX_REQUESTS_PER_MINUTE:30}
       circuit-failure-threshold: ${DEEPSEEK_CIRCUIT_FAILURE_THRESHOLD:3}
       circuit-open-duration: ${DEEPSEEK_CIRCUIT_OPEN_DURATION:30s}

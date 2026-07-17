@@ -60,6 +60,7 @@ export const MENU_GROUP_CONFIG: PermissionMenuGroup[] = [
     items: [
       { key: 'profit-overview', label: '利润概览', to: '/profit', icon: 'profit', requiredPermission: PERMISSIONS.FINANCE_PROFIT_READ },
       { key: 'profit-table', label: '利润表', to: '/profit-table', icon: 'profit', requiredPermission: PERMISSIONS.FINANCE_PROFIT_READ },
+      { key: 'qmai-business', label: '企迈经营数据', to: '/qmai-business', icon: 'platform', requiredPermission: PERMISSIONS.FINANCE_PROFIT_READ },
       { key: 'data-entry', label: '数据录入', to: '/data-entry', icon: 'profit', requiredPermission: PERMISSIONS.FINANCE_PROFIT_WRITE },
       { key: 'expenses', label: '报销栏', to: '/expenses', icon: 'expense', requiredPermission: PERMISSIONS.EXPENSE_READ },
       {

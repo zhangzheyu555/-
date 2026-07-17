@@ -11,6 +11,8 @@ import com.storeprofit.system.finance.ProfitSummaryResponse;
 import com.storeprofit.system.platform.auth.AuthUser;
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -21,6 +23,7 @@ import org.junit.jupiter.api.Test;
 class DeepSeekIntegrationTest {
 
   private final FinanceService financeService = mock(FinanceService.class);
+  private final AssistantDataEngine dataEngine = mock(AssistantDataEngine.class);
   private final DeepSeekProperties properties = new DeepSeekProperties();
 
   private AssistantService assistantService;
@@ -43,7 +46,12 @@ class DeepSeekIntegrationTest {
     properties.setTemperature(0.2);
     properties.setConnectTimeout(Duration.ofSeconds(5));
     properties.setTimeout(Duration.ofSeconds(45));
-    assistantService = new AssistantService(properties, financeService);
+    assistantService = new AssistantService(
+        properties,
+        dataEngine,
+        new DeepSeekClient(properties, new ObjectMapper()),
+        new ObjectMapper()
+    );
 
     // Stub FinanceService to avoid NPE in buildDataContext
     ProfitSummaryResponse summary = new ProfitSummaryResponse(
@@ -62,6 +70,46 @@ class DeepSeekIntegrationTest {
         .thenReturn(List.of("2026-07"));
     when(financeService.entries(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
         .thenReturn(List.of());
+    when(dataEngine.build(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(readyDataResult());
+  }
+
+  private AssistantDataEngine.Result readyDataResult() {
+    AssistantChatResponse.LocalData localData = new AssistantChatResponse.LocalData(
+        "测试门店 2026-01：实收收入¥100.00，经营利润¥28.00，经营利润率28.0%。",
+        List.of(
+            new AssistantChatResponse.Metric("revenue", "实收收入", new BigDecimal("100"), "CNY", "¥100.00", null, ""),
+            new AssistantChatResponse.Metric("net", "经营利润", new BigDecimal("28"), "CNY", "¥28.00", null, ""),
+            new AssistantChatResponse.Metric("margin", "经营利润率", new BigDecimal("0.28"), "PERCENT", "28.0%", null, "")
+        ),
+        "2026-01", "测试门店", "MySQL 8 财务库", "test-source", AssistantDataEngine.CALCULATION_VERSION,
+        Instant.parse("2026-01-31T00:00:00Z")
+    );
+    OperatingSnapshot snapshot = new OperatingSnapshot(
+        "deepseek-ready-snapshot",
+        Instant.parse("2026-01-31T00:00:00Z"),
+        LocalDate.parse("2026-01-31"), LocalDate.parse("2026-01-01"), LocalDate.parse("2026-01-31"), false,
+        new OperatingSnapshot.StoreScope("测试门店", List.of("rx13"), List.of("测试门店")),
+        new OperatingSnapshot.StoreCoverage(1, 1, List.of(), List.of(), List.of(), false, BigDecimal.ONE),
+        new BigDecimal("100"), new BigDecimal("30"), new BigDecimal("42"), null, null,
+        new BigDecimal("28"), new BigDecimal("0.28"),
+        new OperatingSnapshot.PreviousComparablePeriod(
+            true, LocalDate.parse("2025-12-01"), LocalDate.parse("2025-12-31"), List.of("rx13"),
+            new BigDecimal("100"), new BigDecimal("28"), new BigDecimal("0.28"), ""
+        ),
+        new OperatingSnapshot.ComparisonBasis(true, true, true, true, true, "同门店、同天数、同口径。"),
+        new OperatingSnapshot.ProfitBridge(
+            "MONTHLY_OPERATING_PROFIT_PRE_TAX", new BigDecimal("100"), BigDecimal.ZERO, BigDecimal.ZERO,
+            new BigDecimal("100"), new BigDecimal("30"), new BigDecimal("42"), null, null, BigDecimal.ZERO,
+            new BigDecimal("28")
+        ),
+        new OperatingSnapshot.Capabilities(true, true, true, true),
+        new OperatingSnapshot.DataQuality("COMPLETE", List.of(), false, true),
+        List.of(), "test-source"
+    );
+    return new AssistantDataEngine.Result(
+        localData, "仅含已验证快照事实", "test-source", "rx13", "测试门店", "2026-01", List.of(), snapshot
+    );
   }
 
   @Nested

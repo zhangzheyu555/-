@@ -192,6 +192,7 @@ function Save-AssistantRuntimeConfig {
   Set-AssistantRuntimeConfigDirectoryProtection $directory
   $path = Get-AssistantRuntimeConfigPath $directory
   $temporaryPath = Join-Path $directory ('.assistant-providers-' + [Guid]::NewGuid().ToString('N') + '.tmp')
+  $replacementBackupPath = Join-Path $directory ('.assistant-providers-backup-' + [Guid]::NewGuid().ToString('N') + '.tmp')
   $plainJson = $null
   $secureJson = $null
   try {
@@ -201,13 +202,17 @@ function Save-AssistantRuntimeConfig {
     $cipherText = ConvertFrom-SecureString -SecureString $secureJson
     [IO.File]::WriteAllText($temporaryPath, $cipherText, [Text.UTF8Encoding]::new($false))
     if (Test-Path -LiteralPath $path -PathType Leaf) {
-      [IO.File]::Replace($temporaryPath, $path, $null)
+      [IO.File]::Replace($temporaryPath, $path, $replacementBackupPath)
+      Remove-Item -LiteralPath $replacementBackupPath -Force
     } else {
       Move-Item -LiteralPath $temporaryPath -Destination $path -Force
     }
   } finally {
     if (Test-Path -LiteralPath $temporaryPath -PathType Leaf) {
       Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $replacementBackupPath -PathType Leaf) {
+      Remove-Item -LiteralPath $replacementBackupPath -Force -ErrorAction SilentlyContinue
     }
     $plainJson = $null
     if ($secureJson) { $secureJson.Dispose() }

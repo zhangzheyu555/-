@@ -2,6 +2,7 @@ package com.storeprofit.system.platform.auth;
 
 import com.storeprofit.system.common.ApiResponse;
 import com.storeprofit.system.platform.session.SessionUser;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -20,8 +21,11 @@ public class AuthController {
   }
 
   @PostMapping("/login")
-  public ApiResponse<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
-    return ApiResponse.ok(authService.login(request));
+  public ApiResponse<LoginResponse> login(
+      @Valid @RequestBody LoginRequest request,
+      HttpServletRequest servletRequest
+  ) {
+    return ApiResponse.ok(authService.login(request, servletRequest.getRemoteAddr()));
   }
 
   @PostMapping("/logout")

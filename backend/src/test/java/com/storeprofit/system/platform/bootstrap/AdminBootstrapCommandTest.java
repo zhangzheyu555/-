@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.storeprofit.system.platform.auth.PasswordService;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -12,6 +14,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -19,6 +22,27 @@ import org.junit.jupiter.api.Test;
 
 class AdminBootstrapCommandTest {
   private static final String STRONG_PASSWORD = "Zebra!Cloud4826";
+
+  @Test
+  void bootstrapFlywayCandidateMatchesContiguousMigrationResources() throws Exception {
+    Path migrationDirectory = Path.of("src", "main", "resources", "db", "migration");
+    List<Integer> versions;
+    try (var files = Files.list(migrationDirectory)) {
+      versions = files
+          .map(path -> path.getFileName().toString())
+          .filter(name -> name.matches("V[1-9][0-9]*__.+\\.sql"))
+          .map(name -> Integer.parseInt(name.substring(1, name.indexOf("__"))))
+          .sorted()
+          .toList();
+    }
+
+    assertThat(versions)
+        .containsExactlyElementsOf(
+            java.util.stream.IntStream.rangeClosed(
+                    1, AdminBootstrapCommand.EXPECTED_FLYWAY_VERSION)
+                .boxed()
+                .toList());
+  }
 
   @Test
   void disabledMissingInvalidAndWeakInputsNeverOpenDatabase() {
@@ -311,7 +335,7 @@ class AdminBootstrapCommandTest {
             """);
         statement.execute("""
             create table auth_token(
-              token varchar(96) primary key, tenant_id bigint, user_id bigint,
+              token_hash varchar(64) primary key, tenant_id bigint, user_id bigint,
               permission_version bigint
             )
             """);

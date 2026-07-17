@@ -14,8 +14,9 @@ import org.junit.jupiter.api.Test;
 
 class AdminBootstrapSchemaValidationTest {
   @Test
-  void acceptsExactlySuccessfulV1ThroughV56AndRequiredSchema() throws Exception {
-    try (Connection connection = schemaConnection(56, false, true)) {
+  void acceptsExactlySuccessfulCandidateMigrationsAndRequiredSchema() throws Exception {
+    try (Connection connection = schemaConnection(
+        AdminBootstrapCommand.EXPECTED_FLYWAY_VERSION, false, true)) {
       assertThatNoException().isThrownBy(
           () -> AdminBootstrapCommand.validateFlywayHistory(connection));
       assertThatNoException().isThrownBy(
@@ -25,11 +26,13 @@ class AdminBootstrapSchemaValidationTest {
 
   @Test
   void rejectsMissingOrFailedMigrationWithoutRunningFlyway() throws Exception {
-    try (Connection connection = schemaConnection(55, false, true)) {
+    try (Connection connection = schemaConnection(
+        AdminBootstrapCommand.EXPECTED_FLYWAY_VERSION - 1, false, true)) {
       assertThatThrownBy(() -> AdminBootstrapCommand.validateFlywayHistory(connection))
           .isInstanceOf(IllegalStateException.class);
     }
-    try (Connection connection = schemaConnection(56, true, true)) {
+    try (Connection connection = schemaConnection(
+        AdminBootstrapCommand.EXPECTED_FLYWAY_VERSION, true, true)) {
       assertThatThrownBy(() -> AdminBootstrapCommand.validateFlywayHistory(connection))
           .isInstanceOf(IllegalStateException.class);
     }
@@ -37,7 +40,8 @@ class AdminBootstrapSchemaValidationTest {
 
   @Test
   void rejectsMissingRequiredTableOrColumn() throws Exception {
-    try (Connection connection = schemaConnection(56, false, false)) {
+    try (Connection connection = schemaConnection(
+        AdminBootstrapCommand.EXPECTED_FLYWAY_VERSION, false, false)) {
       assertThatThrownBy(() -> AdminBootstrapCommand.validateRequiredSchema(connection))
           .isInstanceOf(SQLException.class);
     }
@@ -97,7 +101,7 @@ class AdminBootstrapSchemaValidationTest {
             permission_version bigint
           )
           """);
-      statement.execute("create table auth_token(token varchar(96), tenant_id bigint, user_id bigint, permission_version bigint)");
+      statement.execute("create table auth_token(token_hash varchar(64), tenant_id bigint, user_id bigint, permission_version bigint)");
       statement.execute("""
           create table operation_log(
             id bigint, tenant_id bigint, operator_id bigint, operator_name varchar(120),

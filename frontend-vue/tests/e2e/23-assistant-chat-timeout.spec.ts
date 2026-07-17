@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { seedAuth } from './auth.setup'
+import { operatingSnapshot, withSnapshotLocalData } from './assistant-snapshot.fixture'
 
 const ok = (data: unknown) => ({
   status: 200,
@@ -30,6 +31,14 @@ const assistantUser = {
   defaultWorkspace: '/boss',
   permissionVersion: 1,
 }
+const snapshot = operatingSnapshot({
+  snapshotId: 'snapshot-ready-2026-01',
+  month: '2026-01',
+  isMTD: false,
+  canCompare: true,
+  canAttributeCause: true,
+  canUseAI: true,
+})
 
 function assistantStatus() {
   return {
@@ -49,16 +58,9 @@ function localAnswer(question: string) {
     question,
     selectedMode: 'LOCAL',
     selectionReason: '自动模式识别为金额或指标事实查询',
-    localData: {
-      summary: '本月真实经营数据已查询完成。',
-      metrics: [{ key: 'revenue', label: '营业额', value: 68967, unit: 'CNY', displayValue: '¥68,967', changeRate: null, comparison: '' }],
-      dataPeriod: '2026-07',
-      dataScope: '测试门店',
-      source: '经营数据库',
-      dataVersion: 'test-v1',
-      calculationVersion: 'test-v1',
-      updatedAt: '2026-07-14T00:00:00Z',
-    },
+    localData: withSnapshotLocalData(snapshot, {
+      metrics: [{ key: 'revenue', label: '实收收入', value: '68967', unit: 'CNY', displayValue: '¥68,967', changeRate: null, comparison: '' }],
+    }),
     aiAnalysis: {
       available: false,
       provider: '',
@@ -84,6 +86,7 @@ function aiAnswer(question: string) {
     ...response,
     selectedMode: 'AI',
     selectionReason: '用户手动选择AI分析，必须调用真实模型',
+    localData: withSnapshotLocalData(snapshot, { aiInvocation: 'LIVE' }),
     aiAnalysis: {
       available: true,
       provider: 'DeepSeek',
@@ -106,14 +109,25 @@ async function prepareAssistantPage(page: Page) {
   await page.route('**/api/stores', (route) => route.fulfill(ok([
     { id: 'store-1', code: 'S001', name: '测试门店', brandId: 1, brandName: '测试品牌', status: 'ACTIVE' },
   ])))
-  await page.route('**/api/finance/months', (route) => route.fulfill(ok(['2026-07'])))
+  await page.route('**/api/finance/months', (route) => route.fulfill(ok(['2026-01'])))
   await page.route('**/api/finance/entries**', (route) => route.fulfill(ok([])))
+  await page.route('**/api/finance/dashboard**', (route) => route.fulfill(ok({
+    months: ['2026-01'],
+    brands: [],
+    summary: {
+      month: '2026-01', storeCount: 1, entryCount: 1, sales: 68967, income: 68967,
+      costSum: 30000, expenseSum: 18000, net: 20967, margin: 0.304, riskStoreCount: 0,
+    },
+    entries: [],
+    trend: [],
+  })))
+  await page.route('**/api/assistant/operating-snapshot**', (route) => route.fulfill(ok(snapshot)))
   await page.route('**/api/assistant/status', (route) => route.fulfill(ok(assistantStatus())))
   await seedAuth(page, { token: 'e2e-assistant-timeout-token', user: assistantUser })
 }
 
 test.describe('store assistant chat timeout boundary', () => {
-  test('keeps the shared 15 second default and scopes the 90 second override to assistant chat', () => {
+  test('keeps the shared 15 second default and scopes the 40 second override to assistant chat', () => {
     const httpSource = readFileSync(resolve(process.cwd(), 'src/api/http.ts'), 'utf8')
     const assistantSource = readFileSync(resolve(process.cwd(), 'src/api/assistant.ts'), 'utf8')
     const importDrawerSource = readFileSync(resolve(process.cwd(), 'src/components/finance/ProfitImportDrawer.vue'), 'utf8')
@@ -122,12 +136,12 @@ test.describe('store assistant chat timeout boundary', () => {
     expect(httpSource).toContain("'REQUEST_TIMEOUT'")
     expect(httpSource).toContain("'ETIMEDOUT'")
     expect(httpSource).not.toContain('文件解析超时')
-    expect(assistantSource).toMatch(/ASSISTANT_CHAT_TIMEOUT_MS\s*=\s*90_000/)
+    expect(assistantSource).toMatch(/ASSISTANT_CHAT_TIMEOUT_MS\s*=\s*40_000/)
     expect(assistantSource).toMatch(/timeout:\s*ASSISTANT_CHAT_TIMEOUT_MS/)
     expect(importDrawerSource).toContain('文件解析超时，请重试。已选择的文件仍然保留。')
   })
 
-  test('routes an AUTO fact question to LOCAL before it can call the model', async ({ page }) => {
+  test('keeps direct fact questions on the fast local path', async ({ page }) => {
     await prepareAssistantPage(page)
     const requestModes: string[] = []
     await page.route('**/api/assistant/chat', async (route) => {
@@ -137,7 +151,7 @@ test.describe('store assistant chat timeout boundary', () => {
     })
 
     await page.goto('/assistant')
-    await page.getByLabel('经营问题').fill('7月营业额、成本和净利润分别是多少？')
+    await page.getByLabel('经营问题').fill('1月营业额、成本和净利润分别是多少？')
     await page.getByRole('button', { name: '发送', exact: true }).click()
 
     await expect(page.getByText('本月真实经营数据已查询完成。')).toBeVisible()
@@ -148,35 +162,51 @@ test.describe('store assistant chat timeout boundary', () => {
   test('allows an assistant response that takes longer than the shared 15 second timeout', async ({ page }) => {
     test.setTimeout(45_000)
     await prepareAssistantPage(page)
+    const requestModes: string[] = []
+    let aiSnapshotId = ''
     await page.route('**/api/assistant/chat', async (route) => {
-      const body = route.request().postDataJSON() as { message: string; mode: string }
-      expect(body.mode).toBe('AI')
+      const body = route.request().postDataJSON() as { message: string; mode: string; snapshotId?: string }
+      requestModes.push(body.mode)
+      if (body.mode === 'LOCAL') {
+        await route.fulfill(ok(localAnswer(body.message)))
+        return
+      }
+      aiSnapshotId = body.snapshotId || ''
       await new Promise<void>((resolve) => setTimeout(resolve, 16_000))
       await route.fulfill(ok(aiAnswer(body.message)))
     })
 
     await page.goto('/assistant')
-    await page.getByRole('button', { name: 'AI分析', exact: true }).click()
-    await page.getByLabel('经营问题').fill('7月成本的主要风险是什么？')
-    await page.getByRole('button', { name: '发送', exact: true }).click()
+    const questionInput = page.getByLabel('经营问题')
+    await questionInput.fill('1月成本的主要风险是什么？')
+    await questionInput.press('Enter')
 
+    await expect(page.getByText('经营数据已就绪')).toBeVisible({ timeout: 3_000 })
+    await expect(page.getByTestId('assistant-ai-progress')).toContainText('AI 继续分析')
     await expect(page.getByText('AI经营分析')).toBeVisible({ timeout: 25_000 })
     await expect(page.getByText('成本风险需要持续跟进。')).toBeVisible()
+    expect(requestModes).toEqual(['LOCAL', 'AUTO'])
+    expect(aiSnapshotId).toBe(snapshot.snapshotId)
   })
 
   test('shows the operating-assistant timeout guidance without file-import wording', async ({ page }) => {
     await prepareAssistantPage(page)
-    await page.route('**/api/assistant/chat', (route) => route.fulfill({
-      status: 408,
-      contentType: 'application/json',
-      body: JSON.stringify({ success: false, code: 'REQUEST_TIMEOUT', message: '请求超时，请稍后重试' }),
-    }))
+    await page.route('**/api/assistant/chat', (route) => {
+      const body = route.request().postDataJSON() as { message: string; mode: string }
+      if (body.mode === 'LOCAL') return route.fulfill(ok(localAnswer(body.message)))
+      return route.fulfill({
+        status: 408,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: false, code: 'REQUEST_TIMEOUT', message: '请求超时，请稍后重试' }),
+      })
+    })
 
     await page.goto('/assistant')
-    await page.getByRole('button', { name: 'AI分析', exact: true }).click()
-    await page.getByLabel('经营问题').fill('7月成本的主要风险是什么？')
+    await page.getByRole('button', { name: '深度分析', exact: true }).click()
+    await page.getByLabel('经营问题').fill('1月成本的主要风险是什么？')
     await page.getByRole('button', { name: '发送', exact: true }).click()
 
+    await expect(page.getByText('经营数据已就绪')).toBeVisible()
     await expect(page.getByText('AI分析耗时较长，请稍后重试，或先使用‘查数据’获取经营事实。')).toBeVisible()
     await expect(page.getByText(/文件解析/)).toHaveCount(0)
   })

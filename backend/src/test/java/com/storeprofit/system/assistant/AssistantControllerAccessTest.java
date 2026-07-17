@@ -54,6 +54,25 @@ class AssistantControllerAccessTest {
   }
 
   @Test
+  void authenticatedAssistantUserCanReadOneOperatingSnapshotThroughTheSamePermissionGate() {
+    AuthService authService = mock(AuthService.class);
+    AssistantService assistantService = mock(AssistantService.class);
+    DeepSeekProperties properties = mock(DeepSeekProperties.class);
+    AccessControlService accessControl = mock(AccessControlService.class);
+    AuthUser finance = user("FINANCE");
+    OperatingSnapshot snapshot = mock(OperatingSnapshot.class);
+    when(authService.requireUser("Bearer finance-token")).thenReturn(finance);
+    when(assistantService.operatingSnapshot(finance, "store-1", "2026-01")).thenReturn(snapshot);
+    AssistantController controller = new AssistantController(authService, assistantService, properties, accessControl);
+
+    assertThat(controller.operatingSnapshot("Bearer finance-token", "store-1", "2026-01").data())
+        .isSameAs(snapshot);
+
+    verify(accessControl).requireAssistantUse(finance);
+    verify(assistantService).operatingSnapshot(finance, "store-1", "2026-01");
+  }
+
+  @Test
   void productionControllerDelegatesChatAndStatusToPermissionWrappers() {
     AuthService authService = mock(AuthService.class);
     AssistantService assistantService = mock(AssistantService.class);

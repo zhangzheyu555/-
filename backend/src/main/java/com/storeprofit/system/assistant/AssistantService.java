@@ -17,6 +17,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.MatchResult;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
@@ -53,6 +54,9 @@ public class AssistantService {
   private static final Pattern WHOLE_JSON_FENCE = Pattern.compile(
       "\\A```(?:(?i:json))?[\\t ]*\\R(.*)\\R```\\z", Pattern.DOTALL
   );
+  private static final Pattern JSON_SUMMARY_FIELD = Pattern.compile(
+      "\"summary\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"", Pattern.DOTALL
+  );
   private static final Pattern NUMERIC_REFERENCE = Pattern.compile(
       "(?<![\\d.])(?:¥\\s*[-+]?\\d[\\d,]*(?:\\.\\d+)?|[-+]?\\d[\\d,]*(?:\\.\\d+)?\\s*(?:元|块)|[-+]?\\d[\\d,]*(?:\\.\\d+)?\\s*%)(?![\\d.])"
   );
@@ -74,6 +78,7 @@ public class AssistantService {
   private final DeepSeekClient deepSeekClient;
   private final ObjectMapper objectMapper;
   private final Map<String, CachedAnalysis> analysisCache = new ConcurrentHashMap<>();
+  private final Map<String, CachedSnapshot> snapshotCache = new ConcurrentHashMap<>();
 
   @Autowired
   public AssistantService(
@@ -86,6 +91,24 @@ public class AssistantService {
     this.dataEngine = dataEngine;
     this.deepSeekClient = deepSeekClient;
     this.objectMapper = objectMapper;
+  }
+
+  /**
+   * Rebuilds a read-only operating snapshot. The identifier remains stable while the source
+   * facts and requested scope remain unchanged, which lets the UI truthfully report refresh
+   * results without presenting an implementation timestamp as a business change.
+   */
+  public OperatingSnapshot operatingSnapshot(AuthUser user, String storeId, String month) {
+    AssistantChatRequest request = new AssistantChatRequest(
+        "查询经营快照", List.of(), "", "LOCAL", storeId, month
+    );
+    AssistantDataEngine.Result result = dataEngine.build(user, request, request.message());
+    OperatingSnapshot snapshot = result.snapshot();
+    if (snapshot == null) {
+      throw new IllegalStateException("Operating snapshot was not produced by the data engine");
+    }
+    cacheSnapshot(user, result);
+    return snapshot;
   }
 
   /** Compatibility constructor retained for focused tests. */
@@ -137,14 +160,19 @@ public class AssistantService {
       );
     }
 
-    ModeSelection selection = selectMode(request.modeOrDefault(), question);
+    String requestedMode = request.modeOrDefault();
+    ModeSelection selection = selectMode(requestedMode, question);
     String effectiveMode = selection.mode();
+    boolean fastProfile = "AUTO".equals(requestedMode);
     String correlationId = UUID.randomUUID().toString().substring(0, 8);
-    AssistantDataEngine.Result data = dataEngine.build(user, request, question);
+    SnapshotResolution resolution = resolveSnapshot(user, request, question);
+    if (resolution.errorResponse() != null) return resolution.errorResponse();
+    AssistantDataEngine.Result data = resolution.data();
+    AssistantChatResponse.LocalData localData = localDataFor(data, "NOT_REQUESTED", null);
 
     if ("LOCAL".equals(effectiveMode)) {
       log.info("Assistant local query completed requestId={}", correlationId);
-      return AssistantChatResponse.localOnly(question, data.localData(), selection.reason());
+      return AssistantChatResponse.localOnly(question, localData, selection.reason());
     }
 
     if (!properties.isConfigured()) {
@@ -155,48 +183,48 @@ public class AssistantService {
       properties.markFailure(code);
       log.warn("DeepSeek unavailable errorCode={} requestId={}", code, correlationId);
       return AssistantChatResponse.aiUnavailable(
-          question, data.localData(), selection.reason(), code, message
+          question, localDataFor(data, "NOT_CALLED_UNAVAILABLE", null), selection.reason(), code, message
       );
     }
 
-    String key = cacheKey(user, data, question);
+    String key = cacheKey(user, data, question, fastProfile);
     CachedAnalysis cached = analysisCache.get(key);
     if (cached != null && cached.expiresAt().isAfter(Instant.now())) {
       return new AssistantChatResponse(
-          question, "AI", selection.reason(), data.localData(), cached.analysis(), false, null
+          question, "AI", selection.reason(), localDataFor(data, "CACHE_HIT", null), cached.analysis(), false, null
       );
     }
 
     long startedAt = System.nanoTime();
-    AnalysisExpectation expectation = analysisExpectation(data.localData(), data.limitations());
+    AnalysisExpectation expectation = analysisExpectation(localData);
     try {
       String modelQuestion = redactSensitiveForModel(question);
       DeepSeekCallResult modelResponse = analyzeWithinBudget(
-          systemPrompt(data.modelContext(), expectation), modelQuestion, startedAt
+          systemPrompt(data.modelContext(), expectation), modelQuestion, startedAt, fastProfile
       );
       ParsedAnalysis parsed = parseAnalysis(modelResponse, data.limitations());
       logSchemaInvalidDiagnostic(parsed, startedAt);
-      QualityResult quality = qualityGate(data.localData(), parsed, expectation);
+      QualityResult quality = qualityGate(localData, parsed, expectation);
 
       if (!quality.passed()) {
         log.warn("DeepSeek quality retry errorCode={} elapsedMs={}",
             quality.code(), elapsedMillis(startedAt));
-        // When local data is insufficient (cost=0, margin=100% or missing months),
+        // When there are no basic operating metrics to analyze,
         // do NOT make a second model request. Use analysisFailure for user-facing message.
         if (expectation.dataLimited()) {
           AnalysisFailure failure = analysisFailure(quality, expectation);
           properties.markAnalysisResponseRejected(failure.code());
           return AssistantChatResponse.aiUnavailable(
-              question, data.localData(), selection.reason(),
+              question, localDataFor(data, "FAILED", null), selection.reason(),
               failure.code(), failure.message()
           );
         }
         modelResponse = analyzeWithinBudget(
-            repairPrompt(data.modelContext(), quality, expectation), modelQuestion, startedAt
+            repairPrompt(data.modelContext(), quality, expectation), modelQuestion, startedAt, fastProfile
         );
         parsed = parseAnalysis(modelResponse, data.limitations());
         logSchemaInvalidDiagnostic(parsed, startedAt);
-        quality = qualityGate(data.localData(), parsed, expectation);
+        quality = qualityGate(localData, parsed, expectation);
         if (!quality.passed()) {
           AnalysisFailure failure = analysisFailure(quality, expectation);
           properties.markAnalysisResponseRejected(failure.code());
@@ -204,7 +232,7 @@ public class AssistantService {
               failure.code(), elapsedMillis(startedAt));
           return AssistantChatResponse.aiUnavailable(
               question,
-              data.localData(),
+              localDataFor(data, "FAILED", null),
               selection.reason(),
               failure.code(),
               failure.message()
@@ -218,7 +246,7 @@ public class AssistantService {
       log.info("DeepSeek analysis succeeded requestId={} elapsedMs={}",
           safeRequestId(analysis.requestId()), elapsedMillis(startedAt));
       return new AssistantChatResponse(
-          question, "AI", selection.reason(), data.localData(), analysis, false, null
+          question, "AI", selection.reason(), localDataFor(data, "LIVE", null), analysis, false, null
       );
     } catch (DeepSeekException ex) {
       long latencyMs = elapsedMillis(startedAt);
@@ -226,9 +254,105 @@ public class AssistantService {
       log.error("DeepSeek analysis failed requestId={} errorCode={} elapsedMs={}",
           correlationId, ex.getCode(), latencyMs);
       return AssistantChatResponse.aiUnavailable(
-          question, data.localData(), selection.reason(), ex.getCode(), ex.getUserMessage()
+          question, localDataFor(data, "FAILED", null), selection.reason(), ex.getCode(), ex.getUserMessage()
       );
     }
+  }
+
+  private SnapshotResolution resolveSnapshot(AuthUser user, AssistantChatRequest request, String question) {
+    String requestedId = request.snapshotId() == null ? "" : request.snapshotId().trim();
+    if (requestedId.isBlank()) {
+      AssistantDataEngine.Result built = dataEngine.build(user, request, question);
+      cacheSnapshot(user, built);
+      return SnapshotResolution.success(built);
+    }
+    CachedSnapshot cached = snapshotCache.get(requestedId);
+    if (cached == null || cached.expiresAt().isBefore(Instant.now()) || cached.tenantId() != user.tenantId()
+        || cached.userId() != user.id()) {
+      snapshotCache.remove(requestedId);
+      return SnapshotResolution.failure(snapshotExpiredResponse(question));
+    }
+    return SnapshotResolution.success(cached.data());
+  }
+
+  private void cacheSnapshot(AuthUser user, AssistantDataEngine.Result data) {
+    if (data == null || data.snapshot() == null || data.snapshot().snapshotId().isBlank()) return;
+    if (snapshotCache.size() >= 128) {
+      Instant now = Instant.now();
+      snapshotCache.entrySet().removeIf(entry -> entry.getValue().expiresAt().isBefore(now));
+      if (snapshotCache.size() >= 128) snapshotCache.clear();
+    }
+    snapshotCache.put(data.snapshot().snapshotId(), new CachedSnapshot(
+        user.tenantId(), user.id(), data, Instant.now().plus(CACHE_TTL)
+    ));
+  }
+
+  private AssistantChatResponse.LocalData localDataFor(
+      AssistantDataEngine.Result data,
+      String invocation,
+      AssistantChatResponse.InsufficientData insufficient
+  ) {
+    AssistantChatResponse.LocalData base = data.localData();
+    return base.withSnapshot(data.snapshot(), insufficient, invocation);
+  }
+
+  private AssistantChatResponse insufficientDataResponse(
+      String question,
+      String selectionReason,
+      AssistantDataEngine.Result data
+  ) {
+    OperatingSnapshot snapshot = data.snapshot();
+    List<String> facts = new ArrayList<>();
+    if (snapshot.capabilities().canComputeKPI()) {
+      facts.add("当前范围已有可验证的收入、成本、费用和经营利润汇总。");
+    }
+    if (snapshot.storeCoverage().reportedStoreCount() > 0) {
+      facts.add("已报门店 " + snapshot.storeCoverage().reportedStoreCount()
+          + " / " + snapshot.storeCoverage().expectedStoreCount() + " 家。");
+    }
+    List<String> cannotDetermine = new ArrayList<>();
+    if (!snapshot.capabilities().canCompare()) cannotDetermine.add("无法按同门店、同营业日、同天数和同口径进行环比。");
+    if (!snapshot.capabilities().canAttributeCause()) cannotDetermine.add("当前数据不足以支持经营原因、趋势或门店结论归因。");
+    List<String> nextSteps = new ArrayList<>();
+    if (!snapshot.storeCoverage().missingStoreIds().isEmpty()) nextSteps.add("补齐缺失门店的当月经营数据。");
+    if (snapshot.missingFields().contains("costOfSalesDetail")
+        || snapshot.missingFields().contains("operatingExpenseDetail")) {
+      nextSteps.add("核对并补录成本、费用明细后再进行原因分析。");
+    }
+    if (snapshot.isMTD()) nextSteps.add("待具备同营业日数据后再启用环比和趋势分析。");
+    if (nextSteps.isEmpty()) nextSteps.add("补齐可比期或日级经营数据后重新分析。");
+    AssistantChatResponse.InsufficientData insufficient = new AssistantChatResponse.InsufficientData(
+        "INSUFFICIENT_DATA", facts, cannotDetermine, snapshot.missingFields(), nextSteps, false
+    );
+    return new AssistantChatResponse(
+        question,
+        "LOCAL",
+        selectionReason + "；当前快照仅返回可验证事实，未调用 AI 模型。",
+        localDataFor(data, "NOT_CALLED_INSUFFICIENT", insufficient),
+        AssistantChatResponse.AiAnalysis.unavailable(),
+        false,
+        null
+    );
+  }
+
+  private AssistantChatResponse snapshotExpiredResponse(String question) {
+    AssistantChatResponse.InsufficientData insufficient = new AssistantChatResponse.InsufficientData(
+        "INSUFFICIENT_DATA", List.of(), List.of("当前页面快照已过期，不能将新旧数据混在同一回答中。"),
+        List.of("snapshotId"), List.of("请重新拉取经营数据后再提问。"), false
+    );
+    AssistantChatResponse.LocalData localData = new AssistantChatResponse.LocalData(
+        "当前经营快照已过期，请重新拉取数据。", List.of(), "", "", "",
+        "", "", Instant.now(), "", null, insufficient, "NOT_CALLED_SNAPSHOT_EXPIRED"
+    );
+    return new AssistantChatResponse(
+        question,
+        "LOCAL",
+        "当前快照已过期，未重新查询或调用 AI。",
+        localData,
+        AssistantChatResponse.AiAnalysis.unavailable(),
+        false,
+        new AssistantChatResponse.AssistantError("SNAPSHOT_EXPIRED", "经营数据已更新或快照已过期，请重新拉取。")
+    );
   }
 
   private AssistantChatResponse blockedResponse(String question, String code, String message) {
@@ -307,9 +431,11 @@ public class AssistantService {
     try {
       root = objectMapper.readTree(json);
     } catch (Exception ex) {
-      return ParsedAnalysis.invalidSchema(SchemaDiagnostic.notJson());
+      return ParsedAnalysis.valid(textAnalysisFallback(result, localLimitations), 0);
     }
-    if (root == null || !root.isObject()) return ParsedAnalysis.invalidSchema(SchemaDiagnostic.nonObject());
+    if (root == null || !root.isObject()) {
+      return ParsedAnalysis.valid(textAnalysisFallback(result, localLimitations), 0);
+    }
     SchemaDiagnostic diagnostic = SchemaDiagnostic.from(root);
 
     try {
@@ -364,6 +490,82 @@ public class AssistantService {
     return fence.matches() ? fence.group(1).trim() : normalized;
   }
 
+  private AssistantChatResponse.AiAnalysis textAnalysisFallback(
+      DeepSeekCallResult result,
+      List<String> localLimitations
+  ) {
+    String content = cleanModelText(result.content());
+    String summary = bestEffortSummaryText(content);
+    summary = summary.isBlank()
+        ? "\u0044\u0065\u0065\u0070\u0053\u0065\u0065\u006b\u5df2\u8fd4\u56de\u5206\u6790\uff0c\u4f46\u672a\u4ea7\u751f\u53ef\u5c55\u793a\u6587\u672c\u3002"
+        : summary;
+    List<String> limitations = new ArrayList<>();
+    if (localLimitations != null) {
+      localLimitations.stream()
+          .map(this::clean)
+          .filter(value -> !value.isBlank())
+          .filter(value -> !limitations.contains(value))
+          .forEach(limitations::add);
+    }
+    limitations.add("\u6a21\u578b\u672a\u8fd4\u56de\u6807\u51c6\u7ed3\u6784\u5316\u004a\u0053\u004f\u004e\uff0c\u672c\u6b21\u6309\u539f\u59cb\u6587\u672c\u7ed3\u8bba\u5c55\u793a\u3002");
+    return new AssistantChatResponse.AiAnalysis(
+        true,
+        "DeepSeek",
+        result.model(),
+        result.requestId(),
+        result.latencyMs(),
+        "FULL",
+        summary,
+        firstTextLines(summary, 5),
+        List.of(),
+        List.of(),
+        List.of(),
+        "MEDIUM",
+        limitations
+    );
+  }
+
+  private String cleanModelText(String value) {
+    String text = clean(value);
+    if (text.isBlank()) return "";
+    text = WHOLE_JSON_FENCE.matcher(text).matches() ? normalizeModelJsonContent(text) : text;
+    return text.length() <= 2000 ? text : text.substring(0, 2000);
+  }
+
+  private String bestEffortSummaryText(String value) {
+    String text = clean(value);
+    if (!text.stripLeading().startsWith("{")) return text;
+    Matcher matcher = JSON_SUMMARY_FIELD.matcher(text);
+    if (!matcher.find()) return text;
+    return decodeJsonString(matcher.toMatchResult()).orElse(text);
+  }
+
+  private Optional<String> decodeJsonString(MatchResult match) {
+    try {
+      String decoded = objectMapper.readValue("\"" + match.group(1) + "\"", String.class);
+      return Optional.of(clean(decoded));
+    } catch (Exception ex) {
+      return Optional.empty();
+    }
+  }
+
+  private List<String> firstTextLines(String value, int limit) {
+    List<String> lines = new ArrayList<>();
+    for (String raw : value.split("\\R+")) {
+      String line = clean(raw)
+          .replaceFirst("^[-*\\d.\\s]+", "")
+          .trim();
+      if (!line.isBlank()) lines.add(line);
+      if (lines.size() >= limit) break;
+    }
+    return lines.isEmpty() ? List.of(value) : List.copyOf(lines);
+  }
+
+  private boolean isTextAnalysisFallback(AssistantChatResponse.AiAnalysis analysis) {
+    return analysis.limitations().stream()
+        .anyMatch(value -> value.contains("\u539f\u59cb\u6587\u672c\u7ed3\u8bba"));
+  }
+
   private void rejectUnknownTopLevelFields(JsonNode root) {
     java.util.Iterator<String> fields = root.fieldNames();
     while (fields.hasNext()) {
@@ -399,13 +601,13 @@ public class AssistantService {
   private DeepSeekCallResult analyzeWithinBudget(
       String systemPrompt,
       String modelQuestion,
-      long startedAt
+      long startedAt,
+      boolean fastProfile
   ) {
-    return deepSeekClient.analyze(
-        systemPrompt,
-        modelQuestion,
-        remainingAnalysisBudget(startedAt)
-    );
+    Duration remaining = remainingAnalysisBudget(startedAt);
+    return fastProfile
+        ? deepSeekClient.analyzeFast(systemPrompt, modelQuestion, remaining)
+        : deepSeekClient.analyze(systemPrompt, modelQuestion, remaining);
   }
 
   private Duration remainingAnalysisBudget(long startedAt) {
@@ -578,6 +780,9 @@ public class AssistantService {
     if (!expectation.analysisType().equals(analysis.analysisType())) {
       return QualityResult.failed("ANALYSIS_TYPE", "当前经营数据要求的分析类型不匹配");
     }
+    if (isTextAnalysisFallback(analysis)) {
+      return QualityResult.success();
+    }
     if (analysis.findings().isEmpty()) {
       return QualityResult.failed("REQUIRED_SECTIONS", "缺少关键发现");
     }
@@ -635,22 +840,11 @@ public class AssistantService {
         && containsAny(text, "成本", "费用", "历史", "月份", "经营数据", "数据");
   }
 
-  private AnalysisExpectation analysisExpectation(
-      AssistantChatResponse.LocalData localData,
-      List<String> limitations
-  ) {
-    boolean costIsZero = metricValue(localData, "cost")
-        .map(value -> value.compareTo(BigDecimal.ZERO) == 0)
-        .orElse(false);
-    boolean marginIsOneHundredPercent = metricValue(localData, "margin")
-        .map(value -> value.compareTo(BigDecimal.ONE) == 0)
-        .orElse(false);
-    boolean missingComparableMonths = limitations != null && limitations.stream().anyMatch(value ->
-        value != null && (value.contains("缺少上月数据")
-            || value.contains("缺少去年同期数据")
-            || value.contains("近三个月数据不足"))
-    );
-    return costIsZero || marginIsOneHundredPercent || missingComparableMonths
+  private AnalysisExpectation analysisExpectation(AssistantChatResponse.LocalData localData) {
+    boolean hasNoMetrics = localData == null || localData.metrics() == null || localData.metrics().isEmpty();
+    boolean hasRevenue = metricValue(localData, "income").isPresent() || metricValue(localData, "sales").isPresent();
+    boolean hasProfit = metricValue(localData, "net").isPresent();
+    return hasNoMetrics || !hasRevenue || !hasProfit
         ? new AnalysisExpectation("DATA_LIMITED", true)
         : new AnalysisExpectation("FULL", false);
   }
@@ -761,19 +955,36 @@ public class AssistantService {
     return allowed;
   }
 
-  private String cacheKey(AuthUser user, AssistantDataEngine.Result data, String question) {
+  private String cacheKey(
+      AuthUser user,
+      AssistantDataEngine.Result data,
+      String question,
+      boolean fastProfile
+  ) {
+    OperatingSnapshot snapshot = data.snapshot();
+    String environment = System.getProperty("app.env");
+    if (environment == null || environment.isBlank()) environment = System.getenv("APP_ENV");
+    if (environment == null || environment.isBlank()) environment = "LOCAL";
+    String scope = snapshot == null
+        ? data.storeId()
+        : String.join(",", snapshot.storeScope().storeIds());
+    String asOf = snapshot == null ? "" : (snapshot.asOf() == null ? "UNKNOWN" : snapshot.asOf().toString());
+    String sourceVersion = snapshot == null ? data.dataVersion() : snapshot.dataSourceVersion();
     return String.join("|",
+        environment.trim().toUpperCase(Locale.ROOT),
         String.valueOf(user.tenantId()),
         user.role(),
-        data.storeId(),
+        scope,
         data.month(),
+        asOf,
+        snapshot == null ? "" : snapshot.snapshotId(),
+        sourceVersion,
         clean(question),
-        data.dataVersion(),
         data.localData().calculationVersion(),
         properties.getBaseUrl(),
-        properties.getModel(),
+        fastProfile ? properties.getFastModel() : properties.getModel(),
         String.valueOf(properties.getTemperature()),
-        String.valueOf(properties.getMaxTokens()),
+        String.valueOf(fastProfile ? properties.getFastMaxTokens() : properties.getMaxTokens()),
         PROMPT_VERSION
     );
   }
@@ -790,13 +1001,14 @@ public class AssistantService {
   private String systemPrompt(String dataContext, AnalysisExpectation expectation) {
     String typeInstruction = expectation.dataLimited()
         ? """
-            当前快照存在成本为0、净利率为100%或可比月份缺失等数据不足信号。
+            当前快照缺少收入或利润等基础经营指标，无法做可靠归因。
             必须输出 analysisType=DATA_LIMITED：summary 和 findings 只说明无法完成原因或趋势判断；
-            limitations 至少一项；risks 可为空；possibleCauses 必须为空；actions 只能给出1至3条补全成本、费用或历史月份数据的具体动作。
+            limitations 至少一项；risks 可为空；possibleCauses 必须为空；actions 只能给出1至3条补全基础经营指标的具体动作。
             不得编造经营原因、金额、比例或趋势。
             """
         : """
-            当前快照可进行完整分析。必须输出 analysisType=FULL，并完整提供发现、风险、待核实原因和恰好3条行动建议。
+            当前快照已有基础经营指标，必须直接进行分析。必须输出 analysisType=FULL，并完整提供发现、风险、待核实原因和恰好3条行动建议。
+            如果存在当前月未完结、缺少日级覆盖、缺少同比或环比等限制，只能写入 limitations，不能因此拒绝分析。
             """;
     return """
         你是门店经营分析引擎。数据库事实已经由本地数据引擎计算，你只负责解释异常、推测原因并提出行动方案。
@@ -1007,4 +1219,19 @@ public class AssistantService {
   }
 
   private record CachedAnalysis(AssistantChatResponse.AiAnalysis analysis, Instant expiresAt) {}
+
+  private record CachedSnapshot(long tenantId, long userId, AssistantDataEngine.Result data, Instant expiresAt) {}
+
+  private record SnapshotResolution(
+      AssistantDataEngine.Result data,
+      AssistantChatResponse errorResponse
+  ) {
+    private static SnapshotResolution success(AssistantDataEngine.Result data) {
+      return new SnapshotResolution(data, null);
+    }
+
+    private static SnapshotResolution failure(AssistantChatResponse response) {
+      return new SnapshotResolution(null, response);
+    }
+  }
 }

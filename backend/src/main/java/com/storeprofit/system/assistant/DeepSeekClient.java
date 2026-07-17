@@ -69,6 +69,29 @@ public class DeepSeekClient {
       String userPrompt,
       Duration totalBudget
   ) {
+    return analyzeWithOptions(
+        systemPrompt, userPrompt, totalBudget, properties.getModel(), properties.getMaxTokens()
+    );
+  }
+
+  /** Uses the low-latency model profile for automatic assistant routing. */
+  public DeepSeekCallResult analyzeFast(
+      String systemPrompt,
+      String userPrompt,
+      Duration totalBudget
+  ) {
+    return analyzeWithOptions(
+        systemPrompt, userPrompt, totalBudget, properties.getFastModel(), properties.getFastMaxTokens()
+    );
+  }
+
+  private DeepSeekCallResult analyzeWithOptions(
+      String systemPrompt,
+      String userPrompt,
+      Duration totalBudget,
+      String model,
+      int maxTokens
+  ) {
     requireConfigured();
     requireCircuitClosed();
     acquireRateLimitPermit();
@@ -80,7 +103,9 @@ public class DeepSeekClient {
         DeepSeekCallResult result = execute(
             systemPrompt,
             userPrompt,
-            timeoutForAttempt(totalBudget, deadlineNanos)
+            timeoutForAttempt(totalBudget, deadlineNanos),
+            model,
+            maxTokens
         );
         consecutiveTransientFailures.set(0);
         circuitOpenUntil = null;
@@ -112,21 +137,52 @@ public class DeepSeekClient {
   private DeepSeekCallResult execute(
       String systemPrompt,
       String userPrompt,
-      Duration requestTimeout
+      Duration requestTimeout,
+      String model,
+      int maxTokens
+  ) {
+    long deadlineNanos = deadlineNanos(requestTimeout);
+    try {
+      return executeOnce(systemPrompt, userPrompt, requestTimeout, true, model, maxTokens);
+    } catch (DeepSeekException failure) {
+      if (!"DEEPSEEK_EMPTY_RESPONSE".equals(failure.getCode())) {
+        throw failure;
+      }
+      log.warn("DeepSeek JSON response mode returned empty content; retrying without response_format");
+      return executeOnce(
+          systemPrompt,
+          userPrompt,
+          timeoutForAttempt(requestTimeout, deadlineNanos),
+          false,
+          model,
+          maxTokens
+      );
+    }
+  }
+
+  private DeepSeekCallResult executeOnce(
+      String systemPrompt,
+      String userPrompt,
+      Duration requestTimeout,
+      boolean includeJsonResponseFormat,
+      String model,
+      int maxTokens
   ) {
     long startedAt = System.nanoTime();
     HttpRequest request;
     try {
       Map<String, Object> body = new LinkedHashMap<>();
-      body.put("model", properties.getModel());
+      body.put("model", model);
       body.put("messages", List.of(
           Map.of("role", "system", "content", nullToEmpty(systemPrompt)),
           Map.of("role", "user", "content", nullToEmpty(userPrompt))
       ));
       body.put("temperature", properties.getTemperature());
-      body.put("max_tokens", properties.getMaxTokens());
+      body.put("max_tokens", maxTokens);
       body.put("stream", false);
-      body.put("response_format", Map.of("type", "json_object"));
+      if (includeJsonResponseFormat) {
+        body.put("response_format", Map.of("type", "json_object"));
+      }
 
       request = HttpRequest.newBuilder()
           .uri(URI.create(properties.getBaseUrl() + "/chat/completions"))

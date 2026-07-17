@@ -34,9 +34,9 @@ class TokenPermissionVersionIntegrationTest {
         where tenant_id = ? and id = ?
         """, user.tenantId(), user.id());
 
-    assertThat(jdbcTemplate.queryForObject(
-        "select count(*) from auth_token where token = 'TEST_STALE_PERMISSION_TOKEN'",
-        Integer.class)).isEqualTo(1);
+    String tokenHash = jdbcTemplate.queryForObject(
+        "select token_hash from auth_token where user_id = ?", String.class, user.id());
+    assertThat(tokenHash).hasSize(64).isNotEqualTo("TEST_STALE_PERMISSION_TOKEN");
     assertThat(authRepository.findByToken("TEST_STALE_PERMISSION_TOKEN")).isEmpty();
   }
 

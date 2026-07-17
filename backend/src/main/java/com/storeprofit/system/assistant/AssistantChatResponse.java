@@ -25,7 +25,11 @@ public record AssistantChatResponse(
       String source,
       String dataVersion,
       String calculationVersion,
-      Instant updatedAt
+      Instant updatedAt,
+      String snapshotId,
+      OperatingSnapshot operatingSnapshot,
+      InsufficientData insufficientData,
+      String aiInvocation
   ) {
     public LocalData {
       summary = safe(summary);
@@ -36,6 +40,22 @@ public record AssistantChatResponse(
       dataVersion = safe(dataVersion);
       calculationVersion = safe(calculationVersion);
       updatedAt = updatedAt == null ? Instant.now() : updatedAt;
+      snapshotId = safe(snapshotId);
+      aiInvocation = safe(aiInvocation).isBlank() ? "NOT_REQUESTED" : safe(aiInvocation).toUpperCase();
+    }
+
+    public LocalData(
+        String summary,
+        List<Metric> metrics,
+        String dataPeriod,
+        String dataScope,
+        String source,
+        String dataVersion,
+        String calculationVersion,
+        Instant updatedAt
+    ) {
+      this(summary, metrics, dataPeriod, dataScope, source, dataVersion, calculationVersion,
+          updatedAt, "", null, null, "NOT_REQUESTED");
     }
 
     public LocalData(
@@ -46,6 +66,39 @@ public record AssistantChatResponse(
         String source
     ) {
       this(summary, metrics, dataPeriod, dataScope, source, "", "", null);
+    }
+
+    public LocalData withSnapshot(
+        OperatingSnapshot snapshot,
+        InsufficientData insufficient,
+        String invocation
+    ) {
+      String id = snapshot == null ? snapshotId : snapshot.snapshotId();
+      return new LocalData(
+          summary, metrics, dataPeriod, dataScope, source, dataVersion, calculationVersion, updatedAt,
+          id, snapshot, insufficient, invocation
+      );
+    }
+  }
+
+  /**
+   * Deterministic data-insufficiency result. It is returned without invoking a model so callers
+   * never have to infer model usage from a routing selection or fallback flag.
+   */
+  public record InsufficientData(
+      String kind,
+      List<String> verifiedFacts,
+      List<String> cannotDetermine,
+      List<String> missingItems,
+      List<String> nextSteps,
+      boolean modelInvoked
+  ) {
+    public InsufficientData {
+      kind = safe(kind).isBlank() ? "INSUFFICIENT_DATA" : safe(kind).toUpperCase();
+      verifiedFacts = immutableStrings(verifiedFacts);
+      cannotDetermine = immutableStrings(cannotDetermine);
+      missingItems = immutableStrings(missingItems);
+      nextSteps = immutableStrings(nextSteps);
     }
   }
 
