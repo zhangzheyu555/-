@@ -45,6 +45,57 @@ function healthState(row: EmployeeRecord): { level: 'ok' | 'danger'; text: strin
   return { level: 'ok', text: row.healthCertExpireDate }
 }
 
+/* ---------- 工龄工资 & 生日福利：全职(正式员工)/长期兼职享受，普通兼职没有 ---------- */
+const SENIORITY_TIERS = [ // 每满半年 +100，两年 400 封顶
+  { months: 24, pay: 400, label: '已满2年' },
+  { months: 18, pay: 300, label: '已满1年半' },
+  { months: 12, pay: 200, label: '已满1年' },
+  { months: 6, pay: 100, label: '已满半年' },
+]
+const BIRTHDAY_BONUS = 200
+const BIRTHDAY_SOON_DAYS = 30
+
+function benefitEligible(r: EmployeeRecord): boolean {
+  const type = r.employmentType || '全职'
+  return r.status === '在职' && (type === '全职' || type === '长期兼职')
+}
+
+function seniorityPay(r: EmployeeRecord): { pay: number; text: string } {
+  if (!benefitEligible(r) || !r.hireDate) return { pay: 0, text: '—' }
+  const hire = new Date(r.hireDate + 'T00:00:00')
+  if (Number.isNaN(hire.getTime())) return { pay: 0, text: '—' }
+  const now = new Date()
+  let months = (now.getFullYear() - hire.getFullYear()) * 12 + (now.getMonth() - hire.getMonth())
+  if (now.getDate() < hire.getDate()) months -= 1
+  const tier = SENIORITY_TIERS.find((t) => months >= t.months)
+  if (!tier) return { pay: 0, text: '未满半年' }
+  return { pay: tier.pay, text: `${tier.pay}（${tier.label}）` }
+}
+
+/* 生日存「月.日」字符串（部分含年份如 1991.8.19），取最后两段当月/日 */
+function birthdayState(r: EmployeeRecord): { soon: boolean; text: string } {
+  const raw = (r.birthday || '').trim()
+  if (!raw) return { soon: false, text: '—' }
+  if (!benefitEligible(r)) return { soon: false, text: raw }
+  const parts = raw.split(/[.\-/月日\s]+/).filter(Boolean)
+  if (parts.length < 2) return { soon: false, text: raw }
+  const month = Number(parts[parts.length - 2])
+  const day = Number(parts[parts.length - 1])
+  if (!(month >= 1 && month <= 12 && day >= 1 && day <= 31)) return { soon: false, text: raw }
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  let next = new Date(today.getFullYear(), month - 1, day)
+  if (next.getTime() < today.getTime()) next = new Date(today.getFullYear() + 1, month - 1, day)
+  const days = Math.round((next.getTime() - today.getTime()) / MS_PER_DAY)
+  if (days > BIRTHDAY_SOON_DAYS) return { soon: false, text: raw }
+  return { soon: true, text: `${raw}（${days === 0 ? '今天生日' : `${days} 天后生日`}·福利 ${BIRTHDAY_BONUS}）` }
+}
+
+const onlyBirthdaySoon = ref(false)
+const birthdaySoonCount = computed(() =>
+  rows.value.filter((r) => (!statusFilter.value || r.status === statusFilter.value)
+    && birthdayState(r).soon).length)
+
 const filtered = computed(() =>
   rows.value.filter((r) => {
     if (storeFilter.value && r.storeId !== storeFilter.value) return false
@@ -54,6 +105,7 @@ const filtered = computed(() =>
       if (!r.name.includes(k) && !(r.phone || '').includes(k)) return false
     }
     if (onlyHealthProblem.value && healthState(r).level !== 'danger') return false
+    if (onlyBirthdaySoon.value && !birthdayState(r).soon) return false
     return true
   }))
 
@@ -96,7 +148,21 @@ const emptyForm = (): EmployeeUpsert => ({
   storeId: '', name: '', phone: '', position: '', employmentType: '全职', status: '在职',
   hireDate: '', birthday: '', idCardNo: '', healthCertIssueDate: '', healthCertExpireDate: '',
   contractSignText: '', regularDate: '', trainerDate: '', shiftLeaderDate: '', managerDate: '', remark: '',
+  hourlyRate: null,
 })
+
+/* ---------- 时薪选择栏（兼职/实习/长期阿姨适用；空=默认：实习兼职15、阿姨18） ---------- */
+const HOURLY_RATE_OPTIONS = [12, 13, 15, 18, 20]
+const hourlyMode = ref('')
+function syncHourlyMode() {
+  const v = form.hourlyRate
+  if (v === null || v === undefined || v === 0) hourlyMode.value = ''
+  else hourlyMode.value = HOURLY_RATE_OPTIONS.includes(Number(v)) ? String(v) : 'custom'
+}
+function onHourlyModeChange() {
+  if (hourlyMode.value === '') form.hourlyRate = null
+  else if (hourlyMode.value !== 'custom') form.hourlyRate = Number(hourlyMode.value)
+}
 const dialogOpen = ref(false)
 const editingId = ref('')
 const form = reactive<EmployeeUpsert>(emptyForm())
@@ -107,6 +173,7 @@ function openCreate() {
   Object.assign(form, emptyForm())
   editingId.value = ''
   dialogError.value = ''
+  syncHourlyMode()
   dialogOpen.value = true
 }
 function openEdit(row: EmployeeRecord) {
@@ -117,10 +184,11 @@ function openEdit(row: EmployeeRecord) {
     healthCertIssueDate: row.healthCertIssueDate, healthCertExpireDate: row.healthCertExpireDate,
     contractSignText: row.contractSignText, regularDate: row.regularDate,
     trainerDate: row.trainerDate, shiftLeaderDate: row.shiftLeaderDate,
-    managerDate: row.managerDate, remark: row.remark,
+    managerDate: row.managerDate, remark: row.remark, hourlyRate: row.hourlyRate ?? null,
   })
   editingId.value = row.id
   dialogError.value = ''
+  syncHourlyMode()
   dialogOpen.value = true
 }
 async function save() {
@@ -131,10 +199,14 @@ async function save() {
   saving.value = true
   dialogError.value = ''
   try {
+    const payload = {
+      ...form,
+      hourlyRate: typeof form.hourlyRate === 'number' && form.hourlyRate > 0 ? form.hourlyRate : null,
+    }
     if (editingId.value) {
-      await updateEmployee(editingId.value, { ...form })
+      await updateEmployee(editingId.value, payload)
     } else {
-      await createEmployee({ ...form })
+      await createEmployee(payload)
     }
     dialogOpen.value = false
     await load()
@@ -224,14 +296,16 @@ async function onImportFile(event: Event) {
   }
 }
 function exportCsv() {
-  const header = ['门店', '姓名', '职位', '用工类型', '账号', '入职日期', '生日', '身份证',
+  const header = ['门店', '姓名', '职位', '用工类型', '账号', '入职日期', '工龄工资', '生日', '生日福利', '身份证',
     '健康证办理', '健康证到期', '健康证状态', '合同签署', '状态', '电话']
   const csvText = (s?: string) => `"${(s || '').replace(/"/g, '""')}"`
   const lines = [header.join(',')]
   for (const r of filtered.value) {
     const h = healthState(r)
+    const b = birthdayState(r)
     lines.push([csvText(r.storeName), csvText(r.name), csvText(r.position), csvText(r.employmentType),
-      csvText(r.accountUsername), csvText(r.hireDate), csvText(r.birthday), csvText(r.idCardNo),
+      csvText(r.accountUsername), csvText(r.hireDate), csvText(seniorityPay(r).text),
+      csvText(r.birthday), csvText(b.soon ? `近期生日·福利${BIRTHDAY_BONUS}` : ''), csvText(r.idCardNo),
       csvText(r.healthCertIssueDate), csvText(r.healthCertExpireDate),
       csvText(h.level === 'danger' ? h.text : '正常'),
       csvText(r.contractSignText), csvText(r.status), csvText(r.phone)].join(','))
@@ -272,6 +346,9 @@ function exportCsv() {
         <button :class="{ danger: onlyHealthProblem }" @click="onlyHealthProblem = !onlyHealthProblem">
           健康证异常（{{ healthProblemCount }}）
         </button>
+        <button :class="{ warning: onlyBirthdaySoon }" @click="onlyBirthdaySoon = !onlyBirthdaySoon">
+          近期生日（{{ birthdaySoonCount }}）
+        </button>
         <span class="spacer" />
         <button v-if="canManage" class="primary" @click="openCreate">新增员工</button>
         <button v-if="canManage" :disabled="accountBusy" @click="batchOpenAccounts">批量开号</button>
@@ -300,16 +377,17 @@ function exportCsv() {
         <thead>
           <tr>
             <th>姓名</th><th>门店</th><th>职位</th><th>用工</th><th>账号</th>
-            <th>入职日期</th><th>生日</th><th>健康证到期</th><th>状态</th>
+            <th>入职日期</th><th>工龄工资</th><th>生日</th><th>健康证到期</th><th>状态</th>
             <th v-if="canManage">操作</th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="r in filtered" :key="r.id" :class="{ 'health-danger-row': healthState(r).level === 'danger' }">
+          <tr v-for="r in filtered" :key="r.id"
+            :class="{ 'health-danger-row': healthState(r).level === 'danger', 'birthday-soon-row': birthdayState(r).soon }">
             <td>{{ r.name }}</td>
             <td>{{ r.storeName || r.storeId }}</td>
             <td>{{ r.position }}</td>
-            <td>{{ r.employmentType || '全职' }}</td>
+            <td>{{ r.employmentType || '全职' }}<span v-if="r.hourlyRate" class="muted">（{{ r.hourlyRate }}元/时）</span></td>
             <td>
               <template v-if="r.accountUsername">
                 {{ r.accountUsername }}<span v-if="r.accountEnabled === false" class="muted">（已禁用）</span>
@@ -320,7 +398,8 @@ function exportCsv() {
               <span v-else class="muted">—</span>
             </td>
             <td>{{ r.hireDate || '—' }}</td>
-            <td>{{ r.birthday || '—' }}</td>
+            <td>{{ seniorityPay(r).text }}</td>
+            <td :class="{ 'birthday-soon': birthdayState(r).soon }">{{ birthdayState(r).text }}</td>
             <td :class="{ 'health-danger': healthState(r).level === 'danger' }">{{ healthState(r).text }}</td>
             <td>{{ r.status }}</td>
             <td v-if="canManage">
@@ -354,8 +433,20 @@ function exportCsv() {
           <label>用工类型
             <select v-model="form.employmentType">
               <option value="全职">全职</option>
-              <option value="兼职">兼职（不开登录账号）</option>
+              <option value="长期兼职">长期兼职（有工龄工资/生日福利）</option>
+              <option value="兼职">兼职（不开登录账号，无福利）</option>
             </select>
+          </label>
+          <label>时薪（兼职/实习/阿姨适用）
+            <span class="hourly-row">
+              <select v-model="hourlyMode" @change="onHourlyModeChange">
+                <option value="">默认（实习兼职15、阿姨18）</option>
+                <option v-for="r in HOURLY_RATE_OPTIONS" :key="r" :value="String(r)">{{ r }} 元/时</option>
+                <option value="custom">自定义…</option>
+              </select>
+              <input v-if="hourlyMode === 'custom'" v-model.number="form.hourlyRate" type="number"
+                min="0" step="0.5" placeholder="元/时" class="hourly-custom" />
+            </span>
           </label>
           <label>电话<input v-model="form.phone" type="text" /></label>
           <label>身份证号<input v-model="form.idCardNo" type="text" /></label>
@@ -488,6 +579,27 @@ tr.health-danger-row td:first-child {
   border-left: 3px solid #dc2626;
 }
 
+/* 生日标黄：30 天内过生日（全职/长期兼职有 200 生日福利） */
+td.birthday-soon {
+  background: #fef9c3;
+  color: #a16207;
+  font-weight: 600;
+}
+
+tr.birthday-soon-row td {
+  background: #fffbeb;
+}
+
+tr.birthday-soon-row td.birthday-soon {
+  background: #fef9c3;
+}
+
+.staff-toolbar button.warning {
+  background: #f59e0b;
+  border-color: #f59e0b;
+  color: #fff;
+}
+
 .link-btn {
   border: none;
   background: none;
@@ -534,5 +646,18 @@ tr.health-danger-row td:first-child {
 
 .form-grid .msg {
   grid-column: 1 / -1;
+}
+
+.hourly-row {
+  display: flex;
+  gap: 6px;
+}
+
+.hourly-row select {
+  flex: 1;
+}
+
+.hourly-custom {
+  width: 90px;
 }
 </style>

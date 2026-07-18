@@ -281,7 +281,8 @@ public class EmployeeService {
     return new EmployeeUpsertRequest(storeId, req.name(), req.phone(), req.position(),
         req.employmentType(), req.status(), req.hireDate(), req.birthday(), req.idCardNo(),
         req.healthCertIssueDate(), req.healthCertExpireDate(), req.contractSignText(),
-        req.regularDate(), req.trainerDate(), req.shiftLeaderDate(), req.managerDate(), req.remark());
+        req.regularDate(), req.trainerDate(), req.shiftLeaderDate(), req.managerDate(), req.remark(),
+        req.hourlyRate());
   }
 
   private void validate(long tenantId, EmployeeUpsertRequest request) {

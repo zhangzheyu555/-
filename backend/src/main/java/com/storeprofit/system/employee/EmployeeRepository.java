@@ -50,7 +50,8 @@ public class EmployeeRepository {
                date_format(e.trainer_date, '%Y-%m-%d') as trainer_date,
                date_format(e.shift_leader_date, '%Y-%m-%d') as shift_leader_date,
                date_format(e.manager_date, '%Y-%m-%d') as manager_date,
-               e.auth_user_id, au.username as account_username, au.enabled as account_enabled
+               e.auth_user_id, au.username as account_username, au.enabled as account_enabled,
+               e.hourly_rate
         from employee e
         left join store_branch s on s.id = e.store_id and s.tenant_id = e.tenant_id
         left join brand b on b.id = s.brand_id and b.tenant_id = s.tenant_id
@@ -102,7 +103,8 @@ public class EmployeeRepository {
                date_format(e.trainer_date, '%Y-%m-%d') as trainer_date,
                date_format(e.shift_leader_date, '%Y-%m-%d') as shift_leader_date,
                date_format(e.manager_date, '%Y-%m-%d') as manager_date,
-               e.auth_user_id, au.username as account_username, au.enabled as account_enabled
+               e.auth_user_id, au.username as account_username, au.enabled as account_enabled,
+               e.hourly_rate
         from employee e
         left join store_branch s on s.id = e.store_id and s.tenant_id = e.tenant_id
         left join brand b on b.id = s.brand_id and b.tenant_id = s.tenant_id
@@ -233,7 +235,8 @@ public class EmployeeRepository {
         rs.getString("manager_date"),
         boxedLong(rs.getLong("auth_user_id"), rs.wasNull()),
         rs.getString("account_username"),
-        boxedBoolean(rs.getBoolean("account_enabled"), rs.wasNull())
+        boxedBoolean(rs.getBoolean("account_enabled"), rs.wasNull()),
+        nullableAmount(rs.getBigDecimal("hourly_rate"))
     );
   }
 
@@ -249,6 +252,10 @@ public class EmployeeRepository {
     return value == null ? ZERO : value.setScale(2, RoundingMode.HALF_UP);
   }
 
+  private BigDecimal nullableAmount(BigDecimal value) {
+    return value == null ? null : value.setScale(2, RoundingMode.HALF_UP);
+  }
+
   private String blankToNull(String value) {
     return value == null || value.isBlank() ? null : value.trim();
   }
@@ -262,12 +269,12 @@ public class EmployeeRepository {
           id, tenant_id, store_id, name, phone, position, employment_type, status,
           hire_date, birthday, id_card_no, health_cert_issue_date, health_cert_expire_date,
           contract_sign_text, regular_date, trainer_date, shift_leader_date, manager_date,
-          base_salary, remark, data_source, created_at, updated_at
+          base_salary, hourly_rate, remark, data_source, created_at, updated_at
         ) values (
           :id, :tenantId, :storeId, :name, :phone, :position, :employmentType, :status,
           :hireDate, :birthday, :idCardNo, :healthIssue, :healthExpire,
           :contract, :regularDate, :trainerDate, :shiftLeaderDate, :managerDate,
-          0, :remark, :dataSource, current_timestamp, current_timestamp
+          0, :hourlyRate, :remark, :dataSource, current_timestamp, current_timestamp
         )
         on duplicate key update
           phone = values(phone), position = values(position),
@@ -279,6 +286,7 @@ public class EmployeeRepository {
           contract_sign_text = values(contract_sign_text),
           regular_date = values(regular_date), trainer_date = values(trainer_date),
           shift_leader_date = values(shift_leader_date), manager_date = values(manager_date),
+          hourly_rate = values(hourly_rate),
           remark = values(remark), data_source = values(data_source),
           updated_at = current_timestamp
         """,
@@ -302,6 +310,7 @@ public class EmployeeRepository {
             .addValue("shiftLeaderDate", blankToNull(req.shiftLeaderDate()))
             .addValue("managerDate", blankToNull(req.managerDate()))
             .addValue("dataSource", dataSource)
+            .addValue("hourlyRate", req.hourlyRate())
             .addValue("remark", blankToNull(req.remark()))
     );
   }

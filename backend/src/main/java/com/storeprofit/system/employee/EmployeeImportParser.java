@@ -76,6 +76,7 @@ final class EmployeeImportParser {
             date(row, 5, problems, "训练员转正"),
             date(row, 6, problems, "领班"),
             date(row, 7, problems, "店长转正"),
+            null,
             null
         );
         rows.add(new ImportRow(i + 1, currentStore == null ? "" : currentStore, request, problems));

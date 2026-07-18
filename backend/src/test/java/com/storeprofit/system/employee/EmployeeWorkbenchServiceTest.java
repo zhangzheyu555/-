@@ -86,7 +86,7 @@ class EmployeeWorkbenchServiceTest {
             "RG1员工一", null, "店员", "店员", "全职", BigDecimal.valueOf(3500),
             "在职", "2026-07-01", null,
             null, null, null, null, null, null, null, null, null,
-            8L, "rg1_emp_01", true)
+            8L, "rg1_emp_01", true, null)
     ));
     when(salaryRepository.latestEmployeeRecord(
         1L, "rg1", List.of("rg1_emp_01", "8"), "RG1员工一")).thenReturn(Optional.empty());

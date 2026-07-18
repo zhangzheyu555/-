@@ -28,6 +28,7 @@ export interface EmployeeRecord {
   authUserId?: number
   accountUsername?: string
   accountEnabled?: boolean
+  hourlyRate?: number | null
 }
 
 export interface EmployeeQuery {
@@ -54,6 +55,7 @@ export interface EmployeeUpsert {
   shiftLeaderDate?: string
   managerDate?: string
   remark?: string
+  hourlyRate?: number | null
 }
 
 export interface EmployeeAccountResult {

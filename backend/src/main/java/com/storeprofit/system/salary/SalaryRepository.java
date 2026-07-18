@@ -490,6 +490,34 @@ public class SalaryRepository {
     return count != null && count > 0;
   }
 
+  /** 门店当月营业额（profit_entry.sales），用于提成档位/额度计算。 */
+  public Optional<BigDecimal> storeMonthlyRevenue(long tenantId, String storeId, String month) {
+    try {
+      return Optional.ofNullable(jdbcTemplate.queryForObject(
+          "select sales from profit_entry where tenant_id = ? and store_id = ? and month = ? limit 1",
+          BigDecimal.class, tenantId, storeId, month));
+    } catch (EmptyResultDataAccessException ex) {
+      return Optional.empty();
+    }
+  }
+
+  public record StoreAttendanceStats(BigDecimal effectiveHours, BigDecimal formalDays) {}
+
+  /** 门店当月考勤汇总：总工时（实习/兼职按半工时）与四个标准岗位的出勤天数合计，用于提成计算。 */
+  public StoreAttendanceStats storeAttendanceStats(long tenantId, String storeId, String month) {
+    return jdbcTemplate.queryForObject("""
+        select coalesce(sum(case when e.employment_type = '兼职' or e.position like '%实习%'
+                                 then a.total_hours / 2 else a.total_hours end), 0) as eff_hours,
+               coalesce(sum(case when e.position in ('店长', '领班', '训练员', '营业员')
+                                 then a.attendance_days else 0 end), 0) as formal_days
+        from employee_month_attendance a
+        join employee e on e.id = a.employee_id and e.tenant_id = a.tenant_id
+        where a.tenant_id = ? and a.store_id = ? and a.month = ? and a.status = 'CONFIRMED'
+        """, (rs, rowNum) -> new StoreAttendanceStats(
+            amount(rs.getBigDecimal("eff_hours")), amount(rs.getBigDecimal("formal_days"))),
+        tenantId, storeId, month);
+  }
+
   public Optional<SalaryProfileRow> salaryProfile(long tenantId, String employeeId, String month) {
     try {
       return Optional.ofNullable(jdbcTemplate.queryForObject("""
@@ -642,9 +670,9 @@ public class SalaryRepository {
           gross, normal_hours, ot_hours, work_hours, vacation_left, vacation_note,
           base, social, post, meal, full_attendance, commission, overtime,
           seniority, late_night, subsidy, performance, deduct_uniform,
-          return_uniform, status, created_at
+          return_uniform, status, version, created_at
         )
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', current_timestamp)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', 1, current_timestamp)
         """,
         id,
         tenantId,

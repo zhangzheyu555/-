@@ -29,7 +29,8 @@ public record EmployeeResponse(
     String managerDate,
     Long authUserId,
     String accountUsername,
-    Boolean accountEnabled
+    Boolean accountEnabled,
+    BigDecimal hourlyRate
 ) {
 
   /** 非 BOSS 角色看到的身份证脱敏视图：保留前 6 后 2。 */
@@ -45,6 +46,6 @@ public record EmployeeResponse(
         role, position, employmentType, baseSalary, status, hireDate, remark,
         birthday, masked, healthCertIssueDate, healthCertExpireDate,
         contractSignText, regularDate, trainerDate, shiftLeaderDate, managerDate,
-        authUserId, accountUsername, accountEnabled);
+        authUserId, accountUsername, accountEnabled, hourlyRate);
   }
 }

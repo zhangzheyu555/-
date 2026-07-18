@@ -18,6 +18,7 @@ public record EmployeeUpsertRequest(
     String trainerDate,
     String shiftLeaderDate,
     String managerDate,
-    String remark
+    String remark,
+    java.math.BigDecimal hourlyRate
 ) {
 }

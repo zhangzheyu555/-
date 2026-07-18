@@ -43,7 +43,7 @@ class SalaryWorkflowServiceTest {
         "employee-1", "store-1", "S001", "测试门店", 1L, "测试品牌", "历史员工", "",
         "EMPLOYEE", "店员", "FULL_TIME", BigDecimal.ZERO, "离职", "2025-01-01", "",
         null, null, null, null, null, null, null, null, null,
-        null, null, null);
+        null, null, null, null);
     when(employeeRepository.record(1L, "employee-1")).thenReturn(Optional.of(inactive));
     when(salaryRepository.storeExists(1L, "store-1")).thenReturn(true);
     when(salaryRepository.record(1L, "LEGACY-1")).thenReturn(Optional.empty());

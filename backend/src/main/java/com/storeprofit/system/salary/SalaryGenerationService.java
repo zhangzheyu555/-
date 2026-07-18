@@ -23,6 +23,27 @@ import org.springframework.transaction.annotation.Transactional;
 public class SalaryGenerationService {
   private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
+  // ===== 2026 工资口径常量（源：《2026年3月工资总合计.xlsx》Sheet1 保底表，已与 2026-03 全量 114 人实发核对一致）=====
+  private static final BigDecimal STD_SOCIAL = new BigDecimal("800");          // 社保补助/月
+  private static final BigDecimal STD_MEAL = new BigDecimal("300");            // 餐补/月
+  private static final BigDecimal FULL_ATTENDANCE_BONUS = new BigDecimal("200");
+  private static final BigDecimal DEFAULT_FULL_MONTH_DAYS = new BigDecimal("26");
+  private static final BigDecimal PART_TIME_HOURLY_RATE = new BigDecimal("15"); // 实习/兼职时薪（工资模板新版）
+  private static final BigDecimal AUNTIE_HOURLY_RATE = new BigDecimal("18");    // 长期阿姨(切水果)正式时薪
+  private static final BigDecimal HOURS_PER_DAY = new BigDecimal("8");
+  private static final java.util.Map<String, BigDecimal> POST_WAGE = java.util.Map.of(
+      "店长", new BigDecimal("1300"), "领班", new BigDecimal("800"),
+      "训练员", new BigDecimal("500"), "营业员", new BigDecimal("200"));
+  // 保底中的固定提成档：店长 800、其余 600（保底 = 基本+社保+岗位+餐补+全勤+此档 → 5300/4600/4300/4000）
+  private static final java.util.Map<String, BigDecimal> GUARANTEE_COMMISSION = java.util.Map.of(
+      "店长", new BigDecimal("800"), "领班", new BigDecimal("600"),
+      "训练员", new BigDecimal("600"), "营业员", new BigDecimal("600"));
+  // 工龄工资：满半年100/一年200/一年半300/两年400 封顶（与员工档案页 SENIORITY_TIERS 一致）
+  private static final int[] SENIORITY_MONTHS = {24, 18, 12, 6};
+  private static final BigDecimal[] SENIORITY_PAY = {
+      new BigDecimal("400"), new BigDecimal("300"), new BigDecimal("200"), new BigDecimal("100")};
+
   private final SalaryRepository salaryRepository;
   private final EmployeeRepository employeeRepository;
   private final AccessControlService accessControl;
@@ -122,6 +143,7 @@ public class SalaryGenerationService {
       throw new BusinessException("EMPLOYEE_REPOSITORY_UNAVAILABLE", "Employee repository is not available", HttpStatus.INTERNAL_SERVER_ERROR);
     }
     List<EmployeeResponse> employees = employeeRepository.records(user.tenantId(), null, storeId, null);
+    StoreCommissionContext commissionCtx = storeCommissionContext(user.tenantId(), storeId, month);
     int generated = 0;
     int skipped = 0;
     int errors = 0;
@@ -157,11 +179,19 @@ public class SalaryGenerationService {
         skipDetails.add(new SalaryGenerateReport.SalarySkipDetail(employee.id(), employee.name(), "工资记录已存在"));
         continue;
       }
-      SalaryRecordRequest row = generatedRecord(storeId, month, employee, preparation);
+      SalaryRecordRequest row = generatedRecord(storeId, month, employee, preparation, commissionCtx);
       String salaryId = generatedId(month, employee.id());
       salaryRepository.upsert(user.tenantId(), salaryId, row);
       saveCalculationSnapshot(user.tenantId(), salaryId, employee, preparation, row);
       generated++;
+    }
+    String detail = "已生成 " + generated + " 条，跳过 " + skipped + " 条，异常 " + errors + " 条";
+    if (commissionCtx != null) {
+      detail += "；提成" + commissionCtx.rateLabel() + "档（每小时产值" + commissionCtx.hourlyRevenue().stripTrailingZeros().toPlainString()
+          + "，人均月产值" + commissionCtx.perCapitaOutput().stripTrailingZeros().toPlainString()
+          + "，人均额度" + commissionCtx.quotaPerPerson().stripTrailingZeros().toPlainString()
+          + "，总池" + commissionCtx.pool().stripTrailingZeros().toPlainString()
+          + "）；店铺基金=总池−实发提成（约7.5%）";
     }
     salaryRepository.logAction(
         user.tenantId(),
@@ -171,7 +201,7 @@ public class SalaryGenerationService {
         storeId + "-" + month,
         storeId,
         month,
-        "已生成 " + generated + " 条，跳过 " + skipped + " 条，异常 " + errors + " 条"
+        detail
     );
     List<SalaryRecordResponse> records = salaryRepository.records(user.tenantId(), month, null, storeId);
     return new GenerateResult(records, new SalaryGenerateReport(generated, skipped, errors, skipDetails));
@@ -180,14 +210,97 @@ public class SalaryGenerationService {
   private record GenerateResult(List<SalaryRecordResponse> records, SalaryGenerateReport report) {}
 
   static SalaryRecordRequest generatedRecord(String storeId, String month, EmployeeResponse employee, Preparation preparation) {
+    return generatedRecord(storeId, month, employee, preparation, null);
+  }
+
+  /** 按 2026-03 工资表口径自动算薪；commission（提成）按每日销售归属人工填报，生成时为 0。 */
+  static SalaryRecordRequest generatedRecord(String storeId, String month, EmployeeResponse employee,
+                                             Preparation preparation, StoreCommissionContext commissionCtx) {
     SalaryRepository.SalaryProfileRow profile = preparation.profile();
     SalaryRepository.SalaryPolicyRow policy = preparation.policy();
     SalaryRepository.AttendanceRow attendance = preparation.attendance();
-    BigDecimal baseSalary = profile.baseSalary().setScale(2, RoundingMode.HALF_UP);
+    StringBuilder note = new StringBuilder("考勤来源：" + attendance.source());
+
+    if ("兼职".equals(employee.employmentType())) {
+      // 时薪优先级：员工档案「时薪」选择 > 默认口径（实习/兼职15，长期阿姨正式18，工资模板新版）
+      String pos = employee.position() == null ? "" : employee.position();
+      BigDecimal rate = employee.hourlyRate() != null && employee.hourlyRate().compareTo(BigDecimal.ZERO) > 0
+          ? employee.hourlyRate()
+          : (pos.contains("阿姨") && !pos.contains("实习") ? AUNTIE_HOURLY_RATE : PART_TIME_HOURLY_RATE);
+      BigDecimal hours = attendance.totalHours();
+      BigDecimal gross = hours.multiply(rate).setScale(2, RoundingMode.HALF_UP);
+      note.append("；按").append(rate.stripTrailingZeros().toPlainString())
+          .append("元/时×").append(hours.stripTrailingZeros().toPlainString()).append("小时");
+      return record(storeId, month, employee, attendance, gross, gross,
+          ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, note.toString());
+    }
+
+    // 满勤天数与分项折算基准都跟月份走 = 当月天数−4 天休息（模板例：31天月 1900÷27×出勤天数）；
+    // 提成的人均产值基准固定 ×26×8；2 月（春节月）不自动判满勤/保底，由人工填写（guarantee_feb_exclude 同口径）。
+    YearMonth targetMonth = YearMonth.parse(month);
+    boolean february = targetMonth.getMonthValue() == 2;
+    BigDecimal monthlyFullDays = BigDecimal.valueOf(targetMonth.lengthOfMonth() - 4L);
+    BigDecimal days = attendance.attendanceDays();
+    BigDecimal ratio = days.compareTo(monthlyFullDays) >= 0 ? BigDecimal.ONE
+        : days.divide(monthlyFullDays, 10, RoundingMode.HALF_UP);
+    String position = canonicalPosition(employee.position());
+    BigDecimal postWage = position == null ? null : POST_WAGE.get(position);
+
+    // 月薪分项按天折算后四舍五入到整元（3 月表口径：1900×22/26=1607.69→1608）；加班费/兼职时薪保留小数不入整
+    BigDecimal base = wholeYuan(profile.baseSalary().multiply(ratio));
+    BigDecimal social = postWage == null ? ZERO : wholeYuan(STD_SOCIAL.multiply(ratio));
+    BigDecimal post = postWage == null ? ZERO : wholeYuan(postWage.multiply(ratio));
+    BigDecimal meal = postWage == null ? ZERO : wholeYuan(STD_MEAL.multiply(ratio));
+    BigDecimal fullAttendance = !february && days.compareTo(monthlyFullDays) >= 0 ? FULL_ATTENDANCE_BONUS : ZERO;
+    if (february) {
+      note.append("；2月满勤与保底不自动判定，请人工填写");
+    }
+    BigDecimal seniority = seniorityPay(employee, month);
     BigDecimal overtimeRate = profile.overtimeHourRate() != null
-        ? profile.overtimeHourRate() : amountOrZero(policy.overtimeHourRate());
-    BigDecimal overtimeAmount = attendance.overtimeHours().multiply(overtimeRate).setScale(2, RoundingMode.HALF_UP);
-    BigDecimal gross = baseSalary.add(overtimeAmount).setScale(2, RoundingMode.HALF_UP);
+        ? profile.overtimeHourRate() : amountOrZero(policy == null ? null : policy.overtimeHourRate());
+    BigDecimal overtime = attendance.overtimeHours().multiply(overtimeRate).setScale(2, RoundingMode.HALF_UP);
+    // 提成分配制（模板）：总池=人均提成×Σ正式出勤天数÷26；店长+5%、每领班+2.5%、85%按出勤天数均摊给正式员工，余额进店铺基金
+    BigDecimal commission = ZERO;
+    if (commissionCtx != null && postWage != null && commissionCtx.pool().compareTo(BigDecimal.ZERO) > 0) {
+      commission = commissionCtx.commissionFor(position, days);
+      note.append("；提成").append(commission.stripTrailingZeros().toPlainString())
+          .append("（").append(commissionCtx.rateLabel()).append("档，池")
+          .append(commissionCtx.pool().stripTrailingZeros().toPlainString()).append("）");
+    }
+
+    BigDecimal gross = base.add(social).add(post).add(meal).add(fullAttendance)
+        .add(commission).add(overtime).add(seniority).setScale(2, RoundingMode.HALF_UP);
+
+    // 保底：仅四个标准岗位、有全勤才享受；不足 26 天按天折算。保底覆盖 基本+社保+岗位+餐补+全勤+提成 六项。
+    if (postWage != null && policy != null && policy.guaranteeEnabled()
+        && fullAttendance.compareTo(BigDecimal.ZERO) > 0) {
+      BigDecimal guaranteeFull = profile.baseSalary().add(STD_SOCIAL).add(postWage).add(STD_MEAL)
+          .add(FULL_ATTENDANCE_BONUS).add(GUARANTEE_COMMISSION.get(position));
+      BigDecimal floor = wholeYuan(guaranteeFull.multiply(ratio));
+      BigDecimal sixItems = base.add(social).add(post).add(meal).add(fullAttendance).add(commission);
+      if (sixItems.compareTo(floor) < 0) {
+        BigDecimal topUp = floor.subtract(sixItems).setScale(2, RoundingMode.HALF_UP);
+        gross = gross.add(topUp).setScale(2, RoundingMode.HALF_UP);
+        note.append("；保底补足+").append(topUp.stripTrailingZeros().toPlainString())
+            .append("（").append(position).append("保底").append(guaranteeFull.stripTrailingZeros().toPlainString());
+        if (ratio.compareTo(BigDecimal.ONE) < 0) {
+          note.append("×").append(days.stripTrailingZeros().toPlainString())
+              .append("/").append(monthlyFullDays.stripTrailingZeros().toPlainString());
+        }
+        note.append("）");
+      }
+    }
+    if (postWage == null) {
+      note.append("；岗位「").append(employee.position()).append("」无标准工资包，仅按底薪折算+加班+工龄");
+    }
+    return record(storeId, month, employee, attendance, gross, base,
+        social, post, meal, fullAttendance, seniority, overtime, commission, note.toString());
+  }
+
+  private static SalaryRecordRequest record(String storeId, String month, EmployeeResponse employee,
+      SalaryRepository.AttendanceRow attendance, BigDecimal gross, BigDecimal base, BigDecimal social,
+      BigDecimal post, BigDecimal meal, BigDecimal fullAttendance, BigDecimal seniority,
+      BigDecimal overtime, BigDecimal commission, String note) {
     return new SalaryRecordRequest(
         storeId,
         month,
@@ -200,15 +313,15 @@ public class SalaryGenerationService {
         attendance.overtimeHours(),
         attendance.totalHours(),
         attendance.vacationBalance(),
-        "考勤来源：" + attendance.source(),
-        baseSalary,
-        ZERO,
-        ZERO,
-        ZERO,
-        ZERO,
-        ZERO,
-        overtimeAmount,
-        ZERO,
+        note,
+        base,
+        social,
+        post,
+        meal,
+        fullAttendance,
+        commission,
+        overtime,
+        seniority,
         ZERO,
         ZERO,
         ZERO,
@@ -217,16 +330,85 @@ public class SalaryGenerationService {
     );
   }
 
+  /** 标准四岗位识别（精确匹配，其他岗位如实习/水果阿姨不套工资包与保底）。 */
+  private static String canonicalPosition(String position) {
+    if (position == null) return null;
+    String p = position.trim();
+    return POST_WAGE.containsKey(p) ? p : null;
+  }
+
+  /** 工龄工资：按入职日期到目标月末的整月数分档；仅全职/长期兼职（兼职走时薪不进此分支）。 */
+  static BigDecimal seniorityPay(EmployeeResponse employee, String month) {
+    if (employee.hireDate() == null || employee.hireDate().isBlank()) return ZERO;
+    try {
+      java.time.LocalDate hire = java.time.LocalDate.parse(employee.hireDate().trim());
+      java.time.LocalDate monthEnd = YearMonth.parse(month).atEndOfMonth();
+      long months = java.time.temporal.ChronoUnit.MONTHS.between(hire, monthEnd);
+      for (int i = 0; i < SENIORITY_MONTHS.length; i++) {
+        if (months >= SENIORITY_MONTHS[i]) return SENIORITY_PAY[i];
+      }
+      return ZERO;
+    } catch (Exception ex) {
+      return ZERO;
+    }
+  }
+
+  /**
+   * 门店提成（工资模板新版）：
+   * 每小时人均产值 = 当月实收营业额 ÷ 总工时（实习/兼职按半工时），取整；
+   * 人均月产值 = 每小时产值×26×8 → 档位 <2.2万:2% / 2.2-3.4万:2.5% / ≥3.4万:3%；
+   * 个人提成额度(取整) × Σ正式出勤天数÷26 = 总提成池；
+   * 分配：店长+池×5%、每领班+池×2.5%、池×85%按出勤天数摊给正式四岗位员工，余额=店铺基金。
+   */
+  record StoreCommissionContext(BigDecimal revenue, BigDecimal effectiveHours, BigDecimal hourlyRevenue,
+                                BigDecimal perCapitaOutput, BigDecimal rate, BigDecimal quotaPerPerson,
+                                BigDecimal pool, BigDecimal formalDays) {
+    String rateLabel() {
+      return rate.multiply(new BigDecimal("100")).stripTrailingZeros().toPlainString() + "%";
+    }
+
+    BigDecimal commissionFor(String position, BigDecimal attendanceDays) {
+      if (formalDays.compareTo(BigDecimal.ZERO) <= 0) return ZERO;
+      BigDecimal share = pool.multiply(new BigDecimal("0.85"))
+          .multiply(attendanceDays).divide(formalDays, 10, RoundingMode.HALF_UP)
+          .setScale(0, RoundingMode.HALF_UP);
+      if ("店长".equals(position)) {
+        share = share.add(pool.multiply(new BigDecimal("0.05")).setScale(0, RoundingMode.HALF_UP));
+      } else if ("领班".equals(position)) {
+        share = share.add(pool.multiply(new BigDecimal("0.025")).setScale(0, RoundingMode.HALF_UP));
+      }
+      return share.setScale(2, RoundingMode.HALF_UP);
+    }
+  }
+
+  private StoreCommissionContext storeCommissionContext(long tenantId, String storeId, String month) {
+    BigDecimal revenue = salaryRepository.storeMonthlyRevenue(tenantId, storeId, month).orElse(null);
+    if (revenue == null || revenue.compareTo(BigDecimal.ZERO) <= 0) return null;
+    SalaryRepository.StoreAttendanceStats stats = salaryRepository.storeAttendanceStats(tenantId, storeId, month);
+    if (stats.effectiveHours().compareTo(BigDecimal.ZERO) <= 0) return null;
+    BigDecimal hourly = revenue.divide(stats.effectiveHours(), 0, RoundingMode.DOWN); // 每小时产值取整不四舍五入
+    BigDecimal perCapita = hourly.multiply(DEFAULT_FULL_MONTH_DAYS).multiply(HOURS_PER_DAY);
+    BigDecimal rate;
+    if (perCapita.compareTo(new BigDecimal("22000")) < 0) rate = new BigDecimal("0.02");
+    else if (perCapita.compareTo(new BigDecimal("34000")) < 0) rate = new BigDecimal("0.025");
+    else rate = new BigDecimal("0.03");
+    BigDecimal quota = perCapita.multiply(rate).setScale(0, RoundingMode.DOWN); // 个人额度取整（3月表：660.4→660）
+    BigDecimal pool = quota.multiply(stats.formalDays())
+        .divide(DEFAULT_FULL_MONTH_DAYS, 2, RoundingMode.HALF_UP);
+    return new StoreCommissionContext(revenue, stats.effectiveHours(), hourly, perCapita, rate, quota, pool, stats.formalDays());
+  }
+
   private Preparation prepareSalary(long tenantId, String storeId, String month, EmployeeResponse employee) {
     java.util.ArrayList<String> missing = new java.util.ArrayList<>();
+    boolean partTime = "兼职".equals(employee.employmentType());
     if (employee.position() == null || employee.position().isBlank()) missing.add("岗位配置");
     SalaryRepository.SalaryProfileRow profile = salaryRepository.salaryProfile(tenantId, employee.id(), month).orElse(null);
-    if (profile == null || profile.baseSalary() == null || profile.baseSalary().compareTo(BigDecimal.ZERO) <= 0) {
+    if (!partTime && (profile == null || profile.baseSalary() == null || profile.baseSalary().compareTo(BigDecimal.ZERO) <= 0)) {
       missing.add("员工工资档案");
     }
     SalaryRepository.SalaryPolicyRow policy = profile == null ? null
         : salaryRepository.activePolicy(tenantId, profile.policyId(), month).orElse(null);
-    if (policy == null) missing.add("有效工资政策");
+    if (!partTime && policy == null) missing.add("有效工资政策");
     SalaryRepository.AttendanceRow attendance = salaryRepository.attendance(tenantId, storeId, employee.id(), month).orElse(null);
     if (attendance == null) missing.add("当月已确认考勤");
     return new Preparation(profile, policy, attendance, missing);
@@ -234,20 +416,33 @@ public class SalaryGenerationService {
 
   private void saveCalculationSnapshot(long tenantId, String salaryId, EmployeeResponse employee,
                                        Preparation preparation, SalaryRecordRequest row) {
+    SalaryRepository.SalaryPolicyRow policy = preparation.policy();
+    if (policy == null) return; // 兼职时薪行无政策，不落快照
     try {
       SalaryRepository.SalaryProfileRow profile = preparation.profile();
-      SalaryRepository.SalaryPolicyRow policy = preparation.policy();
       SalaryRepository.AttendanceRow attendance = preparation.attendance();
       String policySnapshot = OBJECT_MAPPER.writeValueAsString(java.util.Map.of(
           "policyId", policy.id(), "policyName", policy.name(), "policyVersion", policy.version(),
           "employeeId", employee.id(), "baseSalary", profile.baseSalary(),
           "overtimeHourRate", profile.overtimeHourRate() != null ? profile.overtimeHourRate() : amountOrZero(policy.overtimeHourRate())
       ));
-      String calculationSnapshot = OBJECT_MAPPER.writeValueAsString(java.util.Map.of(
-          "attendanceDays", attendance.attendanceDays(), "normalHours", attendance.normalHours(),
-          "overtimeHours", attendance.overtimeHours(), "totalHours", attendance.totalHours(),
-          "base", row.base(), "overtime", row.overtime(), "gross", row.gross(), "netPay", row.gross()
-      ));
+      java.util.Map<String, Object> calc = new java.util.LinkedHashMap<>();
+      calc.put("attendanceDays", attendance.attendanceDays());
+      calc.put("normalHours", attendance.normalHours());
+      calc.put("overtimeHours", attendance.overtimeHours());
+      calc.put("totalHours", attendance.totalHours());
+      calc.put("base", row.base());
+      calc.put("social", row.social());
+      calc.put("post", row.post());
+      calc.put("meal", row.meal());
+      calc.put("fullAttendance", row.fullAttendance());
+      calc.put("seniority", row.seniority());
+      calc.put("overtime", row.overtime());
+      calc.put("commission", row.commission());
+      calc.put("gross", row.gross());
+      calc.put("netPay", row.gross());
+      calc.put("note", row.vacationNote());
+      String calculationSnapshot = OBJECT_MAPPER.writeValueAsString(calc);
       salaryRepository.saveCalculationSnapshot(
           tenantId, salaryId, policy, policySnapshot, calculationSnapshot,
           row.base(), row.overtime(), row.gross());
@@ -258,6 +453,11 @@ public class SalaryGenerationService {
 
   private static BigDecimal amountOrZero(BigDecimal value) {
     return value == null ? ZERO : value.setScale(2, RoundingMode.HALF_UP);
+  }
+
+  /** 月薪分项取整规则：四舍五入到整元（历史工资表口径）。 */
+  private static BigDecimal wholeYuan(BigDecimal value) {
+    return value.setScale(0, RoundingMode.HALF_UP).setScale(2, RoundingMode.HALF_UP);
   }
 
   record Preparation(SalaryRepository.SalaryProfileRow profile, SalaryRepository.SalaryPolicyRow policy,
