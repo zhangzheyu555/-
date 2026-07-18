@@ -114,7 +114,7 @@ export const MENU_GROUP_CONFIG: PermissionMenuGroup[] = [
         to: '/daily-loss',
         icon: 'inventory',
         requiredPermission: PERMISSIONS.DAILY_LOSS_READ,
-        requiredDataScope: { domain: 'WAREHOUSE', modes: ['ALL', 'WAREHOUSE_LIST', 'STORE_LIST', 'OWN_STORE'] },
+        allowedRoles: ['STORE_MANAGER', 'SUPERVISOR', 'FINANCE'],
       },
       {
         label: '门店详情',

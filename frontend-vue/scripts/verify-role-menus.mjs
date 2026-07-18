@@ -21,6 +21,8 @@ const contracts = {
       'system.dashboard.read',
       'operations.dashboard.read',
       'store.read',
+      'daily_loss.read',
+      'daily_loss.review',
       'inspection.read',
       'inspection.manage',
       'exam.learn',
@@ -41,7 +43,7 @@ const contracts = {
       INSPECTION: scope('STORE_LIST', ['TEST-STORE-01', 'TEST-STORE-02']),
       EXAM: scope('STORE_LIST', ['TEST-STORE-01', 'TEST-STORE-02']),
     },
-    expectedMenus: ['督导巡店', '整改复核'],
+    expectedMenus: ['每日报损', '督导巡店', '整改复核'],
     forbiddenMenus: ['运营工作台', '平台配置', '培训考试', '盘存管理', '财务工作台', '老板工作台', '账号权限'],
     routeDenials: ['/operations', '/platform-login', '/operations/exams', '/store/exams', '/exam-center', '/boss'],
   },
@@ -58,8 +60,6 @@ const contracts = {
       'inventory.read',
       'inventory.manage',
       'inventory.review',
-      'daily_loss.read',
-      'daily_loss.review',
       'inspection.read',
       'inspection.manage',
       'exam.learn',
@@ -81,8 +81,8 @@ const contracts = {
       INSPECTION: scope('STORE_LIST', ['TEST-STORE-01', 'TEST-STORE-02']),
       EXAM: scope('STORE_LIST', ['TEST-STORE-01', 'TEST-STORE-02']),
     },
-    expectedMenus: ['运营工作台', '仓库中心', '每日报损', '门店详情', '督导巡店', '整改复核', '培训考试', '平台配置'],
-    forbiddenMenus: ['财务工作台', '老板工作台', '账号权限'],
+    expectedMenus: ['运营工作台', '仓库中心', '门店详情', '督导巡店', '整改复核', '培训考试', '平台配置'],
+    forbiddenMenus: ['每日报损', '财务工作台', '老板工作台', '账号权限'],
     routeAllows: [
       { from: '/exam-center', to: '/operations/exams' },
       { from: '/platform-login', to: '/platform-login' },
@@ -100,6 +100,8 @@ const contracts = {
       'expense.create',
       'expense.read',
       'salary.read',
+      'daily_loss.read',
+      'daily_loss.create',
       'warehouse.store.read',
       'warehouse.requisition.create',
       'warehouse.requisition.receive',
@@ -118,7 +120,7 @@ const contracts = {
       INSPECTION: scope('OWN_STORE', ['TEST-STORE-01']),
       EXAM: scope('OWN_STORE', ['TEST-STORE-01']),
     },
-    expectedMenus: ['门店工作台', '报销栏', '本店工资核对', '仓库中心', '门店详情', '巡检记录', '巡检整改', '培训考试'],
+    expectedMenus: ['门店工作台', '报销栏', '本店工资核对', '仓库中心', '每日报损', '门店详情', '巡检记录', '巡检整改', '培训考试'],
     forbiddenMenus: ['运营工作台', '平台配置', '老板工作台', '财务工作台', '账号权限', '整改复核'],
     routeDenials: ['/operations', '/platform-login', { from: '/boss', to: '/store' }, '/finance'],
     routeAllows: [
@@ -175,7 +177,7 @@ const contracts = {
       FINANCE: scope('STORE_LIST', ['TEST-STORE-01', 'TEST-STORE-02']),
       SALARY: scope('STORE_LIST', ['TEST-STORE-01', 'TEST-STORE-02']),
     },
-    expectedMenus: ['财务工作台', '利润概览', '利润表', '企迈经营数据', '数据录入', '报销栏', '员工工资', '数据导出'],
+    expectedMenus: ['财务工作台', '利润概览', '利润表', '数据录入', '报销栏', '员工工资', '数据导出'],
     forbiddenMenus: ['运营工作台', '平台配置', '培训考试', '老板工作台', '账号权限', '门店工作台'],
     routeDenials: ['/operations', '/platform-login', '/boss', '/store'],
   },
@@ -204,11 +206,11 @@ const contracts = {
 }
 
 const screenshotCases = [
-  { role: 'SUPERVISOR', viewport: { width: 1365, height: 900 }, file: 'phase4b-supervisor-desktop-1365x900.png', mobile: false },
-  { role: 'OPERATIONS', viewport: { width: 1365, height: 900 }, file: 'phase4b-operations-desktop-1365x900.png', mobile: false },
-  { role: 'STORE_MANAGER', viewport: { width: 1365, height: 900 }, file: 'phase4b-store-manager-desktop-1365x900.png', mobile: false },
-  { role: 'SUPERVISOR', viewport: { width: 390, height: 844 }, file: 'phase4b-supervisor-mobile-390x844.png', mobile: true },
-  { role: 'OPERATIONS', viewport: { width: 390, height: 844 }, file: 'phase4b-operations-mobile-390x844.png', mobile: true },
+  { role: 'SUPERVISOR', viewport: { width: 1365, height: 900 }, file: 'daily-loss-reimbursement-supervisor-desktop-1365x900.png', mobile: false },
+  { role: 'OPERATIONS', viewport: { width: 1365, height: 900 }, file: 'daily-loss-reimbursement-operations-desktop-1365x900.png', mobile: false },
+  { role: 'STORE_MANAGER', viewport: { width: 1365, height: 900 }, file: 'daily-loss-reimbursement-store-manager-desktop-1365x900.png', mobile: false },
+  { role: 'SUPERVISOR', viewport: { width: 390, height: 844 }, file: 'daily-loss-reimbursement-supervisor-mobile-390x844.png', mobile: true },
+  { role: 'OPERATIONS', viewport: { width: 390, height: 844 }, file: 'daily-loss-reimbursement-operations-mobile-390x844.png', mobile: true },
 ]
 
 function makeUser(role) {
@@ -230,7 +232,7 @@ function makeUser(role) {
     brandId: null,
     brandName: null,
     defaultWorkspace: contract.defaultWorkspace,
-    permissionVersion: 62,
+    permissionVersion: 63,
   }
 }
 
@@ -450,7 +452,7 @@ try {
   for (const item of screenshotCases) {
     summary.screenshots.push(await captureScreenshot(browser, item))
   }
-  const summaryPath = resolve(artifactDir, 'phase4b-role-menu-summary.json')
+  const summaryPath = resolve(artifactDir, 'daily-loss-reimbursement-role-menu-summary.json')
   await writeFile(summaryPath, `${JSON.stringify(summary, null, 2)}\n`, 'utf8')
   console.log(`frontend role menu verification passed; artifacts=${artifactDir}`)
   console.log(`summary=${summaryPath}`)

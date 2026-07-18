@@ -22,7 +22,7 @@ import java.util.Set;
 public final class AdminBootstrapCommand {
   public static final String COMMAND_ARGUMENT = "--admin-bootstrap";
   public static final String ENABLED_ENVIRONMENT = "APP_BOOTSTRAP_ADMIN_ENABLED";
-  static final int EXPECTED_FLYWAY_VERSION = 62;
+  static final int EXPECTED_FLYWAY_VERSION = 68;
 
   private final PasswordService passwordService;
   private final ConnectionFactory connectionFactory;

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ClipboardCheck, Download, Home, RefreshCw, X } from 'lucide-vue-next'
+import { ClipboardCheck, Download, Home, ReceiptText, RefreshCw, X } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import { getStores, type StoreInfo } from '../api/operations'
 import { getProfitDashboard, type ProfitDashboard, type ProfitEntry } from '../api/profit'
@@ -46,6 +46,9 @@ const canSwitchStore = computed(() => (
 ))
 const canReadSalary = computed(() => auth.hasPermission(PERMISSIONS.SALARY_READ))
 const canExportFinance = computed(() => auth.hasPermission(PERMISSIONS.FINANCE_EXPORT))
+const canHandleDailyExpense = computed(() => (
+  businessScope.isStoreManager.value && auth.hasPermission(PERMISSIONS.EXPENSE_CREATE)
+))
 const canHandleInspectionRectification = computed(() => (
   businessScope.isStoreManager.value && auth.hasPermission(PERMISSIONS.INSPECTION_READ)
 ))
@@ -275,6 +278,15 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
     <div v-if="loading && !stores.length" class="empty-state">正在读取门店详情...</div>
 
     <template v-else-if="selectedStore">
+      <RouterLink v-if="canHandleDailyExpense" class="daily-expense-shortcut" to="/expenses">
+        <span class="daily-expense-icon"><ReceiptText :size="19" /></span>
+        <span>
+          <b>今日报销</b>
+          <small>{{ selectedStore.name }} · {{ selectedMonth || '本月' }}</small>
+        </span>
+        <strong>去提交</strong>
+      </RouterLink>
+
       <div class="store-metric-grid">
         <article class="store-metric-card revenue">
           <span>累计营收</span>
@@ -446,6 +458,54 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
   color: #8b5a00;
   font-size: 14px;
   font-weight: 700;
+}
+
+.daily-expense-shortcut {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
+  border: 1px solid #b8ddd9;
+  border-radius: 8px;
+  background: #f3fbfa;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.daily-expense-icon {
+  display: inline-grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--primary-dark);
+}
+
+.daily-expense-shortcut b,
+.daily-expense-shortcut small {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.daily-expense-shortcut b {
+  font-size: 15px;
+}
+
+.daily-expense-shortcut small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.daily-expense-shortcut strong {
+  color: var(--primary-dark);
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .manager-month-field {
@@ -721,6 +781,15 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
   .store-actions,
   .profile-grid {
     grid-template-columns: 1fr;
+  }
+
+  .daily-expense-shortcut {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .daily-expense-shortcut strong {
+    grid-column: 2;
+    justify-self: start;
   }
 
   .store-filter-field--store {

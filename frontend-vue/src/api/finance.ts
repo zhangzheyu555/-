@@ -8,6 +8,7 @@ export interface ExpenseClaim {
   brandId?: number
   brandName?: string
   month: string
+  expenseDate?: string
   amount: number
   category?: string
   reason?: string
@@ -16,9 +17,20 @@ export interface ExpenseClaim {
   submittedBy?: number
   reviewedBy?: number
   reviewedAt?: string
+  attachments?: ExpenseAttachment[]
   supplements?: ExpenseSupplement[]
   supplementAttachmentCount?: number
   latestSupplementNote?: string
+}
+
+export interface ExpenseAttachment {
+  id: string | number
+  fileName: string
+  contentType?: string
+  sizeBytes?: number
+  uploadedAt?: string
+  previewUrl?: string
+  downloadUrl?: string
 }
 
 export interface ExpenseSupplementAttachment {
@@ -307,6 +319,32 @@ export async function fetchExpenseSupplementAttachment(
 
 export function expenseAttachmentDisplayName(attachment: ExpenseSupplementAttachment) {
   return String(attachment.originalFileName || attachment.fileName || '').trim() || '未命名附件'
+}
+
+export function expenseClaimAttachmentDisplayName(attachment: ExpenseAttachment) {
+  return String(attachment.fileName || '').trim() || '未命名附件'
+}
+
+export async function fetchExpenseAttachment(attachment: ExpenseAttachment, signal?: AbortSignal) {
+  const url = attachment.previewUrl || attachment.downloadUrl || `/api/storage/attachments/${encodeURIComponent(String(attachment.id))}`
+  const response = await http.get<Blob>(url, {
+    responseType: 'blob',
+    timeout: 120_000,
+    signal,
+  })
+  return response.data
+}
+
+export async function downloadExpenseAttachment(attachment: ExpenseAttachment) {
+  const blob = await fetchExpenseAttachment(attachment)
+  const blobUrl = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = blobUrl
+  link.download = expenseClaimAttachmentDisplayName(attachment)
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(blobUrl)
 }
 
 export async function downloadExpenseSupplementAttachment(expenseId: string, attachment: ExpenseSupplementAttachment) {

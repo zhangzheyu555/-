@@ -770,7 +770,15 @@ public class StorageService {
       case "INSPECTION_RECORD" -> "select count(*) from inspection_record where tenant_id = ? and store_id = ? and id = ?";
       case "INSPECTION_RECTIFICATION" -> "select count(*) from inspection_rectification where tenant_id = ? and store_id = ? and id = ?";
       case "EXPENSE", "EXPENSE_CLAIM" -> "select count(*) from expense_claim where tenant_id = ? and store_id = ? and id = ?";
-      case "DAILY_LOSS" -> "select count(*) from daily_loss_record where tenant_id = ? and store_id = ? and id = ?";
+      case "DAILY_LOSS" -> """
+          select (
+            select count(*) from daily_loss_report
+            where tenant_id = ? and store_id = ? and id = ?
+          ) + (
+            select count(*) from daily_loss_record
+            where tenant_id = ? and store_id = ? and id = ?
+          )
+          """;
       case "WAREHOUSE_DELIVERY" -> "select count(*) from warehouse_delivery_order where tenant_id = ? and store_id = ? and id = ?";
       case "STORE_RECEIPT" -> "select count(*) from store_receipt where tenant_id = ? and store_id = ? and id = ?";
       case "WAREHOUSE_RETURN", "RETURN_ORDER" -> "select count(*) from warehouse_return_order where tenant_id = ? and return_store_id = ? and id = ?";
@@ -781,7 +789,9 @@ public class StorageService {
           HttpStatus.BAD_REQUEST
       );
     };
-    Integer count = jdbcTemplate.queryForObject(sql, Integer.class, tenantId, storeId, businessId);
+    Integer count = "DAILY_LOSS".equals(businessType)
+        ? jdbcTemplate.queryForObject(sql, Integer.class, tenantId, storeId, businessId, tenantId, storeId, businessId)
+        : jdbcTemplate.queryForObject(sql, Integer.class, tenantId, storeId, businessId);
     if (count == null || count == 0) {
       throw new BusinessException("ATTACHMENT_BUSINESS_NOT_FOUND", "附件关联的业务记录不存在或不属于该门店", HttpStatus.BAD_REQUEST);
     }
@@ -886,13 +896,15 @@ public class StorageService {
   }
 
   private void logUpload(AuthUser user, String storeId, String businessType, String businessId, String fileName) {
+    String action = isExpenseAttachment(businessType) ? "reimbursement_attachment_upload" : "attachment_upload";
     jdbcTemplate.update("""
         insert into operation_log(tenant_id, operator_id, operator_name, action, target_type, target_id, store_id, reason, created_at)
-        values (?, ?, ?, 'attachment_upload', ?, ?, ?, ?, current_timestamp)
+        values (?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
         """,
         user.tenantId(),
         user.id(),
         user.displayName(),
+        action,
         businessType,
         businessId,
         storeId,
@@ -919,6 +931,10 @@ public class StorageService {
     if ("DAILY_LOSS".equals(attachment.businessType())) {
       targetType = "daily_loss_record";
       reason = "下载每日报损附件";
+    } else if (isExpenseAttachment(attachment.businessType())) {
+      action = "reimbursement_attachment_download";
+      targetType = "expense_claim";
+      reason = "下载店长报销附件";
     } else if ("INSPECTION_RECTIFICATION".equals(attachment.businessType())) {
       action = "inspection_rectification_evidence_download";
       targetType = "inspection_rectification";
@@ -936,5 +952,9 @@ public class StorageService {
         attachment.businessId(),
         attachment.storeId(),
         reason);
+  }
+
+  private boolean isExpenseAttachment(String businessType) {
+    return "EXPENSE".equals(businessType) || "EXPENSE_CLAIM".equals(businessType);
   }
 }

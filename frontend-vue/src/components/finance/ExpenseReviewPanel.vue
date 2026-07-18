@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { CheckCircle2, FileQuestion, MessageSquareText, Paperclip, Pencil, Send, XCircle } from 'lucide-vue-next'
 import StatusBadge from '../common/StatusBadge.vue'
+import ExpenseClaimAttachments from './ExpenseClaimAttachments.vue'
 import ExpenseSupplementAttachments from './ExpenseSupplementAttachments.vue'
-import type { ExpenseClaim, ExpenseSupplementAttachment } from '../../api/finance'
+import type { ExpenseAttachment, ExpenseClaim, ExpenseSupplementAttachment } from '../../api/finance'
 
 const props = withDefaults(defineProps<{
   expenses: ExpenseClaim[]
@@ -62,6 +63,10 @@ function supplementAttachments(expense: ExpenseClaim): ExpenseSupplementAttachme
   return (expense.supplements || []).flatMap((supplement) => supplement.attachments || [])
 }
 
+function claimAttachments(expense: ExpenseClaim): ExpenseAttachment[] {
+  return expense.attachments || []
+}
+
 function supplementNote(expense: ExpenseClaim) {
   if (expense.latestSupplementNote) return expense.latestSupplementNote
   return (expense.supplements || []).find((supplement) => supplement.note?.trim())?.note || ''
@@ -96,7 +101,14 @@ function hasSupplement(expense: ExpenseClaim) {
           <p>{{ expense.category || '报销事项' }} · {{ expense.reason || '暂无说明' }}</p>
           <div class="finance-row-meta">
             <span>月份：{{ expense.month || '-' }}</span>
+            <span>日期：{{ expense.expenseDate || '-' }}</span>
             <span>品牌：{{ expense.brandName || '-' }}</span>
+          </div>
+          <div v-if="claimAttachments(expense).length" class="claim-evidence">
+            <div class="supplement-count">
+              <Paperclip :size="14" />报销凭证 {{ claimAttachments(expense).length }} 张
+            </div>
+            <ExpenseClaimAttachments :attachments="claimAttachments(expense)" />
           </div>
           <div v-if="hasSupplement(expense)" class="supplement-evidence">
             <div v-if="supplementNote(expense)" class="supplement-note">
@@ -258,6 +270,7 @@ function hasSupplement(expense: ExpenseClaim) {
   font-size: 12px;
 }
 
+.claim-evidence,
 .supplement-evidence {
   display: grid;
   gap: 8px;

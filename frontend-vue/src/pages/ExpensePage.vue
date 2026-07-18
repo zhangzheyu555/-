@@ -58,6 +58,17 @@ const filteredExpenses = computed(() => finance.expenseReviews.filter((item) => 
 const pendingCount = computed(() => filteredExpenses.value.filter((item) => !['已完成', '已通过', 'APPROVED', '已驳回', 'REJECTED'].includes(item.status)).length)
 const doneCount = computed(() => filteredExpenses.value.filter((item) => ['已完成', '已通过', 'APPROVED'].includes(item.status)).length)
 const totalAmount = computed(() => filteredExpenses.value.reduce((total, item) => total + Number(item.amount || 0), 0))
+const today = computed(() => {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+})
+const todayExpenses = computed(() => filteredExpenses.value.filter((item) => item.expenseDate === today.value))
+const todayStatusText = computed(() => {
+  if (!scope.isStoreManager.value) return `${todayExpenses.value.length} 单`
+  if (!todayExpenses.value.length) return '未报'
+  if (todayExpenses.value.some((item) => ['草稿', '已驳回', 'REJECTED'].includes(item.status))) return '待提交'
+  return '已报'
+})
 
 function isAuthError(err: unknown) {
   return err instanceof Error && (err.message.includes('登录已失效') || err.message.includes('请先登录') || err.message.includes('UNAUTHORIZED'))
@@ -232,6 +243,7 @@ watch(selectedBrand, () => {
     </section>
 
     <div class="metric-grid">
+      <article class="metric-card today-status"><span>今日状态</span><b>{{ todayStatusText }}</b></article>
       <article class="metric-card"><span>待处理</span><b>{{ pendingCount }}</b></article>
       <article class="metric-card"><span>已完成</span><b>{{ doneCount }}</b></article>
       <article class="metric-card"><span>报销总额</span><b>¥{{ Math.round(totalAmount).toLocaleString('zh-CN') }}</b></article>
@@ -353,6 +365,10 @@ watch(selectedBrand, () => {
 .business-summary span {
   color: var(--muted);
   font-size: 13px;
+}
+
+.today-status b {
+  color: var(--primary-dark);
 }
 
 @media (max-width: 720px) {

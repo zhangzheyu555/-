@@ -6,6 +6,9 @@ __MACOSX/
 application-local.yml
 backend/src/main/resources/application-local.yml
 backend/target/
+backend/BOOT-INF/
+backend/META-INF/
+backend/org/
 backend/output/
 frontend-vue/dist/
 frontend-vue/test-results/
@@ -29,6 +32,7 @@ backend/data/
 # Generated verification artifacts and local runtime logs
 logs/
 output/
+output/secure/
 test-results/
 
 # Local databases, business exports and backups

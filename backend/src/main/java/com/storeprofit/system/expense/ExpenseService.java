@@ -100,7 +100,7 @@ public class ExpenseService {
     ExpenseClaimRequest normalized = normalizeRequest(request, businessScope.storeId());
     requireStoreScope(user, normalized.storeId());
     if (!expenseRepository.storeExists(user.tenantId(), normalized.storeId())) {
-      throw new BusinessException("STORE_NOT_FOUND", "Store does not exist in current tenant", HttpStatus.BAD_REQUEST);
+      throw new BusinessException("STORE_NOT_FOUND", "门店不存在或不属于当前企业", HttpStatus.BAD_REQUEST);
     }
     String targetId = normalizeId(id);
     expenseRepository.claimStoreId(user.tenantId(), targetId)
@@ -116,7 +116,7 @@ public class ExpenseService {
         targetId,
         normalized.storeId(),
         normalized.month(),
-        "expense claim saved"
+        "保存店长报销草稿"
     );
     reconcileTodos(user, normalized.month());
     return requireClaim(user, targetId);
@@ -127,18 +127,23 @@ public class ExpenseService {
     requireWriteRole(user);
     ExpenseClaimResponse claim = requireClaimForUser(user, id);
     if (STATUS_APPROVED.equals(claim.status())) {
-      throw new BusinessException("BAD_STATUS", "Approved expense claim cannot be submitted again", HttpStatus.CONFLICT);
+      throw new BusinessException("BAD_STATUS", "已完成的报销不能重复提交", HttpStatus.CONFLICT);
+    }
+    if (claim.amount() != null
+        && claim.amount().compareTo(BigDecimal.ZERO) > 0
+        && !expenseRepository.hasControlledImageAttachment(user.tenantId(), claim.id(), claim.storeId())) {
+      throw new BusinessException("REIMBURSEMENT_IMAGE_REQUIRED", "有金额报销必须先上传图片凭证", HttpStatus.BAD_REQUEST);
     }
     expenseRepository.updateStatus(user.tenantId(), claim.id(), STATUS_PENDING, user.id(), null);
     expenseRepository.logAction(
         user.tenantId(),
         user.id(),
         user.displayName(),
-        "expense_submit",
+        "reimbursement_submit",
         claim.id(),
         claim.storeId(),
         claim.month(),
-        "expense claim submitted"
+        "提交店长每日报销"
     );
     reconcileTodos(user, claim.month());
     return requireClaim(user, claim.id());
@@ -162,13 +167,13 @@ public class ExpenseService {
   @Transactional
   public ExpenseClaimResponse approve(AuthUser user, String id, ExpenseReviewRequest request) {
     requireReviewRole(user);
-    return review(user, id, STATUS_APPROVED, "expense_approve", reviewNote(request, "expense claim approved"));
+    return review(user, id, STATUS_APPROVED, "reimbursement_approve", reviewNote(request, "报销审核通过"));
   }
 
   @Transactional
   public ExpenseClaimResponse reject(AuthUser user, String id, ExpenseReviewRequest request) {
     requireReviewRole(user);
-    return review(user, id, STATUS_REJECTED, "expense_reject", reviewNote(request, "expense claim rejected"));
+    return review(user, id, STATUS_REJECTED, "reimbursement_reject", reviewNote(request, "报销已驳回"));
   }
 
   @Transactional
@@ -176,7 +181,7 @@ public class ExpenseService {
     requireWriteRole(user);
     ExpenseClaimResponse claim = requireClaimForUser(user, id);
     if (STATUS_APPROVED.equals(claim.status())) {
-      throw new BusinessException("BAD_STATUS", "Approved expense claim cannot be deleted", HttpStatus.CONFLICT);
+      throw new BusinessException("BAD_STATUS", "已完成的报销不能删除", HttpStatus.CONFLICT);
     }
     if (supplementRepository != null && supplementRepository.hasSupplements(user.tenantId(), claim.id())) {
       throw new BusinessException(
@@ -187,7 +192,7 @@ public class ExpenseService {
     }
     int deleted = expenseRepository.delete(user.tenantId(), claim.id());
     if (deleted == 0) {
-      throw new BusinessException("NOT_FOUND", "Expense claim not found", HttpStatus.NOT_FOUND);
+      throw new BusinessException("NOT_FOUND", "报销记录不存在", HttpStatus.NOT_FOUND);
     }
     expenseRepository.logAction(
         user.tenantId(),
@@ -197,7 +202,7 @@ public class ExpenseService {
         claim.id(),
         claim.storeId(),
         claim.month(),
-        "expense claim deleted"
+        "删除店长报销草稿"
     );
     reconcileTodos(user, claim.month());
   }
@@ -205,7 +210,7 @@ public class ExpenseService {
   private ExpenseClaimResponse review(AuthUser user, String id, String status, String action, String reason) {
     ExpenseClaimResponse claim = requireClaim(user, id);
     if (!STATUS_PENDING.equals(claim.status())) {
-      throw new BusinessException("BAD_STATUS", "Only pending expense claims can be reviewed", HttpStatus.CONFLICT);
+      throw new BusinessException("BAD_STATUS", "只有待审核的报销可以审核", HttpStatus.CONFLICT);
     }
     expenseRepository.updateStatus(user.tenantId(), claim.id(), status, null, user.id());
     expenseRepository.logAction(
@@ -224,11 +229,11 @@ public class ExpenseService {
 
   private ExpenseClaimRequest normalizeRequest(ExpenseClaimRequest request, String resolvedStoreId) {
     if (request == null) {
-      throw new BusinessException("BAD_REQUEST", "Expense payload is required", HttpStatus.BAD_REQUEST);
+      throw new BusinessException("BAD_REQUEST", "请完整填写报销信息", HttpStatus.BAD_REQUEST);
     }
     BigDecimal amount = amount(request.amount());
     if (amount.compareTo(BigDecimal.ZERO) <= 0) {
-      throw new BusinessException("BAD_AMOUNT", "Expense amount must be greater than 0", HttpStatus.BAD_REQUEST);
+      throw new BusinessException("BAD_AMOUNT", "报销金额必须大于0", HttpStatus.BAD_REQUEST);
     }
     return new ExpenseClaimRequest(
         requireText(resolvedStoreId, "STORE_REQUIRED", "请选择门店"),
@@ -245,13 +250,13 @@ public class ExpenseService {
   }
 
   private ExpenseClaimResponse requireClaim(AuthUser user, String id) {
-    String targetId = requireText(id, "ID_REQUIRED", "Expense claim id is required");
+    String targetId = requireText(id, "ID_REQUIRED", "报销单编号不能为空");
     DataScope dataScope = expenseScope(user);
     ExpenseClaimResponse claim = scopedClaim(user.tenantId(), targetId, dataScope)
         .orElseGet(() -> {
           expenseRepository.claimStoreId(user.tenantId(), targetId)
               .ifPresent(storeId -> requireStoreScope(user, storeId));
-          throw new BusinessException("NOT_FOUND", "Expense claim not found", HttpStatus.NOT_FOUND);
+          throw new BusinessException("NOT_FOUND", "报销记录不存在", HttpStatus.NOT_FOUND);
         });
     if (dataScope == null) {
       requireStoreScope(user, claim.storeId());
@@ -267,15 +272,17 @@ public class ExpenseService {
   }
 
   private ExpenseClaimResponse enrichClaim(long tenantId, ExpenseClaimResponse claim) {
+    ExpenseClaimResponse enriched = claim.withAttachments(
+        expenseRepository.attachments(tenantId, claim.id(), claim.storeId()));
     if (supplementRepository == null) {
-      return claim;
+      return enriched;
     }
-    return claim.withSupplements(supplementRepository.supplements(tenantId, claim.id()));
+    return enriched.withSupplements(supplementRepository.supplements(tenantId, claim.id()));
   }
 
   private void requireEditableStatus(ExpenseClaimResponse claim) {
     if (STATUS_APPROVED.equals(claim.status()) || STATUS_PENDING.equals(claim.status())) {
-      throw new BusinessException("BAD_STATUS", "Only draft or rejected expense claims can be edited", HttpStatus.CONFLICT);
+      throw new BusinessException("BAD_STATUS", "只有草稿、待补资料或已驳回的报销可以编辑", HttpStatus.CONFLICT);
     }
   }
 
@@ -285,7 +292,7 @@ public class ExpenseService {
       return;
     }
     if (!AccessControlService.hasAnyRole(user, "FINANCE", "STORE_MANAGER")) {
-      throw new BusinessException("FORBIDDEN", "No permission to read expense claims", HttpStatus.FORBIDDEN);
+      throw new BusinessException("FORBIDDEN", "当前账号无权查看报销数据", HttpStatus.FORBIDDEN);
     }
   }
 
@@ -295,7 +302,7 @@ public class ExpenseService {
       return;
     }
     if (!AccessControlService.hasAnyRole(user, "FINANCE", "STORE_MANAGER")) {
-      throw new BusinessException("FORBIDDEN", "No permission to edit expense claims", HttpStatus.FORBIDDEN);
+      throw new BusinessException("FORBIDDEN", "当前账号无权编辑报销数据", HttpStatus.FORBIDDEN);
     }
   }
 
@@ -305,20 +312,20 @@ public class ExpenseService {
       return;
     }
     if (!AccessControlService.hasAnyRole(user, "FINANCE")) {
-      throw new BusinessException("FORBIDDEN", "No permission to review expense claims", HttpStatus.FORBIDDEN);
+      throw new BusinessException("FORBIDDEN", "当前账号无权审核报销", HttpStatus.FORBIDDEN);
     }
   }
 
   private void requireStoreScope(AuthUser user, String storeId) {
     DataScope dataScope = expenseScope(user);
-    if (dataScope != null) {
-      if (!dataScope.allowsStore(storeId)) {
-        throw new BusinessException("FORBIDDEN", "当前账号只能处理授权门店的报销数据", HttpStatus.FORBIDDEN);
+    if (dataScope != null && !dataScope.allowsStore(storeId)) {
+      if (accessControl != null) {
+        accessControl.requireStoreAccess(user, DataScopeDomains.FINANCE, storeId, "处理报销数据");
       }
-      return;
+      throw new BusinessException("FORBIDDEN", "当前账号只能处理授权门店的报销数据", HttpStatus.FORBIDDEN);
     }
     if (accessControl != null) {
-      accessControl.requireStoreAccess(user, storeId, "处理报销数据");
+      accessControl.requireStoreAccess(user, DataScopeDomains.FINANCE, storeId, "处理报销数据");
       return;
     }
     if (!isStoreManager(user)) {
@@ -326,7 +333,7 @@ public class ExpenseService {
     }
     String scopedStoreId = requireManagerStore(user);
     if (!scopedStoreId.equals(storeId)) {
-      throw new BusinessException("FORBIDDEN", "Store manager can only access own store expense claims", HttpStatus.FORBIDDEN);
+      throw new BusinessException("FORBIDDEN", "店长只能处理自己门店的报销", HttpStatus.FORBIDDEN);
     }
   }
 
@@ -342,7 +349,7 @@ public class ExpenseService {
 
   private String requireManagerStore(AuthUser user) {
     if (user.storeId() == null || user.storeId().isBlank()) {
-      throw new BusinessException("NO_STORE_SCOPE", "Store manager is not bound to a store", HttpStatus.FORBIDDEN);
+      throw new BusinessException("NO_STORE_SCOPE", "店长账号未绑定门店", HttpStatus.FORBIDDEN);
     }
     return user.storeId().trim();
   }
@@ -354,7 +361,7 @@ public class ExpenseService {
     try {
       return YearMonth.parse(value.trim()).toString();
     } catch (Exception ex) {
-      throw new BusinessException("BAD_MONTH", "Month must use YYYY-MM", HttpStatus.BAD_REQUEST);
+      throw new BusinessException("BAD_MONTH", "月份格式必须为 YYYY-MM", HttpStatus.BAD_REQUEST);
     }
   }
 

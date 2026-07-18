@@ -6,6 +6,7 @@ import java.math.RoundingMode;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
@@ -40,7 +41,7 @@ public class ExpenseRepository {
   ) {
     StringBuilder sql = new StringBuilder("""
         select ec.id, ec.store_id, s.code as store_code, s.name as store_name,
-               s.brand_id, b.name as brand_name, ec.month, ec.amount, ec.category,
+               s.brand_id, b.name as brand_name, ec.month, ec.expense_date, ec.amount, ec.category,
                ec.reason, ec.status, ec.image_url, ec.submitted_by, ec.reviewed_by,
                ec.reviewed_at
         from expense_claim ec
@@ -77,7 +78,7 @@ public class ExpenseRepository {
   public Optional<ExpenseClaimResponse> claim(long tenantId, String id, DataScope dataScope) {
     StringBuilder sql = new StringBuilder("""
         select ec.id, ec.store_id, s.code as store_code, s.name as store_name,
-               s.brand_id, b.name as brand_name, ec.month, ec.amount, ec.category,
+               s.brand_id, b.name as brand_name, ec.month, ec.expense_date, ec.amount, ec.category,
                ec.reason, ec.status, ec.image_url, ec.submitted_by, ec.reviewed_by,
                ec.reviewed_at
         from expense_claim ec
@@ -100,6 +101,48 @@ public class ExpenseRepository {
         tenantId,
         id
     ).stream().findFirst();
+  }
+
+  public boolean hasControlledImageAttachment(long tenantId, String expenseId, String storeId) {
+    Integer count = jdbcTemplate.queryForObject("""
+        select count(*)
+        from warehouse_attachment
+        where tenant_id = ?
+          and store_id = ?
+          and business_id = ?
+          and business_type in ('EXPENSE', 'EXPENSE_CLAIM')
+          and lower(coalesce(content_type, '')) like 'image/%'
+        """, Integer.class, tenantId, storeId, expenseId);
+    return count != null && count > 0;
+  }
+
+  public List<ExpenseAttachmentResponse> attachments(long tenantId, String expenseId, String storeId) {
+    return jdbcTemplate.query("""
+        select id, file_name, content_type, coalesce(file_size, 0) as file_size, uploaded_at
+        from warehouse_attachment
+        where tenant_id = ?
+          and store_id = ?
+          and business_id = ?
+          and business_type in ('EXPENSE', 'EXPENSE_CLAIM')
+        order by uploaded_at, id
+        """,
+        (rs, rowNum) -> {
+          long id = rs.getLong("id");
+          String url = "/api/storage/attachments/" + id;
+          return new ExpenseAttachmentResponse(
+              id,
+              rs.getString("file_name"),
+              rs.getString("content_type"),
+              rs.getLong("file_size"),
+              getDateTimeOrNull(rs, "uploaded_at"),
+              url,
+              url
+          );
+        },
+        tenantId,
+        storeId,
+        expenseId
+    );
   }
 
   public void upsert(long tenantId, String id, ExpenseClaimRequest request, String status, Long submittedBy) {
@@ -202,10 +245,10 @@ public class ExpenseRepository {
   private void insert(long tenantId, String id, ExpenseClaimRequest request, String status, Long submittedBy) {
     jdbcTemplate.update("""
         insert into expense_claim(
-          id, tenant_id, store_id, month, amount, category, reason, status,
+          id, tenant_id, store_id, month, expense_date, amount, category, reason, status,
           image_url, submitted_by, created_at
         )
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+        values (?, ?, ?, ?, current_date, ?, ?, ?, ?, ?, ?, current_timestamp)
         """,
         id,
         tenantId,
@@ -225,6 +268,7 @@ public class ExpenseRepository {
         update expense_claim set
           store_id = ?,
           month = ?,
+          expense_date = coalesce(expense_date, current_date),
           amount = ?,
           category = ?,
           reason = ?,
@@ -261,7 +305,8 @@ public class ExpenseRepository {
         rs.getString("image_url"),
         getLongOrNull(rs, "submitted_by"),
         getLongOrNull(rs, "reviewed_by"),
-        getDateTimeOrNull(rs, "reviewed_at")
+        getDateTimeOrNull(rs, "reviewed_at"),
+        getDateOrNull(rs, "expense_date")
     );
   }
 
@@ -273,6 +318,11 @@ public class ExpenseRepository {
   private LocalDateTime getDateTimeOrNull(ResultSet rs, String column) throws SQLException {
     Timestamp value = rs.getTimestamp(column);
     return value == null ? null : value.toLocalDateTime();
+  }
+
+  private LocalDate getDateOrNull(ResultSet rs, String column) throws SQLException {
+    java.sql.Date value = rs.getDate(column);
+    return value == null ? null : value.toLocalDate();
   }
 
   private BigDecimal amount(BigDecimal value) {

@@ -4,9 +4,13 @@ import com.storeprofit.system.common.ApiResponse;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
 import jakarta.validation.Valid;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.List;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -14,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -45,6 +50,22 @@ public class DailyLossController {
     return ApiResponse.ok(dailyLossService.list(user(authorization), storeId, date, status));
   }
 
+  @GetMapping("/reports")
+  public ApiResponse<List<DailyLossReportResponse>> reports(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @RequestParam(required = false) String storeId,
+      @RequestParam(required = false) String month
+  ) {
+    return ApiResponse.ok(dailyLossService.reports(user(authorization), storeId, month));
+  }
+
+  @GetMapping("/reports/today")
+  public ApiResponse<DailyLossReportResponse> today(
+      @RequestHeader(value = "Authorization", required = false) String authorization
+  ) {
+    return ApiResponse.ok(dailyLossService.today(user(authorization)));
+  }
+
   @GetMapping("/records/{id}")
   public ApiResponse<DailyLossResponse> record(
       @RequestHeader(value = "Authorization", required = false) String authorization,
@@ -61,12 +82,37 @@ public class DailyLossController {
     return ApiResponse.ok(dailyLossService.create(user(authorization), request));
   }
 
+  @PostMapping(value = "/reports", consumes = MediaType.APPLICATION_JSON_VALUE)
+  public ApiResponse<DailyLossReportResponse> saveReport(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @Valid @RequestBody DailyLossReportSaveRequest request
+  ) {
+    return ApiResponse.ok(dailyLossService.saveReport(user(authorization), request));
+  }
+
+  @PostMapping(value = "/reports", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+  public ApiResponse<DailyLossReportResponse> saveReportWithAttachments(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @Valid @RequestPart("payload") DailyLossReportSaveRequest request,
+      @RequestParam(value = "files", required = false) List<MultipartFile> files
+  ) {
+    return ApiResponse.ok(dailyLossService.saveReport(user(authorization), request, files));
+  }
+
   @PostMapping("/records/{id}/submit")
   public ApiResponse<DailyLossResponse> submit(
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @PathVariable String id
   ) {
     return ApiResponse.ok(dailyLossService.submit(user(authorization), id));
+  }
+
+  @PostMapping("/reports/{id}/submit")
+  public ApiResponse<DailyLossReportResponse> submitReport(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id
+  ) {
+    return ApiResponse.ok(dailyLossService.submitReport(user(authorization), id));
   }
 
   @PostMapping("/records/{id}/approve")
@@ -78,6 +124,15 @@ public class DailyLossController {
     return ApiResponse.ok(dailyLossService.approve(user(authorization), id, request));
   }
 
+  @PostMapping("/reports/{id}/review")
+  public ApiResponse<DailyLossReportResponse> reviewReport(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id,
+      @RequestBody(required = false) DailyLossReviewRequest request
+  ) {
+    return ApiResponse.ok(dailyLossService.reviewReport(user(authorization), id, request));
+  }
+
   @PostMapping(value = "/records/{id}/attachments", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
   public ApiResponse<DailyLossResponse> uploadAttachments(
       @RequestHeader(value = "Authorization", required = false) String authorization,
@@ -85,6 +140,33 @@ public class DailyLossController {
       @RequestParam("files") List<MultipartFile> files
   ) {
     return ApiResponse.ok(dailyLossService.uploadAttachments(user(authorization), id, files));
+  }
+
+  @PostMapping(value = "/reports/{id}/attachments", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+  public ApiResponse<DailyLossReportResponse> uploadReportAttachments(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id,
+      @RequestParam("files") List<MultipartFile> files
+  ) {
+    return ApiResponse.ok(dailyLossService.uploadReportAttachments(user(authorization), id, files));
+  }
+
+  @GetMapping("/stores/{storeId}/months/{yyyyMM}/photos.zip")
+  public ResponseEntity<byte[]> exportMonthlyPhotos(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String storeId,
+      @PathVariable String yyyyMM
+  ) {
+    byte[] content = dailyLossService.exportMonthlyPhotos(user(authorization), storeId, yyyyMM);
+    String fileName = storeId + "-" + yyyyMM + "-daily-loss-photos.zip";
+    return ResponseEntity.ok()
+        .contentType(MediaType.parseMediaType("application/zip"))
+        .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
+            .filename(fileName, StandardCharsets.UTF_8)
+            .build()
+            .toString())
+        .header(HttpHeaders.CACHE_CONTROL, "private, no-store, max-age=0")
+        .body(content);
   }
 
   private AuthUser user(String authorization) {

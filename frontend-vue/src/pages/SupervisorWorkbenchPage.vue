@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { AlertTriangle, CheckCircle2, ImagePlus, RefreshCw, XCircle } from 'lucide-vue-next'
+import { AlertTriangle, CheckCircle2, ClipboardList, ImagePlus, RefreshCw, XCircle } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import PageHeader from '../components/common/PageHeader.vue'
 import InspectionHistoricalEvidenceDialog from '../components/inspection/InspectionHistoricalEvidenceDialog.vue'
@@ -134,6 +134,7 @@ const filterMonth = ref('')
 const inspectionStandard = ref<InspectionStandardSet>(emptyInspectionStandard)
 
 const canManageInspection = computed(() => auth.hasPermission(PERMISSIONS.INSPECTION_MANAGE))
+const canReadDailyLoss = computed(() => auth.hasPermission(PERMISSIONS.DAILY_LOSS_READ))
 // The server remains authoritative. This only prevents a non-manager from seeing an
 // action they cannot complete; SUPERVISOR is normalized to the local OPERATIONS role.
 const canSupplementHistoricalEvidence = computed(() => (
@@ -1661,6 +1662,9 @@ onUnmounted(() => {
           <button class="ghost-button" type="button" :disabled="loading" @click="refresh">
             <RefreshCw :size="16" />刷新
           </button>
+          <RouterLink v-if="canReadDailyLoss" class="ghost-button inspection-daily-loss-link" to="/daily-loss">
+            <ClipboardList :size="16" />每日报损
+          </RouterLink>
         </div>
       </template>
     </PageHeader>
@@ -1990,6 +1994,13 @@ onUnmounted(() => {
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.inspection-daily-loss-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
 }
 
 .inspection-workbench-page .primary-button {

@@ -125,14 +125,29 @@ public class AccessControlService {
 
   public void requireDailyLossRead(AuthUser user) {
     requirePermission(user, PermissionCodes.DAILY_LOSS_READ, "查看每日报损");
+    if (isBoss(user) || hasAnyRole(user, "STORE_MANAGER", "SUPERVISOR", "FINANCE")) {
+      return;
+    }
+    deny(user, "查看每日报损", "API", PermissionCodes.DAILY_LOSS_READ, null,
+        "每日报损仅限店长、督导、财务和老板查看");
   }
 
   public void requireDailyLossCreate(AuthUser user) {
     requirePermission(user, PermissionCodes.DAILY_LOSS_CREATE, "提交每日报损");
+    if (isBoss(user) || hasAnyRole(user, "STORE_MANAGER")) {
+      return;
+    }
+    deny(user, "提交每日报损", "API", PermissionCodes.DAILY_LOSS_CREATE, null,
+        "每日报损提交仅限店长或老板");
   }
 
   public void requireDailyLossReview(AuthUser user) {
     requirePermission(user, PermissionCodes.DAILY_LOSS_REVIEW, "复核每日报损");
+    if (isBoss(user) || hasAnyRole(user, "SUPERVISOR")) {
+      return;
+    }
+    deny(user, "复核每日报损", "API", PermissionCodes.DAILY_LOSS_REVIEW, null,
+        "每日报损复核仅限督导或老板");
   }
 
   public void requireExpenseRead(AuthUser user) {

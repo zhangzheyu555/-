@@ -1,6 +1,7 @@
 package com.storeprofit.system.expense;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -12,6 +13,7 @@ public record ExpenseClaimResponse(
     Long brandId,
     String brandName,
     String month,
+    LocalDate expenseDate,
     BigDecimal amount,
     String category,
     String reason,
@@ -20,11 +22,13 @@ public record ExpenseClaimResponse(
     Long submittedBy,
     Long reviewedBy,
     LocalDateTime reviewedAt,
+    List<ExpenseAttachmentResponse> attachments,
     List<ExpenseSupplementResponse> supplements,
     int supplementAttachmentCount,
     String latestSupplementNote
 ) {
   public ExpenseClaimResponse {
+    attachments = attachments == null ? List.of() : List.copyOf(attachments);
     supplements = supplements == null ? List.of() : List.copyOf(supplements);
   }
 
@@ -47,7 +51,39 @@ public record ExpenseClaimResponse(
   ) {
     this(
         id, storeId, storeCode, storeName, brandId, brandName, month, amount, category, reason,
-        status, imageUrl, submittedBy, reviewedBy, reviewedAt, List.of(), 0, null
+        status, imageUrl, submittedBy, reviewedBy, reviewedAt, null
+    );
+  }
+
+  public ExpenseClaimResponse(
+      String id,
+      String storeId,
+      String storeCode,
+      String storeName,
+      Long brandId,
+      String brandName,
+      String month,
+      BigDecimal amount,
+      String category,
+      String reason,
+      String status,
+      String imageUrl,
+      Long submittedBy,
+      Long reviewedBy,
+      LocalDateTime reviewedAt,
+      LocalDate expenseDate
+  ) {
+    this(
+        id, storeId, storeCode, storeName, brandId, brandName, month, expenseDate, amount, category, reason,
+        status, imageUrl, submittedBy, reviewedBy, reviewedAt, List.of(), List.of(), 0, null
+    );
+  }
+
+  public ExpenseClaimResponse withAttachments(List<ExpenseAttachmentResponse> values) {
+    return new ExpenseClaimResponse(
+        id, storeId, storeCode, storeName, brandId, brandName, month, expenseDate, amount, category, reason,
+        status, imageUrl, submittedBy, reviewedBy, reviewedAt, values, supplements, supplementAttachmentCount,
+        latestSupplementNote
     );
   }
 
@@ -60,8 +96,8 @@ public record ExpenseClaimResponse(
         .findFirst()
         .orElse(null);
     return new ExpenseClaimResponse(
-        id, storeId, storeCode, storeName, brandId, brandName, month, amount, category, reason,
-        status, imageUrl, submittedBy, reviewedBy, reviewedAt, normalized, attachmentCount, latestNote
+        id, storeId, storeCode, storeName, brandId, brandName, month, expenseDate, amount, category, reason,
+        status, imageUrl, submittedBy, reviewedBy, reviewedAt, attachments, normalized, attachmentCount, latestNote
     );
   }
 }

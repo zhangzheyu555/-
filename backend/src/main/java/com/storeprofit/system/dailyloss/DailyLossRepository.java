@@ -6,6 +6,8 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.dao.DuplicateKeyException;
@@ -27,13 +29,33 @@ public class DailyLossRepository {
 
   public List<DailyLossItemResponse> activeItems(long tenantId) {
     return jdbcTemplate.query("""
-        select id, code, name, coalesce(stock_unit, unit, '件') as stock_unit, unit_price
-        from warehouse_item
-        where tenant_id = ? and active = 1
-        order by sort_order, code, id
-        """, (rs, rowNum) -> new DailyLossItemResponse(
-            rs.getLong("id"), rs.getString("code"), rs.getString("name"),
-            rs.getString("stock_unit"), rs.getBigDecimal("unit_price")), tenantId);
+        select config.id, config.item_code, config.item_name, config.category,
+               category.id as warehouse_category_id,
+               category.name as warehouse_category_name,
+               config.unit, config.unit_price, config.active
+        from loss_item_config config
+        left join warehouse_item_category category
+          on category.tenant_id = config.tenant_id
+         and category.id = config.warehouse_category_id
+         and category.enabled = 1
+        where config.tenant_id = ? and config.active = 1
+        order by coalesce(category.sort_order, 999), coalesce(category.name, config.category),
+                 config.source_sheet, config.item_code, config.id
+        """, (rs, rowNum) -> {
+          Long warehouseCategoryId = rs.getObject("warehouse_category_id", Long.class);
+          String sourceCategory = rs.getString("category");
+          String warehouseCategoryName = rs.getString("warehouse_category_name");
+          return new DailyLossItemResponse(
+              rs.getLong("id"),
+              rs.getString("item_code"),
+              rs.getString("item_name"),
+              sourceCategory,
+              dailyLossCategoryCode(warehouseCategoryId, sourceCategory),
+              dailyLossCategoryName(warehouseCategoryName, sourceCategory),
+              rs.getString("unit"),
+              rs.getBigDecimal("unit_price"),
+              rs.getBoolean("active"));
+        }, tenantId);
   }
 
   public Optional<LossItemRow> activeItem(long tenantId, long itemId) {
@@ -43,6 +65,21 @@ public class DailyLossRepository {
         """, (rs, rowNum) -> new LossItemRow(rs.getLong("id"), rs.getString("code"),
             rs.getString("name"), rs.getString("stock_unit"), rs.getBigDecimal("unit_price")),
         tenantId, itemId).stream().findFirst();
+  }
+
+  public Optional<LossItemConfigRow> activeItemConfig(long tenantId, long itemConfigId) {
+    return jdbcTemplate.query("""
+        select id, item_code, item_name, category, unit, unit_price
+        from loss_item_config
+        where tenant_id = ? and id = ? and active = 1
+        """, (rs, rowNum) -> new LossItemConfigRow(
+            rs.getLong("id"),
+            rs.getString("item_code"),
+            rs.getString("item_name"),
+            rs.getString("category"),
+            rs.getString("unit"),
+            rs.getBigDecimal("unit_price")),
+        tenantId, itemConfigId).stream().findFirst();
   }
 
   public boolean storeExists(long tenantId, String storeId) {
@@ -61,6 +98,208 @@ public class DailyLossRepository {
         ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', ?, current_timestamp)
         """, id, tenantId, request.storeId().trim(), request.lossDate(), item.id(), item.code(), item.name(),
         item.stockUnit(), quantity, unitPrice, amount, request.lossReason().trim(), submittedBy);
+  }
+
+  public Optional<DailyLossReportRow> findReportByStoreAndDate(long tenantId, String storeId, LocalDate lossDate) {
+    return jdbcTemplate.query(reportSelect() + """
+        where r.tenant_id = ? and r.store_id = ? and r.loss_date = ?
+        """, reportMapper(), tenantId, storeId, lossDate).stream().findFirst();
+  }
+
+  public Optional<DailyLossReportRow> findReport(long tenantId, String id) {
+    return jdbcTemplate.query(reportSelect() + " where r.tenant_id = ? and r.id = ?",
+        reportMapper(), tenantId, id).stream().findFirst();
+  }
+
+  public Optional<DailyLossReportRow> findReportForUpdate(long tenantId, String id) {
+    return jdbcTemplate.query("""
+        select r.id, r.store_id, s.code as store_code, s.name as store_name, r.loss_date,
+               r.status, r.submitted_by, submitter.display_name as submitted_by_name, r.submitted_at,
+               r.reviewed_by, reviewer.display_name as reviewed_by_name, r.reviewed_at, r.review_note
+        from daily_loss_report r
+        join store_branch s on s.tenant_id = r.tenant_id and s.id = r.store_id
+        left join auth_user submitter on submitter.tenant_id = r.tenant_id and submitter.id = r.submitted_by
+        left join auth_user reviewer on reviewer.tenant_id = r.tenant_id and reviewer.id = r.reviewed_by
+        where r.tenant_id = ? and r.id = ?
+        for update
+        """, reportMapper(), tenantId, id).stream().findFirst();
+  }
+
+  public List<DailyLossReportRow> reports(long tenantId, YearMonth month, String storeId, DataScope scope) {
+    LocalDate start = month.atDay(1);
+    LocalDate end = month.plusMonths(1).atDay(1);
+    StringBuilder sql = new StringBuilder(reportSelect()).append("""
+        where r.tenant_id = :tenantId
+          and r.loss_date >= :start
+          and r.loss_date < :end
+        """);
+    MapSqlParameterSource params = new MapSqlParameterSource()
+        .addValue("tenantId", tenantId)
+        .addValue("start", start)
+        .addValue("end", end);
+    if (storeId != null && !storeId.isBlank()) {
+      sql.append(" and r.store_id = :storeId");
+      params.addValue("storeId", storeId.trim());
+    }
+    appendStoreScope(sql, params, scope, "r.store_id");
+    sql.append(" order by r.loss_date desc, s.code, r.id");
+    return namedJdbc.query(sql.toString(), params, reportMapper());
+  }
+
+  public List<ReportStoreRow> reportStores(long tenantId, String storeId, DataScope scope) {
+    StringBuilder sql = new StringBuilder("""
+        select s.id, s.code, s.name
+        from store_branch s
+        where s.tenant_id = :tenantId
+        """);
+    MapSqlParameterSource params = new MapSqlParameterSource("tenantId", tenantId);
+    if (storeId != null && !storeId.isBlank()) {
+      sql.append(" and s.id = :storeId");
+      params.addValue("storeId", storeId.trim());
+    }
+    appendStoreScope(sql, params, scope, "s.id");
+    sql.append(" order by s.code, s.id");
+    return namedJdbc.query(sql.toString(), params,
+        (rs, rowNum) -> new ReportStoreRow(rs.getString("id"), rs.getString("code"), rs.getString("name")));
+  }
+
+  public void insertReport(long tenantId, String id, String storeId, LocalDate lossDate, long actorId) {
+    jdbcTemplate.update("""
+        insert into daily_loss_report(
+          id, tenant_id, store_id, loss_date, status, created_at
+        ) values (?, ?, ?, ?, 'DRAFT', current_timestamp)
+        """, id, tenantId, storeId, lossDate);
+  }
+
+  public void resetReportDetails(long tenantId, String reportId) {
+    jdbcTemplate.update("""
+        delete from daily_loss_record
+        where tenant_id = ? and report_id = ?
+        """, tenantId, reportId);
+  }
+
+  public void insertReportDetail(
+      long tenantId,
+      String id,
+      String reportId,
+      String storeId,
+      LocalDate lossDate,
+      LossItemConfigRow item,
+      BigDecimal quantity,
+      BigDecimal unitPrice,
+      BigDecimal amount,
+      String reason,
+      long actorId
+  ) {
+    jdbcTemplate.update("""
+        insert into daily_loss_record(
+          id, report_id, tenant_id, store_id, loss_date, item_id, item_config_id,
+          item_code, item_name, stock_unit, loss_quantity, unit_price_snapshot,
+          amount_snapshot, loss_reason, status, submitted_by, submitted_at
+        ) values (?, ?, ?, ?, ?, null, ?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', ?, current_timestamp)
+        """, id, reportId, tenantId, storeId, lossDate, item.id(), item.itemCode(), item.itemName(),
+        item.unit(), quantity, unitPrice, amount, reason, actorId);
+  }
+
+  public void touchReportDraft(long tenantId, String reportId) {
+    jdbcTemplate.update("""
+        update daily_loss_report
+        set status = 'DRAFT', submitted_by = null, submitted_at = null,
+            reviewed_by = null, reviewed_at = null, review_note = null,
+            updated_at = current_timestamp
+        where tenant_id = ? and id = ?
+        """, tenantId, reportId);
+  }
+
+  public void markReportSubmitted(long tenantId, String reportId, long actorId) {
+    jdbcTemplate.update("""
+        update daily_loss_report
+        set status = 'SUBMITTED', submitted_by = ?, submitted_at = current_timestamp,
+            reviewed_by = null, reviewed_at = null, review_note = null,
+            updated_at = current_timestamp
+        where tenant_id = ? and id = ?
+        """, actorId, tenantId, reportId);
+    jdbcTemplate.update("""
+        update daily_loss_record
+        set status = 'SUBMITTED', reviewed_by = null, reviewed_at = null, review_note = null,
+            updated_at = current_timestamp
+        where tenant_id = ? and report_id = ?
+        """, tenantId, reportId);
+  }
+
+  public void markReportReviewed(long tenantId, String reportId, long actorId, String reviewNote) {
+    jdbcTemplate.update("""
+        update daily_loss_report
+        set status = 'REVIEWED', reviewed_by = ?, reviewed_at = current_timestamp,
+            review_note = ?, updated_at = current_timestamp
+        where tenant_id = ? and id = ?
+        """, actorId, blankToNull(reviewNote), tenantId, reportId);
+    jdbcTemplate.update("""
+        update daily_loss_record
+        set status = 'APPROVED', reviewed_by = ?, reviewed_at = current_timestamp,
+            review_note = ?, updated_at = current_timestamp
+        where tenant_id = ? and report_id = ?
+        """, actorId, blankToNull(reviewNote), tenantId, reportId);
+  }
+
+  public List<DailyLossReportDetailResponse> reportDetails(long tenantId, String reportId) {
+    return jdbcTemplate.query("""
+        select r.id, r.item_config_id, r.item_code, r.item_name,
+               coalesce(wc.name, c.category, '每日报损') as category,
+               r.stock_unit, r.loss_quantity, r.unit_price_snapshot,
+               r.amount_snapshot, r.loss_reason
+        from daily_loss_record r
+        left join loss_item_config c on c.tenant_id = r.tenant_id and c.id = r.item_config_id
+        left join warehouse_item_category wc on wc.tenant_id = c.tenant_id and wc.id = c.warehouse_category_id
+        where r.tenant_id = ? and r.report_id = ?
+        order by r.id
+        """, (rs, rowNum) -> new DailyLossReportDetailResponse(
+            rs.getString("id"),
+            rs.getObject("item_config_id", Long.class),
+            rs.getString("item_code"),
+            rs.getString("item_name"),
+            rs.getString("category"),
+            rs.getString("stock_unit"),
+            rs.getBigDecimal("loss_quantity"),
+            rs.getBigDecimal("unit_price_snapshot"),
+            rs.getBigDecimal("amount_snapshot"),
+            rs.getString("loss_reason")),
+        tenantId, reportId);
+  }
+
+  public int reportAttachmentCount(long tenantId, String reportId) {
+    Integer count = jdbcTemplate.queryForObject("""
+        select count(*) from warehouse_attachment
+        where tenant_id = ? and business_type = 'DAILY_LOSS' and business_id = ?
+        """, Integer.class, tenantId, reportId);
+    return count == null ? 0 : count;
+  }
+
+  public List<DailyLossPhotoExportFile> monthlyPhotoFiles(long tenantId, String storeId, YearMonth month) {
+    LocalDate start = month.atDay(1);
+    LocalDate end = month.plusMonths(1).atDay(1);
+    return jdbcTemplate.query("""
+        select a.id, s.code as store_code, r.loss_date as loss_date,
+               a.file_name, a.content_type, a.content
+        from warehouse_attachment a
+        join daily_loss_report r on r.tenant_id = a.tenant_id and r.id = a.business_id
+        join store_branch s on s.tenant_id = r.tenant_id and s.id = r.store_id
+        where a.tenant_id = ?
+          and a.business_type = 'DAILY_LOSS'
+          and r.store_id = ?
+          and r.loss_date >= ?
+          and r.loss_date < ?
+          and lower(coalesce(a.content_type, '')) like 'image/%'
+          and a.content is not null
+        order by r.loss_date, a.id
+        """, (rs, rowNum) -> new DailyLossPhotoExportFile(
+            rs.getLong("id"),
+            rs.getString("store_code"),
+            String.valueOf(rs.getObject("loss_date", LocalDate.class)),
+            rs.getString("file_name"),
+            rs.getString("content_type"),
+            rs.getBytes("content")),
+        tenantId, storeId, start, end);
   }
 
   public List<DailyLossRow> list(long tenantId, LocalDate day, LocalDate monthStart,
@@ -166,15 +405,51 @@ public class DailyLossRepository {
         rs.getString("review_note"));
   }
 
+  private String reportSelect() {
+    return """
+        select r.id, r.store_id, s.code as store_code, s.name as store_name, r.loss_date,
+               r.status, r.submitted_by, submitter.display_name as submitted_by_name, r.submitted_at,
+               r.reviewed_by, reviewer.display_name as reviewed_by_name, r.reviewed_at, r.review_note
+        from daily_loss_report r
+        join store_branch s on s.tenant_id = r.tenant_id and s.id = r.store_id
+        left join auth_user submitter on submitter.tenant_id = r.tenant_id and submitter.id = r.submitted_by
+        left join auth_user reviewer on reviewer.tenant_id = r.tenant_id and reviewer.id = r.reviewed_by
+        """;
+  }
+
+  private RowMapper<DailyLossReportRow> reportMapper() {
+    return (rs, rowNum) -> new DailyLossReportRow(
+        rs.getString("id"),
+        rs.getString("store_id"),
+        rs.getString("store_code"),
+        rs.getString("store_name"),
+        rs.getObject("loss_date", LocalDate.class),
+        rs.getString("status"),
+        rs.getObject("submitted_by", Long.class),
+        rs.getString("submitted_by_name"),
+        rs.getObject("submitted_at", LocalDateTime.class),
+        rs.getObject("reviewed_by", Long.class),
+        rs.getString("reviewed_by_name"),
+        rs.getObject("reviewed_at", LocalDateTime.class),
+        rs.getString("review_note"));
+  }
+
   private void appendStoreScope(StringBuilder sql, MapSqlParameterSource params, DataScope scope) {
+    appendStoreScope(sql, params, scope, "r.store_id");
+  }
+
+  private void appendStoreScope(StringBuilder sql, MapSqlParameterSource params, DataScope scope, String storeColumn) {
     if (scope == null || scope.allowsAllStores()) return;
     if (scope.warehouseIds() != null && !scope.warehouseIds().isEmpty()) {
       sql.append(" and s.supply_warehouse_id in (:scopeWarehouseIds)");
       params.addValue("scopeWarehouseIds", scope.warehouseIds());
       return;
     }
-    if (scope.deniesStoreAccess() || scope.storeIds().isEmpty()) { sql.append(" and 1 = 0"); return; }
-    sql.append(" and r.store_id in (:scopeStoreIds)");
+    if (scope.deniesStoreAccess() || scope.storeIds().isEmpty()) {
+      sql.append(" and 1 = 0");
+      return;
+    }
+    sql.append(" and ").append(storeColumn).append(" in (:scopeStoreIds)");
     params.addValue("scopeStoreIds", scope.storeIds());
   }
 
@@ -198,7 +473,23 @@ public class DailyLossRepository {
     return value == null || value.isBlank() ? null : value.trim();
   }
 
+  private String dailyLossCategoryCode(Long warehouseCategoryId, String sourceCategory) {
+    return warehouseCategoryId == null ? blankToNull(sourceCategory) : "WAREHOUSE_CATEGORY_" + warehouseCategoryId;
+  }
+
+  private String dailyLossCategoryName(String warehouseCategoryName, String sourceCategory) {
+    String mapped = blankToNull(warehouseCategoryName);
+    return mapped == null ? blankToNull(sourceCategory) : mapped;
+  }
+
   public record LossItemRow(long id, String code, String name, String stockUnit, BigDecimal unitPrice) {}
+  public record LossItemConfigRow(long id, String itemCode, String itemName, String category, String unit,
+                                  BigDecimal unitPrice) {}
+  public record ReportStoreRow(String id, String code, String name) {}
+  public record DailyLossReportRow(String id, String storeId, String storeCode, String storeName, LocalDate lossDate,
+                                   String status, Long submittedBy, String submittedByName,
+                                   LocalDateTime submittedAt, Long reviewedBy, String reviewedByName,
+                                   LocalDateTime reviewedAt, String reviewNote) {}
   public record LockedLossRow(String id, String storeId, long itemId, BigDecimal lossQuantity, String lossReason,
                               String status) {}
   public record DailyLossRow(String id, String storeId, String storeCode, String storeName, LocalDate lossDate,

@@ -56,6 +56,7 @@ class ExpenseServiceTest {
           tenant_id bigint not null,
           store_id varchar(64) not null,
           month char(7) null,
+          expense_date date null,
           amount decimal(14,2) not null default 0,
           category varchar(80) null,
           reason text null,
@@ -66,6 +67,22 @@ class ExpenseServiceTest {
           reviewed_at timestamp null,
           created_at timestamp not null default current_timestamp,
           updated_at timestamp null default null
+        )
+        """);
+    jdbcTemplate.execute("""
+        create table warehouse_attachment (
+          id bigint auto_increment primary key,
+          tenant_id bigint not null,
+          store_id varchar(64) null,
+          business_type varchar(60) not null,
+          business_id varchar(120) not null,
+          file_name varchar(255) not null,
+          content_type varchar(120) null,
+          file_size bigint null,
+          storage_path varchar(500) null,
+          content blob null,
+          uploaded_by bigint null,
+          uploaded_at timestamp null default current_timestamp
         )
         """);
     jdbcTemplate.execute("""
@@ -170,6 +187,7 @@ class ExpenseServiceTest {
   @Test
   void submitApproveAndRejectFollowStatusFlowWithAudit() {
     service.save(storeManager(), "exp-1", request("s1", "2026-05", "128.50"));
+    attachImage("exp-1", "s1");
 
     ExpenseClaimResponse submitted = service.submit(storeManager(), "exp-1");
     ExpenseClaimResponse rejected = service.reject(finance(), "exp-1", new ExpenseReviewRequest("Need invoice"));
@@ -199,6 +217,7 @@ class ExpenseServiceTest {
         .isInstanceOf(BusinessException.class)
         .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("BAD_STATUS"));
 
+    attachImage("exp-1", "s1");
     service.submit(storeManager(), "exp-1");
 
     assertThatThrownBy(() -> service.approve(storeManager(), "exp-1", new ExpenseReviewRequest("OK")))
@@ -209,6 +228,7 @@ class ExpenseServiceTest {
   @Test
   void financeCanRequestSupplementThenStoreManagerCanEditAndResubmit() {
     service.save(storeManager(), "exp-supplement", request("s1", "2026-05", "128.50"));
+    attachImage("exp-supplement", "s1");
     service.submit(storeManager(), "exp-supplement");
 
     ExpenseClaimResponse supplement = service.requestInfo(finance(), "exp-supplement", new ExpenseReviewRequest("请补充发票"));
@@ -237,6 +257,7 @@ class ExpenseServiceTest {
   void deleteRemovesDraftButNotApprovedClaim() {
     service.save(boss(), "draft", request("s1", "2026-05", "100"));
     service.save(boss(), "approved", request("s1", "2026-05", "200"));
+    attachImage("approved", "s1");
     service.submit(boss(), "approved");
     service.approve(boss(), "approved", new ExpenseReviewRequest("OK"));
 
@@ -250,6 +271,20 @@ class ExpenseServiceTest {
         .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("BAD_STATUS"));
   }
 
+  @Test
+  void submitRequiresControlledImageForPositiveReimbursement() {
+    service.save(storeManager(), "exp-image-required", request("s1", "2026-05", "128.50"));
+
+    assertThatThrownBy(() -> service.submit(storeManager(), "exp-image-required"))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode())
+            .isEqualTo("REIMBURSEMENT_IMAGE_REQUIRED"));
+
+    attachImage("exp-image-required", "s1");
+
+    assertThat(service.submit(storeManager(), "exp-image-required").status()).isEqualTo("待审核");
+  }
+
   private ExpenseClaimRequest request(String storeId, String month, String amount) {
     return new ExpenseClaimRequest(
         storeId,
@@ -259,6 +294,15 @@ class ExpenseServiceTest {
         "牛奶采购",
         "https://example.test/invoice.jpg"
     );
+  }
+
+  private void attachImage(String expenseId, String storeId) {
+    jdbcTemplate.update("""
+        insert into warehouse_attachment(
+          tenant_id, store_id, business_type, business_id, file_name, content_type, file_size
+        )
+        values (1, ?, 'EXPENSE_CLAIM', ?, 'invoice.jpg', 'image/jpeg', 12)
+        """, storeId, expenseId);
   }
 
   private AuthUser boss() {

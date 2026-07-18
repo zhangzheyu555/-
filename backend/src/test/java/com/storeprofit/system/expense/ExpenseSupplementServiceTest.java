@@ -88,7 +88,7 @@ class ExpenseSupplementServiceTest {
         .isEqualTo(4);
     assertThat(Files.walk(storageRoot).filter(Files::isRegularFile)).hasSize(4);
     assertThat(jdbcTemplate.queryForObject(
-        "select reason from operation_log where action = 'expense_supplement_submit'", String.class))
+        "select reason from operation_log where action = 'reimbursement_attachment_upload'", String.class))
         .isEqualTo("提交报销补充资料，附件数量：4");
 
     long pdfAttachmentId = refreshed.getFirst().attachments().stream()
@@ -101,7 +101,7 @@ class ExpenseSupplementServiceTest {
     assertThat(downloaded.fileName()).isEqualTo("invoice.pdf");
     assertThat(downloaded.bytes()).isEqualTo(pdf());
     assertThat(jdbcTemplate.queryForObject(
-        "select count(*) from operation_log where action = 'expense_supplement_attachment_download'", Integer.class))
+        "select count(*) from operation_log where action = 'reimbursement_attachment_download'", Integer.class))
         .isEqualTo(1);
   }
 
@@ -251,7 +251,7 @@ class ExpenseSupplementServiceTest {
     jdbcTemplate.execute("""
         create table expense_claim (
           id varchar(120) primary key, tenant_id bigint not null, store_id varchar(64) not null,
-          month char(7), amount decimal(14,2), category varchar(80), reason text,
+          month char(7), expense_date date, amount decimal(14,2), category varchar(80), reason text,
           status varchar(40), image_url varchar(500), submitted_by bigint, reviewed_by bigint,
           reviewed_at timestamp, created_at timestamp default current_timestamp,
           updated_at timestamp null

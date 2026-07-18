@@ -136,15 +136,14 @@ async function onFileChange(event: Event) {
 function validateAttachment(selected: File, actualType: string) {
   if (!selected.size) return `${selected.name} 是空文件，无法上传。`
   if (selected.size > 10 * 1024 * 1024) return `${selected.name} 超过 10MB。`
-  const acceptedTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
-  if (!acceptedTypes.includes(actualType)) return `${selected.name} 不是有效的 JPG、PNG、WebP 或 PDF 文件。`
+  const acceptedTypes = ['image/jpeg', 'image/png', 'image/webp']
+  if (!acceptedTypes.includes(actualType)) return `${selected.name} 不是有效的 JPG、PNG 或 WebP 图片。`
   const extension = selected.name.slice(selected.name.lastIndexOf('.')).toLowerCase()
   const expectedTypes: Record<string, string> = {
     '.jpg': 'image/jpeg',
     '.jpeg': 'image/jpeg',
     '.png': 'image/png',
     '.webp': 'image/webp',
-    '.pdf': 'application/pdf',
   }
   if (expectedTypes[extension] !== actualType) return `${selected.name} 的扩展名与真实文件类型不一致。`
   return ''
@@ -339,14 +338,14 @@ function displayError(reason: unknown) {
           ref="fileInput"
           class="file-input"
           type="file"
-          accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf"
+          accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
           @change="onFileChange"
         />
         <section class="attachment-section" aria-label="报销附件">
           <div class="attachment-heading">
             <div>
               <b>报销凭证</b>
-              <span>JPG、PNG、WebP 或 PDF，单个不超过 10MB</span>
+              <span>JPG、PNG、WebP 图片，单个不超过 10MB</span>
             </div>
             <button v-if="!file" class="ghost-button" type="button" :disabled="saving" @click="chooseFile">
               <Paperclip :size="16" />选择附件

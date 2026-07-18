@@ -234,6 +234,37 @@ class AccessControlServiceTest {
   }
 
   @Test
+  void operationsCannotReadDailyLossEvenWhenLegacyPermissionExistsAndDenialIsAudited() {
+    AuthorizationService authorizationService = mock(AuthorizationService.class);
+    AccessControlService dailyLossAccess = new AccessControlService(
+        authService,
+        authRepository,
+        auditRepository,
+        authorizationService,
+        mock(DataScopeService.class)
+    );
+    AuthUser operations = user("OPERATIONS", null);
+    when(authorizationService.hasPermission(operations, PermissionCodes.DAILY_LOSS_READ)).thenReturn(true);
+
+    assertThatThrownBy(() -> dailyLossAccess.requireDailyLossRead(operations))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> {
+          BusinessException forbidden = (BusinessException) error;
+          assertThat(forbidden.getCode()).isEqualTo("FORBIDDEN");
+          assertThat(forbidden.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+        });
+
+    verify(auditRepository).writePermissionDenied(
+        any(AuthUser.class),
+        any(String.class),
+        any(String.class),
+        any(String.class),
+        isNull(),
+        any(String.class)
+    );
+  }
+
+  @Test
   void employeeCanUseOwnLearningAndAssistantButCannotEnterHighRiskModules() {
     AuthUser employee = user("EMPLOYEE", "rg1");
 
