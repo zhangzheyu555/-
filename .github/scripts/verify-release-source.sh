@@ -4,7 +4,8 @@ set -Eeuo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
-readonly expected_flyway_latest=56
+readonly expected_mysql_flyway_latest=74
+readonly expected_h2_flyway_latest=73
 
 required_exam_and_training_files=(
   backend/src/main/resources/db/migration/V28__exam_training_seed_data.sql
@@ -55,6 +56,7 @@ block_release_source() {
 verify_latest_flyway() {
   local migration_dir="$1"
   local label="$2"
+  local expected_flyway_latest="$3"
   local migration_path file_name version latest=0
   local -a expected_migrations=()
 
@@ -145,7 +147,9 @@ scan_sensitive_config_content() {
 
 scan_sensitive_configuration_values() {
   local matched_path lower_path
-  local pattern="^[[:space:]]*(export[[:space:]]+)?(DEEPSEEK_API_KEY|OPENAI_API_KEY|EMPLOYEE_ASSISTANT_API_TOKEN|MYSQL_PASSWORD|DB_PASSWORD|DATABASE_URL|AWS_SECRET_ACCESS_KEY|AWS_ACCESS_KEY_ID|PASSWORD|SECRET|TOKEN|PRIVATE_KEY)[[:space:]]*[:=][[:space:]]*['\"]?[^\$<@[:space:]'\"]{8,}"
+  # Values beginning with $, [, ( or @ are runtime expressions/collections rather
+  # than embedded credentials (for example PowerShell's `[string](...)`).
+  local pattern="^[[:space:]]*(export[[:space:]]+)?(DEEPSEEK_API_KEY|OPENAI_API_KEY|EMPLOYEE_ASSISTANT_API_TOKEN|MYSQL_PASSWORD|DB_PASSWORD|DATABASE_URL|AWS_SECRET_ACCESS_KEY|AWS_ACCESS_KEY_ID|PASSWORD|SECRET|TOKEN|PRIVATE_KEY)[[:space:]]*[:=][[:space:]]*['\"]?[^\$<@\[\([:space:]'\"]{8,}"
 
   if ! write_content_match_file "$pattern"; then
     return
@@ -254,8 +258,8 @@ else
   done
 fi
 
-verify_latest_flyway backend/src/main/resources/db/migration MySQL
-verify_latest_flyway backend/src/main/resources/db/migration-h2 H2
+verify_latest_flyway backend/src/main/resources/db/migration MySQL "$expected_mysql_flyway_latest"
+verify_latest_flyway backend/src/main/resources/db/migration-h2 H2 "$expected_h2_flyway_latest"
 
 while IFS= read -r -d '' tracked_path; do
   lower_path="${tracked_path,,}"
