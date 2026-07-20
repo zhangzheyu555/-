@@ -728,7 +728,6 @@ function roleText(value: string) {
     STORE_MANAGER: '店长',
     WAREHOUSE: '仓库管理员',
     SUPERVISOR: '督导',
-    OPERATIONS: '运营',
   } as Record<string, string>)[String(value || '').toUpperCase()] || value || '待确认'
 }
 
@@ -742,7 +741,7 @@ function todoOwnerRole(value: string) {
     督导: 'SUPERVISOR',
     仓库: 'WAREHOUSE',
     仓库管理员: 'WAREHOUSE',
-    运营: 'OPERATIONS',
+    运营: 'SUPERVISOR',
   }
   return aliases[normalized] || normalized.toUpperCase()
 }

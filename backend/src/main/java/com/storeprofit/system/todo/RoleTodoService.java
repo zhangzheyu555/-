@@ -48,7 +48,6 @@ public class RoleTodoService {
   private static final Set<RoleTodoAudience> ESCALATION_AUDIENCES = Set.of(
       RoleTodoAudience.FINANCE,
       RoleTodoAudience.SUPERVISOR,
-      RoleTodoAudience.OPERATIONS,
       RoleTodoAudience.STORE_MANAGER,
       RoleTodoAudience.WAREHOUSE
   );
@@ -1182,7 +1181,6 @@ public class RoleTodoService {
     return List.of(
         RoleTodoAudience.BOSS,
         RoleTodoAudience.SUPERVISOR,
-        RoleTodoAudience.OPERATIONS,
         RoleTodoAudience.STORE_MANAGER
     ).contains(audience);
   }
@@ -1196,7 +1194,7 @@ public class RoleTodoService {
   }
 
   private boolean includesDataImport(RoleTodoAudience audience) {
-    return List.of(RoleTodoAudience.BOSS, RoleTodoAudience.OPERATIONS).contains(audience);
+    return List.of(RoleTodoAudience.BOSS, RoleTodoAudience.SUPERVISOR).contains(audience);
   }
 
   private void requireAudienceAccess(AuthUser user, RoleTodoAudience audience) {
@@ -1206,7 +1204,7 @@ public class RoleTodoService {
     if (sameRole(audience.roleCode(), user == null ? null : user.role())) {
       return;
     }
-    throw new BusinessException("FORBIDDEN", "No permission to read this role todo list", HttpStatus.FORBIDDEN);
+    throw new BusinessException("FORBIDDEN", "当前账号无权查看该角色待办", HttpStatus.FORBIDDEN);
   }
 
   private StoreQueryScope effectiveStoreScope(
@@ -1231,9 +1229,10 @@ public class RoleTodoService {
     boolean unrestricted = AccessControlService.isBoss(user)
         || accessControl.hasAllDataScope(user, domainCode);
     if (requested != null) {
-      if (!unrestricted && !accessControl.canAccessStore(user, domainCode, requested)) {
-        throw new BusinessException(
-            "FORBIDDEN", "请求门店不在当前账号的数据范围内", HttpStatus.FORBIDDEN);
+      if (!unrestricted) {
+        // Keep store-scope denials on the central authorization path so every rejected
+        // cross-store todo query is recorded in operation_log for later review.
+        accessControl.requireStoreAccess(user, domainCode, requested, "查看角色待办");
       }
       return new StoreQueryScope(false, List.of(requested));
     }
@@ -1265,7 +1264,7 @@ public class RoleTodoService {
 
   private void requireValidStatus(String status) {
     if (status != null && !STATUSES.contains(status)) {
-      throw new BusinessException("BAD_STATUS", "Todo status must be RISK, PENDING, REMINDER or DONE", HttpStatus.BAD_REQUEST);
+      throw new BusinessException("BAD_STATUS", "待办状态仅支持风险、待处理、提醒或已完成", HttpStatus.BAD_REQUEST);
     }
   }
 
@@ -1279,14 +1278,14 @@ public class RoleTodoService {
     if (user != null && sameRole(audience.roleCode(), user.role())) {
       return;
     }
-    throw new BusinessException("FORBIDDEN", "No permission to escalate this role todo", HttpStatus.FORBIDDEN);
+    throw new BusinessException("FORBIDDEN", "当前账号无权上报该角色待办", HttpStatus.FORBIDDEN);
   }
 
   private void requireCompletionActor(AuthUser user, RoleTodoAudience audience) {
     if (user != null && sameRole(audience.roleCode(), user.role())) {
       return;
     }
-    throw new BusinessException("FORBIDDEN", "No permission to complete this role todo", HttpStatus.FORBIDDEN);
+    throw new BusinessException("FORBIDDEN", "当前账号无权完成该角色待办", HttpStatus.FORBIDDEN);
   }
 
   private void requireBoss(AuthUser user) {

@@ -3,6 +3,7 @@ package com.storeprofit.system.assistant;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.storeprofit.system.finance.FinanceService;
+import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -31,7 +32,7 @@ public class AssistantService {
   static final String PROMPT_VERSION = "business-analysis-v4-strict-json-data-limited";
   private static final Duration CACHE_TTL = Duration.ofMinutes(5);
   private static final Set<String> ACTION_OWNER_ROLES = Set.of(
-      "BOSS", "FINANCE", "STORE_MANAGER", "SUPERVISOR", "WAREHOUSE", "OPERATIONS"
+      "BOSS", "FINANCE", "STORE_MANAGER", "SUPERVISOR", "WAREHOUSE"
   );
   private static final Set<String> ANALYSIS_TOP_LEVEL_FIELDS = Set.of(
       "analysisType", "summary", "findings", "risks", "possibleCauses", "actions", "limitations", "confidence"
@@ -49,7 +50,7 @@ public class AssistantService {
       "店长", "STORE_MANAGER",
       "督导", "SUPERVISOR",
       "仓库管理员", "WAREHOUSE",
-      "运营", "OPERATIONS"
+      "运营", "SUPERVISOR"
   );
   private static final Pattern WHOLE_JSON_FENCE = Pattern.compile(
       "\\A```(?:(?i:json))?[\\t ]*\\R(.*)\\R```\\z", Pattern.DOTALL
@@ -414,14 +415,13 @@ public class AssistantService {
   }
 
   private boolean roleOnlyFallback(AuthUser user) {
-    return List.of("WAREHOUSE", "SUPERVISOR", "OPERATIONS").contains(user.role());
+    return List.of("WAREHOUSE", "SUPERVISOR").contains(AccessControlService.canonicalRole(user.role()));
   }
 
   private String roleFallbackAnswer(AuthUser user) {
-    return switch (user.role()) {
+    return switch (AccessControlService.canonicalRole(user.role())) {
       case "WAREHOUSE" -> "仓库数据助手需要仓库页面上下文才能回答库存和叫货明细。";
-      case "SUPERVISOR" -> "巡店数据助手需要巡店记录上下文才能回答整改和得分明细。";
-      case "OPERATIONS" -> "运营数据助手可以协助查看数据导入、平台同步、门店配置和经营异常。";
+      case "SUPERVISOR" -> "督导数据助手可以协助查看巡店整改、平台同步、培训考试、盘存和经营异常。";
       default -> "当前账号没有可用的经营分析数据。";
     };
   }
@@ -1162,7 +1162,7 @@ public class AssistantService {
         2. risks最多3项，每项必须包含title、evidence和severity；evidence只能引用输入中的数据证据。
         3. possibleCauses必须明确写成待核实的推测，每项包含cause、confidence和basis，禁止当作事实。
         4. FULL 的 actions必须恰好给出3条本周可执行建议；DATA_LIMITED 的 actions必须给出1至3条数据补全建议。每项包含action、ownerRole、deadline、expectedImpact和verificationMetric。
-           ownerRole只能使用正式角色代码：BOSS、FINANCE、STORE_MANAGER、SUPERVISOR、WAREHOUSE、OPERATIONS。
+           ownerRole只能使用正式角色代码：BOSS、FINANCE、STORE_MANAGER、SUPERVISOR、WAREHOUSE、EMPLOYEE。
         5. 每项推测的confidence以及整体confidence只能为HIGH、MEDIUM或LOW。
         6. 数据不足时写入limitations，禁止编造不存在的同比、环比、原因、金额或比例。
         7. 金额和比例必须与输入完全一致，禁止重新计算或改写数值。

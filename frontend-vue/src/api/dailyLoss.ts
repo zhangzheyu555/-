@@ -238,18 +238,30 @@ export async function fetchDailyLossAttachment(attachment: DailyLossAttachment, 
   return response.data
 }
 
-export async function downloadDailyLossPhotosZip(storeId: string, month: string) {
+export async function downloadMonthlyDailyLossExcel(month: string, storeId?: string) {
   const response = await http.get<Blob>(
-    `/api/daily-loss/stores/${encodeURIComponent(storeId)}/months/${encodeURIComponent(month)}/photos.zip`,
-    { responseType: 'blob', timeout: 120_000 },
+    '/api/daily-loss/exports/monthly.xlsx',
+    {
+      responseType: 'blob',
+      timeout: 120_000,
+      params: { month, storeId: storeId || undefined },
+    },
   )
   const blob = response.data
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = `${storeId}-${month}-报损照片.zip`
+  link.download = downloadFileName(String(response.headers['content-disposition'] || ''))
+    || `每日报损-${month}.xlsx`
   document.body.appendChild(link)
   link.click()
   link.remove()
   window.setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
+function downloadFileName(disposition: string) {
+  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+  if (encoded) return decodeURIComponent(encoded)
+  const plain = disposition.match(/filename="?([^";]+)"?/i)?.[1]
+  return plain ? decodeURIComponent(plain) : ''
 }

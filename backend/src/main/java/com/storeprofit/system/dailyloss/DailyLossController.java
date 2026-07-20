@@ -151,22 +151,22 @@ public class DailyLossController {
     return ApiResponse.ok(dailyLossService.uploadReportAttachments(user(authorization), id, files));
   }
 
-  @GetMapping("/stores/{storeId}/months/{yyyyMM}/photos.zip")
-  public ResponseEntity<byte[]> exportMonthlyPhotos(
+  @GetMapping("/exports/monthly.xlsx")
+  public ResponseEntity<byte[]> exportMonthlyExcel(
       @RequestHeader(value = "Authorization", required = false) String authorization,
-      @PathVariable String storeId,
-      @PathVariable String yyyyMM
+      @RequestParam String month,
+      @RequestParam(required = false) String storeId
   ) {
-    byte[] content = dailyLossService.exportMonthlyPhotos(user(authorization), storeId, yyyyMM);
-    String fileName = storeId + "-" + yyyyMM + "-daily-loss-photos.zip";
+    DailyLossMonthlyExcelExport export = dailyLossService.exportMonthlyExcel(user(authorization), storeId, month);
     return ResponseEntity.ok()
-        .contentType(MediaType.parseMediaType("application/zip"))
+        .contentType(MediaType.parseMediaType(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
         .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
-            .filename(fileName, StandardCharsets.UTF_8)
+            .filename(export.fileName(), StandardCharsets.UTF_8)
             .build()
             .toString())
         .header(HttpHeaders.CACHE_CONTROL, "private, no-store, max-age=0")
-        .body(content);
+        .body(export.content());
   }
 
   private AuthUser user(String authorization) {

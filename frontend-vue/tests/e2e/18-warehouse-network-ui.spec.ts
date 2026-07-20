@@ -106,6 +106,12 @@ const shandongAdminSession = {
   },
 }
 
+const noPendingCentralSession = {
+  ...baseSession,
+  id: 10,
+  displayName: '无待办总仓管理员',
+}
+
 const storeSession = {
   ...baseSession,
   id: 21,
@@ -207,7 +213,9 @@ const transferContext = (warehouseId: number, session: typeof baseSession) => {
           canShip: can('warehouse.transfer.ship'),
         }),
       }],
-      todos: { pendingApproval: 1, pendingShipment: 1, completed: 3 },
+      todos: session.id === noPendingCentralSession.id
+        ? { completed: 3 }
+        : { pendingApproval: 1, pendingShipment: 1, completed: 3 },
     }
   }
   return {
@@ -439,22 +447,47 @@ async function fulfillApi(route: Route, session: typeof baseSession, log: Reques
   return route.fulfill(ok([]))
 }
 
-test('boss sees complete warehouse navigation and regional context has no purchase action', async ({ page }) => {
+test('central warehouse entry prioritizes identity, risks, pending work and one main action', async ({ page }) => {
   const log = await prepare(page, baseSession)
-  await page.goto('/warehouse')
+  await page.goto('/warehouse/central')
   const pageRoot = page.locator('.warehouse-page')
-  for (const label of ['全部仓库总览', '荆州总仓', '山东分仓', '门店叫货', '外部采购', '出入库记录']) {
+  await expect(pageRoot.getByRole('link', { name: '仓库中心', exact: true })).toBeVisible()
+  await expect(pageRoot.getByRole('heading', { name: '荆州总仓', exact: true })).toBeVisible()
+  for (const label of ['总仓', '荆州区域', '可外部采购', '可向分仓配货']) {
+    await expect(pageRoot.getByText(label, { exact: true })).toBeVisible()
+  }
+  const statGrid = pageRoot.locator('.warehouse-stat-grid')
+  for (const label of ['库存总值', '低库存', '临期风险', '待处理调拨', '待处理叫货']) {
+    await expect(statGrid.getByText(label, { exact: true })).toBeVisible()
+  }
+  await expect(pageRoot.getByRole('heading', { name: '待优先处理', exact: true })).toBeVisible()
+  await expect(pageRoot.getByRole('link', { name: '处理 2 笔调拨', exact: true })).toBeVisible()
+  await expect(pageRoot.getByRole('link', { name: '外部采购入库', exact: true })).toBeVisible()
+  await expect(pageRoot.getByRole('link', { name: /物料档案/ })).toBeVisible()
+  for (const label of ['库存', '门店叫货', '外部采购', '出入库记录']) {
     await expect(pageRoot.getByRole('link', { name: label, exact: true })).toBeVisible()
   }
-  await expect(pageRoot.getByRole('link', { name: /仓间调拨/ })).toBeVisible()
-  await page.screenshot({ path: '../output/playwright/warehouse-network-overview.png', fullPage: true })
+  await expect(pageRoot.locator('.warehouse-business-navigation').getByRole('link', { name: /调拨/ })).toBeVisible()
+  await page.screenshot({ path: '../output/playwright/warehouse-central-workbench.png', fullPage: true })
 
   await page.goto('/warehouse/shandong')
-  await expect(pageRoot.getByText('山东分仓', { exact: true }).first()).toBeVisible()
+  await expect(pageRoot.getByRole('heading', { name: '山东分仓', exact: true })).toBeVisible()
+  await expect(pageRoot.getByText('上级：荆州总仓', { exact: true })).toBeVisible()
+  await expect(pageRoot.getByText('仅可申请补货', { exact: true })).toBeVisible()
   await expect(pageRoot.getByRole('link', { name: '向上级总仓申请补货', exact: true })).toBeVisible()
   await expect(pageRoot.getByRole('link', { name: '外部采购', exact: true })).toHaveCount(0)
   await expect(pageRoot.getByRole('link', { name: '外部采购入库', exact: true })).toHaveCount(0)
   await page.screenshot({ path: '../output/playwright/warehouse-shandong-context.png', fullPage: true })
+  expect(log.consoleErrors).toEqual([])
+})
+
+test('central warehouse without pending work falls back to proactive allocation and shows an empty priority state', async ({ page }) => {
+  const log = await prepare(page, noPendingCentralSession)
+  await page.goto('/warehouse/central')
+
+  await expect(page.getByRole('link', { name: '向分仓配货', exact: true })).toBeVisible()
+  await expect(page.getByText('当前没有需要优先处理的事项。', { exact: true })).toBeVisible()
+  await expect(page.getByRole('link', { name: /处理 .*笔调拨/ })).toHaveCount(0)
   expect(log.consoleErrors).toEqual([])
 })
 

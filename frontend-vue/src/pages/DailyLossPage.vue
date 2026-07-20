@@ -20,7 +20,7 @@ import PageHeader from '../components/common/PageHeader.vue'
 import BusinessScopeBar from '../components/common/BusinessScopeBar.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import {
-  downloadDailyLossPhotosZip,
+  downloadMonthlyDailyLossExcel,
   fetchDailyLossAttachment,
   getDailyLossItems,
   getDailyLossReports,
@@ -91,7 +91,9 @@ const canSubmit = computed(() => auth.hasPermission(PERMISSIONS.DAILY_LOSS_CREAT
   && (isBossRole(auth.role) || normalizeRoleCode(auth.role) === 'STORE_MANAGER'))
 const canReview = computed(() => auth.hasPermission(PERMISSIONS.DAILY_LOSS_REVIEW)
   && (isBossRole(auth.role) || normalizeRoleCode(auth.role) === 'SUPERVISOR'))
-const storeScope = computed(() => auth.dataScope('STORE') || auth.dataScope('WAREHOUSE'))
+const storeScope = computed(() => normalizeRoleCode(auth.role) === 'FINANCE'
+  ? (auth.dataScope('FINANCE') || auth.dataScope('STORE'))
+  : (auth.dataScope('STORE') || auth.dataScope('WAREHOUSE')))
 const accessibleStores = computed(() => {
   if (scope.isStoreManager.value) {
     return stores.value.filter((store) => store.id === scope.boundStoreId.value)
@@ -102,6 +104,9 @@ const accessibleStores = computed(() => {
   return stores.value
 })
 const effectiveStoreId = computed(() => scope.scopedStoreId(selectedStoreId.value))
+const canSelectAllStores = computed(() => !scope.isStoreManager.value && storeScope.value?.mode === 'ALL')
+const canExport = computed(() => auth.hasPermission(PERMISSIONS.DAILY_LOSS_EXPORT)
+  && (isBossRole(auth.role) || ['FINANCE', 'SUPERVISOR', 'STORE_MANAGER'].includes(normalizeRoleCode(auth.role))))
 const notReportedCount = computed(() => reports.value.filter((report) => statusKey(report) === 'NOT_REPORTED').length)
 const pendingCount = computed(() => reports.value.filter((report) => statusKey(report) === 'SUBMITTED').length)
 const reviewedCount = computed(() => reports.value.filter((report) => ['REVIEWED', 'APPROVED'].includes(statusKey(report))).length)
@@ -182,7 +187,7 @@ async function initialize() {
     stores.value = await getStores()
     selectedStoreId.value = scope.isStoreManager.value
       ? scope.boundStoreId.value
-      : accessibleStores.value[0]?.id || ''
+      : (canSelectAllStores.value ? '' : accessibleStores.value[0]?.id || '')
     await refreshData()
   } catch (error) {
     pageError.value = readableError(error, '每日报损暂时无法读取，请稍后刷新。')
@@ -192,7 +197,7 @@ async function initialize() {
 }
 
 async function refreshData() {
-  if (!effectiveStoreId.value) {
+  if (!effectiveStoreId.value && !canSelectAllStores.value) {
     items.value = []
     reports.value = []
     return
@@ -382,15 +387,16 @@ async function reviewReport(report: DailyLossReport) {
   }
 }
 
-async function exportPhotos() {
-  if (!effectiveStoreId.value || !canReview.value || exporting.value) return
+async function exportMonthlyExcel() {
+  if ((!effectiveStoreId.value && !canSelectAllStores.value) || !canExport.value || exporting.value) return
   exporting.value = true
   pageError.value = ''
+  actionMessage.value = ''
   try {
-    await downloadDailyLossPhotosZip(effectiveStoreId.value, selectedMonth.value)
-    actionMessage.value = '照片包已开始下载，压缩包只包含图片文件。'
+    await downloadMonthlyDailyLossExcel(selectedMonth.value, effectiveStoreId.value || undefined)
+    actionMessage.value = '本月报损 Excel 已开始下载。'
   } catch (error) {
-    pageError.value = readableError(error, '照片包导出失败，请确认门店和月份后重试。')
+    pageError.value = readableError(error, '本月报损 Excel 导出失败，请确认门店和月份后重试。')
   } finally {
     exporting.value = false
   }
@@ -502,7 +508,7 @@ function currentMonth() {
   <section class="daily-loss-page">
     <PageHeader
       title="每日报损"
-      subtitle="店长每日提交，督导按门店和日期复核；月度照片包只包含图片。"
+      subtitle="店长每日提交，督导按门店和日期复核；可按当前范围导出本月报损 Excel。"
     >
       <template #actions>
         <UiButton :loading="refreshing" @click="refreshData">
@@ -520,7 +526,8 @@ function currentMonth() {
       <label v-else class="toolbar-field">
         <span>门店</span>
         <select v-model="selectedStoreId" :disabled="loading || refreshing">
-          <option value="" disabled>请选择门店</option>
+          <option v-if="canSelectAllStores" value="">全部门店</option>
+          <option v-else value="" disabled>请选择门店</option>
           <option v-for="store in accessibleStores" :key="store.id" :value="store.id">
             {{ store.brandName ? `${store.brandName} · ` : '' }}{{ store.name || store.id }}
           </option>
@@ -530,9 +537,14 @@ function currentMonth() {
         <span>月份</span>
         <input v-model="selectedMonth" type="month" :disabled="loading || refreshing" />
       </label>
-      <UiButton v-if="canReview" :loading="exporting" :disabled="!effectiveStoreId" @click="exportPhotos">
+      <UiButton
+        v-if="canExport"
+        :loading="exporting"
+        :disabled="(!effectiveStoreId && !canSelectAllStores) || loading || refreshing"
+        @click="exportMonthlyExcel"
+      >
         <template #icon><Download :size="16" /></template>
-        导出照片包
+        {{ exporting ? '正在生成 Excel…' : '导出本月报损 Excel' }}
       </UiButton>
       <div class="toolbar-note" title="页面不录入单价，后端按配置快照计算金额。">
         <Info :size="16" />

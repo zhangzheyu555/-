@@ -29,8 +29,7 @@ public class WorkspaceAccessResolver {
       "FINANCE", "/finance",
       "WAREHOUSE", "/warehouse",
       "STORE_MANAGER", "/store",
-      "SUPERVISOR", "/operations/inspection",
-      "OPERATIONS", "/operations",
+      "SUPERVISOR", "/operations",
       "EMPLOYEE", "/employee"
   );
 

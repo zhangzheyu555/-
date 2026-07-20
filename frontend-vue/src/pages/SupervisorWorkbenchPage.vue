@@ -136,7 +136,7 @@ const inspectionStandard = ref<InspectionStandardSet>(emptyInspectionStandard)
 const canManageInspection = computed(() => auth.hasPermission(PERMISSIONS.INSPECTION_MANAGE))
 const canReadDailyLoss = computed(() => auth.hasPermission(PERMISSIONS.DAILY_LOSS_READ))
 // The server remains authoritative. This only prevents a non-manager from seeing an
-// action they cannot complete; SUPERVISOR is normalized to the local OPERATIONS role.
+// action they cannot complete; the backend remains authoritative for every permission check.
 const canSupplementHistoricalEvidence = computed(() => (
   canManageInspection.value && canAccessRoles(auth.role, ['BOSS', 'SUPERVISOR'])
 ))

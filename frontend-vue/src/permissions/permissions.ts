@@ -43,6 +43,7 @@ export const PERMISSIONS = {
   DAILY_LOSS_READ: 'daily_loss.read',
   DAILY_LOSS_CREATE: 'daily_loss.create',
   DAILY_LOSS_REVIEW: 'daily_loss.review',
+  DAILY_LOSS_EXPORT: 'daily_loss.export',
   INSPECTION_READ: 'inspection.read',
   INSPECTION_MANAGE: 'inspection.manage',
   EXAM_LEARN: 'exam.learn',

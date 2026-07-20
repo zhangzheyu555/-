@@ -110,7 +110,7 @@ public class RoleTodoController {
       @RequestParam(required = false) Long brandId,
       @RequestParam(required = false) String storeId
   ) {
-    return todos(authorization, RoleTodoAudience.OPERATIONS, includeDone, status, limit, brandId, storeId);
+    return todos(authorization, RoleTodoAudience.SUPERVISOR, includeDone, status, limit, brandId, storeId);
   }
 
   @PostMapping("/api/finance/todos/{todoId}/escalate")
@@ -155,7 +155,7 @@ public class RoleTodoController {
       @PathVariable String todoId,
       @RequestBody RoleTodoEscalationRequest request
   ) {
-    return escalate(authorization, RoleTodoAudience.OPERATIONS, todoId, request);
+    return escalate(authorization, RoleTodoAudience.SUPERVISOR, todoId, request);
   }
 
   @PostMapping("/api/finance/todos/{todoId}/resolve")
@@ -200,7 +200,7 @@ public class RoleTodoController {
       @PathVariable String todoId,
       @RequestBody RoleTodoCompletionRequest request
   ) {
-    return resolve(authorization, RoleTodoAudience.OPERATIONS, todoId, request);
+    return resolve(authorization, RoleTodoAudience.SUPERVISOR, todoId, request);
   }
 
   @PostMapping("/api/boss/todos/{todoId}/resolve")

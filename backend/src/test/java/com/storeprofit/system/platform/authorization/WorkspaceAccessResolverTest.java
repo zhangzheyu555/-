@@ -99,11 +99,12 @@ class WorkspaceAccessResolverTest {
   }
 
   @Test
-  void supervisorDefaultsToInspectionWorkspaceWithoutOperationsDashboard() {
+  void supervisorDefaultsToUnifiedSupervisorWorkspace() {
     AuthUser supervisor = user("SUPERVISOR", null, true);
     WorkspaceAccessProfile profile = resolver.resolve(
         supervisor,
-        Set.of(PermissionCodes.STORE_READ, PermissionCodes.INSPECTION_READ, PermissionCodes.INSPECTION_MANAGE),
+        Set.of(PermissionCodes.STORE_READ, PermissionCodes.INSPECTION_READ, PermissionCodes.INSPECTION_MANAGE,
+            PermissionCodes.OPERATIONS_DASHBOARD_READ),
         Map.of(
             DataScopeDomains.STORE, new DataScope(DataScopeModes.STORE_LIST, List.of("rg1")),
             DataScopeDomains.INSPECTION, new DataScope(DataScopeModes.STORE_LIST, List.of("rg1"))
@@ -111,9 +112,9 @@ class WorkspaceAccessResolverTest {
         List.of("rg1")
     );
 
-    assertThat(profile.availableWorkspaces()).containsExactly("/operations/inspection", "/store");
-    assertThat(profile.defaultWorkspace()).isEqualTo("/operations/inspection");
-    assertThat(resolver.recommendedWorkspace("SUPERVISOR")).isEqualTo("/operations/inspection");
+    assertThat(profile.availableWorkspaces()).containsExactly("/operations", "/store", "/operations/inspection");
+    assertThat(profile.defaultWorkspace()).isEqualTo("/operations");
+    assertThat(resolver.recommendedWorkspace("SUPERVISOR")).isEqualTo("/operations");
   }
 
   @Test

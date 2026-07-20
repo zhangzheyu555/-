@@ -747,9 +747,9 @@ public class WarehouseRepository {
     jdbcTemplate.update("""
         insert into store_requisition(
           id, tenant_id, store_id, supply_warehouse_id, status, total_amount, note,
-          submitted_by, submitted_at, idempotency_key
+          submitted_by, submitted_at, idempotency_key, version
         )
-        values (?, ?, ?, ?, 'SUBMITTED', ?, ?, ?, current_timestamp, ?)
+        values (?, ?, ?, ?, 'SUBMITTED', ?, ?, ?, current_timestamp, ?, 0)
         """,
         id,
         tenantId,
@@ -788,9 +788,10 @@ public class WarehouseRepository {
     BigDecimal price = amount(unitPrice);
     jdbcTemplate.update("""
         insert into store_requisition_line(
-          tenant_id, requisition_id, item_id, requested_quantity, unit_price, amount, warning_text, note
+          tenant_id, requisition_id, item_id, requested_quantity, shipped_quantity,
+          unit_price, amount, warning_text, note
         )
-        values (?, ?, ?, ?, ?, ?, ?, ?)
+        values (?, ?, ?, ?, 0, ?, ?, ?, ?)
         """,
         tenantId,
         requisitionId,

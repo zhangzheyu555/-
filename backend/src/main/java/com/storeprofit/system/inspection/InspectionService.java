@@ -132,7 +132,7 @@ public class InspectionService {
     String normalizedDateFrom = normalizeOptionalDate(dateFrom, "dateFrom");
     String normalizedDateTo = normalizeOptionalDate(dateTo, "dateTo");
     if (normalizedDateFrom != null && normalizedDateTo != null && LocalDate.parse(normalizedDateFrom).isAfter(LocalDate.parse(normalizedDateTo))) {
-      throw new BusinessException("BAD_DATE_RANGE", "dateFrom cannot be after dateTo", HttpStatus.BAD_REQUEST);
+      throw new BusinessException("BAD_DATE_RANGE", "开始日期不能晚于结束日期", HttpStatus.BAD_REQUEST);
     }
     if (isStoreManager(user)) {
       String scopedStoreId = requireManagerStore(user);
@@ -475,11 +475,8 @@ public class InspectionService {
   private void requireHistoricalEvidenceManage(AuthUser user) {
     requireInspectionRead(user);
     requireInspectionManage(user);
-    // AccessControlService canonicalizes the local SUPERVISOR role to OPERATIONS. The latter is
-    // accepted here only for that established supervisor mapping; this remains restricted by
-    // inspection permission and the record's store range below.
     if (AccessControlService.isBoss(user)
-        || AccessControlService.hasAnyRole(user, "SUPERVISOR", "OPERATIONS")) {
+        || AccessControlService.hasAnyRole(user, "SUPERVISOR")) {
       return;
     }
     throw new BusinessException(
@@ -716,7 +713,7 @@ public class InspectionService {
   public InspectionHistoryRepairResponse repairHistory(AuthUser user) {
     requireInspectionManage(user);
     if (!AccessControlService.isBoss(user)
-        && !AccessControlService.hasAnyRole(user, "SUPERVISOR", "OPERATIONS")) {
+        && !AccessControlService.hasAnyRole(user, "SUPERVISOR")) {
       throw new BusinessException(
           "FORBIDDEN",
           "只有老板或负责巡检的督导可以执行历史巡检修复",
@@ -2484,12 +2481,18 @@ public class InspectionService {
   }
 
   private String normalizeDate(String value, String label) {
+    String displayLabel = switch (label) {
+      case "dateFrom" -> "开始日期";
+      case "dateTo" -> "结束日期";
+      case "inspectionDate" -> "巡检日期";
+      default -> "日期";
+    };
     try {
-      return LocalDate.parse(requireText(value, "BAD_DATE", label + " is required")).toString();
+      return LocalDate.parse(requireText(value, "BAD_DATE", displayLabel + "不能为空")).toString();
     } catch (BusinessException ex) {
       throw ex;
     } catch (Exception ex) {
-      throw new BusinessException("BAD_DATE", label + " must use YYYY-MM-DD", HttpStatus.BAD_REQUEST);
+      throw new BusinessException("BAD_DATE", displayLabel + "必须使用 YYYY-MM-DD 格式", HttpStatus.BAD_REQUEST);
     }
   }
 

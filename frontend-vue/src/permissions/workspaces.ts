@@ -21,8 +21,7 @@ export const RECOMMENDED_WORKSPACE_BY_ROLE: Record<string, string> = {
   FINANCE: '/finance',
   WAREHOUSE: '/warehouse',
   STORE_MANAGER: '/store',
-  SUPERVISOR: '/operations/inspection',
-  OPERATIONS: '/operations',
+  SUPERVISOR: '/operations',
   EMPLOYEE: '/employee',
 }
 
@@ -31,8 +30,7 @@ const WORKSPACE_ORDER_BY_ROLE: Record<string, string[]> = {
   FINANCE: ['/finance'],
   WAREHOUSE: ['/warehouse'],
   STORE_MANAGER: ['/store'],
-  SUPERVISOR: ['/operations/inspection'],
-  OPERATIONS: ['/operations'],
+  SUPERVISOR: ['/operations', '/operations/inspection'],
   EMPLOYEE: ['/employee'],
 }
 

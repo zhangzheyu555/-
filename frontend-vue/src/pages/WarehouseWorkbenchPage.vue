@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
+import { ArrowRight, ClipboardList, PackagePlus, Warehouse } from 'lucide-vue-next'
 import SecondaryNavigation from '../components/common/SecondaryNavigation.vue'
 import ActionConfirmDialog from '../components/ui/ActionConfirmDialog.vue'
 import WarehouseAlertPanel from '../components/warehouse/WarehouseAlertPanel.vue'
@@ -67,7 +68,6 @@ const alerts = computed(() => overview.value?.alerts || [])
 const accessibleWarehouses = computed(() => warehouse.warehouses.filter((row) => row.enabled !== false))
 const selectedWarehouse = computed(() => accessibleWarehouses.value.find((row) => String(row.id) === String(warehouse.selectedWarehouseId)) || null)
 const centralWarehouse = computed(() => accessibleWarehouses.value.find((row) => row.type === 'CENTRAL') || null)
-const regionalWarehouse = computed(() => accessibleWarehouses.value.find((row) => row.type === 'REGIONAL') || null)
 const isBoss = computed(() => auth.role === 'BOSS')
 const hasPermission = (permission: string) => auth.hasPermission(permission)
 const canConfigureWarehouse = computed(() => (
@@ -91,14 +91,6 @@ const canProcessTransfer = computed(() => Boolean(
     route.actions.canApprove || route.actions.canReject || route.actions.canShip
   )),
 ))
-const transferWorkbenchLabel = computed(() => (
-  transferContext.value?.workbenchLabel
-  || (transferContext.value?.mode === 'REQUEST_REPLENISHMENT'
-    ? '向上级总仓申请补货'
-    : transferContext.value?.mode === 'PROACTIVE_ALLOCATION'
-      ? '向分仓主动配货'
-      : '新建仓间调拨')
-))
 const canProcessRequisition = computed(() => (
   isBoss.value
   || hasPermission(PERMISSIONS.WAREHOUSE_REQUISITION_PROCESS)
@@ -106,6 +98,7 @@ const canProcessRequisition = computed(() => (
 ))
 const showWarehouseSwitcher = computed(() => accessibleWarehouses.value.length > 1 && currentTab() !== 'overview')
 const warehouseDetailSection = computed(() => String(route.meta.warehouseSection || 'inventory'))
+const isWarehouseEntrance = computed(() => currentTab() === 'warehouse' && warehouseDetailSection.value === 'inventory')
 const pendingTransfers = computed(() => {
   const todos = transferContext.value?.todos
   return Number(todos?.draft || 0)
@@ -203,17 +196,85 @@ const transferRoute = computed<RouteLocationRaw>(() => ({
   query: warehouse.selectedWarehouseId ? { warehouseId: String(warehouse.selectedWarehouseId) } : undefined,
 }))
 
+const warehouseHomeRoute = computed<RouteLocationRaw>(() => ({
+  path: selectedWarehouse.value?.type === 'REGIONAL' ? '/warehouse/shandong' : '/warehouse/central',
+}))
+
+const warehouseCapabilities = computed(() => {
+  const current = selectedWarehouse.value
+  if (!current) return []
+  if (current.type === 'REGIONAL') {
+    return [
+      `上级：${current.parentWarehouseName || centralWarehouse.value?.name || '荆州总仓'}`,
+      '仅可申请补货',
+    ]
+  }
+  return [
+    current.externalPurchaseAllowed ? '可外部采购' : '不可外部采购',
+    current.storeSupplyAllowed ? '可向分仓配货' : '不向分仓配货',
+  ]
+})
+
+const primaryAction = computed(() => {
+  const current = selectedWarehouse.value
+  if (!current) return null
+  if (current.type === 'REGIONAL') {
+    return canCreateTransfer.value
+      ? { label: '向上级总仓申请补货', to: transferRoute.value }
+      : null
+  }
+  if (pendingTransfers.value > 0 && canProcessTransfer.value) {
+    return { label: `处理 ${pendingTransfers.value} 笔调拨`, to: transferRoute.value }
+  }
+  return canCreateTransfer.value ? { label: '向分仓配货', to: transferRoute.value } : null
+})
+
+const priorityItems = computed(() => {
+  const rows: Array<{ key: string; title: string; detail: string; count: number; to: RouteLocationRaw }> = []
+  if (pendingTransfers.value > 0) {
+    rows.push({
+      key: 'transfers',
+      title: '调拨待处理',
+      detail: selectedWarehouse.value?.type === 'REGIONAL' ? '请确认在途货物或补货申请。' : '请优先审批、发货或处理调拨单。',
+      count: pendingTransfers.value,
+      to: transferRoute.value,
+    })
+  }
+  if (Number(overview.value?.summary.lowStockCount || 0) > 0) {
+    rows.push({
+      key: 'low-stock',
+      title: '低库存物料',
+      detail: '请查看库存风险并安排补货。',
+      count: Number(overview.value?.summary.lowStockCount || 0),
+      to: warehouseHomeRoute.value,
+    })
+  }
+  if (Number(overview.value?.summary.expiringCount || 0) > 0) {
+    rows.push({
+      key: 'expiring',
+      title: '临期物料',
+      detail: '请核对批次并优先处理临期风险。',
+      count: Number(overview.value?.summary.expiringCount || 0),
+      to: warehouseHomeRoute.value,
+    })
+  }
+  if (pendingRequisitions.value.length > 0) {
+    rows.push({
+      key: 'requisitions',
+      title: '门店叫货单',
+      detail: '请处理门店提交的叫货需求。',
+      count: pendingRequisitions.value.length,
+      to: { path: '/warehouse/requests' },
+    })
+  }
+  return rows
+})
+
 const tabs = computed<Array<{ key: string; label: string; badge?: number; to: RouteLocationRaw }>>(() => {
   const rows: Array<{ key: string; label: string; badge?: number; to: RouteLocationRaw }> = []
-  rows.push({
-    key: 'overview',
-    label: accessibleWarehouses.value.length > 1 || isBoss.value ? '全部仓库总览' : '仓库总览',
-    to: '/warehouse',
-  })
-  if (centralWarehouse.value) rows.push({ key: 'central', label: '荆州总仓', to: '/warehouse/central' })
-  if (regionalWarehouse.value) rows.push({ key: 'shandong', label: '山东分仓', to: '/warehouse/shandong' })
+  rows.push({ key: 'inventory', label: '库存', to: warehouseHomeRoute.value })
   if (hasTransferRoute.value) {
-    rows.push({ key: 'transfers', label: '仓间调拨', badge: pendingTransfers.value, to: transferRoute.value })
+    rows.push({ key: 'transfers', label: '调拨', badge: pendingTransfers.value, to: transferRoute.value })
   }
   rows.push({ key: 'requisitions', label: '门店叫货', badge: pendingRequisitions.value.length, to: '/warehouse/requests' })
   if (canPurchase.value && selectedWarehouse.value?.type === 'CENTRAL') {
@@ -223,8 +284,7 @@ const tabs = computed<Array<{ key: string; label: string; badge?: number; to: Ro
   return rows
 })
 const activeNavigationKey = computed(() => {
-  if (currentTab() !== 'warehouse') return currentTab()
-  return selectedWarehouse.value?.type === 'REGIONAL' ? 'shandong' : 'central'
+  return currentTab() === 'warehouse' ? 'inventory' : currentTab()
 })
 
 const tabRoutes: Record<WarehouseTab, string> = {
@@ -570,33 +630,30 @@ watch(
 
 <template>
   <div class="warehouse-workbench">
-    <SecondaryNavigation
-      :items="tabs"
-      :model-value="activeNavigationKey"
-      label="仓库中心功能"
-    />
-
-    <div v-if="currentTab() !== 'overview' && selectedWarehouse" class="warehouse-context-bar">
+    <section v-if="currentTab() !== 'overview' && selectedWarehouse" class="warehouse-context-header">
       <div class="warehouse-context-copy">
-        <b>{{ selectedWarehouse.name }}</b>
-          <span>{{ selectedWarehouse.code }} · {{ selectedWarehouse.type === 'CENTRAL' ? '总仓' : '区域分仓' }} · {{ selectedWarehouse.regionCode === 'JINGZHOU' ? '荆州区域' : '山东区域' }}</span>
+        <div class="warehouse-breadcrumb">
+          <RouterLink to="/warehouse">仓库中心</RouterLink>
+          <span>/</span>
+          <strong>{{ selectedWarehouse.name }}</strong>
+        </div>
+        <div class="warehouse-title-line">
+          <Warehouse :size="22" aria-hidden="true" />
+          <h2>{{ selectedWarehouse.name }}</h2>
+        </div>
+        <div class="warehouse-context-tags" aria-label="仓库身份与能力">
+          <span class="warehouse-type-tag">{{ selectedWarehouse.type === 'CENTRAL' ? '总仓' : '区域分仓' }}</span>
+          <span>{{ selectedWarehouse.regionCode === 'JINGZHOU' ? '荆州区域' : '山东区域' }}</span>
+          <span v-for="capability in warehouseCapabilities" :key="capability">{{ capability }}</span>
+        </div>
       </div>
       <label v-if="showWarehouseSwitcher" class="warehouse-switcher">
-        <span>当前仓库</span>
+        <span>切换仓库</span>
         <select :value="String(selectedWarehouse.id)" aria-label="当前仓库" @change="selectWarehouse">
           <option v-for="row in accessibleWarehouses" :key="row.id" :value="String(row.id)">{{ row.name }}</option>
         </select>
       </label>
-      <div v-if="currentTab() === 'warehouse'" class="warehouse-context-actions">
-        <RouterLink v-if="canCreateTransfer" class="primary-button" :to="transferRoute">
-          {{ transferWorkbenchLabel }}
-        </RouterLink>
-        <RouterLink v-if="selectedWarehouse.type === 'CENTRAL' && canPurchase" class="primary-button" to="/warehouse/purchase">外部采购入库</RouterLink>
-        <RouterLink v-if="canProcessTransfer" class="ghost-button" :to="transferRoute">处理调拨待办</RouterLink>
-        <RouterLink v-if="canConfigureWarehouse && warehouseDetailSection !== 'catalog'" class="ghost-button" to="/warehouse/items">物料档案</RouterLink>
-        <RouterLink v-if="warehouseDetailSection === 'catalog'" class="ghost-button" :to="selectedWarehouse.type === 'REGIONAL' ? '/warehouse/shandong' : '/warehouse/central'">返回库存</RouterLink>
-      </div>
-    </div>
+    </section>
 
     <WarehouseNetworkOverview
       v-if="currentTab() === 'overview'"
@@ -605,15 +662,62 @@ watch(
     />
 
     <WarehouseStatCards
-      v-if="currentTab() === 'warehouse'"
-      :item-count="overview?.summary.itemCount || activeItems.length"
+      v-if="isWarehouseEntrance"
       :stock-value="Number(overview?.summary.stockValue || 0)"
       :low-stock-count="overview?.summary.lowStockCount || 0"
       :expiring-count="overview?.summary.expiringCount || 0"
+      :pending-transfer-count="pendingTransfers"
       :pending-requisition-count="overview?.summary.pendingRequisitionCount || 0"
     />
 
-    <section v-if="currentTab() === 'warehouse'" class="warehouse-overview-grid">
+    <section v-if="isWarehouseEntrance" class="warehouse-workbench-grid">
+      <section class="warehouse-priority-panel" aria-labelledby="warehouse-priority-heading">
+        <div class="workbench-section-heading">
+          <div>
+            <span>今日工作重点</span>
+            <h3 id="warehouse-priority-heading">待优先处理</h3>
+          </div>
+        </div>
+        <div v-if="priorityItems.length" class="priority-list">
+          <RouterLink v-for="item in priorityItems" :key="item.key" class="priority-item" :to="item.to">
+            <span class="priority-item__count">{{ item.count }}</span>
+            <span class="priority-item__copy"><b>{{ item.title }}</b><small>{{ item.detail }}</small></span>
+            <ArrowRight :size="18" aria-hidden="true" />
+          </RouterLink>
+        </div>
+        <div v-else class="priority-empty">当前没有需要优先处理的事项。</div>
+      </section>
+
+      <section class="warehouse-action-panel" aria-labelledby="warehouse-actions-heading">
+        <div class="workbench-section-heading">
+          <div>
+            <span>按当前仓库权限执行</span>
+            <h3 id="warehouse-actions-heading">常用操作</h3>
+          </div>
+        </div>
+        <div class="warehouse-action-list">
+          <RouterLink v-if="primaryAction" class="primary-button warehouse-primary-action" :to="primaryAction.to">
+            <ClipboardList :size="18" />{{ primaryAction.label }}
+          </RouterLink>
+          <RouterLink v-if="selectedWarehouse?.type === 'CENTRAL' && canPurchase" class="secondary-action" to="/warehouse/purchase">
+            <PackagePlus :size="18" />外部采购入库
+          </RouterLink>
+          <RouterLink v-if="canConfigureWarehouse && warehouseDetailSection !== 'catalog'" class="text-action" to="/warehouse/items">物料档案 <ArrowRight :size="15" /></RouterLink>
+          <RouterLink v-if="warehouseDetailSection === 'catalog'" class="text-action" :to="warehouseHomeRoute">返回库存 <ArrowRight :size="15" /></RouterLink>
+          <span v-if="!primaryAction && !(selectedWarehouse?.type === 'CENTRAL' && canPurchase)" class="action-empty">当前账号没有可执行的仓库操作。</span>
+        </div>
+      </section>
+    </section>
+
+    <SecondaryNavigation
+      v-if="currentTab() !== 'overview'"
+      class="warehouse-business-navigation"
+      :items="tabs"
+      :model-value="activeNavigationKey"
+      label="仓库业务导航"
+    />
+
+    <section v-if="isWarehouseEntrance" class="warehouse-overview-grid">
       <div class="content-card overview-card">
         <div class="table-heading">
           <div><h3>库存预警</h3></div>
@@ -807,59 +911,286 @@ watch(
 .warehouse-workbench,
 .section-stack {
   display: grid;
-  gap: 18px;
+  gap: 22px;
 }
 
-.warehouse-context-bar {
+.warehouse-workbench {
+  width: min(100%, 1280px);
+  margin: 0 auto;
+}
+
+.warehouse-context-header {
   display: flex;
   min-width: 0;
-  align-items: center;
-  gap: 14px;
-  padding: 10px 12px;
-  border: 1px solid var(--ds-line);
-  border-radius: 8px;
-  background: var(--ds-surface);
+  align-items: flex-start;
+  gap: 20px;
+  padding: 2px 0 0;
 }
 
 .warehouse-context-copy {
   display: grid;
   min-width: 0;
-  gap: 2px;
+  gap: 9px;
   margin-right: auto;
 }
 
-.warehouse-context-copy b {
-  color: var(--ds-ink);
-  font-size: 15px;
+.warehouse-breadcrumb,
+.warehouse-title-line,
+.warehouse-context-tags,
+.warehouse-switcher,
+.warehouse-action-list,
+.priority-item {
+  display: flex;
+  align-items: center;
 }
 
-.warehouse-context-copy span,
+.warehouse-breadcrumb {
+  gap: 7px;
+  color: var(--ds-muted);
+  font-size: 13px;
+}
+
+.warehouse-breadcrumb a {
+  color: var(--ds-secondary);
+  text-decoration: none;
+}
+
+.warehouse-breadcrumb a:hover {
+  color: var(--ds-primary-hover);
+}
+
+.warehouse-breadcrumb strong {
+  color: var(--ds-ink);
+}
+
+.warehouse-title-line {
+  gap: 9px;
+  color: var(--ds-primary-hover);
+}
+
+.warehouse-title-line h2 {
+  margin: 0;
+  color: var(--ds-ink);
+  font-size: clamp(22px, 2.3vw, 28px);
+  line-height: 1.15;
+}
+
+.warehouse-context-tags {
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.warehouse-context-tags span {
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: var(--ds-surface-muted);
+  color: var(--ds-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.warehouse-context-tags .warehouse-type-tag {
+  background: var(--ds-primary-soft);
+  color: var(--ds-primary-hover);
+}
+
 .warehouse-switcher > span {
   color: var(--ds-muted);
   font-size: 12px;
 }
 
 .warehouse-switcher {
-  display: flex;
-  align-items: center;
+  min-height: 44px;
+  flex: 0 0 auto;
   gap: 7px;
   white-space: nowrap;
 }
 
 .warehouse-switcher select {
   min-width: 150px;
+  min-height: 44px;
 }
 
-.warehouse-context-actions {
+.warehouse-workbench-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(300px, 0.75fr);
+  gap: 24px;
+  padding: 20px 0;
+  border-top: 1px solid var(--ds-line);
+  border-bottom: 1px solid var(--ds-line);
+}
+
+.warehouse-priority-panel,
+.warehouse-action-panel {
+  min-width: 0;
+}
+
+.warehouse-action-panel {
+  padding-left: 24px;
+  border-left: 1px solid var(--ds-line);
+}
+
+.workbench-section-heading {
   display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
+  align-items: start;
+  justify-content: space-between;
+  margin-bottom: 12px;
 }
 
-.warehouse-context-actions a {
-  width: auto;
-  min-height: 36px;
+.workbench-section-heading span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--ds-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.workbench-section-heading h3 {
+  margin: 0;
+  color: var(--ds-ink);
+  font-size: 17px;
+}
+
+.priority-list {
+  display: grid;
+}
+
+.priority-item {
+  min-height: 56px;
+  gap: 11px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--ds-line);
+  color: inherit;
   text-decoration: none;
+}
+
+.priority-item:last-child {
+  border-bottom: 0;
+}
+
+.priority-item:hover .priority-item__copy b,
+.priority-item:hover > svg {
+  color: var(--ds-primary-hover);
+}
+
+.priority-item__count {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--ds-primary-soft);
+  color: var(--ds-primary-hover);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.priority-item__copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  margin-right: auto;
+}
+
+.priority-item__copy b {
+  color: var(--ds-ink);
+  font-size: 14px;
+}
+
+.priority-item__copy small,
+.priority-empty,
+.action-empty {
+  color: var(--ds-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.priority-empty {
+  display: grid;
+  min-height: 112px;
+  place-items: center start;
+}
+
+.warehouse-action-list {
+  align-items: stretch;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.warehouse-primary-action,
+.secondary-action {
+  width: 100%;
+  min-height: 44px;
+  box-sizing: border-box;
+  justify-content: center;
+  text-decoration: none;
+}
+
+.secondary-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 13px;
+  border: 1px solid var(--ds-line-strong, var(--ds-line));
+  border-radius: 7px;
+  background: var(--ds-surface);
+  color: var(--ds-primary-hover);
+  font-size: 14px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.secondary-action:hover {
+  border-color: var(--ds-primary);
+  background: var(--ds-primary-soft);
+}
+
+.text-action {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 38px;
+  align-items: center;
+  gap: 5px;
+  color: var(--ds-primary-hover);
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.warehouse-business-navigation {
+  width: 100%;
+  border-bottom: 1px solid var(--ds-line);
+}
+
+.warehouse-business-navigation :deep(.secondary-navigation) {
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.warehouse-business-navigation :deep(.secondary-navigation__item) {
+  min-height: 44px;
+  padding: 10px 14px 8px;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: var(--ds-secondary);
+}
+
+.warehouse-business-navigation :deep(.secondary-navigation__item:hover) {
+  background: var(--ds-surface-muted);
+}
+
+.warehouse-business-navigation :deep(.secondary-navigation__item--active) {
+  border-bottom-color: var(--ds-primary);
+  background: var(--ds-primary-soft);
+  box-shadow: none;
+  color: var(--ds-ink);
 }
 
 .warehouse-overview-grid {
@@ -913,16 +1244,26 @@ watch(
 }
 
 @media (max-width: 768px) {
-  .warehouse-context-bar {
+  .warehouse-context-header {
     align-items: stretch;
     flex-direction: column;
   }
 
   .warehouse-switcher,
-  .warehouse-switcher select,
-  .warehouse-context-actions,
-  .warehouse-context-actions a {
+  .warehouse-switcher select {
     width: 100%;
+  }
+
+  .warehouse-workbench-grid {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .warehouse-action-panel {
+    padding-top: 20px;
+    padding-left: 0;
+    border-top: 1px solid var(--ds-line);
+    border-left: 0;
   }
 
   .warehouse-overview-grid {

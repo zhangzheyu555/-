@@ -1,6 +1,7 @@
 package com.storeprofit.system.platform.users;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -217,27 +218,24 @@ class UserAuthorizationManagementTest {
   }
 
   @Test
-  void supervisorCannotReceiveOperationsHighRiskPermission() {
+  void supervisorCanReceiveOperationsPermissionWithinFormalBoundary() {
     AuthUser supervisor = user(9L, "supervisor", "SUPERVISOR", null, 2L);
     stubAuthorizationSnapshot(supervisor);
     when(authorizationService.catalog()).thenReturn(List.of(catalogEntry(PermissionCodes.PLATFORM_MANAGE)));
 
-    assertThatThrownBy(() -> service.updateAuthorization(
+    assertThatCode(() -> service.updateAuthorization(
         boss,
         9L,
         new UserAuthorizationUpdateRequest(
             List.of(new UserPermissionOverrideRequest(PermissionCodes.PLATFORM_MANAGE, "ALLOW")),
-            List.of())))
-        .isInstanceOf(BusinessException.class)
-        .satisfies(error -> assertThat(((BusinessException) error).getCode())
-            .isEqualTo("SUPERVISOR_PERMISSION_BOUNDARY"));
+            List.of()))).doesNotThrowAnyException();
 
-    verify(authorizationService, never()).replaceUserOverrides(
+    verify(authorizationService).replaceUserOverrides(
         eq(1L), eq(9L), org.mockito.ArgumentMatchers.anyList(), eq(1L));
   }
 
   @Test
-  void supervisorDataScopeIsLimitedToStoreListForStoreAndInspection() {
+  void supervisorDataScopeSupportsAssignedOperationsDomainsWithoutAll() {
     AuthUser supervisor = user(10L, "supervisor2", "SUPERVISOR", null, 2L);
     stubAuthorizationSnapshot(supervisor);
 
@@ -469,10 +467,10 @@ class UserAuthorizationManagementTest {
     when(authRepository.userExists(eq(1L), org.mockito.ArgumentMatchers.anyString())).thenReturn(false);
     when(passwordService.hash("secure-password")).thenReturn("password-hash");
     AuthUser warehouse = user(20L, "warehouse2", "WAREHOUSE", null, 1L);
-    AuthUser operations = user(21L, "operations2", "OPERATIONS", null, 1L);
+    AuthUser operations = user(21L, "supervisor2", "SUPERVISOR", null, 1L);
     AuthUser employee = user(22L, "employee2", "EMPLOYEE", null, 1L);
     when(authRepository.findByUsername(1L, "warehouse2")).thenReturn(Optional.of(warehouse));
-    when(authRepository.findByUsername(1L, "operations2")).thenReturn(Optional.of(operations));
+    when(authRepository.findByUsername(1L, "supervisor2")).thenReturn(Optional.of(operations));
     when(authRepository.findByUsername(1L, "employee2")).thenReturn(Optional.of(employee));
     when(authorizationService.effectivePermissions(warehouse))
         .thenReturn(Set.of(PermissionCodes.WAREHOUSE_CENTRAL_READ));
@@ -486,7 +484,7 @@ class UserAuthorizationManagementTest {
     service.create(boss, new UserCreateRequest(
         "warehouse2", "仓库", "WAREHOUSE", null, List.of(), "secure-password"));
     assertThatThrownBy(() -> service.create(boss, new UserCreateRequest(
-        "operations2", "运营", "OPERATIONS", null, List.of(), "secure-password")))
+        "supervisor2", "督导", "SUPERVISOR", null, List.of(), "secure-password")))
         .isInstanceOf(BusinessException.class)
         .satisfies(error -> assertThat(((BusinessException) error).getCode())
             .isEqualTo("ACCOUNT_WORKSPACE_REQUIRED"));
@@ -494,16 +492,29 @@ class UserAuthorizationManagementTest {
         "employee2", "学员", "EMPLOYEE", null, List.of(), "secure-password"));
 
     verify(authRepository).createUser(1L, "warehouse2", "password-hash", "仓库", "WAREHOUSE", null);
-    verify(authRepository).createUser(1L, "operations2", "password-hash", "运营", "OPERATIONS", null);
+    verify(authRepository).createUser(1L, "supervisor2", "password-hash", "督导", "SUPERVISOR", null);
     verify(authRepository).createUser(1L, "employee2", "password-hash", "学员", "EMPLOYEE", null);
+
+    for (String legacyRole : List.of("OPERATIONS", "OPS")) {
+      assertThatThrownBy(() -> service.create(boss, new UserCreateRequest(
+          "legacy-" + legacyRole.toLowerCase(), "历史运营", legacyRole, null, List.of(), "secure-password")))
+          .isInstanceOf(BusinessException.class)
+          .satisfies(error -> assertThat(((BusinessException) error).getCode())
+              .isEqualTo("ROLE_LEGACY_REJECTED"));
+    }
+
+    verify(authRepository, never()).createUser(
+        eq(1L), org.mockito.ArgumentMatchers.startsWith("legacy-"), org.mockito.ArgumentMatchers.anyString(),
+        org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
+        org.mockito.ArgumentMatchers.any());
   }
 
   @Test
   void oldUpdateRejectsReenablingAccountWithoutUsableWorkspace() {
     AuthUser disabled = new AuthUser(
-        30L, 1L, "测试企业", "operations3", "hash", "运营", "OPERATIONS", null, false, 2L);
+        30L, 1L, "测试企业", "supervisor3", "hash", "督导", "SUPERVISOR", null, false, 2L);
     AuthUser reenabled = new AuthUser(
-        30L, 1L, "测试企业", "operations3", "hash", "运营", "OPERATIONS", null, true, 2L);
+        30L, 1L, "测试企业", "supervisor3", "hash", "督导", "SUPERVISOR", null, true, 2L);
     when(authRepository.user(1L, 30L)).thenReturn(Optional.of(disabled), Optional.of(reenabled));
     when(authRepository.assignedStoreScope(1L, 30L)).thenReturn(List.of());
     when(authorizationService.effectivePermissions(reenabled)).thenReturn(Set.of());
@@ -512,7 +523,7 @@ class UserAuthorizationManagementTest {
     assertThatThrownBy(() -> service.update(
         boss,
         30L,
-        new UserUpdateRequest("运营", "OPERATIONS", null, List.of(), true)))
+        new UserUpdateRequest("督导", "SUPERVISOR", null, List.of(), true)))
         .isInstanceOf(BusinessException.class)
         .satisfies(error -> assertThat(((BusinessException) error).getCode())
             .isEqualTo("ACCOUNT_WORKSPACE_REQUIRED"));
@@ -523,7 +534,7 @@ class UserAuthorizationManagementTest {
   @Test
   void oldUpdateRejectsEnabledRoleChangeWithoutUsableWorkspace() {
     AuthUser finance = user(31L, "finance4", "FINANCE", null, 2L);
-    AuthUser operations = user(31L, "finance4", "OPERATIONS", null, 2L);
+    AuthUser operations = user(31L, "finance4", "SUPERVISOR", null, 2L);
     when(authRepository.user(1L, 31L)).thenReturn(Optional.of(finance), Optional.of(operations));
     when(authRepository.assignedStoreScope(1L, 31L)).thenReturn(List.of());
     when(authorizationService.effectivePermissions(operations)).thenReturn(Set.of());
@@ -532,7 +543,7 @@ class UserAuthorizationManagementTest {
     assertThatThrownBy(() -> service.update(
         boss,
         31L,
-        new UserUpdateRequest("运营", "OPERATIONS", null, List.of(), true)))
+        new UserUpdateRequest("督导", "SUPERVISOR", null, List.of(), true)))
         .isInstanceOf(BusinessException.class)
         .satisfies(error -> assertThat(((BusinessException) error).getCode())
             .isEqualTo("ACCOUNT_WORKSPACE_REQUIRED"));

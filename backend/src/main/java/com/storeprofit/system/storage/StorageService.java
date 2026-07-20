@@ -49,7 +49,7 @@ public class StorageService {
   );
   private static final Set<String> OWNER_ROLES = Set.of();
   private static final Set<String> ALL_INTERNAL_ROLES =
-      Set.of("FINANCE", "SUPERVISOR", "STORE_MANAGER", "WAREHOUSE", "OPERATIONS");
+      Set.of("FINANCE", "SUPERVISOR", "STORE_MANAGER", "WAREHOUSE");
   private static final Map<String, Set<String>> KEY_WRITE_ROLES = Map.ofEntries(
       Map.entry("stores", OWNER_ROLES),
       Map.entry("entries", Set.of("FINANCE")),
@@ -58,12 +58,12 @@ public class StorageService {
       Map.entry("inspections", Set.of("SUPERVISOR")),
       Map.entry("logs", ALL_INTERNAL_ROLES),
       Map.entry("schema_v", OWNER_ROLES),
-      Map.entry("ana_uploads", Set.of("OPERATIONS")),
+      Map.entry("ana_uploads", Set.of("SUPERVISOR")),
       // 考试是各角色（含店长带新员工）都会提交的
       Map.entry("exam_records", ALL_INTERNAL_ROLES),
-      Map.entry("inv_overrides", Set.of("OPERATIONS", "STORE_MANAGER")),
-      Map.entry("train_ov", Set.of("OPERATIONS")),
-      Map.entry("train_fruit_ov", Set.of("OPERATIONS"))
+      Map.entry("inv_overrides", Set.of("SUPERVISOR", "STORE_MANAGER")),
+      Map.entry("train_ov", Set.of("SUPERVISOR")),
+      Map.entry("train_fruit_ov", Set.of("SUPERVISOR"))
   );
 
   private final JdbcTemplate jdbcTemplate;
@@ -123,7 +123,7 @@ public class StorageService {
 
   /**
    * Historical inspection evidence is deliberately not accepted through the generic storage
-   * controller. The caller must be the boss, a supervisor, or an operations user, and must already
+   * controller. The caller must be the boss or a supervisor, and must already
    * have passed inspection-store authorization at the specialised endpoint.
    */
   @Transactional
@@ -135,7 +135,7 @@ public class StorageService {
   ) {
     accessControl.requireInspectionManage(user);
     if (!AccessControlService.isBoss(user)
-        && !AccessControlService.hasAnyRole(user, "SUPERVISOR", "OPERATIONS")) {
+        && !AccessControlService.hasAnyRole(user, "SUPERVISOR")) {
       throw new BusinessException(
           "FORBIDDEN", "只有老板或负责巡检的督导可以补传历史巡检现场证据", HttpStatus.FORBIDDEN);
     }

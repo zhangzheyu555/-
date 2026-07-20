@@ -45,10 +45,10 @@ class AccessControlServiceTest {
   }
 
   @Test
-  void operationsRoleCannotReadFinanceData() {
-    AuthUser operations = user("OPERATIONS", null);
+  void supervisorCannotReadFinanceData() {
+    AuthUser supervisor = user("SUPERVISOR", null);
 
-    assertThatThrownBy(() -> service.requireFinanceRead(operations))
+    assertThatThrownBy(() -> service.requireFinanceRead(supervisor))
         .isInstanceOf(BusinessException.class)
         .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
   }
@@ -226,15 +226,15 @@ class AccessControlServiceTest {
   }
 
   @Test
-  void supervisorIsNoLongerCanonicalizedToOperations() {
+  void legacyOperationsAliasesNormalizeToFormalSupervisor() {
     assertThat(AccessControlService.canonicalRole("SUPERVISOR")).isEqualTo("SUPERVISOR");
-    assertThat(AccessControlService.canonicalRole("OPS")).isEqualTo("OPERATIONS");
-    assertThat(AccessControlService.hasAnyRole(user("SUPERVISOR", "rg1"), "OPERATIONS")).isFalse();
+    assertThat(AccessControlService.canonicalRole("OPS")).isEqualTo("SUPERVISOR");
+    assertThat(AccessControlService.hasAnyRole(user("SUPERVISOR", "rg1"), "OPERATIONS")).isTrue();
     assertThat(AccessControlService.hasAnyRole(user("SUPERVISOR", "rg1"), "SUPERVISOR")).isTrue();
   }
 
   @Test
-  void operationsCannotReadDailyLossEvenWhenLegacyPermissionExistsAndDenialIsAudited() {
+  void supervisorUsesDailyLossReadBoundaryAfterTakingOperationsWorkspace() {
     AuthorizationService authorizationService = mock(AuthorizationService.class);
     AccessControlService dailyLossAccess = new AccessControlService(
         authService,
@@ -243,25 +243,10 @@ class AccessControlServiceTest {
         authorizationService,
         mock(DataScopeService.class)
     );
-    AuthUser operations = user("OPERATIONS", null);
-    when(authorizationService.hasPermission(operations, PermissionCodes.DAILY_LOSS_READ)).thenReturn(true);
+    AuthUser supervisor = user("SUPERVISOR", null);
+    when(authorizationService.hasPermission(supervisor, PermissionCodes.DAILY_LOSS_READ)).thenReturn(true);
 
-    assertThatThrownBy(() -> dailyLossAccess.requireDailyLossRead(operations))
-        .isInstanceOf(BusinessException.class)
-        .satisfies(error -> {
-          BusinessException forbidden = (BusinessException) error;
-          assertThat(forbidden.getCode()).isEqualTo("FORBIDDEN");
-          assertThat(forbidden.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
-        });
-
-    verify(auditRepository).writePermissionDenied(
-        any(AuthUser.class),
-        any(String.class),
-        any(String.class),
-        any(String.class),
-        isNull(),
-        any(String.class)
-    );
+    dailyLossAccess.requireDailyLossRead(supervisor);
   }
 
   @Test

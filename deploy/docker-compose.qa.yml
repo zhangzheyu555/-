@@ -1,0 +1,32 @@
+services:
+  mysql-qa:
+    image: mysql:8.0
+    container_name: ai-profit-os-qa-mysql
+    restart: unless-stopped
+    env_file:
+      - ../.env.qa
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USERNAME}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      # The historical Flyway V17/V40 contract requires this database default.
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+08:00
+    ports:
+      - "127.0.0.1:13306:3306"
+    volumes:
+      - ai-profit-os-qa-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+
+volumes:
+  ai-profit-os-qa-mysql-data:
+    name: ai-profit-os-qa-mysql-data

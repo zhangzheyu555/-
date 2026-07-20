@@ -37,19 +37,13 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class UserManagementService {
   private static final Set<String> ALLOWED_ROLES = Set.of(
-      "BOSS", "FINANCE", "STORE_MANAGER", "WAREHOUSE", "OPERATIONS", "SUPERVISOR", "EMPLOYEE");
-  private static final Set<String> SUPERVISOR_PERMISSION_DENYLIST = Set.of(
-      PermissionCodes.OPERATIONS_DASHBOARD_READ,
-      PermissionCodes.PLATFORM_READ,
-      PermissionCodes.PLATFORM_MANAGE,
-      PermissionCodes.INVENTORY_MANAGE,
-      PermissionCodes.INVENTORY_REVIEW,
-      PermissionCodes.EXAM_MANAGE,
-      PermissionCodes.EXAM_REPORT
-  );
+      "BOSS", "FINANCE", "STORE_MANAGER", "WAREHOUSE", "SUPERVISOR", "EMPLOYEE");
   private static final Set<String> SUPERVISOR_SCOPE_DOMAINS = Set.of(
       DataScopeDomains.STORE,
-      DataScopeDomains.INSPECTION
+      DataScopeDomains.WAREHOUSE,
+      DataScopeDomains.INSPECTION,
+      DataScopeDomains.EXAM,
+      DataScopeDomains.PLATFORM
   );
 
   private final AuthRepository authRepository;
@@ -453,12 +447,29 @@ public class UserManagementService {
       String targetRole = AccessControlService.canonicalRole(target.role());
       if ("SUPERVISOR".equals(targetRole)
           && effect == PermissionEffect.ALLOW
-          && SUPERVISOR_PERMISSION_DENYLIST.contains(permissionCode)) {
+          && Set.of(
+              PermissionCodes.SYSTEM_USER_MANAGE,
+              PermissionCodes.STORE_MANAGE,
+              PermissionCodes.FINANCE_PROFIT_WRITE,
+              PermissionCodes.FINANCE_PROFIT_IMPORT,
+              PermissionCodes.FINANCE_PROFIT_DELETE,
+              PermissionCodes.SALARY_READ,
+              PermissionCodes.SALARY_EDIT,
+              PermissionCodes.SALARY_REVIEW,
+              PermissionCodes.SALARY_PAY,
+              PermissionCodes.WAREHOUSE_CENTRAL_READ,
+              PermissionCodes.WAREHOUSE_CENTRAL_MANAGE,
+              PermissionCodes.WAREHOUSE_PURCHASE,
+              PermissionCodes.WAREHOUSE_TRANSFER_REQUEST,
+              PermissionCodes.WAREHOUSE_TRANSFER_APPROVE,
+              PermissionCodes.WAREHOUSE_TRANSFER_SHIP,
+              PermissionCodes.WAREHOUSE_TRANSFER_RECEIVE,
+              PermissionCodes.WAREHOUSE_REQUISITION_PROCESS,
+              PermissionCodes.WAREHOUSE_CONFIGURE).contains(permissionCode)) {
         throw new BusinessException(
             "SUPERVISOR_PERMISSION_BOUNDARY",
-            "督导角色只能配置巡店、整改、待办、附件和助手相关权限，不能授予运营高风险权限",
-            HttpStatus.BAD_REQUEST
-        );
+            "督导不能获得财务写入、工资、账号权限、门店管理或总仓操作权限",
+            HttpStatus.BAD_REQUEST);
       }
       if ("EMPLOYEE".equals(targetRole)
           && effect == PermissionEffect.ALLOW
@@ -611,12 +622,14 @@ public class UserManagementService {
     }
     if ("SUPERVISOR".equals(role)) {
       boolean valid = SUPERVISOR_SCOPE_DOMAINS.contains(domain)
-          ? Set.of(DataScopeModes.STORE_LIST, DataScopeModes.NONE).contains(mode)
+          ? (DataScopeDomains.WAREHOUSE.equals(domain)
+              ? Set.of(DataScopeModes.STORE_LIST, DataScopeModes.WAREHOUSE_LIST, DataScopeModes.NONE).contains(mode)
+              : Set.of(DataScopeModes.STORE_LIST, DataScopeModes.NONE).contains(mode))
           : DataScopeModes.NONE.equals(mode);
       if (!valid) {
         throw new BusinessException(
             "SUPERVISOR_SCOPE_BOUNDARY",
-            "督导角色只能配置门店列表范围，且仅用于门店和巡检业务",
+            "督导角色只能配置已授权门店或仓库的数据范围",
             HttpStatus.BAD_REQUEST
         );
       }
@@ -727,9 +740,9 @@ public class UserManagementService {
           : new DataScope(DataScopeModes.STORE_LIST, assignedStoreIds);
       scopes.put(DataScopeDomains.FINANCE, financeScope);
       scopes.put(DataScopeDomains.STORE, financeScope);
-    } else if ("OPERATIONS".equals(role) && assignedStoreIds != null && !assignedStoreIds.isEmpty()) {
-      DataScope operationsScope = new DataScope(DataScopeModes.STORE_LIST, assignedStoreIds);
-      scopes.put(DataScopeDomains.STORE, operationsScope);
+    } else if ("SUPERVISOR".equals(role) && assignedStoreIds != null && !assignedStoreIds.isEmpty()) {
+      DataScope supervisorScope = new DataScope(DataScopeModes.STORE_LIST, assignedStoreIds);
+      SUPERVISOR_SCOPE_DOMAINS.forEach(domain -> scopes.put(domain, supervisorScope));
     }
     return Map.copyOf(scopes);
   }
@@ -850,7 +863,15 @@ public class UserManagementService {
   }
 
   private String normalizeRole(String value) {
-    String role = AccessControlService.canonicalRole(requireText(value, "ROLE_REQUIRED", "请选择角色"));
+    String requested = requireText(value, "ROLE_REQUIRED", "请选择角色").trim().toUpperCase(Locale.ROOT);
+    if (Set.of("ADMIN", "OWNER", "OPS", "OPERATIONS").contains(requested)) {
+      throw new BusinessException(
+          "ROLE_LEGACY_REJECTED",
+          "运营、OPS、ADMIN、OWNER 仅用于历史兼容，不能新建、编辑或授权，请选择当前正式角色",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+    String role = AccessControlService.canonicalRole(requested);
     if (!ALLOWED_ROLES.contains(role)) {
       throw new BusinessException("ROLE_INVALID", "角色不正确", HttpStatus.BAD_REQUEST);
     }
@@ -944,7 +965,6 @@ public class UserManagementService {
       case "SUPERVISOR" -> "督导";
       case "STORE_MANAGER" -> "店长";
       case "WAREHOUSE" -> "仓库管理员";
-      case "OPERATIONS" -> "运营";
       case "EMPLOYEE" -> "员工";
       default -> role;
     };

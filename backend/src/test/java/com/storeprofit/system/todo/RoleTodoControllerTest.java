@@ -2,6 +2,7 @@ package com.storeprofit.system.todo;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -73,11 +74,9 @@ class RoleTodoControllerTest {
     assertThat(controller.supervisorTodos("Bearer token", null, null, null, null, null).data().roleName()).isEqualTo("督导");
     assertThat(controller.storeManagerTodos("Bearer token", null, null, null, null, null).data().roleName()).isEqualTo("店长");
     assertThat(controller.warehouseTodos("Bearer token", null, null, null, null, null).data().roleName()).isEqualTo("仓库管理员");
-    assertThat(controller.operationsTodos("Bearer token", null, null, null, null, null).data().roleName()).isEqualTo("运营");
+    assertThat(controller.operationsTodos("Bearer token", null, null, null, null, null).data().roleName()).isEqualTo("督导");
 
-    for (RoleTodoAudience audience : RoleTodoAudience.values()) {
-      verify(roleTodoService).todos(boss, audience, RoleTodoQuery.defaults());
-    }
+    verify(roleTodoService, times(2)).todos(boss, RoleTodoAudience.SUPERVISOR, RoleTodoQuery.defaults());
   }
 
   @Test

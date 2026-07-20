@@ -43,7 +43,7 @@ const DATA_SCOPE_DOMAINS = ['STORE', 'FINANCE', 'SALARY', 'WAREHOUSE', 'INSPECTI
 const DATA_SCOPE_MODE_ORDER: DataScopeMode[] = ['ALL', 'WAREHOUSE_LIST', 'STORE_LIST', 'OWN_STORE', 'CENTRAL_WAREHOUSE', 'SELF', 'NONE']
 const MODULE_LABELS: Record<string, string> = {
   SYSTEM: '系统管理',
-  OPERATIONS: '运营工作台',
+  OPERATIONS: '督导工作台',
   ASSISTANT: '经营助手',
   STORE: '门店组织',
   EMPLOYEE: '员工管理',
@@ -142,7 +142,7 @@ const roles = [
   { value: 'FINANCE', label: '财务' },
   { value: 'STORE_MANAGER', label: '店长' },
   { value: 'WAREHOUSE', label: '仓库管理员' },
-  { value: 'OPERATIONS', label: '运营' },
+  { value: 'SUPERVISOR', label: '督导' },
   { value: 'EMPLOYEE', label: '学员（兼容身份）' },
 ]
 
@@ -383,7 +383,7 @@ function compatibilityScopeFallback(user: UserAccount) {
   if (!storeIds.length) return fallback
   const domains = role === 'FINANCE'
     ? ['STORE', 'FINANCE', 'SALARY', 'WAREHOUSE']
-    : role === 'OPERATIONS'
+    : role === 'SUPERVISOR'
       ? ['STORE', 'WAREHOUSE', 'INSPECTION', 'EXAM', 'PLATFORM']
       : []
   for (const domainCode of domains) assign(domainCode, 'STORE_LIST', storeIds)

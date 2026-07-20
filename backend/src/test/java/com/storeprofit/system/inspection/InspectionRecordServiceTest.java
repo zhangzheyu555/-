@@ -187,13 +187,33 @@ class InspectionRecordServiceTest {
   void saveRejectsBadDateMissingStoreAndInvalidScore() {
     assertThatThrownBy(() -> service.save(supervisor(), null, request("s1", "20260521", "92.00", false)))
         .isInstanceOf(BusinessException.class)
-        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("BAD_DATE"));
+        .satisfies(error -> {
+          assertThat(((BusinessException) error).getCode()).isEqualTo("BAD_DATE");
+          assertThat(error.getMessage()).isEqualTo("巡检日期必须使用 YYYY-MM-DD 格式");
+        });
     assertThatThrownBy(() -> service.save(supervisor(), null, request("missing", "2026-05-21", "92.00", false)))
         .isInstanceOf(BusinessException.class)
         .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("STORE_NOT_FOUND"));
     assertThatThrownBy(() -> service.save(supervisor(), null, request("s1", "2026-05-21", "120.00", false)))
         .isInstanceOf(BusinessException.class)
         .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("BAD_SCORE"));
+  }
+
+  @Test
+  void recordsRejectInvalidAndReversedDateRangesWithChineseMessages() {
+    assertThatThrownBy(() -> service.records(supervisor(), "bad-date", null, null, null, null))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> {
+          assertThat(((BusinessException) error).getCode()).isEqualTo("BAD_DATE");
+          assertThat(error.getMessage()).isEqualTo("开始日期必须使用 YYYY-MM-DD 格式");
+        });
+    assertThatThrownBy(() -> service.records(
+        supervisor(), "2026-05-31", "2026-05-01", null, null, null))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> {
+          assertThat(((BusinessException) error).getCode()).isEqualTo("BAD_DATE_RANGE");
+          assertThat(error.getMessage()).isEqualTo("开始日期不能晚于结束日期");
+        });
   }
 
   @Test

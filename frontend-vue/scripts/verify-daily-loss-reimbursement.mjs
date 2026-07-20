@@ -49,6 +49,7 @@ function makeUser(role) {
         'expense.read',
         'daily_loss.read',
         'daily_loss.create',
+        'daily_loss.export',
         'attachment.read',
         'attachment.write',
       ],
@@ -63,6 +64,7 @@ function makeUser(role) {
       'store.read',
       'daily_loss.read',
       'daily_loss.review',
+      'daily_loss.export',
       'inspection.read',
       'inspection.manage',
       'attachment.read',
@@ -171,7 +173,7 @@ function mockApiData(path, user) {
   return []
 }
 
-async function preparePage(browser, role, viewport) {
+async function preparePage(browser, role, viewport, { exportFailure = false } = {}) {
   const user = makeUser(role)
   const context = await browser.newContext({ viewport, acceptDownloads: true })
   await context.route('**/*', async (route) => {
@@ -180,11 +182,20 @@ async function preparePage(browser, role, viewport) {
       await route.fulfill({ status: 200, contentType: 'image/png', body: png })
       return
     }
-    if (url.pathname.endsWith('/photos.zip')) {
+    if (url.pathname === '/api/daily-loss/exports/monthly.xlsx') {
+      if (exportFailure) {
+        await route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: false, message: '导出服务暂不可用，请稍后重试。', code: 'DAILY_LOSS_EXCEL_EXPORT_FAILED' }),
+        })
+        return
+      }
       await route.fulfill({
         status: 200,
-        contentType: 'application/zip',
-        body: Buffer.from('PK\x05\x06' + '\0'.repeat(18), 'binary'),
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers: { 'content-disposition': "attachment; filename*=UTF-8''%E6%B5%8B%E8%AF%95%E9%97%A8%E5%BA%97-2026%E5%B9%B407%E6%9C%88-%E6%AF%8F%E6%97%A5%E6%8A%A5%E6%8D%9F.xlsx" },
+        body: Buffer.from('mock-xlsx'),
       })
       return
     }
@@ -243,6 +254,41 @@ async function verifyDailyLossPhotoPreview(browser, viewport, file) {
   }
 }
 
+async function verifyMonthlyExcelExport(browser) {
+  const { context, page } = await preparePage(browser, 'SUPERVISOR', { width: 1365, height: 900 })
+  try {
+    const exportRequests = []
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname === '/api/daily-loss/exports/monthly.xlsx') exportRequests.push(request.url())
+    })
+    await page.goto(`${base}/daily-loss`, { waitUntil: 'domcontentloaded' })
+    await page.waitForLoadState('networkidle').catch(() => undefined)
+    const button = page.getByRole('button', { name: '导出本月报损 Excel' })
+    await button.waitFor({ state: 'visible', timeout: 15000 })
+    if (await page.getByText('导出照片包', { exact: true }).count()) throw new Error('旧照片 ZIP 导出入口仍可见')
+    const download = page.waitForEvent('download')
+    await button.click()
+    const result = await download
+    if (!result.suggestedFilename().endsWith('.xlsx')) throw new Error('每日报损导出未返回 xlsx 文件名')
+    await page.getByText('本月报损 Excel 已开始下载。').waitFor({ state: 'visible', timeout: 5000 })
+    if (!exportRequests.some((url) => new URL(url).searchParams.has('month'))) {
+      throw new Error('前端没有调用 monthly.xlsx 接口或未传月份')
+    }
+  } finally {
+    await context.close()
+  }
+
+  const failed = await preparePage(browser, 'SUPERVISOR', { width: 1365, height: 900 }, { exportFailure: true })
+  try {
+    await failed.page.goto(`${base}/daily-loss`, { waitUntil: 'domcontentloaded' })
+    await failed.page.waitForLoadState('networkidle').catch(() => undefined)
+    await failed.page.getByRole('button', { name: '导出本月报损 Excel' }).click()
+    await failed.page.getByRole('alert').getByText('导出服务暂不可用，请稍后重试。').waitFor({ state: 'visible', timeout: 5000 })
+  } finally {
+    await failed.context.close()
+  }
+}
+
 await mkdir(artifactDir, { recursive: true })
 
 const browser = await chromium.launch()
@@ -254,6 +300,7 @@ try {
     { width: 1365, height: 900 },
     'daily-loss-reimbursement-supervisor-loss-photo-preview-desktop-1365x900.png',
   ))
+  await verifyMonthlyExcelExport(browser)
   screenshots.push(await verifyDailyLossPhotoPreview(
     browser,
     { width: 390, height: 844 },

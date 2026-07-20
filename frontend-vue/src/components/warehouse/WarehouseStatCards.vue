@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { AlertTriangle, ClipboardList, Package, ShieldAlert, WalletCards } from 'lucide-vue-next'
+import { AlertTriangle, ArrowLeftRight, ClipboardList, ShieldAlert, WalletCards } from 'lucide-vue-next'
 
 defineProps<{
-  itemCount: number
   stockValue: number
   lowStockCount: number
   expiringCount: number
+  pendingTransferCount: number
   pendingRequisitionCount: number
 }>()
 
@@ -17,12 +17,7 @@ function money(value: number) {
 <template>
   <div class="warehouse-stat-grid">
     <div class="warehouse-stat">
-      <span>物料数</span>
-      <b>{{ itemCount }}<small>项</small></b>
-      <Package :size="20" />
-    </div>
-    <div class="warehouse-stat">
-      <span>库存金额</span>
+      <span>库存总值</span>
       <b>{{ money(stockValue) }}</b>
       <WalletCards :size="20" />
     </div>
@@ -35,6 +30,11 @@ function money(value: number) {
       <span>临期风险</span>
       <b>{{ expiringCount }}<small>项</small></b>
       <ShieldAlert :size="20" />
+    </div>
+    <div class="warehouse-stat" :class="{ featured: pendingTransferCount > 0 }">
+      <span>待处理调拨</span>
+      <b>{{ pendingTransferCount }}<small>笔</small></b>
+      <ArrowLeftRight :size="20" />
     </div>
     <div class="warehouse-stat">
       <span>待处理叫货</span>

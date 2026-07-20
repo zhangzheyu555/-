@@ -16,16 +16,27 @@ public class AuthorizationService {
       PermissionCodes.EXAM_LEARN,
       PermissionCodes.EMPLOYEE_ASSISTANT_USE
   );
-  private static final Set<String> SUPERVISOR_PERMISSION_DENYLIST = Set.of(
-      PermissionCodes.OPERATIONS_DASHBOARD_READ,
-      PermissionCodes.PLATFORM_READ,
-      PermissionCodes.PLATFORM_MANAGE,
-      PermissionCodes.INVENTORY_MANAGE,
-      PermissionCodes.INVENTORY_REVIEW,
-      PermissionCodes.EXAM_MANAGE,
-      PermissionCodes.EXAM_REPORT
+  /** Supervisor takes over operations, never finance, payroll, account, store, or central-warehouse control. */
+  private static final Set<String> SUPERVISOR_PERMISSION_CEILING = Set.of(
+      PermissionCodes.SYSTEM_USER_MANAGE,
+      PermissionCodes.STORE_MANAGE,
+      PermissionCodes.FINANCE_PROFIT_WRITE,
+      PermissionCodes.FINANCE_PROFIT_IMPORT,
+      PermissionCodes.FINANCE_PROFIT_DELETE,
+      PermissionCodes.SALARY_READ,
+      PermissionCodes.SALARY_EDIT,
+      PermissionCodes.SALARY_REVIEW,
+      PermissionCodes.SALARY_PAY,
+      PermissionCodes.WAREHOUSE_CENTRAL_READ,
+      PermissionCodes.WAREHOUSE_CENTRAL_MANAGE,
+      PermissionCodes.WAREHOUSE_PURCHASE,
+      PermissionCodes.WAREHOUSE_TRANSFER_REQUEST,
+      PermissionCodes.WAREHOUSE_TRANSFER_APPROVE,
+      PermissionCodes.WAREHOUSE_TRANSFER_SHIP,
+      PermissionCodes.WAREHOUSE_TRANSFER_RECEIVE,
+      PermissionCodes.WAREHOUSE_REQUISITION_PROCESS,
+      PermissionCodes.WAREHOUSE_CONFIGURE
   );
-
   private final AuthorizationRepository repository;
 
   public AuthorizationService(AuthorizationRepository repository) {
@@ -52,7 +63,7 @@ public class AuthorizationService {
       permissions.remove(PermissionCodes.FINANCE_PROFIT_IMPORT);
     }
     if ("SUPERVISOR".equals(canonicalRole)) {
-      permissions.removeAll(SUPERVISOR_PERMISSION_DENYLIST);
+      permissions.removeAll(SUPERVISOR_PERMISSION_CEILING);
     }
     return Set.copyOf(permissions);
   }
@@ -103,7 +114,7 @@ public class AuthorizationService {
       effective.retainAll(EMPLOYEE_PERMISSION_CEILING);
     }
     if ("SUPERVISOR".equals(role)) {
-      effective.removeAll(SUPERVISOR_PERMISSION_DENYLIST);
+      effective.removeAll(SUPERVISOR_PERMISSION_CEILING);
     }
     // Personal ALLOW overrides are evaluated above, then this hard BOSS-only boundary is
     // applied. DENY still wins for every ordinary permission, and cannot be bypassed here.
@@ -141,6 +152,7 @@ public class AuthorizationService {
           PermissionCodes.FINANCE_EXPORT,
           PermissionCodes.DAILY_LOSS_READ,
           PermissionCodes.DAILY_LOSS_REVIEW,
+          PermissionCodes.DAILY_LOSS_EXPORT,
           PermissionCodes.EXPENSE_CREATE,
           PermissionCodes.EXPENSE_READ,
           PermissionCodes.EXPENSE_REVIEW,
@@ -187,6 +199,7 @@ public class AuthorizationService {
           PermissionCodes.FINANCE_PROFIT_WRITE,
           PermissionCodes.DAILY_LOSS_READ,
           PermissionCodes.DAILY_LOSS_CREATE,
+          PermissionCodes.DAILY_LOSS_EXPORT,
           PermissionCodes.EXPENSE_CREATE,
           PermissionCodes.EXPENSE_READ,
           PermissionCodes.SALARY_READ,
@@ -205,7 +218,7 @@ public class AuthorizationService {
           PermissionCodes.ASSISTANT_USE,
           PermissionCodes.EMPLOYEE_ASSISTANT_USE
       );
-      case "OPERATIONS" -> Set.of(
+      case "SUPERVISOR" -> Set.of(
           PermissionCodes.OPERATIONS_DASHBOARD_READ,
           PermissionCodes.STORE_READ,
           PermissionCodes.EMPLOYEE_READ,
@@ -222,18 +235,6 @@ public class AuthorizationService {
           PermissionCodes.EXAM_REPORT,
           PermissionCodes.PLATFORM_READ,
           PermissionCodes.PLATFORM_MANAGE,
-          PermissionCodes.ATTACHMENT_READ,
-          PermissionCodes.ATTACHMENT_WRITE,
-          PermissionCodes.TODO_READ,
-          PermissionCodes.TODO_TRANSITION,
-          PermissionCodes.ASSISTANT_USE,
-          PermissionCodes.EMPLOYEE_ASSISTANT_USE,
-          PermissionCodes.EMPLOYEE_ASSISTANT_HANDOFF_MANAGE
-      );
-      case "SUPERVISOR" -> Set.of(
-          PermissionCodes.STORE_READ,
-          PermissionCodes.INSPECTION_READ,
-          PermissionCodes.INSPECTION_MANAGE,
           PermissionCodes.ATTACHMENT_READ,
           PermissionCodes.ATTACHMENT_WRITE,
           PermissionCodes.TODO_READ,

@@ -25,6 +25,7 @@ public final class PermissionCodes {
   public static final String DAILY_LOSS_READ = "daily_loss.read";
   public static final String DAILY_LOSS_CREATE = "daily_loss.create";
   public static final String DAILY_LOSS_REVIEW = "daily_loss.review";
+  public static final String DAILY_LOSS_EXPORT = "daily_loss.export";
 
   public static final String EXPENSE_CREATE = "expense.create";
   public static final String EXPENSE_READ = "expense.read";
@@ -95,6 +96,7 @@ public final class PermissionCodes {
       DAILY_LOSS_READ,
       DAILY_LOSS_CREATE,
       DAILY_LOSS_REVIEW,
+      DAILY_LOSS_EXPORT,
       EXPENSE_CREATE,
       EXPENSE_READ,
       EXPENSE_REVIEW,

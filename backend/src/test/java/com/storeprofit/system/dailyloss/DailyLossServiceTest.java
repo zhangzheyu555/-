@@ -18,17 +18,15 @@ import com.storeprofit.system.platform.authorization.DataScopeDomains;
 import com.storeprofit.system.platform.authorization.DataScopeModes;
 import com.storeprofit.system.storage.StorageService;
 import com.storeprofit.system.warehouse.WarehouseRepository;
-import java.io.ByteArrayInputStream;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
 import org.junit.jupiter.api.Test;
+import org.apache.poi.ss.usermodel.CellType;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -111,7 +109,28 @@ class DailyLossServiceTest {
   }
 
   @Test
-  void reportWorkflowCalculatesBigDecimalExportsOnlyImagesAndWritesAudit() throws Exception {
+  void bossCanReadAllDailyLossReportsWithoutStoreBinding() {
+    DailyLossRepository repository = mock(DailyLossRepository.class);
+    AccessControlService access = mock(AccessControlService.class);
+    AuditRepository audit = mock(AuditRepository.class);
+    AuthUser boss = user("BOSS", null);
+    DataScope scope = DataScope.all();
+    when(access.dataScope(boss, DataScopeDomains.FINANCE)).thenReturn(scope);
+    when(repository.reportStores(1L, null, scope)).thenReturn(List.of());
+    when(repository.reports(1L, java.time.YearMonth.of(2026, 7), null, scope)).thenReturn(List.of());
+
+    List<DailyLossReportResponse> reports = service(
+        repository, mock(WarehouseRepository.class), access, audit).reports(boss, null, "2026-07");
+
+    assertThat(reports).isEmpty();
+    verify(audit, never()).writePermissionDenied(
+        org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString(),
+        org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any(),
+        org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString());
+  }
+
+  @Test
+  void reportWorkflowExportsMonthlyExcelWithMissingDatesNumericCellsAndNoAttachments() throws Exception {
     DriverManagerDataSource dataSource = new DriverManagerDataSource(
         "jdbc:h2:mem:" + UUID.randomUUID() + ";MODE=MySQL;NON_KEYWORDS=MONTH;DB_CLOSE_DELAY=-1",
         "sa",
@@ -141,7 +160,7 @@ class DailyLossServiceTest {
         "s1",
         LocalDate.of(2026, 7, 14),
         List.of(
-            new DailyLossReportLineRequest(1L, new BigDecimal("10.0000"), "鲜切损耗"),
+            new DailyLossReportLineRequest(1L, new BigDecimal("10.0000"), "=恶意公式"),
             new DailyLossReportLineRequest(2L, new BigDecimal("2"), "整颗报损")
         )
     ));
@@ -157,17 +176,109 @@ class DailyLossServiceTest {
     DailyLossReportResponse submitted = dailyLossService.submitReport(manager, draft.id());
     DailyLossReportResponse reviewed = dailyLossService.reviewReport(
         supervisor, draft.id(), new DailyLossReviewRequest("照片已核对"));
-    byte[] zip = dailyLossService.exportMonthlyPhotos(supervisor, "s1", "2026-07");
+    DailyLossMonthlyExcelExport export = dailyLossService.exportMonthlyExcel(supervisor, "s1", "2026-07");
 
     assertThat(draft.totalAmount()).isEqualByComparingTo("50.14");
     assertThat(draft.details()).extracting(DailyLossReportDetailResponse::amountSnapshot)
         .containsExactlyInAnyOrder(new BigDecimal("0.14"), new BigDecimal("50.00"));
     assertThat(submitted.status()).isEqualTo("SUBMITTED");
     assertThat(reviewed.status()).isEqualTo("REVIEWED");
-    assertThat(zipEntries(zip)).containsExactly("001/2026-07/14/001.jpg");
+    assertThat(export.fileName()).isEqualTo("测试门店-2026年07月-每日报损.xlsx");
+    assertThat(export.summaryRowCount()).isEqualTo(31);
+    assertThat(export.detailRowCount()).isEqualTo(2);
+    try (XSSFWorkbook workbook = new XSSFWorkbook(new java.io.ByteArrayInputStream(export.content()))) {
+      assertThat(workbook.getNumberOfSheets()).isEqualTo(2);
+      assertThat(workbook.getSheetName(0)).isEqualTo("每日汇总");
+      assertThat(workbook.getSheetName(1)).isEqualTo("报损明细");
+      assertThat(workbook.getAllPictures()).isEmpty();
+      assertThat(workbook.getSheetAt(0).getDrawingPatriarch()).isNull();
+      assertThat(workbook.getSheetAt(1).getDrawingPatriarch()).isNull();
+
+      var summary = workbook.getSheet("每日汇总");
+      var details = workbook.getSheet("报损明细");
+      assertThat(summary.getLastRowNum()).isEqualTo(31);
+      assertThat(summary.getPaneInformation().isFreezePane()).isTrue();
+      assertThat(summary.getCTWorksheet().isSetAutoFilter()).isTrue();
+      assertThat(summary.getRow(1).getCell(5).getNumericCellValue()).isZero();
+      assertThat(summary.getRow(14).getCell(3).getNumericCellValue()).isEqualTo(2D);
+      assertThat(summary.getRow(14).getCell(4).getCellType()).isEqualTo(CellType.NUMERIC);
+      assertThat(summary.getRow(14).getCell(5).getNumericCellValue()).isEqualTo(50.14D);
+      assertThat(summary.getRow(14).getCell(5).getCellStyle().getDataFormatString()).contains("#,##0.00");
+      assertThat(details.getLastRowNum()).isEqualTo(2);
+      assertThat(details.getRow(1).getCell(6).getCellType()).isEqualTo(CellType.NUMERIC);
+      assertThat(details.getRow(1).getCell(9).getCellType()).isEqualTo(CellType.NUMERIC);
+      var formulaRow = java.util.stream.IntStream.rangeClosed(1, details.getLastRowNum())
+          .mapToObj(details::getRow)
+          .filter(row -> "苹果汁".equals(row.getCell(4).getStringCellValue()))
+          .findFirst()
+          .orElseThrow();
+      assertThat(formulaRow.getCell(10).getStringCellValue()).isEqualTo("'=恶意公式");
+      assertThat(formulaRow.getCell(10).getStringCellValue()).doesNotContain("photo.jpg", "/api/storage", ".zip");
+    }
     assertThat(jdbcTemplate.queryForList(
         "select action from operation_log order by id", String.class))
-        .contains("daily_loss_submit", "daily_loss_review", "daily_loss_photo_export");
+        .contains("daily_loss_submit", "daily_loss_review", "daily_loss_export");
+  }
+
+  @Test
+  void monthlyExcelExportIncludesEveryUnreportedDayForAnEmptyMonth() throws Exception {
+    DriverManagerDataSource dataSource = reportDataSource();
+    JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
+    createReportSchema(jdbcTemplate);
+    DailyLossRepository repository = new DailyLossRepository(jdbcTemplate, new NamedParameterJdbcTemplate(dataSource));
+    AccessControlService access = mock(AccessControlService.class);
+    AuthUser supervisor = user("SUPERVISOR", null);
+    when(access.dataScope(supervisor, DataScopeDomains.STORE)).thenReturn(DataScope.all());
+    DailyLossMonthlyExcelExport export = service(repository, mock(WarehouseRepository.class), access,
+        new AuditRepository(jdbcTemplate)).exportMonthlyExcel(supervisor, null, "2026-08");
+
+    try (XSSFWorkbook workbook = new XSSFWorkbook(new java.io.ByteArrayInputStream(export.content()))) {
+      assertThat(workbook.getSheet("每日汇总").getLastRowNum()).isEqualTo(31);
+      assertThat(workbook.getSheet("报损明细").getLastRowNum()).isZero();
+      assertThat(workbook.getSheet("每日汇总").getRow(1).getCell(6).getStringCellValue()).isEqualTo("未报");
+      assertThat(workbook.getSheet("每日汇总").getRow(1).getCell(5).getNumericCellValue()).isZero();
+    }
+  }
+
+  @Test
+  void monthlyExcelExportUsesAuthenticatedTenantAndRejectsCrossStoreRequest() {
+    DailyLossRepository repository = mock(DailyLossRepository.class);
+    AccessControlService access = mock(AccessControlService.class);
+    AuthUser manager = new AuthUser(8L, 2L, "第二租户", "manager", "hash", "店长", "STORE_MANAGER", "s1", true, 1L);
+    when(access.dataScope(manager, DataScopeDomains.STORE))
+        .thenReturn(new DataScope(DataScopeModes.OWN_STORE, List.of("s1")));
+    doThrow(new BusinessException("FORBIDDEN", "当前账号没有访问该业务的权限", HttpStatus.FORBIDDEN))
+        .when(access).requireStoreAccess(manager, DataScopeDomains.STORE, "s2", "导出每日报损");
+
+    BusinessException error = catchThrowableOfType(
+        () -> service(repository, mock(WarehouseRepository.class), access, mock(AuditRepository.class))
+            .exportMonthlyExcel(manager, "s2", "2026-07"),
+        BusinessException.class);
+
+    assertThat(error.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+    verify(repository, never()).reportStores(org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.any(),
+        org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void monthlyExcelExportQueriesOnlyTheAuthenticatedTenant() {
+    DailyLossRepository repository = mock(DailyLossRepository.class);
+    AccessControlService access = mock(AccessControlService.class);
+    AuditRepository audit = mock(AuditRepository.class);
+    AuthUser finance = new AuthUser(9L, 2L, "第二租户", "finance", "hash", "财务", "FINANCE", null, true, 1L);
+    DataScope scope = DataScope.all();
+    when(access.dataScope(finance, DataScopeDomains.FINANCE)).thenReturn(scope);
+    when(repository.reportStores(2L, null, scope)).thenReturn(List.of());
+    when(repository.reports(2L, java.time.YearMonth.of(2026, 7), null, scope)).thenReturn(List.of());
+    when(repository.monthlyExportDetails(2L, java.time.YearMonth.of(2026, 7), null, scope)).thenReturn(List.of());
+
+    service(repository, mock(WarehouseRepository.class), access, audit)
+        .exportMonthlyExcel(finance, null, "2026-07");
+
+    verify(repository).reportStores(2L, null, scope);
+    verify(repository).reports(2L, java.time.YearMonth.of(2026, 7), null, scope);
+    verify(repository).monthlyExportDetails(2L, java.time.YearMonth.of(2026, 7), null, scope);
+    verify(repository, never()).reportStores(eq(1L), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
   }
 
   @Test
@@ -428,14 +539,11 @@ class DailyLossServiceTest {
         """);
   }
 
-  private List<String> zipEntries(byte[] zip) throws Exception {
-    List<String> entries = new ArrayList<>();
-    try (ZipInputStream input = new ZipInputStream(new ByteArrayInputStream(zip))) {
-      ZipEntry entry;
-      while ((entry = input.getNextEntry()) != null) {
-        entries.add(entry.getName());
-      }
-    }
-    return entries;
+  private DriverManagerDataSource reportDataSource() {
+    return new DriverManagerDataSource(
+        "jdbc:h2:mem:" + UUID.randomUUID() + ";MODE=MySQL;NON_KEYWORDS=MONTH;DB_CLOSE_DELAY=-1",
+        "sa",
+        ""
+    );
   }
 }

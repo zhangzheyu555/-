@@ -330,7 +330,6 @@ public class AuthService {
       case "FINANCE" -> "财务";
       case "STORE_MANAGER" -> "店长";
       case "WAREHOUSE" -> "仓库管理员";
-      case "OPERATIONS" -> "运营";
       case "EMPLOYEE" -> "员工";
       default -> role;
     };

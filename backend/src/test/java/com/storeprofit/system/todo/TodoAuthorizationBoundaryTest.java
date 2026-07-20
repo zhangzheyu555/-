@@ -1,6 +1,7 @@
 package com.storeprofit.system.todo;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -61,7 +62,12 @@ class TodoAuthorizationBoundaryTest {
     RoleTodoRepository repository = mock(RoleTodoRepository.class);
     RoleTodoService service = roleService(repository, accessControl);
     AuthUser finance = user(2L, "FINANCE", null);
-    when(accessControl.canAccessStore(finance, DataScopeDomains.FINANCE, "s2")).thenReturn(false);
+    doThrow(new BusinessException(
+        "FORBIDDEN",
+        "当前账号没有访问该业务的权限",
+        org.springframework.http.HttpStatus.FORBIDDEN
+    )).when(accessControl).requireStoreAccess(
+        finance, DataScopeDomains.FINANCE, "s2", "查看角色待办");
 
     assertThatThrownBy(() -> service.todos(
         finance,
@@ -72,6 +78,8 @@ class TodoAuthorizationBoundaryTest {
             .isEqualTo("FORBIDDEN"));
 
     verify(accessControl).requireTodoRead(finance);
+    verify(accessControl).requireStoreAccess(
+        finance, DataScopeDomains.FINANCE, "s2", "查看角色待办");
     verify(repository, never()).profitRiskEntries(1L, null, "s2", 50);
   }
 

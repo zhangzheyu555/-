@@ -46,7 +46,7 @@ public class BusinessTodoService {
   private static final String RULE_SALARY_REVIEW = "SALARY_PENDING_REVIEW";
   private static final String RULE_ASSISTANT_ACTION = "ASSISTANT_ACTION";
   private static final Set<String> MANUAL_ASSIGNEE_ROLES = Set.of(
-      "BOSS", "FINANCE", "STORE_MANAGER", "SUPERVISOR", "WAREHOUSE", "OPERATIONS");
+      "BOSS", "FINANCE", "STORE_MANAGER", "SUPERVISOR", "WAREHOUSE");
   private static final Set<String> ALLOWED_ATTACHMENT_TYPES = Set.of(
       "image/jpeg", "image/png", "image/webp", "application/pdf");
 
@@ -702,7 +702,6 @@ public class BusinessTodoService {
       case "STORE_MANAGER" -> "店长";
       case "SUPERVISOR" -> "督导";
       case "WAREHOUSE" -> "仓库管理员";
-      case "OPERATIONS", "OPS" -> "运营";
       default -> role == null ? null : role;
     };
   }

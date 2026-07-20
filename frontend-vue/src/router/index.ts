@@ -25,7 +25,6 @@ const EmployeeProfilePage = () => import('../pages/EmployeeProfilePage.vue')
 const DailyLossPage = () => import('../pages/DailyLossPage.vue')
 const OperationLogPage = () => import('../pages/OperationLogPage.vue')
 const NoPermissionPage = () => import('../pages/NoPermissionPage.vue')
-const PlaceholderPage = () => import('../pages/PlaceholderPage.vue')
 const PlatformLoginPage = () => import('../pages/PlatformLoginPage.vue')
 const UserPermissionPage = () => import('../pages/UserPermissionPage.vue')
 const BossWorkspace = () => import('../pages/workspaces/BossWorkspace.vue')
@@ -46,13 +45,16 @@ const permissionMeta = (permission: PermissionCode, extras: Record<string, unkno
 })
 
 const appChildren: RouteRecordRaw[] = [
-  { path: '', name: 'home', component: PlaceholderPage, meta: { title: '正在进入工作台', subtitle: '系统会根据当前账号权限进入对应首页。' } },
+  // Do not render an empty placeholder at the gateway mount root.  This route
+  // must always resolve through the session guard: unauthenticated users go to
+  // login, while authenticated users continue to their permitted workspace.
+  { path: '', name: 'home', redirect: () => defaultRouteForSession() },
   { path: 'boss', name: 'boss-workspace', component: BossWorkspace, meta: permissionMeta(PERMISSIONS.SYSTEM_DASHBOARD_READ, { menuKey: 'boss-workspace', title: '老板工作台', bossOnly: true }) },
   { path: 'finance', name: 'finance-workspace', component: FinanceWorkspace, meta: permissionMeta(PERMISSIONS.FINANCE_PROFIT_READ, { menuKey: 'finance-workspace', title: '财务工作台', allowedRoles: ['FINANCE'] }) },
   { path: 'warehouse', name: 'warehouse-overview', component: WarehouseWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_READ, { moduleKey: 'warehouse', menuKey: 'warehouse-center', warehouseTab: 'overview', title: '仓库中心' }) },
   { path: 'warehouse/workspace', redirect: '/warehouse' },
   { path: 'store', name: 'store-workspace', component: StoreManagerWorkspace, meta: permissionMeta(PERMISSIONS.STORE_READ, { menuKey: 'store-workspace', title: '门店工作台', allowedRoles: ['STORE_MANAGER'] }) },
-  { path: 'operations', name: 'operations-workspace', component: OperationsWorkspace, meta: permissionMeta(PERMISSIONS.OPERATIONS_DASHBOARD_READ, { menuKey: 'operations-workspace', title: '运营工作台', allowedRoles: ['OPERATIONS'] }) },
+  { path: 'operations', name: 'operations-workspace', component: OperationsWorkspace, meta: permissionMeta(PERMISSIONS.OPERATIONS_DASHBOARD_READ, { menuKey: 'supervisor-workspace', title: '督导工作台', allowedRoles: ['SUPERVISOR'] }) },
   { path: 'employee', name: 'employee-workspace', component: EmployeeWorkbenchPage, meta: permissionMeta(PERMISSIONS.EXAM_LEARN, { menuKey: 'employee-workspace', title: '员工工作台', allowedRoles: ['EMPLOYEE'] }) },
   { path: 'employee/profile', name: 'employee-profile', component: EmployeeProfilePage, meta: permissionMeta(PERMISSIONS.EXAM_LEARN, { menuKey: 'employee-profile', title: '我的资料', allowedRoles: ['EMPLOYEE'] }) },
   { path: 'employee/exams', name: 'employee-exams', component: ExamProgressWorkspace, meta: permissionMeta(PERMISSIONS.EXAM_LEARN, { moduleKey: 'exam', menuKey: 'employee-exams', title: '培训考试', allowedRoles: ['EMPLOYEE'] }) },
@@ -80,7 +82,7 @@ const appChildren: RouteRecordRaw[] = [
   { path: 'stores', name: 'stores', component: StoreManagementPage, meta: permissionMeta(PERMISSIONS.STORE_MANAGE, { menuKey: 'store-management', title: '门店管理', bossOnly: true }) },
   { path: 'staff', name: 'staff-profiles', component: StaffProfilePage, meta: permissionMeta(PERMISSIONS.EMPLOYEE_READ, { menuKey: 'staff-profiles', title: '员工档案' }) },
   { path: 'logs', name: 'logs', component: OperationLogPage, meta: permissionMeta(PERMISSIONS.SYSTEM_AUDIT_READ, { menuKey: 'operation-logs', title: '操作日志' }) },
-  { path: 'platform-login', name: 'platform-login', component: PlatformLoginPage, meta: permissionMeta(PERMISSIONS.PLATFORM_READ, { menuKey: 'platform-settings', title: '平台配置', allowedRoles: ['OPERATIONS'] }) },
+  { path: 'platform-login', name: 'platform-login', component: PlatformLoginPage, meta: permissionMeta(PERMISSIONS.PLATFORM_READ, { menuKey: 'platform-settings', title: '平台配置', allowedRoles: ['SUPERVISOR'] }) },
   { path: 'users', name: 'users', component: UserPermissionPage, meta: permissionMeta(PERMISSIONS.SYSTEM_USER_MANAGE, { menuKey: 'user-permissions', title: '账号权限' }) },
 
   { path: 'finance/salary', name: 'finance-salary', component: FinanceSalaryWorkspace, meta: permissionMeta(PERMISSIONS.SALARY_READ, { menuKey: 'finance-salary', title: '员工工资' }) },
@@ -121,12 +123,12 @@ const appChildren: RouteRecordRaw[] = [
     component: InspectionReviewQueuePage,
     meta: permissionMeta(PERMISSIONS.INSPECTION_MANAGE, {
       menuKey: 'inspection-review-queue',
-      allowedRoles: ['SUPERVISOR', 'OPERATIONS'],
+      allowedRoles: ['SUPERVISOR'],
       title: '整改复核',
     }),
   },
   { path: 'operations/inspection/standards', name: 'inspection-standards', component: SupervisorWorkbenchPage, meta: permissionMeta(PERMISSIONS.INSPECTION_MANAGE, { menuKey: 'inspection-management', inspectionTab: 'standards', title: '稽核标准' }) },
-  { path: 'operations/exams', name: 'exam-admin', component: ExamAdminWorkspace, meta: permissionMeta(PERMISSIONS.EXAM_MANAGE, { moduleKey: 'exam', menuKey: 'exam-center', title: '培训考试', allowedRoles: ['OPERATIONS'] }) },
+  { path: 'operations/exams', name: 'exam-admin', component: ExamAdminWorkspace, meta: permissionMeta(PERMISSIONS.EXAM_MANAGE, { moduleKey: 'exam', menuKey: 'exam-center', title: '培训考试', allowedRoles: ['SUPERVISOR'] }) },
   { path: 'store/exams', name: 'exam-progress', component: ExamProgressWorkspace, meta: permissionMeta(PERMISSIONS.EXAM_REPORT, { moduleKey: 'exam', menuKey: 'exam-center', title: '培训考试', allowedRoles: ['STORE_MANAGER'] }) },
 ]
 
@@ -167,6 +169,12 @@ const routes: RouteRecordRaw[] = [
 
 function defaultRouteForSession(): RouteLocationRaw {
   const auth = useAuthStore()
+  // The child route `/` is resolved before the navigation guard.  Without an
+  // explicit anonymous branch it sent a fresh visitor to `/no-permission`,
+  // which LoginPage then treated as the post-login redirect.  A valid account
+  // could therefore finish login on the no-permission page instead of its
+  // assigned workspace.
+  if (!auth.isLoggedIn) return { name: 'login' }
   if (auth.role === 'STORE_MANAGER' && !auth.storeManagerHasStoreBinding) {
     return { name: 'no-permission', query: { reason: 'STORE_NOT_BOUND' } }
   }
@@ -204,7 +212,10 @@ const warehouseTabRedirects: Record<string, string> = {
 }
 
 const router = createRouter({
-  history: createWebHistory(),
+  // The desktop application is served behind the gateway at `/admin/` in QA and
+  // production.  Using Vite's generated base keeps browser history routes inside
+  // that mount point instead of treating `/admin/` as an unknown application path.
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes,
 })
 

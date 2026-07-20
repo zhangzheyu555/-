@@ -23,8 +23,15 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipOutputStream;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.CellStyle;
+import org.apache.poi.ss.usermodel.DataFormat;
+import org.apache.poi.ss.usermodel.Font;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.ss.util.CellRangeAddress;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -246,16 +253,42 @@ public class DailyLossService {
   }
 
   @Transactional
-  public byte[] exportMonthlyPhotos(AuthUser user, String storeId, String yyyyMM) {
-    accessControl.requireDailyLossReview(user);
-    String targetStoreId = requiredText(storeId, "请选择门店");
-    requireStoreScope(user, targetStoreId, "导出每日报损照片");
-    YearMonth month = normalizeMonth(yyyyMM);
-    List<DailyLossPhotoExportFile> photos = repository.monthlyPhotoFiles(user.tenantId(), targetStoreId, month);
-    byte[] zip = zipPhotos(photos, month);
-    audit(user, "daily_loss_photo_export", targetStoreId + "-" + month, targetStoreId,
-        "导出月度报损照片包，图片数量：" + photos.size());
-    return zip;
+  public DailyLossMonthlyExcelExport exportMonthlyExcel(AuthUser user, String storeId, String monthValue) {
+    accessControl.requireDailyLossExport(user);
+    YearMonth month = normalizeMonth(monthValue);
+    String targetStoreId = resolveOptionalStoreForRead(user, storeId);
+    if (targetStoreId != null) {
+      requireStoreScope(user, targetStoreId, "导出每日报损");
+    }
+    DataScope scope = dailyLossScope(user);
+    List<DailyLossRepository.ReportStoreRow> stores = repository.reportStores(
+        user.tenantId(), targetStoreId, scope);
+    List<DailyLossRepository.DailyLossReportRow> reports = repository.reports(
+        user.tenantId(), month, targetStoreId, scope);
+    List<DailyLossRepository.MonthlyExportDetailRow> details = repository.monthlyExportDetails(
+        user.tenantId(), month, targetStoreId, scope);
+    Map<String, DailyLossRepository.DailyLossReportRow> reportsByStoreDay = new LinkedHashMap<>();
+    for (DailyLossRepository.DailyLossReportRow report : reports) {
+      reportsByStoreDay.put(report.storeId() + "|" + report.lossDate(), report);
+    }
+    Map<String, List<DailyLossRepository.MonthlyExportDetailRow>> detailsByReport = new LinkedHashMap<>();
+    for (DailyLossRepository.MonthlyExportDetailRow detail : details) {
+      detailsByReport.computeIfAbsent(detail.reportId(), ignored -> new java.util.ArrayList<>()).add(detail);
+    }
+
+    byte[] content = buildMonthlyExcel(month, stores, reportsByStoreDay, details, detailsByReport);
+    String fileName = monthlyExcelFileName(month, stores, targetStoreId);
+    String scopeLabel = targetStoreId == null ? "全部门店" : stores.stream()
+        .filter(store -> targetStoreId.equals(store.id()))
+        .map(DailyLossRepository.ReportStoreRow::name)
+        .findFirst()
+        .orElse(targetStoreId);
+    auditRepository.writeLog(user, new AuditLogRequest(
+        "daily_loss_export", "daily_loss_export", month.toString(), targetStoreId, month.toString(),
+        "导出每日报损Excel，月份：" + month + "，门店范围：" + safeAuditText(scopeLabel)
+            + "，汇总行数：" + stores.size() * month.lengthOfMonth() + "，明细行数：" + details.size(),
+        null, null));
+    return new DailyLossMonthlyExcelExport(content, fileName, stores.size() * month.lengthOfMonth(), details.size());
   }
 
   @Transactional(readOnly = true)
@@ -379,7 +412,10 @@ public class DailyLossService {
     if (requested != null) {
       return requested;
     }
-    if (AccessControlService.hasAnyRole(user, "STORE_MANAGER")) {
+    // `hasAnyRole` intentionally treats BOSS as a global role.  This branch
+    // needs the exact role instead: a boss may read all authorized stores and
+    // must never be forced through the store-manager single-store binding.
+    if ("STORE_MANAGER".equals(AccessControlService.canonicalRole(user == null ? null : user.role()))) {
       return resolveRequiredStoreForCurrentUser(user, "查看每日报损");
     }
     return null;
@@ -496,52 +532,194 @@ public class DailyLossService {
     return filename != null && filename.toLowerCase(Locale.ROOT).matches(".*\\.(jpe?g|png|webp|gif)$");
   }
 
-  private byte[] zipPhotos(List<DailyLossPhotoExportFile> photos, YearMonth month) {
+  private byte[] buildMonthlyExcel(
+      YearMonth month,
+      List<DailyLossRepository.ReportStoreRow> stores,
+      Map<String, DailyLossRepository.DailyLossReportRow> reportsByStoreDay,
+      List<DailyLossRepository.MonthlyExportDetailRow> details,
+      Map<String, List<DailyLossRepository.MonthlyExportDetailRow>> detailsByReport
+  ) {
     try {
       ByteArrayOutputStream output = new ByteArrayOutputStream();
-      try (ZipOutputStream zip = new ZipOutputStream(output)) {
-        Map<String, Integer> dayCounters = new LinkedHashMap<>();
-        for (DailyLossPhotoExportFile photo : photos) {
-          String day = photo.lossDate() == null || photo.lossDate().length() < 10
-              ? "unknown"
-              : photo.lossDate().substring(8, 10);
-          int index = dayCounters.merge(day, 1, Integer::sum);
-          String path = safePathSegment(photo.storeCode()) + "/" + month + "/" + day + "/"
-              + String.format(Locale.ROOT, "%03d%s", index, extension(photo.fileName(), photo.contentType()));
-          ZipEntry entry = new ZipEntry(path);
-          zip.putNextEntry(entry);
-          zip.write(photo.content());
-          zip.closeEntry();
+      try (Workbook workbook = new XSSFWorkbook()) {
+        ExcelStyles styles = new ExcelStyles(workbook);
+        Sheet summary = workbook.createSheet("每日汇总");
+        Sheet detail = workbook.createSheet("报损明细");
+        String[] summaryHeaders = {"日期", "门店编码", "门店名称", "报损品类数", "报损总数量", "报损总金额",
+            "上报状态", "提交人", "提交时间", "复核人", "复核时间", "复核意见"};
+        String[] detailHeaders = {"日期", "门店编码", "门店名称", "物料编码", "物料名称", "品类",
+            "报损数量", "单位", "单价", "报损金额", "报损原因", "上报状态", "提交人", "提交时间",
+            "复核人", "复核时间", "复核意见"};
+        writeHeader(summary, summaryHeaders, styles.header());
+        writeHeader(detail, detailHeaders, styles.header());
+
+        int summaryRowIndex = 1;
+        for (DailyLossRepository.ReportStoreRow store : stores) {
+          for (LocalDate day = month.atDay(1); !day.isAfter(month.atEndOfMonth()); day = day.plusDays(1)) {
+            DailyLossRepository.DailyLossReportRow report = reportsByStoreDay.get(store.id() + "|" + day);
+            List<DailyLossRepository.MonthlyExportDetailRow> reportDetails = report == null
+                ? List.of()
+                : detailsByReport.getOrDefault(report.id(), List.of());
+            BigDecimal quantity = reportDetails.stream().map(DailyLossRepository.MonthlyExportDetailRow::lossQuantity)
+                .filter(java.util.Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal amount = reportDetails.stream().map(DailyLossRepository.MonthlyExportDetailRow::amount)
+                .filter(java.util.Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
+            Row row = summary.createRow(summaryRowIndex++);
+            writeDate(row, 0, day, styles.date());
+            writeText(row, 1, store.code(), styles.text());
+            writeText(row, 2, store.name(), styles.text());
+            writeNumber(row, 3, BigDecimal.valueOf(reportDetails.size()), styles.integer());
+            writeNumber(row, 4, quantity, styles.quantity());
+            writeNumber(row, 5, amount, styles.amount());
+            writeText(row, 6, report == null ? "未报" : reportStatusLabel(normalizeStatus(report.status())), styles.text());
+            writeText(row, 7, report == null ? null : report.submittedByName(), styles.text());
+            writeDateTime(row, 8, report == null ? null : report.submittedAt(), styles.dateTime());
+            writeText(row, 9, report == null ? null : report.reviewedByName(), styles.text());
+            writeDateTime(row, 10, report == null ? null : report.reviewedAt(), styles.dateTime());
+            writeText(row, 11, report == null ? null : report.reviewNote(), styles.text());
+          }
         }
+
+        int detailRowIndex = 1;
+        for (DailyLossRepository.MonthlyExportDetailRow item : details) {
+          Row row = detail.createRow(detailRowIndex++);
+          writeDate(row, 0, item.lossDate(), styles.date());
+          writeText(row, 1, item.storeCode(), styles.text());
+          writeText(row, 2, item.storeName(), styles.text());
+          writeText(row, 3, item.itemCode(), styles.text());
+          writeText(row, 4, item.itemName(), styles.text());
+          writeText(row, 5, item.category(), styles.text());
+          writeNumber(row, 6, item.lossQuantity(), styles.quantity());
+          writeText(row, 7, item.unit(), styles.text());
+          writeNumber(row, 8, item.unitPrice(), styles.unitPrice());
+          writeNumber(row, 9, item.amount(), styles.amount());
+          writeText(row, 10, item.lossReason(), styles.text());
+          writeText(row, 11, reportStatusLabel(normalizeStatus(item.status())), styles.text());
+          writeText(row, 12, item.submittedByName(), styles.text());
+          writeDateTime(row, 13, item.submittedAt(), styles.dateTime());
+          writeText(row, 14, item.reviewedByName(), styles.text());
+          writeDateTime(row, 15, item.reviewedAt(), styles.dateTime());
+          writeText(row, 16, item.reviewNote(), styles.text());
+        }
+        configureSheet(summary, summaryRowIndex - 1,
+            new int[]{13, 14, 22, 13, 15, 15, 13, 16, 20, 16, 20, 32});
+        configureSheet(detail, detailRowIndex - 1,
+            new int[]{13, 14, 22, 18, 24, 18, 15, 10, 14, 15, 30, 13, 16, 20, 16, 20, 32});
+        workbook.write(output);
       }
       return output.toByteArray();
     } catch (IOException ex) {
-      throw new BusinessException("DAILY_LOSS_PHOTO_EXPORT_FAILED", "报损照片打包失败，请稍后重试",
+      throw new BusinessException("DAILY_LOSS_EXCEL_EXPORT_FAILED", "本月报损 Excel 生成失败，请稍后重试",
           HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
-  private String extension(String fileName, String contentType) {
-    String normalizedType = contentType == null ? "" : contentType.trim().toLowerCase(Locale.ROOT);
-    if ("image/jpeg".equals(normalizedType) || "image/jpg".equals(normalizedType)) return ".jpg";
-    if ("image/png".equals(normalizedType)) return ".png";
-    if ("image/webp".equals(normalizedType)) return ".webp";
-    if ("image/gif".equals(normalizedType)) return ".gif";
-    String name = fileName == null ? "" : fileName.trim();
-    int dot = name.lastIndexOf('.');
-    if (dot >= 0 && dot < name.length() - 1) {
-      String ext = name.substring(dot).toLowerCase(Locale.ROOT);
-      if (List.of(".jpg", ".jpeg", ".png", ".webp", ".gif").contains(ext)) {
-        return ".jpeg".equals(ext) ? ".jpg" : ext;
-      }
+  private void writeHeader(Sheet sheet, String[] headers, CellStyle headerStyle) {
+    Row row = sheet.createRow(0);
+    for (int index = 0; index < headers.length; index++) {
+      Cell cell = row.createCell(index);
+      cell.setCellValue(headers[index]);
+      cell.setCellStyle(headerStyle);
     }
-    return ".jpg";
   }
 
-  private String safePathSegment(String value) {
-    String normalized = value == null || value.isBlank() ? "store" : value.trim();
-    normalized = normalized.replaceAll("[\\\\/:*?\"<>|\\s]+", "-");
-    return normalized.isBlank() ? "store" : normalized;
+  private void configureSheet(Sheet sheet, int lastRow, int[] widths) {
+    sheet.createFreezePane(0, 1);
+    sheet.setAutoFilter(new CellRangeAddress(0, Math.max(0, lastRow), 0, widths.length - 1));
+    sheet.setDefaultRowHeightInPoints(19);
+    for (int index = 0; index < widths.length; index++) {
+      sheet.setColumnWidth(index, widths[index] * 256);
+    }
+  }
+
+  private void writeText(Row row, int index, String value, CellStyle style) {
+    Cell cell = row.createCell(index);
+    cell.setCellValue(safeExcelText(value));
+    cell.setCellStyle(style);
+  }
+
+  private void writeNumber(Row row, int index, BigDecimal value, CellStyle style) {
+    Cell cell = row.createCell(index);
+    cell.setCellValue((value == null ? BigDecimal.ZERO : value).doubleValue());
+    cell.setCellStyle(style);
+  }
+
+  private void writeDate(Row row, int index, LocalDate value, CellStyle style) {
+    Cell cell = row.createCell(index);
+    if (value != null) {
+      cell.setCellValue(java.util.Date.from(value.atStartOfDay(BUSINESS_ZONE).toInstant()));
+    }
+    cell.setCellStyle(style);
+  }
+
+  private void writeDateTime(Row row, int index, java.time.LocalDateTime value, CellStyle style) {
+    Cell cell = row.createCell(index);
+    if (value != null) {
+      cell.setCellValue(java.util.Date.from(value.atZone(BUSINESS_ZONE).toInstant()));
+    }
+    cell.setCellStyle(style);
+  }
+
+  private String safeExcelText(String value) {
+    if (value == null) return "";
+    return value.startsWith("=") || value.startsWith("+") || value.startsWith("-") || value.startsWith("@")
+        ? "'" + value
+        : value;
+  }
+
+  private String monthlyExcelFileName(
+      YearMonth month,
+      List<DailyLossRepository.ReportStoreRow> stores,
+      String targetStoreId
+  ) {
+    String scopeName = targetStoreId == null ? "全部门店" : stores.stream()
+        .filter(store -> targetStoreId.equals(store.id()))
+        .map(DailyLossRepository.ReportStoreRow::name)
+        .findFirst()
+        .orElse(targetStoreId);
+    return safeFileName(scopeName) + "-" + month.getYear() + "年"
+        + String.format(Locale.ROOT, "%02d", month.getMonthValue()) + "月-每日报损.xlsx";
+  }
+
+  private String safeFileName(String value) {
+    String normalized = value == null || value.isBlank() ? "全部门店" : value.trim();
+    return normalized.replaceAll("[\\\\/:*?\"<>|\\r\\n]+", "-");
+  }
+
+  private String safeAuditText(String value) {
+    return (value == null ? "全部门店" : value).replaceAll("[\\r\\n]+", " ");
+  }
+
+  private record ExcelStyles(CellStyle header, CellStyle text, CellStyle integer, CellStyle quantity,
+                             CellStyle unitPrice, CellStyle amount, CellStyle date, CellStyle dateTime) {
+    private ExcelStyles(Workbook workbook) {
+      this(headerStyle(workbook), workbook.createCellStyle(), numericStyle(workbook, "0"),
+          numericStyle(workbook, "#,##0.00####"), numericStyle(workbook, "#,##0.0000"),
+          numericStyle(workbook, "#,##0.00"), dateStyle(workbook, "yyyy-mm-dd"),
+          dateStyle(workbook, "yyyy-mm-dd hh:mm:ss"));
+    }
+
+    private static CellStyle headerStyle(Workbook workbook) {
+      CellStyle style = workbook.createCellStyle();
+      Font font = workbook.createFont();
+      font.setBold(true);
+      font.setColor(org.apache.poi.ss.usermodel.IndexedColors.WHITE.getIndex());
+      style.setFont(font);
+      style.setFillForegroundColor(org.apache.poi.ss.usermodel.IndexedColors.DARK_BLUE.getIndex());
+      style.setFillPattern(org.apache.poi.ss.usermodel.FillPatternType.SOLID_FOREGROUND);
+      return style;
+    }
+
+    private static CellStyle numericStyle(Workbook workbook, String format) {
+      CellStyle style = workbook.createCellStyle();
+      DataFormat dataFormat = workbook.createDataFormat();
+      style.setDataFormat(dataFormat.getFormat(format));
+      return style;
+    }
+
+    private static CellStyle dateStyle(Workbook workbook, String format) {
+      return numericStyle(workbook, format);
+    }
   }
 
   private DailyLossRepository.DailyLossRow requiredRecord(long tenantId, String id) {

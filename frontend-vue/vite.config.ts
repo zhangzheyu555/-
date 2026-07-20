@@ -30,6 +30,10 @@ export default defineConfig(({ mode }) => {
   // VITE_BACKEND_PROXY_TARGET 覆盖，避免未加载 .env.local 时悄悄转发到旧的 8080。
   const backendTarget = env.VITE_BACKEND_PROXY_TARGET || 'http://127.0.0.1:18081'
   return {
+    // The gateway mounts the desktop app at /admin/.  Keep Vite's asset base
+    // aligned with Vue Router's BASE_URL so a deployed page never renders an
+    // unmatched blank RouterView at that mount point.
+    base: env.VITE_PUBLIC_BASE || '/',
     plugins: [vue()],
     server: {
       host: '127.0.0.1',

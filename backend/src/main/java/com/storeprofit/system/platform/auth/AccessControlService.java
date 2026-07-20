@@ -150,6 +150,15 @@ public class AccessControlService {
         "每日报损复核仅限督导或老板");
   }
 
+  public void requireDailyLossExport(AuthUser user) {
+    requirePermission(user, PermissionCodes.DAILY_LOSS_EXPORT, "导出每日报损");
+    if (isBoss(user) || hasAnyRole(user, "STORE_MANAGER", "SUPERVISOR", "FINANCE")) {
+      return;
+    }
+    deny(user, "导出每日报损", "API", PermissionCodes.DAILY_LOSS_EXPORT, null,
+        "每日报损导出仅限店长、督导、财务和老板");
+  }
+
   public void requireExpenseRead(AuthUser user) {
     requirePermission(user, PermissionCodes.EXPENSE_READ, "查看报销数据");
   }
@@ -250,7 +259,7 @@ public class AccessControlService {
   /** Review remains separate from a store manager's submit permission. */
   public void requireInspectionRectificationReview(AuthUser user) {
     requireInspectionManage(user);
-    if (isBoss(user) || hasAnyRole(user, "SUPERVISOR", "OPERATIONS")) {
+    if (isBoss(user) || hasAnyRole(user, "SUPERVISOR")) {
       return;
     }
     deny(
@@ -407,7 +416,7 @@ public class AccessControlService {
   /** Only authorized operations or supervisor users may process handoffs. */
   public void requireEmployeeAssistantHandoffManage(AuthUser user) {
     requirePermission(user, PermissionCodes.EMPLOYEE_ASSISTANT_HANDOFF_MANAGE, "处理员工助手人工事项");
-    if (hasAnyRole(user, "SUPERVISOR", "OPERATIONS")) {
+    if (hasAnyRole(user, "SUPERVISOR")) {
       return;
     }
     deny(user, "处理员工助手人工事项", "API", PermissionCodes.EMPLOYEE_ASSISTANT_HANDOFF_MANAGE, null,
@@ -625,8 +634,10 @@ public class AccessControlService {
   public static String canonicalRole(String role) {
     String normalized = role == null ? "" : role.trim().toUpperCase(Locale.ROOT);
     return switch (normalized) {
+      // Legacy rows and pre-migration sessions remain readable, but these aliases are never
+      // accepted as current account roles by UserManagementService.
       case "ADMIN", "OWNER" -> BOSS_ROLE;
-      case "OPS" -> "OPERATIONS";
+      case "OPS", "OPERATIONS" -> "SUPERVISOR";
       default -> normalized;
     };
   }

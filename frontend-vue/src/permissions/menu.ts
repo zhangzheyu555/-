@@ -52,8 +52,7 @@ const WORKSPACE_ITEMS: PermissionMenuItem[] = [
   { key: 'finance-workspace', label: '财务工作台', to: '/finance', icon: 'dashboard', requiredPermission: PERMISSIONS.FINANCE_PROFIT_READ, allowedRoles: ['FINANCE'], workspacePath: '/finance' },
   { key: 'warehouse-workspace', label: '仓库工作台', to: '/warehouse', icon: 'warehouse', requiredPermission: PERMISSIONS.WAREHOUSE_READ, alternativePermissions: [PERMISSIONS.WAREHOUSE_CENTRAL_READ], workspacePath: '/warehouse', requiredDataScope: { domain: 'WAREHOUSE', modes: ['ALL', 'WAREHOUSE_LIST', 'CENTRAL_WAREHOUSE'] } },
   { key: 'store-workspace', label: '门店工作台', to: '/store', icon: 'store', requiredPermission: PERMISSIONS.STORE_READ, allowedRoles: ['STORE_MANAGER'], workspacePath: '/store' },
-  { key: 'supervisor-workspace', label: '督导巡店', to: '/operations/inspection', icon: 'inspection', requiredPermission: PERMISSIONS.INSPECTION_READ, workspacePath: '/operations/inspection', requiredDataScope: { domain: 'INSPECTION', modes: ['STORE_LIST'] } },
-  { key: 'operations-workspace', label: '运营工作台', to: '/operations', icon: 'dashboard', requiredPermission: PERMISSIONS.OPERATIONS_DASHBOARD_READ, allowedRoles: ['OPERATIONS'], workspacePath: '/operations' },
+  { key: 'supervisor-workspace', label: '督导工作台', to: '/operations', icon: 'dashboard', requiredPermission: PERMISSIONS.OPERATIONS_DASHBOARD_READ, allowedRoles: ['SUPERVISOR'], workspacePath: '/operations' },
   { key: 'employee-workspace', label: '员工工作台', to: '/employee', icon: 'dashboard', requiredPermission: PERMISSIONS.EXAM_LEARN, allowedRoles: ['EMPLOYEE'], workspacePath: '/employee' },
 ]
 
@@ -153,7 +152,7 @@ export const MENU_GROUP_CONFIG: PermissionMenuGroup[] = [
         to: '/operations/inspection/reviews',
         icon: 'inspection',
         requiredPermission: PERMISSIONS.INSPECTION_MANAGE,
-        allowedRoles: ['SUPERVISOR', 'OPERATIONS'],
+        allowedRoles: ['SUPERVISOR'],
         requiredDataScope: { domain: 'INSPECTION', modes: ['ALL', 'STORE_LIST'] },
       },
       {
@@ -163,10 +162,10 @@ export const MENU_GROUP_CONFIG: PermissionMenuGroup[] = [
         icon: 'exam',
         requiredPermission: PERMISSIONS.EXAM_MANAGE,
         alternativePermissions: [PERMISSIONS.EXAM_REPORT],
-        allowedRoles: ['OPERATIONS', 'STORE_MANAGER'],
+        allowedRoles: ['SUPERVISOR', 'STORE_MANAGER'],
         requiredDataScope: { domain: 'EXAM', modes: ['ALL', 'STORE_LIST', 'OWN_STORE'] },
       },
-      { key: 'platform-settings', label: '平台配置', to: '/platform-login', icon: 'platform', requiredPermission: PERMISSIONS.PLATFORM_READ, allowedRoles: ['OPERATIONS'] },
+      { key: 'platform-settings', label: '平台配置', to: '/platform-login', icon: 'platform', requiredPermission: PERMISSIONS.PLATFORM_READ, allowedRoles: ['SUPERVISOR'] },
     ],
   },
   {

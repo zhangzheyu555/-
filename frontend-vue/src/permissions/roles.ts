@@ -5,7 +5,8 @@ export function normalizeRoleCode(role?: string) {
   const aliases: Record<string, string> = {
     ADMIN: BOSS_ROLE,
     OWNER: BOSS_ROLE,
-    OPS: 'OPERATIONS',
+    OPS: 'SUPERVISOR',
+    OPERATIONS: 'SUPERVISOR',
     STORE: 'STORE_MANAGER',
     MANAGER: 'STORE_MANAGER',
   }
@@ -34,7 +35,6 @@ export function roleName(role?: string) {
     WAREHOUSE: '仓库管理员',
     SUPERVISOR: '督导',
     STORE_MANAGER: '店长',
-    OPERATIONS: '运营',
     EMPLOYEE: '员工',
   }
   const normalized = normalizeRoleCode(role)

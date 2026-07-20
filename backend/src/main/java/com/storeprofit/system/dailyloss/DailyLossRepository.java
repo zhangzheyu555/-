@@ -275,31 +275,65 @@ public class DailyLossRepository {
     return count == null ? 0 : count;
   }
 
-  public List<DailyLossPhotoExportFile> monthlyPhotoFiles(long tenantId, String storeId, YearMonth month) {
+  public List<MonthlyExportDetailRow> monthlyExportDetails(
+      long tenantId,
+      YearMonth month,
+      String storeId,
+      DataScope scope
+  ) {
     LocalDate start = month.atDay(1);
     LocalDate end = month.plusMonths(1).atDay(1);
-    return jdbcTemplate.query("""
-        select a.id, s.code as store_code, r.loss_date as loss_date,
-               a.file_name, a.content_type, a.content
-        from warehouse_attachment a
-        join daily_loss_report r on r.tenant_id = a.tenant_id and r.id = a.business_id
-        join store_branch s on s.tenant_id = r.tenant_id and s.id = r.store_id
-        where a.tenant_id = ?
-          and a.business_type = 'DAILY_LOSS'
-          and r.store_id = ?
-          and r.loss_date >= ?
-          and r.loss_date < ?
-          and lower(coalesce(a.content_type, '')) like 'image/%'
-          and a.content is not null
-        order by r.loss_date, a.id
-        """, (rs, rowNum) -> new DailyLossPhotoExportFile(
-            rs.getLong("id"),
-            rs.getString("store_code"),
-            String.valueOf(rs.getObject("loss_date", LocalDate.class)),
-            rs.getString("file_name"),
-            rs.getString("content_type"),
-            rs.getBytes("content")),
-        tenantId, storeId, start, end);
+    StringBuilder sql = new StringBuilder("""
+        select report.id as report_id, report.store_id, s.code as store_code, s.name as store_name,
+               report.loss_date, report.status, report.submitted_by,
+               submitter.display_name as submitted_by_name, report.submitted_at,
+               report.reviewed_by, reviewer.display_name as reviewed_by_name, report.reviewed_at,
+               report.review_note, detail.item_code, detail.item_name,
+               coalesce(category.name, config.category, '每日报损') as category,
+               detail.loss_quantity, detail.stock_unit, detail.unit_price_snapshot,
+               detail.amount_snapshot, detail.loss_reason
+        from daily_loss_record detail
+        join daily_loss_report report on report.tenant_id = detail.tenant_id and report.id = detail.report_id
+        join store_branch s on s.tenant_id = report.tenant_id and s.id = report.store_id
+        left join auth_user submitter on submitter.tenant_id = report.tenant_id and submitter.id = report.submitted_by
+        left join auth_user reviewer on reviewer.tenant_id = report.tenant_id and reviewer.id = report.reviewed_by
+        left join loss_item_config config on config.tenant_id = detail.tenant_id and config.id = detail.item_config_id
+        left join warehouse_item_category category on category.tenant_id = config.tenant_id
+          and category.id = config.warehouse_category_id
+        where detail.tenant_id = :tenantId
+          and report.loss_date >= :start
+          and report.loss_date < :end
+        """);
+    MapSqlParameterSource params = new MapSqlParameterSource()
+        .addValue("tenantId", tenantId)
+        .addValue("start", start)
+        .addValue("end", end);
+    if (storeId != null && !storeId.isBlank()) {
+      sql.append(" and report.store_id = :storeId");
+      params.addValue("storeId", storeId.trim());
+    }
+    appendStoreScope(sql, params, scope, "report.store_id");
+    sql.append(" order by report.loss_date, s.code, report.id, detail.id");
+    return namedJdbc.query(sql.toString(), params, (rs, rowNum) -> new MonthlyExportDetailRow(
+        rs.getString("report_id"),
+        rs.getString("store_id"),
+        rs.getString("store_code"),
+        rs.getString("store_name"),
+        rs.getObject("loss_date", LocalDate.class),
+        rs.getString("status"),
+        rs.getString("item_code"),
+        rs.getString("item_name"),
+        rs.getString("category"),
+        rs.getBigDecimal("loss_quantity"),
+        rs.getString("stock_unit"),
+        rs.getBigDecimal("unit_price_snapshot"),
+        rs.getBigDecimal("amount_snapshot"),
+        rs.getString("loss_reason"),
+        rs.getString("submitted_by_name"),
+        rs.getObject("submitted_at", LocalDateTime.class),
+        rs.getString("reviewed_by_name"),
+        rs.getObject("reviewed_at", LocalDateTime.class),
+        rs.getString("review_note")));
   }
 
   public List<DailyLossRow> list(long tenantId, LocalDate day, LocalDate monthStart,
@@ -490,6 +524,12 @@ public class DailyLossRepository {
                                    String status, Long submittedBy, String submittedByName,
                                    LocalDateTime submittedAt, Long reviewedBy, String reviewedByName,
                                    LocalDateTime reviewedAt, String reviewNote) {}
+  public record MonthlyExportDetailRow(
+      String reportId, String storeId, String storeCode, String storeName, LocalDate lossDate, String status,
+      String itemCode, String itemName, String category, BigDecimal lossQuantity, String unit,
+      BigDecimal unitPrice, BigDecimal amount, String lossReason, String submittedByName,
+      LocalDateTime submittedAt, String reviewedByName, LocalDateTime reviewedAt, String reviewNote
+  ) {}
   public record LockedLossRow(String id, String storeId, long itemId, BigDecimal lossQuantity, String lossReason,
                               String status) {}
   public record DailyLossRow(String id, String storeId, String storeCode, String storeName, LocalDate lossDate,

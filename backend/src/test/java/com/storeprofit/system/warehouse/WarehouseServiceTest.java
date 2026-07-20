@@ -61,6 +61,16 @@ class WarehouseServiceTest {
 
     assertThat(created.storeId()).isEqualTo("rg1");
     assertThat(created.statusLabel()).isEqualTo("待仓库处理");
+    assertThat(jdbcTemplate.queryForObject(
+        "select version from store_requisition where tenant_id = 1 and id = ?",
+        Long.class,
+        created.id()
+    )).isZero();
+    assertThat(jdbcTemplate.queryForObject(
+        "select shipped_quantity from store_requisition_line where tenant_id = 1 and requisition_id = ?",
+        BigDecimal.class,
+        created.id()
+    )).isZero();
     assertThat(itemStock(1L)).isEqualByComparingTo(stockBeforeRequisition);
     WarehouseOverviewResponse storeOverview = service.overview(storeManager());
     assertThat(storeOverview.summary().stockValue()).isEqualByComparingTo("0.00");
@@ -313,8 +323,9 @@ class WarehouseServiceTest {
     for (int i = 0; i < 85; i++) {
       jdbcTemplate.update("""
           insert into store_requisition(
-            id, tenant_id, store_id, supply_warehouse_id, status, total_amount, note, submitted_by, submitted_at
-          ) values (?, 1, 'rg1', 1, 'SUBMITTED', 0, ?, 3, ?)
+            id, tenant_id, store_id, supply_warehouse_id, status, total_amount, note,
+            submitted_by, submitted_at, version
+          ) values (?, 1, 'rg1', 1, 'SUBMITTED', 0, ?, 3, ?, 0)
           """,
           "future-window-" + i,
           "recent list filler",
@@ -1173,6 +1184,7 @@ class WarehouseServiceTest {
           store_id varchar(64) not null,
           supply_warehouse_id bigint null,
           idempotency_key varchar(120) null,
+          version bigint not null,
           status varchar(40) not null default 'SUBMITTED',
           total_amount decimal(14,2) not null default 0,
           note text,
@@ -1196,7 +1208,7 @@ class WarehouseServiceTest {
           item_id bigint not null,
           requested_quantity decimal(14,2) not null default 0,
           approved_quantity decimal(14,2) null,
-          shipped_quantity decimal(14,2) not null default 0,
+          shipped_quantity decimal(14,2) not null,
           unit_price decimal(14,2) not null default 0,
           amount decimal(14,2) not null default 0,
           warning_text varchar(255),

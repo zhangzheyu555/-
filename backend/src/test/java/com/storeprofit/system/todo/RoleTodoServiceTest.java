@@ -2,12 +2,20 @@ package com.storeprofit.system.todo;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
+import com.storeprofit.system.platform.authorization.DataScopeDomains;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -573,7 +581,60 @@ class RoleTodoServiceTest {
         .isEqualTo("\u8d22\u52a1");
     assertThatThrownBy(() -> service.todos(finance(), RoleTodoAudience.WAREHOUSE, new RoleTodoQuery(false, null, 50, null, null)))
         .isInstanceOf(BusinessException.class)
+        .satisfies(error -> {
+          assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN");
+          assertThat(error.getMessage()).isEqualTo("当前账号无权查看该角色待办");
+        });
+  }
+
+  @Test
+  void invalidTodoStatusUsesChineseBusinessMessage() {
+    assertThatThrownBy(() -> service.todos(
+        supervisor(), RoleTodoAudience.SUPERVISOR,
+        new RoleTodoQuery(false, "INVALID", 50, null, null)))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> {
+          assertThat(((BusinessException) error).getCode()).isEqualTo("BAD_STATUS");
+          assertThat(error.getMessage()).isEqualTo("待办状态仅支持风险、待处理、提醒或已完成");
+        });
+  }
+
+  @Test
+  void crossStoreTodoQueryUsesAuditedAuthorizationBoundary() {
+    RoleTodoRepository todoRepository = mock(RoleTodoRepository.class);
+    RoleTodoEscalationRepository escalationRepository = mock(RoleTodoEscalationRepository.class);
+    RoleTodoActionRepository actionRepository = mock(RoleTodoActionRepository.class);
+    AccessControlService accessControl = mock(AccessControlService.class);
+    RoleTodoService scopedService = new RoleTodoService(
+        todoRepository, escalationRepository, actionRepository, accessControl);
+    AuthUser currentSupervisor = supervisor();
+
+    when(actionRepository.completedActions(currentSupervisor.tenantId())).thenReturn(Map.of());
+    when(escalationRepository.resolvedSourceTodoIds(currentSupervisor.tenantId())).thenReturn(Set.of());
+    when(accessControl.hasAllDataScope(currentSupervisor, DataScopeDomains.INSPECTION)).thenReturn(false);
+    doThrow(new BusinessException("FORBIDDEN", "当前账号没有访问该业务的权限", org.springframework.http.HttpStatus.FORBIDDEN))
+        .when(accessControl)
+        .requireStoreAccess(
+            currentSupervisor,
+            DataScopeDomains.INSPECTION,
+            "foreign-store-e2e",
+            "查看角色待办"
+        );
+
+    assertThatThrownBy(() -> scopedService.todos(
+        currentSupervisor,
+        RoleTodoAudience.SUPERVISOR,
+        new RoleTodoQuery(false, null, 50, null, "foreign-store-e2e")
+    ))
+        .isInstanceOf(BusinessException.class)
         .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
+
+    verify(accessControl).requireStoreAccess(
+        currentSupervisor,
+        DataScopeDomains.INSPECTION,
+        "foreign-store-e2e",
+        "查看角色待办"
+    );
   }
 
   @Test
@@ -621,7 +682,10 @@ class RoleTodoServiceTest {
         new RoleTodoEscalationRequest("cannot process", "PENDING")
     ))
         .isInstanceOf(BusinessException.class)
-        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
+        .satisfies(error -> {
+          assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN");
+          assertThat(error.getMessage()).isEqualTo("当前账号无权上报该角色待办");
+        });
   }
 
   @Test

@@ -67,7 +67,7 @@ class DataScopeServiceTest {
   }
 
   @Test
-  void supervisorOnlyUsesStoreListForStoreAndInspectionDomains() {
+  void supervisorUsesAssignedStoreOrWarehouseScopeForOwnedDomains() {
     AuthUser supervisor = user("SUPERVISOR");
     when(repository.assignmentsForUser(1L, 7L)).thenReturn(List.of(
         new DataScopeAssignmentRow(DataScopeDomains.STORE, DataScopeModes.STORE_LIST, "[\"rg1\"]"),
@@ -82,7 +82,7 @@ class DataScopeServiceTest {
     assertThat(scopes.get(DataScopeDomains.INSPECTION).storeIds()).containsExactly("rg1");
     assertThat(scopes.get(DataScopeDomains.PLATFORM).allowsAllStores()).isFalse();
     assertThat(scopes.get(DataScopeDomains.PLATFORM).storeIds()).isEmpty();
-    assertThat(scopes.get(DataScopeDomains.WAREHOUSE).storeIds()).isEmpty();
+    assertThat(scopes.get(DataScopeDomains.WAREHOUSE).storeIds()).containsExactly("rg2");
   }
 
   @Test
@@ -96,8 +96,10 @@ class DataScopeServiceTest {
     assertThat(scopes.get(DataScopeDomains.STORE).mode()).isEqualTo(DataScopeModes.STORE_LIST);
     assertThat(scopes.get(DataScopeDomains.STORE).storeIds()).containsExactly("rg1", "rg2");
     assertThat(scopes.get(DataScopeDomains.INSPECTION).storeIds()).containsExactly("rg1", "rg2");
-    assertThat(scopes.get(DataScopeDomains.WAREHOUSE).storeIds()).isEmpty();
-    assertThat(scopes.get(DataScopeDomains.EXAM).storeIds()).isEmpty();
+    assertThat(scopes.get(DataScopeDomains.WAREHOUSE).storeIds()).containsExactly("rg1", "rg2");
+    assertThat(scopes.get(DataScopeDomains.EXAM).storeIds()).containsExactly("rg1", "rg2");
+    assertThat(scopes.get(DataScopeDomains.PLATFORM).storeIds()).containsExactly("rg1", "rg2");
+    assertThat(scopes.values()).noneMatch(DataScope::allowsAllStores);
   }
 
   private AuthUser user(long id, String role, String storeId) {

@@ -123,7 +123,7 @@ class AuthorizationServiceTest {
   }
 
   @Test
-  void supervisorHasIndependentTemplateAndCannotInheritOperationsHighRiskPermissions() {
+  void supervisorInheritsOperationsCapabilitiesButNotBossOnlyPermissions() {
     AuthUser supervisor = user(10L, "SUPERVISOR");
     when(repository.roleTemplatePermissions(1L, "SUPERVISOR"))
         .thenReturn(Set.of(
@@ -133,7 +133,10 @@ class AuthorizationServiceTest {
             PermissionCodes.OPERATIONS_DASHBOARD_READ,
             PermissionCodes.PLATFORM_MANAGE,
             PermissionCodes.INVENTORY_MANAGE,
-            PermissionCodes.EXAM_MANAGE
+            PermissionCodes.EXAM_MANAGE,
+            PermissionCodes.FINANCE_PROFIT_WRITE,
+            PermissionCodes.SALARY_EDIT,
+            PermissionCodes.WAREHOUSE_CENTRAL_MANAGE
         ));
     when(repository.enabledPermissionCodes()).thenReturn(Set.of(
         PermissionCodes.INSPECTION_READ,
@@ -143,7 +146,10 @@ class AuthorizationServiceTest {
         PermissionCodes.OPERATIONS_DASHBOARD_READ,
         PermissionCodes.PLATFORM_MANAGE,
         PermissionCodes.INVENTORY_MANAGE,
-        PermissionCodes.EXAM_MANAGE
+        PermissionCodes.EXAM_MANAGE,
+        PermissionCodes.FINANCE_PROFIT_WRITE,
+        PermissionCodes.SALARY_EDIT,
+        PermissionCodes.WAREHOUSE_CENTRAL_MANAGE
     ));
     when(repository.userOverrides(1L, 10L)).thenReturn(List.of(
         new UserPermissionOverride(PermissionCodes.TODO_READ, PermissionEffect.ALLOW),
@@ -151,30 +157,32 @@ class AuthorizationServiceTest {
     ));
 
     assertThat(service.roleTemplatePermissions(1L, "SUPERVISOR"))
-        .contains(PermissionCodes.INSPECTION_READ, PermissionCodes.INSPECTION_MANAGE, PermissionCodes.ATTACHMENT_READ)
-        .doesNotContain(
+        .contains(PermissionCodes.INSPECTION_READ, PermissionCodes.INSPECTION_MANAGE, PermissionCodes.ATTACHMENT_READ,
             PermissionCodes.OPERATIONS_DASHBOARD_READ,
             PermissionCodes.PLATFORM_MANAGE,
             PermissionCodes.INVENTORY_MANAGE,
-            PermissionCodes.EXAM_MANAGE
-        );
+            PermissionCodes.EXAM_MANAGE)
+        .doesNotContain(PermissionCodes.FINANCE_PROFIT_WRITE, PermissionCodes.SALARY_EDIT,
+            PermissionCodes.WAREHOUSE_CENTRAL_MANAGE, PermissionCodes.STORE_MANAGE,
+            PermissionCodes.SYSTEM_USER_MANAGE);
     assertThat(service.effectivePermissions(supervisor))
-        .contains(PermissionCodes.INSPECTION_READ, PermissionCodes.INSPECTION_MANAGE, PermissionCodes.TODO_READ)
-        .doesNotContain(
+        .contains(PermissionCodes.INSPECTION_READ, PermissionCodes.INSPECTION_MANAGE, PermissionCodes.TODO_READ,
             PermissionCodes.OPERATIONS_DASHBOARD_READ,
             PermissionCodes.PLATFORM_MANAGE,
             PermissionCodes.INVENTORY_MANAGE,
-            PermissionCodes.EXAM_MANAGE
-        );
+            PermissionCodes.EXAM_MANAGE)
+        .doesNotContain(PermissionCodes.FINANCE_PROFIT_WRITE, PermissionCodes.SALARY_EDIT,
+            PermissionCodes.WAREHOUSE_CENTRAL_MANAGE, PermissionCodes.STORE_MANAGE,
+            PermissionCodes.SYSTEM_USER_MANAGE);
     assertThat(AuthorizationService.legacyTemplatePermissions("SUPERVISOR"))
-        .contains(PermissionCodes.INSPECTION_READ, PermissionCodes.INSPECTION_MANAGE, PermissionCodes.TODO_TRANSITION)
-        .doesNotContain(PermissionCodes.OPERATIONS_DASHBOARD_READ, PermissionCodes.PLATFORM_MANAGE);
+        .contains(PermissionCodes.INSPECTION_READ, PermissionCodes.INSPECTION_MANAGE, PermissionCodes.TODO_TRANSITION,
+            PermissionCodes.OPERATIONS_DASHBOARD_READ, PermissionCodes.PLATFORM_MANAGE);
   }
 
   @Test
-  void operationsKeepsOperationsTemplateAfterSupervisorSplit() {
+  void legacyOperationsResolvesToSupervisorTemplate() {
     AuthUser operations = user(11L, "OPERATIONS");
-    when(repository.roleTemplatePermissions(1L, "OPERATIONS"))
+    when(repository.roleTemplatePermissions(1L, "SUPERVISOR"))
         .thenReturn(Set.of(
             PermissionCodes.OPERATIONS_DASHBOARD_READ,
             PermissionCodes.PLATFORM_MANAGE,
