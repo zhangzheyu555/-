@@ -310,4 +310,4 @@ if [[ "$failures" -ne 0 ]]; then
   exit 1
 fi
 
-echo "Release source check passed: Flyway latest V${expected_flyway_latest}, exam/training sources, and tracked source data/key exclusions are complete."
+echo "Release source check passed: MySQL Flyway latest V${expected_mysql_flyway_latest}, H2 Flyway latest V${expected_h2_flyway_latest}, exam/training sources, and tracked source data/key exclusions are complete."
