@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 backend_jar="${1:-}"
-readonly expected_flyway_latest=56
+readonly expected_flyway_latest=74
 required_env=(
   APP_ENV SERVER_PORT MYSQL_HOST MYSQL_PORT MYSQL_DATABASE MYSQL_USERNAME
   MYSQL_PASSWORD MYSQL_CONTAINER_ID
@@ -20,6 +20,11 @@ if [[ -z "$backend_jar" || ! -f "$backend_jar" ]]; then
   exit 1
 fi
 
+if [[ ! "$MYSQL_DATABASE" =~ ^[A-Za-z0-9_]+$ ]]; then
+  echo "MYSQL_DATABASE contains unsupported characters: $MYSQL_DATABASE" >&2
+  exit 1
+fi
+
 log_file="${RUNNER_TEMP:-/tmp}/store-profit-backend-ci.log"
 health_file="${RUNNER_TEMP:-/tmp}/store-profit-health-ci.json"
 backend_pid=""
@@ -31,6 +36,20 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+
+mysql_query() {
+  docker exec \
+    -e MYSQL_PWD="$MYSQL_PASSWORD" \
+    "$MYSQL_CONTAINER_ID" \
+    mysql --protocol=TCP --host=127.0.0.1 \
+      --user="$MYSQL_USERNAME" --database="$MYSQL_DATABASE" \
+      --batch --skip-column-names --execute="$1"
+}
+
+# Historical migrations create temporary tables without an explicit collation.
+# Normalize a controlled empty CI database before Flyway so MySQL 8.0's newer
+# server default cannot conflict with the project's utf8mb4_unicode_ci tables.
+mysql_query "ALTER DATABASE \`${MYSQL_DATABASE}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 
 java -jar "$backend_jar" >"$log_file" 2>&1 &
 backend_pid=$!
@@ -53,15 +72,6 @@ if [[ ! -s "$health_file" ]]; then
   tail -n 200 "$log_file" >&2
   exit 1
 fi
-
-mysql_query() {
-  docker exec \
-    -e MYSQL_PWD="$MYSQL_PASSWORD" \
-    "$MYSQL_CONTAINER_ID" \
-    mysql --protocol=TCP --host=127.0.0.1 \
-      --user="$MYSQL_USERNAME" --database="$MYSQL_DATABASE" \
-      --batch --skip-column-names --execute="$1"
-}
 
 mysql_version="$(mysql_query 'SELECT VERSION();')"
 if [[ "$mysql_version" != 8.* ]]; then
