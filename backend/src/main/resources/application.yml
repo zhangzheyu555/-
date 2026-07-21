@@ -85,6 +85,11 @@ app:
     shops: ${QMAI_SHOPS:}
   auth:
     token-ttl-hours: 12
+  wechat-mini-program:
+    # 仅后端读取；请在部署密钥系统注入，绝不提交 AppSecret 或发送到小程序。
+    app-id: ${WECHAT_MINI_PROGRAM_APP_ID:}
+    app-secret: ${WECHAT_MINI_PROGRAM_APP_SECRET:}
+    base-url: ${WECHAT_MINI_PROGRAM_BASE_URL:https://api.weixin.qq.com}
   training:
     video-playback-ticket-ttl-seconds: ${TRAINING_VIDEO_PLAYBACK_TICKET_TTL_SECONDS:1800}
     # 开发和单实例默认使用本地短期票据。预发布/生产多实例必须显式开启，并且
