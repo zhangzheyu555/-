@@ -3,6 +3,7 @@ __MACOSX/
 *.log
 .env
 .env.*
+!.env.example
 application-local.yml
 backend/src/main/resources/application-local.yml
 backend/target/

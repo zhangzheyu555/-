@@ -156,6 +156,10 @@ function createRequestId(prefix: string) {
   return `${prefix}-${Date.now()}-${random}`
 }
 
+function openDetail(record: WarehouseRequisition) {
+  uni.navigateTo({ url: `/pkg-store/requisition-detail/index?id=${encodeURIComponent(record.id)}` })
+}
+
 function denyAndReturn() {
   uni.showToast({ title: '叫货与收货仅向店长开放', icon: 'none' })
   setTimeout(() => uni.reLaunch({ url: '/pages/home/index' }), 500)
@@ -245,6 +249,7 @@ function friendlyError(error: unknown, fallback: string) {
             {{ line.itemName }} × {{ formatNumber(line.requestedQuantity) }}
           </text>
         </view>
+        <button class="detail-button" @click="openDetail(record)">查看详情</button>
         <button
           v-if="record.status === 'SHIPPED' && canReceive"
           class="receive-button"
@@ -268,37 +273,38 @@ function friendlyError(error: unknown, fallback: string) {
 </template>
 
 <style scoped lang="scss">
-.page { min-height: 100vh; box-sizing: border-box; padding: 24rpx 24rpx calc(190rpx + env(safe-area-inset-bottom)); background: #f4f6f2; color: #172019; }
+.page { min-height: 100vh; box-sizing: border-box; padding: 24rpx 24rpx calc(190rpx + env(safe-area-inset-bottom)); background: #f2f6f5; color: #1c1d22; }
 .page-head, .section-head, .record-head, .safe-action-bar, .item-card { display: flex; align-items: center; justify-content: space-between; gap: 20rpx; }
 .page-head { margin-bottom: 24rpx; }
 .eyebrow, .title, .section-title, .item-name, .muted, .warning-text, .field-label, .line-text, .state-title { display: block; }
-.eyebrow { color: #657168; font-size: 24rpx; letter-spacing: 2rpx; }
-.title { margin-top: 6rpx; font-size: 44rpx; font-weight: 700; }
+.eyebrow { color: #71807d; font-size: 24rpx; letter-spacing: 0; }
+.title { margin-top: 6rpx; font-size: 38rpx; font-weight: 700; }
 .section-head { margin: 26rpx 2rpx 16rpx; }
 .section-title { font-size: 30rpx; font-weight: 700; }
-.item-card, .record-card, .note-card, .state-card { margin-bottom: 16rpx; padding: 24rpx; border: 1px solid #dce2db; border-radius: 22rpx; background: #fff; box-shadow: 0 8rpx 24rpx rgba(27,45,32,.045); }
+.item-card, .record-card, .note-card, .state-card { margin-bottom: 16rpx; padding: 24rpx; border: 1px solid #d9e6e3; border-radius: 16rpx; background: #fff; box-shadow: 0 8rpx 24rpx rgba(37,39,45,.045); }
 .item-copy { flex: 1; min-width: 0; }
 .item-name { margin-bottom: 8rpx; font-size: 30rpx; font-weight: 650; }
-.muted { color: #6b746d; font-size: 23rpx; line-height: 1.5; }
+.muted { color: #71807d; font-size: 23rpx; line-height: 1.5; }
 .warning-text { margin-top: 8rpx; color: #a56a14; font-size: 22rpx; }
 .stepper { display: flex; align-items: center; flex-shrink: 0; }
-.step-button { width: 88rpx; min-width: 88rpx; height: 88rpx; line-height: 88rpx; padding: 0; border-radius: 18rpx; background: #edf3ee; color: #1f6741; font-size: 34rpx; }
-.quantity-input { width: 112rpx; height: 88rpx; margin: 0 8rpx; border: 1px solid #cbd6cd; border-radius: 16rpx; background: #fff; text-align: center; font-size: 30rpx; }
+.step-button { width: 88rpx; min-width: 88rpx; height: 88rpx; line-height: 88rpx; padding: 0; border-radius: 16rpx; background: #e6f3f1; color: #27655f; font-size: 34rpx; }
+.quantity-input { width: 112rpx; height: 88rpx; margin: 0 8rpx; border: 1px solid #d9e6e3; border-radius: 16rpx; background: #fff; text-align: center; font-size: 30rpx; }
 .field-label { margin-bottom: 12rpx; font-weight: 650; }
 .note-input { width: 100%; min-height: 150rpx; box-sizing: border-box; padding: 18rpx; border-radius: 16rpx; background: #f5f7f4; font-size: 27rpx; }
 .records-head { margin-top: 38rpx; }
-.line-count { color: #1f6741; font-weight: 700; }
+.line-count { color: #27655f; font-weight: 700; }
 .line-summary { margin: 18rpx 0 4rpx; padding-top: 14rpx; border-top: 1px solid #edf0ed; }
 .line-text { padding: 6rpx 0; color: #4b574f; font-size: 24rpx; }
-.receive-button { min-height: 88rpx; margin-top: 18rpx; border-radius: 18rpx; background: #e8f2eb; color: #1f6741; font-size: 28rpx; }
+.receive-button { min-height: 88rpx; margin-top: 18rpx; border-radius: 16rpx; background: #e6f3f1; color: #27655f; font-size: 28rpx; }
+.detail-button { min-height: 80rpx; margin-top: 18rpx; border-radius: 16rpx; background: #f7faf9; color: #4e5966; font-size: 27rpx; }
 .message { margin-bottom: 18rpx; padding: 18rpx 20rpx; border-radius: 14rpx; font-size: 25rpx; }
 .message.error { background: #fff0ed; color: #963b30; }
 .message.success { background: #eaf5ed; color: #24663e; }
 .state-card { text-align: center; }
 .state-title { margin-bottom: 8rpx; font-weight: 650; }
-.ghost-button, .primary-button { min-height: 88rpx; line-height: 88rpx; border-radius: 18rpx; font-size: 28rpx; }
-.ghost-button { min-width: 136rpx; background: #fff; color: #264c36; border: 1px solid #cbd6cd; }
+.ghost-button, .primary-button { min-height: 88rpx; line-height: 88rpx; border-radius: 16rpx; font-size: 28rpx; }
+.ghost-button { min-width: 136rpx; background: #fff; color: #1f5752; border: 1px solid #d9e6e3; }
 .selection-copy { min-width: 180rpx; font-size: 25rpx; }
-.primary-button { flex: 1; margin: 0; background: #1f6741; color: #fff; border: 0; font-weight: 650; }
+.primary-button { flex: 1; margin: 0; background: #27655f; color: #fff; border: 0; font-weight: 650; }
 button::after { border: 0; }
 </style>

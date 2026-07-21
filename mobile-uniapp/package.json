@@ -8,16 +8,18 @@
   },
   "packageManager": "npm@10.8.2",
   "scripts": {
-    "dev:h5": "uni",
-    "dev:mp-weixin": "uni -p mp-weixin",
-    "dev:app": "uni -p app-plus",
-    "build:h5": "cross-env UNI_OUTPUT_DIR=dist/candidate/h5 uni build",
-    "build:mp-weixin": "cross-env UNI_OUTPUT_DIR=dist/build/mp-weixin uni build -p mp-weixin",
-    "build:mp-weixin:candidate": "cross-env UNI_OUTPUT_DIR=dist/candidate/mp-weixin uni build -p mp-weixin",
-    "build:app:android": "cross-env MOBILE_TARGET_OS=android UNI_OUTPUT_DIR=dist/candidate/android uni build -p app-plus",
-    "build:app:ios": "cross-env MOBILE_TARGET_OS=ios UNI_OUTPUT_DIR=dist/candidate/ios uni build -p app-plus",
+    "dev:h5": "uni --mode development",
+    "dev:mp-weixin": "uni -p mp-weixin --mode development",
+    "dev:app": "uni -p app-plus --mode development",
+    "build:h5": "cross-env UNI_OUTPUT_DIR=dist/candidate/h5 uni build --mode production",
+    "build:mp-weixin": "cross-env UNI_OUTPUT_DIR=dist/build/mp-weixin uni build -p mp-weixin --mode production",
+    "build:mp-weixin:candidate": "cross-env UNI_OUTPUT_DIR=dist/candidate/mp-weixin uni build -p mp-weixin --mode production",
+    "build:app:android": "cross-env MOBILE_TARGET_OS=android UNI_OUTPUT_DIR=dist/candidate/android uni build -p app-plus --mode production",
+    "build:app:ios": "cross-env MOBILE_TARGET_OS=ios UNI_OUTPUT_DIR=dist/candidate/ios uni build -p app-plus --mode production",
     "build:all": "npm run build:h5 && npm run build:mp-weixin && npm run build:app:android && npm run build:app:ios",
-    "type-check": "vue-tsc --noEmit"
+    "type-check": "vue-tsc --noEmit",
+    "check:permissions": "node scripts/check-permission-contract.mjs",
+    "verify": "npm run check:permissions && npm run type-check && npm run build:mp-weixin"
   },
   "dependencies": {
     "@dcloudio/uni-app": "3.0.0-4080420251103001",

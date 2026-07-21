@@ -200,27 +200,27 @@ function denyAndReturn() {
 </template>
 
 <style scoped lang="scss">
-.page { min-height: 100vh; box-sizing: border-box; padding: 24rpx; background: #f4f6f2; color: #172019; }
+.page { min-height: 100vh; box-sizing: border-box; padding: 24rpx; background: #f2f6f5; color: #1c1d22; }
 .page-head, .section-head, .card-head, .progress-row { display: flex; align-items: center; justify-content: space-between; gap: 18rpx; }
 .page-head { margin-bottom: 24rpx; }
 .eyebrow, .title, .player-title, .muted, .section-title, .card-title, .description { display: block; }
-.eyebrow { color: #657168; font-size: 24rpx; letter-spacing: 2rpx; }
-.title { margin-top: 6rpx; font-size: 44rpx; font-weight: 700; }
-.player-card, .video-card, .state-card { margin-bottom: 18rpx; padding: 24rpx; border: 1px solid #dce2db; border-radius: 22rpx; background: #fff; box-shadow: 0 8rpx 24rpx rgba(27,45,32,.045); }
+.eyebrow { color: #71807d; font-size: 24rpx; letter-spacing: 0; }
+.title { margin-top: 6rpx; font-size: 38rpx; font-weight: 700; }
+.player-card, .video-card, .state-card { margin-bottom: 18rpx; padding: 24rpx; border: 1px solid #d9e6e3; border-radius: 16rpx; background: #fff; box-shadow: 0 8rpx 24rpx rgba(37,39,45,.045); }
 .player-title, .section-title, .card-title { font-size: 30rpx; font-weight: 700; }
-.video { width: 100%; height: 390rpx; margin-top: 18rpx; border-radius: 18rpx; background: #101511; }
+.video { width: 100%; height: 390rpx; margin-top: 18rpx; border-radius: 16rpx; background: #1c1d22; }
 .progress-row { padding: 16rpx 2rpx 6rpx; color: #566259; font-size: 24rpx; }
 .section-head { margin: 32rpx 2rpx 16rpx; }
-.muted { margin-top: 6rpx; color: #6b746d; font-size: 23rpx; line-height: 1.5; }
+.muted { margin-top: 6rpx; color: #71807d; font-size: 23rpx; line-height: 1.5; }
 .description { margin-top: 12rpx; color: #4d5850; font-size: 24rpx; line-height: 1.55; }
 .progress-chip { flex-shrink: 0; padding: 7rpx 12rpx; border-radius: 12rpx; background: #fff0d8; color: #8a5b18; font-size: 22rpx; }
 .progress-chip.done { background: #e7f3ea; color: #20623c; }
-.play-button, .save-button, .ghost-button { min-height: 88rpx; line-height: 88rpx; border-radius: 18rpx; font-size: 27rpx; }
-.play-button, .save-button { margin-top: 18rpx; background: #1f6741; color: #fff; }
-.ghost-button { min-width: 136rpx; background: #fff; color: #264c36; border: 1px solid #cbd6cd; }
+.play-button, .save-button, .ghost-button { min-height: 88rpx; line-height: 88rpx; border-radius: 16rpx; font-size: 27rpx; }
+.play-button, .save-button { margin-top: 18rpx; background: #27655f; color: #fff; }
+.ghost-button { min-width: 136rpx; background: #fff; color: #27655f; border: 1px solid #d9e6e3; }
 .message { margin-bottom: 18rpx; padding: 18rpx 20rpx; border-radius: 14rpx; font-size: 25rpx; }
 .message.error { background: #fff0ed; color: #963b30; }
 .message.success { background: #eaf5ed; color: #24663e; }
-.state-card { text-align: center; color: #657168; }
+.state-card { text-align: center; color: #71807d; }
 button::after { border: 0; }
 </style>

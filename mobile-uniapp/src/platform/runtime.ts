@@ -19,7 +19,12 @@ export function resolveApiUrl(path: string): string {
   if (/^https?:\/\//i.test(path)) return path
   const normalizedPath = path.startsWith('/') ? path : `/${path}`
   const baseUrl = apiBaseUrl()
-  if (baseUrl) return `${baseUrl}${normalizedPath}`
+  if (baseUrl) {
+    if (baseUrl.endsWith('/api') && normalizedPath.startsWith('/api/')) {
+      return `${baseUrl}${normalizedPath.slice('/api'.length)}`
+    }
+    return `${baseUrl}${normalizedPath}`
+  }
 
   // #ifdef H5
   return normalizedPath

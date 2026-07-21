@@ -1,62 +1,57 @@
 {
-  "name": "AI Profit OS",
-  "appid": "",
-  "description": "多门店经营任务移动工作台",
-  "versionName": "0.1.0",
-  "versionCode": "100",
-  "transformPx": false,
-  "app-plus": {
-    "usingComponents": true,
-    "nvueStyleCompiler": "uni-app",
-    "compilerVersion": 3,
-    "splashscreen": {
-      "alwaysShowBeforeRender": true,
-      "waiting": true,
-      "autoclose": true,
-      "delay": 0
-    },
-    "modules": {
-      "Camera": {},
-      "VideoPlayer": {}
-    },
-    "distribute": {
-      "android": {
-        "permissions": [
-          "<uses-permission android:name=\"android.permission.INTERNET\"/>",
-          "<uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\"/>",
-          "<uses-permission android:name=\"android.permission.CAMERA\"/>",
-          "<uses-feature android:name=\"android.hardware.camera\" android:required=\"false\"/>"
-        ]
-      },
-      "ios": {
-        "privacyDescription": {
-          "NSCameraUsageDescription": "用于巡检拍照并上传整改证据",
-          "NSPhotoLibraryUsageDescription": "用于从相册选择巡检和整改照片"
+    "name" : "AI Profit OS",
+    "appid" : "__UNI__82794DE",
+    "description" : "多门店经营任务移动工作台",
+    "versionName" : "0.1.0",
+    "versionCode" : "100",
+    "transformPx" : false,
+    "app-plus" : {
+        "usingComponents" : true,
+        "nvueStyleCompiler" : "uni-app",
+        "compilerVersion" : 3,
+        "splashscreen" : {
+            "alwaysShowBeforeRender" : true,
+            "waiting" : true,
+            "autoclose" : true,
+            "delay" : 0
+        },
+        "modules" : {
+            "Camera" : {},
+            "VideoPlayer" : {}
+        },
+        "distribute" : {
+            "android" : {
+                "permissions" : [
+                    "<uses-permission android:name=\"android.permission.INTERNET\"/>",
+                    "<uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\"/>",
+                    "<uses-permission android:name=\"android.permission.CAMERA\"/>",
+                    "<uses-feature android:name=\"android.hardware.camera\" android:required=\"false\"/>"
+                ]
+            },
+            "ios" : {
+                "privacyDescription" : {
+                    "NSCameraUsageDescription" : "用于巡检拍照并上传整改证据",
+                    "NSPhotoLibraryUsageDescription" : "用于从相册选择巡检和整改照片"
+                }
+            },
+            "sdkConfigs" : {}
         }
-      },
-      "sdkConfigs": {}
-    }
-  },
-  "h5": {
-    "title": "AI Profit OS 移动工作台"
-  },
-  "mp-weixin": {
-    "appid": "",
-    "usingComponents": true,
-    "permission": {
-      "scope.camera": {
-        "desc": "用于巡检拍照并上传整改证据"
-      }
     },
-    "setting": {
-      "urlCheck": true,
-      "es6": true,
-      "postcss": true,
-      "minified": true
-    }
-  },
-  "uniStatistics": {
-    "enable": false
-  },
-  "vueVersion": "3"
+    "h5" : {
+        "title" : "AI Profit OS 移动工作台"
+    },
+    "mp-weixin" : {
+        "appid" : "wx9bf82ef0efb915de",
+        "usingComponents" : true,
+        "setting" : {
+            "urlCheck" : false,
+            "es6" : true,
+            "postcss" : true,
+            "minified" : true
+        }
+    },
+    "uniStatistics" : {
+        "enable" : false
+    },
+    "vueVersion" : "3"
 }

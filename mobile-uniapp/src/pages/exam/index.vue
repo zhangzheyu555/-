@@ -5,15 +5,18 @@ import {
   getMobileExamOverview,
   getMobileExamPaper,
   getMobileExamResults,
+  getMobileWrongQuestions,
+  markMobileWrongQuestionMastered,
   submitMobileExam,
 } from '../../api/business'
 import SafeActionBar from '../../components/SafeActionBar.vue'
 import { canUseMobileCapability, useSessionStore } from '../../stores'
-import type { ExamAssignment, ExamPaper, ExamResult } from '../../types/business'
+import type { ExamAssignment, ExamPaper, ExamResult, WrongQuestion } from '../../types/business'
 
 const session = useSessionStore()
 const assignments = ref<ExamAssignment[]>([])
 const results = ref<ExamResult[]>([])
+const wrongQuestions = ref<WrongQuestion[]>([])
 const activeAssignment = ref<ExamAssignment | null>(null)
 const paper = ref<ExamPaper | null>(null)
 const answers = ref<Record<number, string>>({})
@@ -22,6 +25,7 @@ const loadingPaper = ref(false)
 const submitting = ref(false)
 const errorMessage = ref('')
 const actionMessage = ref('')
+const markingWrongId = ref<number | null>(null)
 
 const canLearn = computed(() => canUseMobileCapability(session.user, 'exam'))
 const pendingAssignments = computed(() => assignments.value.filter((assignment) => assignment.status !== 'COMPLETED'))
@@ -42,13 +46,30 @@ async function refresh() {
   loading.value = true
   errorMessage.value = ''
   try {
-    const [overview, history] = await Promise.all([getMobileExamOverview(), getMobileExamResults()])
+    const [overview, history, wrongs] = await Promise.all([getMobileExamOverview(), getMobileExamResults(), getMobileWrongQuestions()])
     assignments.value = overview.assignments || []
     results.value = history || []
+    wrongQuestions.value = wrongs || []
   } catch (error) {
     errorMessage.value = friendlyError(error, '考试数据暂时无法加载，请稍后重试。')
   } finally {
     loading.value = false
+  }
+}
+
+async function toggleMastered(item: WrongQuestion) {
+  if (markingWrongId.value !== null) return
+  markingWrongId.value = item.id
+  errorMessage.value = ''
+  actionMessage.value = ''
+  try {
+    const result = await markMobileWrongQuestionMastered(item.id, !item.mastered)
+    item.mastered = result.mastered
+    actionMessage.value = result.mastered ? '已标记掌握，复习记录已更新。' : '已重新加入待复习错题。'
+  } catch (error) {
+    errorMessage.value = friendlyError(error, '错题状态更新失败，请稍后重试。')
+  } finally {
+    markingWrongId.value = null
   }
 }
 
@@ -174,7 +195,7 @@ function denyAndReturn() {
           <text class="question-text">{{ question.questionText }}</text>
           <radio-group v-if="question.questionType === 'SINGLE_CHOICE'" class="options" @change="setChoice(question.id, $event)">
             <label v-for="option in question.options" :key="option" class="option-row">
-              <radio :value="option" :checked="answers[question.id] === option" color="#1f6741" />
+              <radio :value="option" :checked="answers[question.id] === option" color="#27655f" />
               <text>{{ option }}</text>
             </label>
           </radio-group>
@@ -225,6 +246,15 @@ function denyAndReturn() {
           <view><text class="card-title">{{ result.examTitle || result.paperName }}</text><text class="muted">{{ result.submittedAt }} · {{ result.reviewStatus }}</text></view>
           <view class="result-score" :class="{ passed: result.passed }"><text>{{ result.score }}</text><text class="score-label">{{ result.passed ? '通过' : '未通过' }}</text></view>
         </view>
+
+        <view class="section-head history-head"><text class="section-title">错题复习</text><text class="muted">待掌握 {{ wrongQuestions.filter((item) => !item.mastered).length }} 题</text></view>
+        <view v-if="!wrongQuestions.length && !loading" class="state-card">暂无错题记录</view>
+        <view v-for="item in wrongQuestions.slice(0, 50)" :key="item.id" class="wrong-card" :class="{ mastered: item.mastered }">
+          <view class="card-head"><text class="card-title">{{ item.paperName }}</text><text class="status-chip">{{ item.mastered ? '已掌握' : '待复习' }}</text></view>
+          <text class="question-text">{{ item.questionText }}</text>
+          <view class="answer-review"><text>你的答案：{{ item.userAnswer || '未作答' }}</text><text>标准答案：{{ item.standardAnswer }}</text><text v-if="item.answerAnalysis">解析：{{ item.answerAnalysis }}</text></view>
+          <button class="master-button" :loading="markingWrongId === item.id" :disabled="markingWrongId !== null" @click="toggleMastered(item)">{{ item.mastered ? '重新加入复习' : '标记为已掌握' }}</button>
+        </view>
       </template>
     </template>
 
@@ -241,38 +271,42 @@ function denyAndReturn() {
 </template>
 
 <style scoped lang="scss">
-.page { min-height: 100vh; box-sizing: border-box; padding: 24rpx; background: #f4f6f2; color: #172019; }
+.page { min-height: 100vh; box-sizing: border-box; padding: 24rpx; background: #f2f6f5; color: #1c1d22; }
 .page.with-action { padding-bottom: calc(160rpx + env(safe-area-inset-bottom)); }
 .page-head, .section-head, .paper-head, .question-head, .card-head, .result-card { display: flex; align-items: center; justify-content: space-between; gap: 18rpx; }
 .page-head { margin-bottom: 24rpx; }
 .eyebrow, .title, .section-title, .paper-title, .muted, .question-text, .card-title, .due, .score-label { display: block; }
-.eyebrow { color: #657168; font-size: 24rpx; letter-spacing: 2rpx; }
-.title { margin-top: 6rpx; font-size: 44rpx; font-weight: 700; }
+.eyebrow { color: #71807d; font-size: 24rpx; letter-spacing: 0; }
+.title { margin-top: 6rpx; font-size: 38rpx; font-weight: 700; }
 .section-head { margin: 28rpx 2rpx 14rpx; }
 .section-title, .paper-title, .card-title { font-size: 30rpx; font-weight: 700; }
-.paper-head, .question-card, .assignment-card, .result-card, .state-card { margin-bottom: 18rpx; padding: 24rpx; border: 1px solid #dce2db; border-radius: 22rpx; background: #fff; box-shadow: 0 8rpx 24rpx rgba(27,45,32,.045); }
-.question-number { display: flex; width: 54rpx; height: 54rpx; align-items: center; justify-content: center; border-radius: 50%; background: #1f6741; color: #fff; font-weight: 700; }
+.paper-head, .question-card, .assignment-card, .result-card, .wrong-card, .state-card { margin-bottom: 18rpx; padding: 24rpx; border: 1px solid #d9e6e3; border-radius: 16rpx; background: #fff; box-shadow: 0 8rpx 24rpx rgba(37,39,45,.045); }
+.question-number { display: flex; width: 54rpx; height: 54rpx; align-items: center; justify-content: center; border-radius: 50%; background: #27655f; color: #fff; font-weight: 700; }
 .question-score { color: #637067; font-size: 24rpx; }
 .question-text { margin: 20rpx 0; font-size: 29rpx; font-weight: 650; line-height: 1.55; }
 .options { display: flex; flex-direction: column; gap: 12rpx; }
-.option-row { display: flex; min-height: 88rpx; box-sizing: border-box; align-items: center; gap: 16rpx; padding: 12rpx 18rpx; border: 1px solid #dce2db; border-radius: 16rpx; background: #f8faf8; font-size: 26rpx; }
-.answer-input, .answer-area { width: 100%; box-sizing: border-box; border: 1px solid #cbd6cd; border-radius: 16rpx; background: #f8faf8; font-size: 27rpx; }
+.option-row { display: flex; min-height: 88rpx; box-sizing: border-box; align-items: center; gap: 16rpx; padding: 12rpx 18rpx; border: 1px solid #d9e6e3; border-radius: 16rpx; background: #f8faf8; font-size: 26rpx; }
+.answer-input, .answer-area { width: 100%; box-sizing: border-box; border: 1px solid #d9e6e3; border-radius: 16rpx; background: #f8faf8; font-size: 27rpx; }
 .answer-input { min-height: 88rpx; padding: 0 18rpx; }
 .answer-area { min-height: 180rpx; padding: 18rpx; }
 .status-chip { flex-shrink: 0; padding: 7rpx 12rpx; border-radius: 12rpx; background: #fff0d8; color: #8a5b18; font-size: 22rpx; }
-.muted { margin-top: 7rpx; color: #6b746d; font-size: 23rpx; line-height: 1.5; }
+.muted { margin-top: 7rpx; color: #71807d; font-size: 23rpx; line-height: 1.5; }
 .due { margin-top: 14rpx; color: #8a5b18; font-size: 24rpx; }
-.start-button, .close-button, .ghost-button { min-height: 88rpx; line-height: 88rpx; border-radius: 18rpx; font-size: 27rpx; }
-.start-button { margin-top: 18rpx; background: #1f6741; color: #fff; }
-.close-button { flex-shrink: 0; padding: 0 20rpx; background: #edf3ee; color: #1f6741; }
-.ghost-button { min-width: 136rpx; background: #fff; color: #264c36; border: 1px solid #cbd6cd; }
+.start-button, .close-button, .ghost-button { min-height: 88rpx; line-height: 88rpx; border-radius: 16rpx; font-size: 27rpx; }
+.start-button { margin-top: 18rpx; background: #27655f; color: #fff; }
+.close-button { flex-shrink: 0; padding: 0 20rpx; background: #e6f3f1; color: #27655f; }
+.ghost-button { min-width: 136rpx; background: #fff; color: #27655f; border: 1px solid #d9e6e3; }
 .history-head { margin-top: 40rpx; }
 .result-score { min-width: 100rpx; color: #9a4236; text-align: center; font-size: 38rpx; font-weight: 750; }
-.result-score.passed { color: #1f6741; }
+.result-score.passed { color: #27655f; }
+.wrong-card.mastered { opacity: .72; }
+.answer-review { padding: 18rpx; border-radius: 12rpx; background: #f7faf9; color: #4f5661; font-size: 24rpx; line-height: 1.65; }
+.answer-review text { display: block; }
+.master-button { min-height: 80rpx; margin-top: 16rpx; line-height: 80rpx; border-radius: 14rpx; background: #e6f3f1; color: #27655f; font-size: 25rpx; }
 .score-label { font-size: 21rpx; }
 .message { margin-bottom: 18rpx; padding: 18rpx 20rpx; border-radius: 14rpx; font-size: 25rpx; }
 .message.error { background: #fff0ed; color: #963b30; }
 .message.success { background: #eaf5ed; color: #24663e; }
-.state-card { text-align: center; color: #657168; }
+.state-card { text-align: center; color: #71807d; }
 button::after { border: 0; }
 </style>

@@ -38,7 +38,15 @@ async function logout(): Promise<void> {
 
 <template>
   <view class="mobile-page profile-page mobile-stack">
-    <AppCard eyebrow="登录身份" :title="session.user?.displayName || '我的账号'">
+    <view class="profile-hero">
+      <view class="profile-avatar">{{ session.user?.displayName?.charAt(0) || '?' }}</view>
+      <view class="profile-copy">
+        <text class="profile-name">{{ session.user?.displayName || '我的账号' }}</text>
+        <view class="profile-tags"><StatusChip :label="session.user?.roleLabel || '未登录'" tone="info" /><text>{{ session.scopeLabel }}</text></view>
+      </view>
+    </view>
+
+    <AppCard title="账号信息">
       <view class="identity-list">
         <view class="identity-row"><text>角色</text><text class="identity-row__value">{{ session.user?.roleLabel || '—' }}</text></view>
         <view class="identity-row"><text>组织</text><text class="identity-row__value">{{ session.user?.tenantName || '—' }}</text></view>
@@ -71,6 +79,12 @@ async function logout(): Promise<void> {
 
 <style scoped lang="scss">
 .identity-list, .setting-list { display: flex; flex-direction: column; }
+.profile-hero { display: flex; min-height: 176rpx; padding: 30rpx; align-items: center; gap: 24rpx; color: #fff; background: #27655f; border-radius: 14rpx; box-shadow: 0 12rpx 30rpx rgba(30,77,71,.12); }
+.profile-avatar { display: flex; width: 104rpx; height: 104rpx; flex: 0 0 104rpx; align-items: center; justify-content: center; background: rgba(255,255,255,.2); border: 2rpx solid rgba(255,255,255,.3); border-radius: 50%; font-size: 42rpx; font-weight: 800; }
+.profile-copy { display: flex; min-width: 0; flex-direction: column; gap: 12rpx; }
+.profile-name { overflow: hidden; color: #fff; font-size: 36rpx; font-weight: 850; text-overflow: ellipsis; white-space: nowrap; }
+.profile-tags { display: flex; align-items: center; gap: 14rpx; }
+.profile-tags > text { color: rgba(255,255,255,.8); font-size: 22rpx; }
 .identity-row { display: flex; min-height: 76rpx; padding: 14rpx 0; align-items: center; justify-content: space-between; gap: 24rpx; border-bottom: 1rpx solid $mobile-line; }
 .identity-row:last-child { border-bottom: 0; }
 .identity-row > text { color: $mobile-muted; font-size: 25rpx; }
@@ -82,8 +96,8 @@ async function logout(): Promise<void> {
 .setting-row__title { color: $mobile-ink; font-size: 28rpx; font-weight: 700; }
 .setting-row__description { color: $mobile-muted; font-size: 23rpx; }
 .setting-row > text { color: $mobile-muted; font-size: 34rpx; }
-.setting-result { display: block; padding: 16rpx 20rpx; color: $mobile-green; background: $mobile-green-soft; border-radius: 14rpx; font-size: 23rpx; line-height: 1.55; }
+.setting-result { display: block; padding: 16rpx 20rpx; color: $mobile-orange-dark; background: $mobile-orange-soft; border-radius: 14rpx; font-size: 23rpx; line-height: 1.55; }
 .session-note { display: block; color: $mobile-muted; font-size: 24rpx; line-height: 1.65; }
-.logout-button { min-height: 88rpx; margin: 28rpx 0 0; color: #9d3c35; background: #fff0ed; border-radius: 20rpx; font-size: 28rpx; font-weight: 700; line-height: 88rpx; }
+.logout-button { min-height: 88rpx; margin: 28rpx 0 0; color: #9d3c35; background: #fff0ed; border-radius: 16rpx; font-size: 28rpx; font-weight: 700; line-height: 88rpx; }
 .logout-button::after { border: 0; }
 </style>

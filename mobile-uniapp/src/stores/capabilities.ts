@@ -1,4 +1,5 @@
 import type { SessionUser } from '@/types/auth'
+import { hasAllowedRole, hasAnyPermission, hasScopeMode } from '@/permissions'
 
 export type MobileCapabilityKey =
   | 'inventory'
@@ -10,6 +11,13 @@ export type MobileCapabilityKey =
   | 'exam'
   | 'assistant'
   | 'summary'
+  | 'expenses'
+  | 'salary'
+  | 'dailyLoss'
+  | 'operations'
+  | 'operationsMonitor'
+  | 'audit'
+  | 'businessAssistant'
 
 interface MobileCapabilityRule {
   roles: string[]
@@ -71,6 +79,40 @@ const CAPABILITY_RULES: Record<MobileCapabilityKey, MobileCapabilityRule> = {
     scopeDomain: 'FINANCE',
     allowedScopeModes: ['ALL', 'STORE_LIST', 'OWN_STORE'],
   },
+  expenses: {
+    roles: ['STORE_MANAGER', 'FINANCE'],
+    anyPermission: ['expense.read', 'expense.create', 'expense.review'],
+    scopeDomain: 'FINANCE',
+    allowedScopeModes: ['ALL', 'STORE_LIST', 'OWN_STORE'],
+  },
+  salary: {
+    roles: ['STORE_MANAGER', 'FINANCE'],
+    anyPermission: ['salary.read', 'salary.review', 'salary.pay'],
+    scopeDomain: 'SALARY',
+    allowedScopeModes: ['ALL', 'STORE_LIST', 'OWN_STORE', 'SELF'],
+  },
+  dailyLoss: {
+    roles: ['STORE_MANAGER', 'WAREHOUSE', 'OPERATIONS'],
+    anyPermission: ['daily_loss.read', 'daily_loss.create', 'daily_loss.review'],
+    scopeDomain: 'WAREHOUSE',
+    allowedScopeModes: ['ALL', 'WAREHOUSE_LIST', 'STORE_LIST', 'OWN_STORE'],
+  },
+  operations: {
+    roles: ['OPERATIONS'],
+    anyPermission: ['operations.dashboard.read', 'inventory.read', 'inventory.manage', 'inventory.review', 'exam.report', 'platform.read', 'employee_assistant.handoff_manage'],
+  },
+  operationsMonitor: {
+    roles: ['OPERATIONS'],
+    anyPermission: ['exam.report', 'platform.read', 'employee_assistant.handoff_manage'],
+  },
+  audit: {
+    roles: ['BOSS'],
+    anyPermission: ['system.audit.read'],
+  },
+  businessAssistant: {
+    roles: ['BOSS', 'FINANCE', 'STORE_MANAGER', 'OPERATIONS'],
+    anyPermission: ['assistant.use'],
+  },
 }
 
 /**
@@ -79,18 +121,7 @@ const CAPABILITY_RULES: Record<MobileCapabilityKey, MobileCapabilityRule> = {
 export function canUseMobileCapability(user: SessionUser | null, key: MobileCapabilityKey): boolean {
   if (!user) return false
   const rule = CAPABILITY_RULES[key]
-  const role = canonicalRole(user.role)
-  if (!rule.roles.some((allowedRole) => canonicalRole(allowedRole) === role)) return false
-  const permissions = new Set(user.permissions.map((permission) => permission.trim().toLowerCase()))
-  if (!rule.anyPermission.some((permission) => permissions.has(permission))) return false
-  if (!rule.scopeDomain) return true
-  const mode = String(user.dataScopes[rule.scopeDomain]?.mode || 'NONE').trim().toUpperCase()
-  return Boolean(rule.allowedScopeModes?.includes(mode))
-}
-
-function canonicalRole(value: string): string {
-  const role = String(value || '').trim().toUpperCase()
-  if (role === 'ADMIN' || role === 'OWNER') return 'BOSS'
-  if (role === 'SUPERVISOR' || role === 'OPS') return 'OPERATIONS'
-  return role
+  return hasAllowedRole(user, rule.roles)
+    && hasAnyPermission(user, rule.anyPermission)
+    && hasScopeMode(user, rule.scopeDomain, rule.allowedScopeModes)
 }

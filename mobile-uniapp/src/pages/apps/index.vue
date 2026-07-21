@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onPullDownRefresh, onShow } from '@dcloudio/uni-app'
+import PageHeader from '@/components/PageHeader.vue'
 import { useMenuStore, useSessionStore } from '@/stores'
 import type { MobileMenuItem } from '@/types/navigation'
 
@@ -26,20 +27,37 @@ function open(item: MobileMenuItem) {
 </script>
 
 <template>
-  <view class="page">
-    <view class="head"><text class="eyebrow">按权限开放</text><text class="title">应用</text></view>
+  <view class="mobile-page apps-page">
+    <PageHeader eyebrow="按账号权限开放" title="全部应用" description="只显示当前角色和数据范围内可使用的移动功能" />
     <view v-if="!menu.groups.length" class="state">当前账号暂无可用移动应用。</view>
     <view v-for="group in menu.groups" :key="group.key" class="group">
       <text class="group-title">{{ group.title }}</text>
-      <button v-for="item in group.items" :key="item.key" class="app" @click="open(item)">
-        <view><text class="app-title">{{ item.label }}</text><text class="app-desc">{{ item.description }}</text></view>
-        <text class="arrow">›</text>
-      </button>
+      <view class="app-grid">
+        <button v-for="item in group.items" :key="item.key" class="app mobile-feedback" @click="open(item)">
+          <view class="app-icon" :class="`app-icon--${item.tone}`">{{ item.icon }}</view>
+          <text class="app-title">{{ item.label }}</text>
+          <text class="app-desc">{{ item.description }}</text>
+          <text class="arrow">›</text>
+        </button>
+      </view>
     </view>
   </view>
 </template>
 
 <style scoped lang="scss">
-.page { min-height: 100vh; box-sizing: border-box; padding: 28rpx 24rpx calc(48rpx + env(safe-area-inset-bottom)); background: #f4f6f2; color: #172019; }
-.head, .group { display: flex; flex-direction: column; }.head { margin-bottom: 32rpx; }.eyebrow { color: #657168; font-size: 23rpx; letter-spacing: 2rpx; }.title { margin-top: 6rpx; font-size: 46rpx; font-weight: 750; }.group { gap: 14rpx; margin-bottom: 32rpx; }.group-title { font-size: 30rpx; font-weight: 700; }.app { display: flex; min-height: 96rpx; padding: 22rpx 24rpx; align-items: center; justify-content: space-between; text-align: left; background: #fff; border: 1rpx solid #dce2db; border-radius: 20rpx; }.app::after { border: 0; }.app-title, .app-desc { display: block; }.app-title { font-size: 28rpx; font-weight: 700; }.app-desc { margin-top: 6rpx; color: #68756d; font-size: 23rpx; }.arrow { color: #1f6741; font-size: 42rpx; }.state { padding: 48rpx 24rpx; color: #657168; text-align: center; background: #fff; border-radius: 22rpx; }
+.apps-page { display: flex; flex-direction: column; gap: 28rpx; }
+.group { display: flex; flex-direction: column; gap: 16rpx; }
+.group-title { font-size: 29rpx; font-weight: 800; }
+.app-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16rpx; }
+.app { position: relative; display: flex; min-height: 222rpx; margin: 0; padding: 22rpx; flex-direction: column; align-items: flex-start; text-align: left; background: #fff; border: 1rpx solid $mobile-line; border-radius: 16rpx; box-shadow: 0 8rpx 22rpx rgba(37,39,45,.04); }
+.app::after { border: 0; }
+.app-icon { display: flex; width: 58rpx; height: 58rpx; margin-bottom: 16rpx; align-items: center; justify-content: center; color: $mobile-green; background: $mobile-green-soft; border-radius: 14rpx; font-size: 29rpx; font-weight: 800; }
+.app-icon--orange { color: $mobile-orange-dark; background: $mobile-orange-soft; }
+.app-icon--blue { color: $mobile-blue; background: $mobile-blue-soft; }
+.app-icon--slate { color: #59606b; background: #eef0f3; }
+.app-title, .app-desc { display: block; }
+.app-title { color: $mobile-ink; font-size: 28rpx; font-weight: 800; }
+.app-desc { margin-top: 7rpx; padding-right: 14rpx; color: $mobile-muted; font-size: 22rpx; line-height: 1.5; }
+.arrow { position: absolute; right: 20rpx; bottom: 16rpx; color: $mobile-orange; font-size: 38rpx; }
+.state { padding: 48rpx 24rpx; color: $mobile-muted; text-align: center; background: #fff; border-radius: 16rpx; }
 </style>

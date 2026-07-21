@@ -1,22 +1,26 @@
-// AI Profit OS mobile tokens. Calm operational surfaces with one visible status rail.
-$mobile-ink: #173028;
-$mobile-muted: #63736d;
-$mobile-canvas: #f2f6f4;
-$mobile-surface-strong: #e8efeb;
-$mobile-line: #d6e1db;
-$mobile-green: #176b4b;
-$mobile-green-soft: #e1f2e9;
-$mobile-blue: #2f5fa7;
-$mobile-blue-soft: #e4ecfa;
-$mobile-orange: #c65e2d;
-$mobile-orange-soft: #fae9df;
+// Mobile visual tokens aligned with the back-office's restrained teal system.
+$mobile-ink: #1e2b2a;
+$mobile-muted: #71807d;
+$mobile-canvas: #f2f6f5;
+$mobile-surface-strong: #f7faf9;
+$mobile-line: #d9e6e3;
+$mobile-green: #16805e;
+$mobile-green-soft: #e6f5ef;
+$mobile-blue: #347e91;
+$mobile-blue-soft: #e7f3f5;
+$mobile-orange: #27655f;
+$mobile-orange-dark: #1f5752;
+$mobile-orange-soft: #e6f3f1;
+$mobile-red: #d94f3d;
+$mobile-red-soft: #fff0ed;
+$mobile-surface: #ffffff;
 $mobile-font-display: 'HarmonyOS Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
 $mobile-font-body: 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei', sans-serif;
 
-$uni-color-primary: $mobile-green;
+$uni-color-primary: $mobile-orange;
 $uni-color-success: $mobile-green;
 $uni-color-warning: $mobile-orange;
-$uni-color-error: #b33b36;
+$uni-color-error: $mobile-red;
 $uni-text-color: $mobile-ink;
 $uni-text-color-grey: $mobile-muted;
 $uni-bg-color: $mobile-canvas;

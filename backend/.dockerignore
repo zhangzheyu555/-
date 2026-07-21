@@ -1,3 +1,9 @@
-.git
-.idea
+# 同时支持服务器产物镜像和开发源码构建镜像。
+# target 下只放行服务器镜像需要的 JAR；开发镜像从 src/ 构建。
+.mvn/
+.idea/
+.vscode/
+*.iml
 *.log
+target/*
+!target/store-profit-backend-*.jar

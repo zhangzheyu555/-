@@ -68,6 +68,12 @@ const expandedRecordId = ref('')
 const errorMessage = ref('')
 const actionMessage = ref('')
 const draftRecordId = ref('')
+const recordKeyword = ref('')
+const filterStoreId = ref('')
+const filterDateFrom = ref('')
+const filterDateTo = ref('')
+const filterResultIndex = ref(0)
+const resultOptions = [{ label: '全部结果', value: '' }, { label: '巡检通过', value: 'true' }, { label: '需要整改', value: 'false' }]
 
 const hasCapability = computed(() => canUseMobileCapability(session.user, 'inspection'))
 const canRead = computed(() => hasCapability.value && session.hasPermission(MOBILE_PERMISSIONS.inspectionRead))
@@ -79,6 +85,13 @@ const enabledClauses = computed(() => (standard.value?.items || []).filter((item
 const storeNames = computed(() => stores.value.map((store) => store.name))
 const selectedStoreName = computed(() => stores.value.find((store) => store.id === selectedStoreId.value)?.name || selectedStoreId.value)
 const draftScore = computed(() => draftItems.value.reduce((sum, item) => sum + item.actualScore, 0))
+const filterStores = computed(() => [{ id: '', name: '全部授权门店' }, ...stores.value])
+const filterStoreIndex = computed(() => Math.max(0, filterStores.value.findIndex((store) => store.id === filterStoreId.value)))
+const filteredRecords = computed(() => {
+  const query = recordKeyword.value.trim().toLowerCase()
+  if (!query) return records.value
+  return records.value.filter((record) => [record.id, record.storeName, record.storeId, record.inspector, record.note, ...recordIssues(record).map((item) => `${item.title || ''} ${item.deductionReason || ''}`)].some((value) => String(value || '').toLowerCase().includes(query)))
+})
 const saveBlocked = computed(() => {
   if (!canManage.value) return '当前账号没有保存巡检的权限。'
   if (!canUpload.value) return '当前账号没有上传巡检附件的权限。'
@@ -105,7 +118,7 @@ async function refresh() {
   try {
     const [standardResult, recordResult, todoResult, storeResult] = await Promise.all([
       getMobileInspectionStandard(),
-      canRead.value ? getMobileInspectionRecords() : Promise.resolve([]),
+      canRead.value ? getMobileInspectionRecords({ dateFrom: filterDateFrom.value || undefined, dateTo: filterDateTo.value || undefined, storeId: filterStoreId.value || undefined, passed: resultOptions[filterResultIndex.value]?.value === '' ? undefined : resultOptions[filterResultIndex.value]?.value === 'true' }) : Promise.resolve([]),
       canReadTodos.value ? getSupervisorInspectionTodos() : Promise.resolve(null),
       canReadStores.value ? getMobileStores() : Promise.resolve([]),
     ])
@@ -161,6 +174,11 @@ function selectStore(event: { detail?: { value?: number | string } }) {
   const index = Number(event.detail?.value || 0)
   selectedStoreId.value = stores.value[index]?.id || ''
 }
+
+function selectFilterStore(event:{detail?:{value?:number|string}}){filterStoreId.value=filterStores.value[Number(event.detail?.value||0)]?.id||''}
+function selectFilterResult(event:{detail?:{value?:number|string}}){filterResultIndex.value=Number(event.detail?.value||0)}
+async function applyRecordFilters(){if(filterDateFrom.value&&filterDateTo.value&&filterDateFrom.value>filterDateTo.value){errorMessage.value='开始日期不能晚于结束日期。';return}await refresh()}
+async function resetRecordFilters(){recordKeyword.value='';filterStoreId.value='';filterDateFrom.value='';filterDateTo.value='';filterResultIndex.value=0;await refresh()}
 
 async function addPhotos() {
   if (!canUpload.value || uploading.value) return
@@ -390,6 +408,8 @@ function toggleRecord(recordId: string) {
   expandedRecordId.value = expandedRecordId.value === recordId ? '' : recordId
 }
 
+function openRecordDetail(recordId:string){uni.navigateTo({url:`/pkg-inspection/detail/index?id=${encodeURIComponent(recordId)}`})}
+
 function recordIssues(record: InspectionRecord) {
   return (record.itemResults || []).filter((item) => item.issueFound || item.rectificationStatus === '待整改')
 }
@@ -494,9 +514,10 @@ function denyAndReturn() {
         <text class="hint">页面分数仅用于填写；服务端会按正式标准、照片关联和人工决定重新计算。</text>
       </view>
 
-      <view class="section-head records-head"><text class="section-title">巡检与整改</text><text class="muted">{{ records.length }} 条</text></view>
-      <view v-if="!records.length && !loading" class="state-card">暂无巡检记录</view>
-      <view v-for="record in records.slice(0, 30)" :key="record.id" class="record-card" @click="toggleRecord(record.id)">
+      <view class="section-head records-head"><text class="section-title">巡检与整改</text><text class="muted">{{ filteredRecords.length }} 条</text></view>
+      <view class="filter-card"><input v-model="recordKeyword" class="filter-input" placeholder="搜索门店、巡检人、问题或编号"><view class="filter-grid"><picker :range="filterStores" range-key="name" :value="filterStoreIndex" @change="selectFilterStore"><view class="picker-field compact">{{filterStores[filterStoreIndex]?.name}}</view></picker><picker :range="resultOptions" range-key="label" :value="filterResultIndex" @change="selectFilterResult"><view class="picker-field compact">{{resultOptions[filterResultIndex]?.label}}</view></picker><picker mode="date" :value="filterDateFrom" @change="filterDateFrom=String($event.detail.value)"><view class="picker-field compact">{{filterDateFrom||'开始日期'}}</view></picker><picker mode="date" :value="filterDateTo" @change="filterDateTo=String($event.detail.value)"><view class="picker-field compact">{{filterDateTo||'结束日期'}}</view></picker></view><view class="filter-actions"><button @click="resetRecordFilters">重置</button><button class="filter-primary" @click="applyRecordFilters">查询</button></view></view>
+      <view v-if="!filteredRecords.length && !loading" class="state-card">暂无符合条件的巡检记录</view>
+      <view v-for="record in filteredRecords.slice(0, 30)" :key="record.id" class="record-card" @click="toggleRecord(record.id)">
         <view class="card-head"><text class="card-title">{{ record.storeName || record.storeId }}</text><text class="score">{{ number(record.displayScore ?? record.score) }} 分</text></view>
         <text class="muted">{{ record.inspectionDate }} · {{ record.displayPassed ?? record.passed ? '通过' : '需整改' }}</text>
         <view v-if="expandedRecordId === record.id" class="issue-list">
@@ -504,6 +525,7 @@ function denyAndReturn() {
             <text>{{ issue.deductionReason || '现场问题' }}</text><text class="status-chip">{{ issue.rectificationStatus || '待整改' }}</text>
           </view>
           <text v-if="!recordIssues(record).length" class="muted">该记录暂无待整改条款。</text>
+          <button class="secondary-button" @click.stop="openRecordDetail(record.id)">查看历史证据与结论</button>
         </view>
       </view>
     </template>
@@ -520,49 +542,50 @@ function denyAndReturn() {
 </template>
 
 <style scoped lang="scss">
-.page { min-height: 100vh; box-sizing: border-box; padding: 24rpx 24rpx calc(190rpx + env(safe-area-inset-bottom)); background: #f4f6f2; color: #172019; }
+.page { min-height: 100vh; box-sizing: border-box; padding: 24rpx 24rpx calc(190rpx + env(safe-area-inset-bottom)); background: #f2f6f5; color: #1c1d22; }
 .page-head, .section-head, .card-head, .two-columns, .manual-row, .score-strip { display: flex; align-items: center; justify-content: space-between; gap: 18rpx; }
 .page-head { margin-bottom: 22rpx; }
 .eyebrow, .title, .section-title, .muted, .card-title, .summary, .field-label, .hint, .linked { display: block; }
-.eyebrow { color: #657168; font-size: 24rpx; letter-spacing: 2rpx; }
-.title { margin-top: 6rpx; font-size: 44rpx; font-weight: 700; }
+.eyebrow { color: #71807d; font-size: 24rpx; letter-spacing: 0; }
+.title { margin-top: 6rpx; font-size: 38rpx; font-weight: 700; }
 .section-head { margin: 28rpx 2rpx 14rpx; }
 .section-head.inner { margin-top: 0; }
 .section-title, .card-title { font-size: 30rpx; font-weight: 700; }
-.todo-card, .draft-card, .photo-card, .record-card, .state-card { margin-bottom: 16rpx; padding: 24rpx; border: 1px solid #dce2db; border-radius: 22rpx; background: #fff; box-shadow: 0 8rpx 24rpx rgba(27,45,32,.045); }
-.priority, .score, .linked { color: #1f6741; font-weight: 700; }
+.todo-card, .draft-card, .photo-card, .record-card, .state-card, .filter-card { margin-bottom: 16rpx; padding: 24rpx; border: 1px solid #d9e6e3; border-radius: 16rpx; background: #fff; box-shadow: 0 8rpx 24rpx rgba(37,39,45,.045); }
+.priority, .score, .linked { color: #27655f; font-weight: 700; }
 .summary { margin-top: 10rpx; color: #4c5850; font-size: 25rpx; line-height: 1.55; }
-.muted, .hint { color: #6b746d; font-size: 23rpx; line-height: 1.5; }
+.muted, .hint { color: #71807d; font-size: 23rpx; line-height: 1.5; }
 .hint { margin: 10rpx 2rpx 20rpx; }
 .field-label { margin: 18rpx 0 10rpx; font-size: 25rpx; font-weight: 650; }
-.picker-field, .text-input, .deduction-input, .reason-input { min-height: 88rpx; box-sizing: border-box; padding: 0 18rpx; border: 1px solid #cbd6cd; border-radius: 16rpx; background: #f8faf8; font-size: 26rpx; line-height: 88rpx; }
+.picker-field, .text-input, .deduction-input, .reason-input { min-height: 88rpx; box-sizing: border-box; padding: 0 18rpx; border: 1px solid #d9e6e3; border-radius: 16rpx; background: #f8faf8; font-size: 26rpx; line-height: 88rpx; }
 .picker-field.compact { min-height: 88rpx; line-height: 88rpx; }
 .two-columns { align-items: flex-start; }
 .field-block { flex: 1; min-width: 0; }
-.camera-button, .secondary-button, .primary-button, .ghost-button { min-height: 88rpx; line-height: 88rpx; border-radius: 18rpx; font-size: 27rpx; }
-.camera-button { margin-top: 24rpx; background: #1f6741; color: #fff; }
+.camera-button, .secondary-button, .primary-button, .ghost-button { min-height: 88rpx; line-height: 88rpx; border-radius: 16rpx; font-size: 27rpx; }
+.camera-button { margin-top: 24rpx; background: #27655f; color: #fff; }
 .photo-card { padding: 16rpx; overflow: hidden; }
 .photo { width: 100%; height: 320rpx; border-radius: 16rpx; background: #e9ede9; }
 .photo-content { padding: 14rpx 6rpx 4rpx; }
-.ai-suggestion { margin-top: 16rpx; padding: 18rpx; border-radius: 16rpx; background: #eef5ef; }
+.ai-suggestion { margin-top: 16rpx; padding: 18rpx; border-radius: 16rpx; background: #e6f3f1; }
 .manual-box { margin-top: 16rpx; padding: 18rpx; border: 1px dashed #bdc9bf; border-radius: 16rpx; }
 .manual-row { margin-top: 12rpx; }
 .deduction-input { width: 150rpx; }
 .reason-input { flex: 1; }
-.secondary-button { margin-top: 14rpx; background: #edf3ee; color: #1f6741; }
+.secondary-button { margin-top: 14rpx; background: #e6f3f1; color: #27655f; }
 .linked { margin-top: 14rpx; font-size: 24rpx; }
 .note-input { width: 100%; min-height: 160rpx; box-sizing: border-box; padding: 18rpx; border-radius: 16rpx; background: #f5f7f4; font-size: 27rpx; }
-.score-strip { margin-top: 18rpx; padding: 18rpx; border-radius: 14rpx; background: #172019; color: #fff; font-weight: 650; }
+.score-strip { margin-top: 18rpx; padding: 18rpx; border-radius: 14rpx; background: #1c1d22; color: #fff; font-weight: 650; }
 .records-head { margin-top: 40rpx; }
+.filter-input{box-sizing:border-box;width:100%;min-height:82rpx;padding:0 18rpx;background:#f8faf8;border:1rpx solid #d9e6e3;border-radius:14rpx}.filter-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12rpx;margin-top:12rpx}.filter-actions{display:flex;gap:12rpx;margin-top:14rpx}.filter-actions button{flex:1;margin:0;background:#f7faf9;color:#4e5966}.filter-actions .filter-primary{background:#27655f;color:#fff}
 .issue-list { margin-top: 18rpx; padding-top: 14rpx; border-top: 1px solid #edf0ed; }
 .issue-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 14rpx; padding: 10rpx 0; font-size: 24rpx; }
 .status-chip { flex-shrink: 0; padding: 5rpx 10rpx; border-radius: 10rpx; background: #fff1df; color: #8d5b16; }
 .state-card { text-align: center; }
-.state-card.small { padding: 22rpx; color: #657168; font-size: 24rpx; }
+.state-card.small { padding: 22rpx; color: #71807d; font-size: 24rpx; }
 .message { margin-bottom: 18rpx; padding: 18rpx 20rpx; border-radius: 14rpx; font-size: 25rpx; }
 .message.error { background: #fff0ed; color: #963b30; }
 .message.success { background: #eaf5ed; color: #24663e; }
-.ghost-button { min-width: 136rpx; background: #fff; color: #264c36; border: 1px solid #cbd6cd; }
+.ghost-button { min-width: 136rpx; background: #fff; color: #1f5752; border: 1px solid #d9e6e3; }
 .bar-hint { display: block; margin: 10rpx 0; color: #84631c; text-align: center; font-size: 22rpx; }
 button::after { border: 0; }
 </style>
