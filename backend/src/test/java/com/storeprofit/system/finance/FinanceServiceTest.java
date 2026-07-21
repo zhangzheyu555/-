@@ -105,6 +105,25 @@ class FinanceServiceTest {
   }
 
   @Test
+  void profitEntriesPageUsesOneBasedBoundsWithoutChangingTheAuthorizedResultSet() {
+    when(financeRepository.entries(1L, "2026-07", null, null)).thenReturn(List.of(
+        entry(1L), entry(2L), entry(3L)));
+
+    ProfitEntryPageResponse result = service.entriesPaged(finance, "2026-07", null, null, 2, 1);
+
+    assertThat(result.total()).isEqualTo(3);
+    assertThat(result.page()).isEqualTo(2);
+    assertThat(result.size()).isEqualTo(1);
+    assertThat(result.totalPages()).isEqualTo(3);
+    assertThat(result.rows()).containsExactly(entry(2L));
+
+    ProfitEntryPageResponse beyondLastPage = service.entriesPaged(
+        finance, "2026-07", null, null, Integer.MAX_VALUE, 100);
+    assertThat(beyondLastPage.rows()).isEmpty();
+    assertThat(beyondLastPage.page()).isEqualTo(Integer.MAX_VALUE);
+  }
+
+  @Test
   void storeManagerCannotQueryOtherStoreProfit() {
     assertThatThrownBy(() -> service.entries(storeManager, "2026-07", null, "bw1"))
         .isInstanceOf(BusinessException.class)
@@ -126,5 +145,17 @@ class FinanceServiceTest {
         .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
 
     verify(financeRepository, never()).entries(1L, "2026-07", null, "bw1", scope);
+  }
+
+  private ProfitEntryResponse entry(long id) {
+    return new ProfitEntryResponse(
+        id, "rg" + id, "RG" + id, "测试门店" + id, 1L, "测试品牌", "荆州", "店长",
+        "2026-07", BigDecimal.valueOf(100), BigDecimal.ZERO, BigDecimal.ZERO,
+        BigDecimal.valueOf(100), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.valueOf(100), BigDecimal.ONE,
+        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+        BigDecimal.valueOf(100), BigDecimal.ONE, "健康", "测试"
+    );
   }
 }

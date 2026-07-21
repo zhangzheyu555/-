@@ -70,6 +70,19 @@ public class FinanceController {
     return ApiResponse.ok(financeService.entries(authService.requireUser(authorization), month, brandId, storeId));
   }
 
+  @GetMapping("/entries/page")
+  public ApiResponse<ProfitEntryPageResponse> entriesPaged(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @RequestParam(required = false) String month,
+      @RequestParam(required = false) Long brandId,
+      @RequestParam(required = false) String storeId,
+      @RequestParam(defaultValue = "1") int page,
+      @RequestParam(defaultValue = "20") int size
+  ) {
+    return ApiResponse.ok(financeService.entriesPaged(
+        authService.requireUser(authorization), month, brandId, storeId, page, size));
+  }
+
   @GetMapping("/entries/detail")
   public ApiResponse<ProfitEntryResponse> entry(
       @RequestHeader(value = "Authorization", required = false) String authorization,

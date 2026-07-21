@@ -110,6 +110,21 @@ public class FinanceService {
     return profitEntries(user.tenantId(), normalizeMonth(month), businessScope.brandId(), targetStoreId, dataScope);
   }
 
+  public ProfitEntryPageResponse entriesPaged(
+      AuthUser user, String month, Long brandId, String storeId, int page, int size
+  ) {
+    int normalizedPage = Math.max(1, page);
+    int normalizedSize = Math.max(1, Math.min(100, size));
+    List<ProfitEntryResponse> allRows = entries(user, month, brandId, storeId);
+    int total = allRows.size();
+    long requestedOffset = (long) (normalizedPage - 1) * normalizedSize;
+    int fromIndex = (int) Math.min(requestedOffset, total);
+    int toIndex = Math.min(fromIndex + normalizedSize, total);
+    int totalPages = total == 0 ? 1 : (int) Math.ceil((double) total / normalizedSize);
+    return new ProfitEntryPageResponse(
+        List.copyOf(allRows.subList(fromIndex, toIndex)), total, normalizedPage, normalizedSize, totalPages);
+  }
+
   public ProfitEntryResponse entry(AuthUser user, String storeId, String month) {
     accessControl.requireFinanceRead(user);
     DataScope dataScope = financeScope(user);

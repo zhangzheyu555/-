@@ -22,6 +22,8 @@ const router = useRouter()
 const profit = useProfitStore()
 const scope = useBusinessScope()
 const reportMode = ref<ReportMode>(scope.isStoreManager.value ? 'single' : (isSummaryMode(route.query.mode) ? 'summary' : 'single'))
+const summaryPage = ref(Math.max(1, Number(route.query.page || 1) || 1))
+const SUMMARY_PAGE_SIZE = 20
 
 const dataEntryNotice = computed(() => {
   const notice = route.query.notice
@@ -102,6 +104,12 @@ const monthRows = computed(() => profit.allEntries.filter((entry) => !selectedMo
 const brandRows = computed(() => monthRows.value.filter((entry) => matchesBrand(entry, selectedBrandId.value)))
 const singleEntry = computed(() => brandRows.value.find((entry) => entry.storeId === selectedStoreId.value) || null)
 const allRows = computed(() => [...brandRows.value].sort((a, b) => amount(b.net) - amount(a.net)))
+const summaryTotalPages = computed(() => Math.max(1, Math.ceil(allRows.value.length / SUMMARY_PAGE_SIZE)))
+const summaryRows = computed(() => {
+  const page = Math.min(summaryPage.value, summaryTotalPages.value)
+  const from = (page - 1) * SUMMARY_PAGE_SIZE
+  return allRows.value.slice(from, from + SUMMARY_PAGE_SIZE)
+})
 const totalRow = computed(() => summarize(allRows.value))
 const visibleRows = computed(() => (reportMode.value === 'single' ? (singleEntry.value ? [singleEntry.value] : []) : allRows.value))
 
@@ -118,16 +126,20 @@ async function refresh() {
 }
 
 function updateMonth(value: string) {
+  summaryPage.value = 1
   const query = { ...route.query }
   if (value) query.month = value
   else delete query.month
+  delete query.page
   void router.push({ path: '/profit-table', query })
 }
 
 function updateBrand(value: string) {
+  summaryPage.value = 1
   const query = { ...route.query }
   if (value) query.brandId = value
   else delete query.brandId
+  delete query.page
   if (reportMode.value === 'single') {
     const nextStore = storesForBrand(value)[0]
     if (nextStore) query.storeId = nextStore.storeId
@@ -154,6 +166,7 @@ function selectValue(event: Event) {
 function setMode(mode: ReportMode) {
   if (scope.isStoreManager.value) return
   reportMode.value = mode
+  summaryPage.value = 1
   const query = { ...route.query, mode } as Record<string, string | undefined>
   if (mode === 'summary') {
     delete query.storeId
@@ -164,6 +177,12 @@ function setMode(mode: ReportMode) {
     if (nextStore) query.storeId = nextStore.storeId
   }
   void router.push({ path: '/profit-table', query })
+}
+
+function setSummaryPage(page: number) {
+  const next = Math.max(1, Math.min(summaryTotalPages.value, page))
+  summaryPage.value = next
+  void router.push({ path: '/profit-table', query: { ...route.query, mode: 'summary', page: String(next) } })
 }
 
 function showSingle(entry: ProfitEntry) {
@@ -393,7 +412,7 @@ onMounted(async () => {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="entry in allRows" :key="`${entry.storeId}-${entry.month}`" class="click-row" @click="showSingle(entry)">
+            <tr v-for="entry in summaryRows" :key="`${entry.storeId}-${entry.month}`" class="click-row" @click="showSingle(entry)">
               <td class="store-name">{{ entry.storeName || entry.storeId }}</td>
               <td><BrandBadge :brand-name="entry.brandName || '-'" /></td>
               <td class="r">{{ money(entry.income ?? entry.sales) }}</td>
@@ -413,6 +432,11 @@ onMounted(async () => {
             </tr>
           </tbody>
         </table>
+      </div>
+      <div v-if="summaryTotalPages > 1" class="profit-pagination" aria-label="利润表分页">
+        <button type="button" :disabled="summaryPage <= 1" @click="setSummaryPage(summaryPage - 1)">上一页</button>
+        <span>第 {{ Math.min(summaryPage, summaryTotalPages) }} / {{ summaryTotalPages }} 页，共 {{ allRows.length }} 家门店</span>
+        <button type="button" :disabled="summaryPage >= summaryTotalPages" @click="setSummaryPage(summaryPage + 1)">下一页</button>
       </div>
     </section>
   </section>
@@ -698,6 +722,31 @@ onMounted(async () => {
   color: var(--bad);
 }
 
+.profit-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.profit-pagination button {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--primary);
+  font-weight: 800;
+}
+
+.profit-pagination button:disabled {
+  cursor: not-allowed;
+  opacity: .45;
+}
+
 @media (max-width: 720px) {
   .profit-report-page .page-head,
   .report-filter-card,
@@ -717,6 +766,10 @@ onMounted(async () => {
 
   .seg-button {
     flex: 1;
+  }
+
+  .profit-pagination {
+    justify-content: space-between;
   }
 }
 </style>
