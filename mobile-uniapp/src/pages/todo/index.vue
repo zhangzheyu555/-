@@ -6,6 +6,8 @@ import { closeMobileBossTodo, escalateMobileRoleTodo, getMobileRoleTodos, resolv
 import { useSessionStore } from '@/stores'
 import type { RoleTodoItem } from '@/types/business'
 import { canPerformMobileAction } from '@/permissions'
+import { chooseMedia } from '@/platform'
+import { todoAttachmentsFromMedia } from '@/utils/todoAttachment'
 
 const session = useSessionStore()
 const todos = ref<RoleTodoItem[]>([])
@@ -55,7 +57,11 @@ async function transition(todo: RoleTodoItem, action: 'resolve' | 'escalate' | '
   try {
     if (action === 'escalate') await escalateMobileRoleTodo(session.user?.role || '', todo.id, note)
     else if (action === 'close') await closeMobileBossTodo(todo.id, note)
-    else await resolveMobileRoleTodo(session.user?.role || '', todo.id, note)
+    else {
+      const files = await chooseMedia({ count: 3, source: 'both', kinds: ['image'] })
+      const attachments = files.length ? await todoAttachmentsFromMedia(files) : []
+      await resolveMobileRoleTodo(session.user?.role || '', todo.id, note, attachments)
+    }
     await refresh()
   } catch (cause) { error.value = cause instanceof Error ? cause.message : '待办处理失败，请稍后重试。' }
   finally { actingId.value = '' }
@@ -105,7 +111,7 @@ function statusTone(status: string): 'warning' | 'info' | 'success' | 'danger' |
         <text class="todo-copy">{{ todo.summary || '请进入对应应用处理' }}</text>
         <view class="todo-foot"><text class="todo-meta">{{ todo.storeName || todo.storeId || '权限范围内事项' }}</text><text v-if="todo.dueAt" class="todo-meta">{{ todo.dueAt }}</text></view>
         <view v-if="(canResolve || canEscalate || canClose) && !['COMPLETED','REJECTED'].includes(todo.status)" class="todo-actions" @click.stop>
-          <button v-if="canResolve" :disabled="Boolean(actingId)" @click.stop="transition(todo,'resolve')">完成</button>
+          <button v-if="canResolve" :disabled="Boolean(actingId)" @click.stop="transition(todo,'resolve')">完成并留证</button>
           <button v-if="canEscalate && !todo.escalatedToBoss" :disabled="Boolean(actingId)" @click.stop="transition(todo,'escalate')">升级</button>
           <button v-if="canClose" :disabled="Boolean(actingId)" @click.stop="transition(todo,'close')">关闭</button>
         </view>

@@ -27,6 +27,7 @@ const amount = ref('')
 const category = ref('')
 const reason = ref('')
 const month = ref(new Date().toISOString().slice(0, 7))
+const pendingFiles = ref<Array<{ path: string; name?: string }>>([])
 const canCreate = computed(() => canPerformMobileAction(session.user, 'expense.create'))
 const canReview = computed(() => canPerformMobileAction(session.user, 'expense.review'))
 
@@ -57,6 +58,7 @@ async function save(submitAfterSave: boolean) {
   try {
     const payload = { storeId, month: month.value, amount: value, category: category.value.trim(), reason: reason.value.trim() }
     const row = editingId.value ? await updateMobileExpense(editingId.value, payload) : await createMobileExpense(payload)
+    for (const file of pendingFiles.value) await uploadMobileExpenseSupplement(row.id, file.path, '报销凭证')
     if (submitAfterSave) await submitMobileExpense(row.id)
     message.value = submitAfterSave ? '报销已提交审核。' : '报销草稿已保存。'
     resetForm()
@@ -113,7 +115,14 @@ function resetForm() {
   category.value = ''
   reason.value = ''
   month.value = new Date().toISOString().slice(0, 7)
+  pendingFiles.value = []
 }
+async function chooseReceipts() {
+  if (acting.value) return
+  const files = await chooseMedia({ count: Math.max(1, 6 - pendingFiles.value.length), source: 'both', kinds: ['image'] })
+  pendingFiles.value = [...pendingFiles.value, ...files].slice(0, 6)
+}
+function removeReceipt(index: number) { pendingFiles.value.splice(index, 1) }
 function isDraft(status?: string) { return ['DRAFT', '草稿'].includes(String(status || '')) }
 function isPending(status?: string) { return ['SUBMITTED', 'PENDING_REVIEW', '待审核'].includes(String(status || '')) }
 function needsInfo(status?: string) { return ['NEED_MORE_INFO', 'INFO_REQUIRED', '待补充资料'].includes(String(status || '')) }
@@ -133,6 +142,8 @@ function attachments(row: ExpenseClaim): ProtectedAttachment[] { return (row.sup
       <input v-model="amount" type="digit" placeholder="金额"/>
       <input v-model="category" placeholder="类别"/>
       <textarea v-model="reason" placeholder="报销事由"/>
+      <button class="receipt-button" :disabled="Boolean(acting)" @click="chooseReceipts">拍照/选择报销凭证（{{ pendingFiles.length }}/6）</button>
+      <view v-for="(file,index) in pendingFiles" :key="`${file.path}-${index}`" class="pending-file"><text>凭证 {{ index + 1 }}</text><button @click="removeReceipt(index)">移除</button></view>
       <view class="form-actions"><button :loading="Boolean(acting)" :disabled="Boolean(acting)" @click="save(false)">保存草稿</button><button class="primary" :loading="Boolean(acting)" :disabled="Boolean(acting)" @click="save(true)">保存并提交</button></view>
     </view>
     <text class="section list-heading">报销记录</text>
@@ -157,5 +168,5 @@ function attachments(row: ExpenseClaim): ProtectedAttachment[] { return (row.sup
 </template>
 
 <style scoped lang="scss">
-.page{min-height:100vh;box-sizing:border-box;padding:24rpx;background:#f2f6f5;color:#202124}.head,.row,.actions,.form-actions{display:flex;align-items:center;justify-content:space-between;gap:12rpx}.eyebrow,.title,.section,.name,.money,.copy,.reason,.supplement-note{display:block}.title{font-size:40rpx;font-weight:750}.eyebrow,.copy{color:#71807d;font-size:24rpx}.section{font-size:30rpx;font-weight:700}.list-heading{margin:28rpx 0 14rpx}.panel,.card,.empty,.notice{margin-top:16rpx;padding:24rpx;background:#fff;border:1rpx solid #d9e6e3;border-radius:16rpx}.panel input,.panel textarea{box-sizing:border-box;width:100%;margin-top:14rpx;padding:18rpx;background:#f7faf9;border-radius:12rpx}.panel textarea{height:130rpx}.form-actions{margin-top:16rpx}.form-actions button{flex:1;margin:0}.primary{background:#27655f;color:#fff}.text-button{margin:0;background:transparent;color:#1f5752;font-size:24rpx}.money{margin-top:12rpx;font-size:36rpx;font-weight:750}.copy,.reason,.supplement-note{margin-top:8rpx;line-height:1.5}.reason{font-size:26rpx}.supplement-note{padding:14rpx;background:#fff9e8;color:#755d2d;font-size:24rpx}.actions{margin-top:16rpx;justify-content:flex-start;flex-wrap:wrap}.actions button{margin:0;padding:0 22rpx;background:#e6f3f1;color:#1f5752;font-size:24rpx}.empty{text-align:center;color:#71807d}
+.page{min-height:100vh;box-sizing:border-box;padding:24rpx;background:#f2f6f5;color:#202124}.head,.row,.actions,.form-actions,.pending-file{display:flex;align-items:center;justify-content:space-between;gap:12rpx}.eyebrow,.title,.section,.name,.money,.copy,.reason,.supplement-note{display:block}.title{font-size:40rpx;font-weight:750}.eyebrow,.copy{color:#71807d;font-size:24rpx}.section{font-size:30rpx;font-weight:700}.list-heading{margin:28rpx 0 14rpx}.panel,.card,.empty,.notice{margin-top:16rpx;padding:24rpx;background:#fff;border:1rpx solid #d9e6e3;border-radius:16rpx}.panel input,.panel textarea{box-sizing:border-box;width:100%;margin-top:14rpx;padding:18rpx;background:#f7faf9;border-radius:12rpx}.panel textarea{height:130rpx}.receipt-button{width:100%;margin-top:14rpx;background:#e6f3f1;color:#1f5752;font-size:24rpx}.pending-file{margin-top:10rpx;padding:12rpx 16rpx;background:#f7faf9;border-radius:10rpx;color:#59606b;font-size:23rpx}.pending-file button{margin:0;color:#a34b42;background:transparent;font-size:22rpx}.form-actions{margin-top:16rpx}.form-actions button{flex:1;margin:0}.primary{background:#27655f;color:#fff}.text-button{margin:0;background:transparent;color:#1f5752;font-size:24rpx}.money{margin-top:12rpx;font-size:36rpx;font-weight:750}.copy,.reason,.supplement-note{margin-top:8rpx;line-height:1.5}.reason{font-size:26rpx}.supplement-note{padding:14rpx;background:#fff9e8;color:#755d2d;font-size:24rpx}.actions{margin-top:16rpx;justify-content:flex-start;flex-wrap:wrap}.actions button{margin:0;padding:0 22rpx;background:#e6f3f1;color:#1f5752;font-size:24rpx}.empty{text-align:center;color:#71807d}
 </style>

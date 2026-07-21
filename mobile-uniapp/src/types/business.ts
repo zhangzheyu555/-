@@ -31,6 +31,24 @@ export interface SalaryRecord {
   base?:number|null; social?:number|null; post?:number|null; meal?:number|null; fullAttendance?:number|null; commission?:number|null; overtime?:number|null; seniority?:number|null; lateNight?:number|null; subsidy?:number|null; performance?:number|null; deductUniform?:number|null; returnUniform?:number|null
   status?: string; submittedBy?:number; reviewedBy?:number; reviewedAt?:string; reviewNote?: string; paidAt?: string; version?:number
 }
+export interface EmployeeSelfProfile {
+  profile: { userId: number; username: string; displayName: string; role: string }
+  store: { storeId: string; storeName: string; brandName?: string | null }
+  archive: {
+    linked: boolean; employeeId?: string | null; name?: string | null; position?: string | null
+    employmentType?: string | null; status?: string | null; hireDate?: string | null
+    baseSalary?: number | null; message: string
+  }
+  salary: {
+    available: boolean; recordId?: string | null; month?: string | null; status?: string | null
+    statusLabel: string; employeeId?: string | null; employeeName?: string | null; position?: string | null
+    attendance?: string | null; base?: number | null; gross?: number | null; netPay?: number | null
+    commission?: number | null; overtime?: number | null; performance?: number | null
+    deductUniform?: number | null; returnUniform?: number | null; vacationLeft?: number | null
+    vacationNote?: string | null; reviewedAt?: string | null; paidAt?: string | null; message: string
+  }
+  checklist: Array<{ key: string; title: string; description: string; state: string; severity: string }>
+}
 export interface DailyLossItem { id: number; code: string; name: string; stockUnit: string; unitPrice: number }
 export interface DailyLossRecord {
   id: string; storeId: string; storeName: string; lossDate: string; itemId: number; itemName: string; stockUnit: string
@@ -227,6 +245,7 @@ export interface StoreManagerWorkbench {
   todayFocusItems:StoreManagerWorkbenchItem[]
   needMyAction:StoreManagerWorkbenchItem[]
   businessReminder:{month:string;income:number;net:number;margin:number;costRatio:number;risk:string;previousMonth?:string;previousIncome?:number;incomeChangeRate?:number;reminders:string[]}
+  records?:{inspections?:InspectionRecord[];expenses?:ExpenseClaim[]}
 }
 
 export interface StoreInfo {
@@ -236,6 +255,9 @@ export interface StoreInfo {
   brandId: number
   brandName?: string
   status?: string
+  area?: string
+  manager?: string
+  openDate?: string
 }
 
 export type InspectionRiskLevel = 'RED' | 'YELLOW' | 'NORMAL'

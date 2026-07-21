@@ -30,6 +30,7 @@
     { "root": "pkg-learning", "pages": [
       { "path": "learning/index", "style": { "navigationBarTitleText": "培训视频", "enablePullDownRefresh": true } },
       { "path": "exam/index", "style": { "navigationBarTitleText": "考试中心", "enablePullDownRefresh": true } },
+      { "path": "progress/index", "style": { "navigationBarTitleText": "培训进度", "enablePullDownRefresh": true } },
       { "path": "assistant/index", "style": { "navigationBarTitleText": "员工服务助手" } }
     ] },
     { "root": "pkg-summary", "pages": [

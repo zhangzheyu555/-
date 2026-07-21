@@ -34,6 +34,11 @@ export interface LoginResponse {
   user: SessionUser
 }
 
+export interface WeChatBindingStatus {
+  configured: boolean
+  bound: boolean
+}
+
 export interface StoreOption {
   id: string
   code: string
@@ -45,4 +50,3 @@ export interface StoreOption {
   supplyWarehouseId: number | null
   supplyWarehouseName: string | null
 }
-

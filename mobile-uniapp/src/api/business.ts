@@ -30,7 +30,8 @@ import type {
   InspectionEvidenceCandidates, InspectionDetectionDecision,
   InventoryCheck, InventoryCheckLine,
   WrongQuestion, TrainingProgressReport, EmployeeAssistantHandoff, PlatformAdapterStatus,
-  BossTodoDashboard, MobileUserAccount,
+  BossTodoDashboard, MobileUserAccount, EmployeeSelfProfile,
+  ProfitEntry,
 } from '../types/business'
 
 export function getMobileWarehouseOverview(warehouseId?: number | string) {
@@ -122,10 +123,11 @@ export function getMobileRoleTodos(role: string, includeDone = false) {
   if (!route) return Promise.resolve({ roleName: '', updatedAt: '', items: [] } as RoleTodoResponse)
   return apiGet<RoleTodoResponse>(route, { includeDone, limit: includeDone ? 160 : 100 })
 }
-export function resolveMobileRoleTodo(role: string, todoId: string, note: string) {
+export interface MobileTodoAttachment { fileName: string; contentType: string; dataBase64: string }
+export function resolveMobileRoleTodo(role: string, todoId: string, note: string, attachments: MobileTodoAttachment[] = []) {
   const audience = todoAudience(role)
   if (!audience) return Promise.reject(new Error('当前角色没有待办处理通道'))
-  return apiPost<unknown, { note: string; attachments: unknown[] }>(`/api/${audience}/todos/${encodeURIComponent(todoId)}/resolve`, { note, attachments: [] })
+  return apiPost<unknown, { note: string; attachments: MobileTodoAttachment[] }>(`/api/${audience}/todos/${encodeURIComponent(todoId)}/resolve`, { note, attachments })
 }
 export function escalateMobileRoleTodo(role: string, todoId: string, reason: string) {
   const audience = todoAudience(role)
@@ -293,6 +295,10 @@ export function getMobileProfitDashboard(month?: string, storeId?: string) {
     storeId: storeId || undefined,
   })
 }
+export function getMobileFinanceMonths() { return apiGet<string[]>('/api/finance/months') }
+export function getMobileProfitEntries(query: { month?: string; storeId?: string } = {}) {
+  return apiGet<ProfitEntry[]>('/api/finance/entries', query)
+}
 
 export function getMobileStoreManagerWorkbench() {
   return apiGet<StoreManagerWorkbench>('/api/store-manager/workbench')
@@ -326,6 +332,8 @@ export function reviewMobileExpense(id: string, action: 'approve' | 'reject' | '
 export function uploadMobileExpenseSupplement(id: string, filePath: string, note: string) { return apiUpload<ExpenseClaim>(`/api/expenses/${encodeURIComponent(id)}/supplements`, filePath, 'files', { note }) }
 export function getMobileSalaries(query: { month?: string; storeId?: string } = {}) { return apiGet<SalaryRecord[]>('/api/salaries', query) }
 export function getMobileSalary(id:string){return apiGet<SalaryRecord>(`/api/salaries/${encodeURIComponent(id)}`)}
+/** 员工本人档案及最近一笔工资；后端仅允许已授权的 EMPLOYEE 账号访问。 */
+export function getMobileEmployeeProfile() { return apiGet<EmployeeSelfProfile>('/api/employee/profile') }
 export function reviewMobileSalary(id: string, action: 'approve' | 'reject' | 'mark-paid', note?: string) { return apiPost<SalaryRecord, { note?: string }>(`/api/salaries/${encodeURIComponent(id)}/${action}`, note ? { note } : undefined) }
 export function getMobileDailyLossItems() { return apiGet<DailyLossItem[]>('/api/daily-loss/items') }
 export function getMobileDailyLossRecords(query: { storeId?: string; date?: string; status?: string } = {}) { return apiGet<DailyLossRecord[]>('/api/daily-loss/records', query) }

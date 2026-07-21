@@ -4,13 +4,13 @@ import { onPullDownRefresh, onShow } from '@dcloudio/uni-app'
 import StatePanel from '@/components/StatePanel.vue'
 import {
   getMobileExamOverview,
+  getMobileProfitEntries,
   getMobileProfitDashboard,
   getMobileRoleTodos,
   getMobileWarehouseOverview,
 } from '@/api/business'
 import { canUseMobileCapability, useContextStore, useMenuStore, useSessionStore } from '@/stores'
-import type { ExamOverview, ProfitDashboard, RoleTodoItem, WarehouseOverview } from '@/types/business'
-import type { MobileMenuItem } from '@/types/navigation'
+import type { ExamOverview, ProfitDashboard, ProfitEntry, RoleTodoItem, WarehouseOverview } from '@/types/business'
 
 const session = useSessionStore()
 const menu = useMenuStore()
@@ -27,6 +27,7 @@ const todos = ref<RoleTodoItem[]>([])
 const warehouse = ref<WarehouseOverview | null>(null)
 const finance = ref<ProfitDashboard | null>(null)
 const exams = ref<ExamOverview | null>(null)
+const managerEntries = ref<ProfitEntry[]>([])
 let workspaceRequestId = 0
 
 onShow(initializeHome)
@@ -67,17 +68,22 @@ async function loadWorkspace(): Promise<void> {
     const examPromise = canUseMobileCapability(session.user, 'exam')
       ? getMobileExamOverview()
       : Promise.resolve(null)
-    const [todoResult, warehouseResult, financeResult, examResult] = await Promise.all([
+    const managerEntriesPromise = canUseMobileCapability(session.user, 'business')
+      ? getMobileProfitEntries({ storeId })
+      : Promise.resolve([])
+    const [todoResult, warehouseResult, financeResult, examResult, entryResult] = await Promise.all([
       todoPromise,
       warehousePromise,
       financePromise,
       examPromise,
+      managerEntriesPromise,
     ])
     if (requestId !== workspaceRequestId) return
     todos.value = todoResult.items || []
     warehouse.value = warehouseResult
     finance.value = financeResult
     exams.value = examResult
+    managerEntries.value = entryResult
   } catch {
     if (requestId === workspaceRequestId) workspaceError.value = '部分工作台数据暂时无法加载，下拉可重新获取。'
   } finally {
@@ -106,8 +112,18 @@ const workspaceTitle = computed(() => {
 })
 
 const pendingTodos = computed(() => todos.value.filter((item) => !['COMPLETED', 'REJECTED'].includes(item.status)))
+const latestManagerEntry = computed(() => [...managerEntries.value].sort((left, right) => right.month.localeCompare(left.month))[0] || null)
 
 const metrics = computed<WorkspaceMetric[]>(() => {
+  if (session.user?.role === 'STORE_MANAGER' && latestManagerEntry.value) {
+    const entry = latestManagerEntry.value
+    return [
+      { label: '本月营业额', value: compactMoney(entry.sales), tone: 'brand' },
+      { label: '实收收入', value: compactMoney(entry.income), tone: 'info' },
+      { label: '成本合计', value: compactMoney(entry.costSum), tone: 'neutral' },
+      { label: '净利润', value: compactMoney(entry.net), hint: `净利率 ${percent(entry.margin)}`, tone: entry.net < 0 ? 'danger' : 'success' },
+    ]
+  }
   if (finance.value) {
     const summary = finance.value.summary
     return [
@@ -156,13 +172,8 @@ async function chooseStore(event: { detail: { value: string | number } }): Promi
   warehouse.value = null
   finance.value = null
   exams.value = null
+  managerEntries.value = []
   await loadWorkspace()
-}
-
-function openItem(item: MobileMenuItem): void {
-  const storeId = context.currentStoreId
-  const query = storeId ? `?storeId=${encodeURIComponent(storeId)}` : ''
-  uni.navigateTo({ url: `${item.path}${query}` })
 }
 
 function openProfile(): void {
@@ -172,6 +183,9 @@ function openProfile(): void {
 function openTodos(): void {
   uni.switchTab({ url: '/pages/todo/index' })
 }
+function openBusiness(): void { uni.navigateTo({ url: '/pkg-store/business/index' }) }
+function money(value: number | undefined): string { return `¥${Number(value || 0).toFixed(2)}` }
+function percent(value: number | undefined): string { return `${Number(value || 0).toFixed(1)}%` }
 </script>
 
 <template>
@@ -214,6 +228,16 @@ function openTodos(): void {
       </view>
     </view>
 
+    <view v-if="session.user?.role === 'STORE_MANAGER' && latestManagerEntry" class="section-card business-preview">
+      <view class="section-card__head"><view><text class="section-card__eyebrow">本店经营</text><text class="section-card__title">{{ latestManagerEntry.month }} 经营明细</text></view><button class="text-button" @click="openBusiness">查看全部</button></view>
+      <view class="business-preview__grid"><view><text>实收收入</text><b>{{ money(latestManagerEntry.income) }}</b></view><view><text>成本合计</text><b>{{ money(latestManagerEntry.costSum) }}</b></view><view><text>费用合计</text><b>{{ money(latestManagerEntry.expenseSum) }}</b></view><view><text>净利润 · 净利率</text><b :class="{ negative: latestManagerEntry.net < 0 }">{{ money(latestManagerEntry.net) }} · {{ percent(latestManagerEntry.margin) }}</b></view></view>
+    </view>
+
+    <view v-if="session.user?.role === 'STORE_MANAGER' && warehouse" class="section-card fulfilment-preview">
+      <view class="section-card__head"><view><text class="section-card__eyebrow">库存履约</text><text class="section-card__title">本店库存与收货</text></view></view>
+      <view class="fulfilment-preview__grid"><view><text>库存预警</text><b>{{ warehouse.summary.lowStockCount }} 项</b></view><view><text>待确认收货</text><b>{{ warehouse.summary.pendingReceiptCount }} 单</b></view><view><text>待处理叫货</text><b>{{ warehouse.summary.pendingRequisitionCount }} 单</b></view></view>
+    </view>
+
     <view v-if="workspaceError" class="workspace-message">{{ workspaceError }}</view>
 
     <view v-if="pendingTodos.length" class="section-card todo-preview">
@@ -231,39 +255,7 @@ function openTodos(): void {
       @action="initializeHome"
     />
 
-    <StatePanel
-      v-else-if="!menu.groups.length"
-      type="permission"
-      title="暂无移动端功能"
-      description="移动菜单按账号权限和数据范围生成。如需使用，请联系老板调整权限。"
-    />
-
-    <view v-else class="home-groups">
-      <view v-for="group in menu.groups" :key="group.key" class="home-group">
-        <view class="group-heading"><text class="home-group__title">{{ group.title }}</text><text class="group-heading__hint">常用功能</text></view>
-        <view class="menu-grid">
-          <button
-            v-for="item in group.items"
-            :key="item.key"
-            class="menu-card"
-            :class="`menu-card--${item.tone}`"
-            @click="openItem(item)"
-          >
-            <view class="menu-card__icon" aria-hidden="true">{{ item.icon }}</view>
-            <text class="menu-card__title">{{ item.label }}</text>
-            <text class="menu-card__description">{{ item.description }}</text>
-            <text class="menu-card__arrow" aria-hidden="true">→</text>
-          </button>
-        </view>
-      </view>
-    </view>
-
-    <view v-if="session.hasAnyPermission(['finance.profit.read', 'system.dashboard.read'])" class="desktop-card">
-      <view class="desktop-note">
-        <text class="desktop-note__title">复杂操作请回桌面端</text>
-        <text class="desktop-note__copy">经营录入、月度导入、权限管理、仓库配置和批量导出未开放手机操作。</text>
-      </view>
-    </view>
+    <view class="apps-hint"><text>完整功能请进入底部“应用”查看。</text></view>
   </view>
 </template>
 
@@ -296,6 +288,14 @@ function openTodos(): void {
 .metric-card__hint { margin-top: auto; color: #718581; font-size: 20rpx; }
 .workspace-message { padding: 18rpx 22rpx; color: #96603b; background: #fff7ed; border: 1rpx solid #f0ddc8; border-radius: 12rpx; font-size: 24rpx; }
 .section-card { padding: 24rpx; background: #ffffff; border: 1rpx solid #d9e6e3; border-radius: 14rpx; box-shadow: 0 5rpx 14rpx rgba(46, 79, 73, .03); }
+.business-preview__grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14rpx; margin-top:14rpx; }
+.business-preview__grid view { display:flex; min-height:94rpx; padding:16rpx; flex-direction:column; justify-content:space-between; background:#f7faf9; border-radius:12rpx; }
+.business-preview__grid text { color:#718581; font-size:21rpx; }
+.business-preview__grid b { color:#263633; font-size:25rpx; line-height:1.35; }
+.business-preview__grid b.negative { color:#b84c40; }
+.fulfilment-preview__grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12rpx; margin-top:14rpx; }
+.fulfilment-preview__grid view { display:flex; min-height:90rpx; padding:14rpx; flex-direction:column; justify-content:space-between; background:#f7faf9; border-radius:12rpx; }
+.fulfilment-preview__grid text { color:#718581; font-size:20rpx; }.fulfilment-preview__grid b { color:#263633; font-size:24rpx; }
 .section-card__head { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; margin-bottom: 10rpx; }
 .section-card__head > view { display: flex; flex-direction: column; gap: 4rpx; }
 .section-card__title { color: #1f2b2a; font-size: 30rpx; font-weight: 800; }
@@ -306,22 +306,5 @@ function openTodos(): void {
 .todo-row__meta { color: #80918e; font-size: 21rpx; }
 .todo-row__arrow { color: #27655f; font-size: 34rpx; }
 .all-todos { min-height: 70rpx; margin: 14rpx 0 0; padding: 0; color: #27655f; background: #e7f4f1; border-radius: 10rpx; font-size: 23rpx; font-weight: 700; line-height: 70rpx; }
-.home-groups { display: flex; flex-direction: column; gap: 30rpx; }
-.home-group { display: flex; flex-direction: column; gap: 16rpx; }
-.group-heading { display: flex; align-items: center; justify-content: space-between; padding: 0 4rpx; }
-.home-group__title { color: #1f2b2a; font-size: 29rpx; font-weight: 850; }
-.group-heading__hint { color: #849592; font-size: 21rpx; }
-.menu-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16rpx; }
-.menu-card { position: relative; display: flex; min-height: 214rpx; margin: 0; padding: 22rpx; flex-direction: column; align-items: flex-start; color: #1f2b2a; background: #ffffff; border: 1rpx solid #d9e6e3; border-radius: 14rpx; line-height: 1.4; text-align: left; box-shadow: 0 5rpx 14rpx rgba(46,79,73,.03); }
-.menu-card__icon { display: flex; width: 58rpx; height: 58rpx; margin-bottom: 16rpx; align-items: center; justify-content: center; color: #27655f; background: #e4f3f0; border-radius: 12rpx; font-size: 29rpx; font-weight: 800; }
-.menu-card--blue .menu-card__icon { color: #397579; background: #e3f0f1; }
-.menu-card--orange .menu-card__icon { color: #9c6943; background: #edf5f3; }
-.menu-card--slate .menu-card__icon { color: #596b68; background: #edf2f1; }
-.menu-card__title { color: #233330; font-size: 29rpx; font-weight: 800; }
-.menu-card__description { margin-top: 8rpx; padding-right: 10rpx; color: #758783; font-size: 22rpx; line-height: 1.55; }
-.menu-card__arrow { position: absolute; right: 22rpx; bottom: 17rpx; color: #27655f; font-size: 30rpx; font-weight: 700; }
-.desktop-card { padding: 24rpx; background: #f8fbfa; border: 1rpx dashed #cadeda; border-radius: 14rpx; }
-.desktop-note { display: flex; flex-direction: column; gap: 8rpx; }
-.desktop-note__title { color: #315b57; font-size: 26rpx; font-weight: 750; }
-.desktop-note__copy { color: #788b87; font-size: 23rpx; line-height: 1.65; }
+.apps-hint { padding:20rpx 24rpx; color:#718581; background:#f8fbfa; border:1rpx dashed #cadeda; border-radius:14rpx; font-size:23rpx; text-align:center; }
 </style>

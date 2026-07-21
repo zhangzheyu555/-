@@ -12,7 +12,27 @@ export function runtimePlatform(): RuntimePlatform {
 }
 
 export function apiBaseUrl(): string {
-  return String(import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/$/, '')
+  const configured = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL)
+  // 开发者工具运行开发包时可访问电脑的 127.0.0.1；真机调试中的手机不能。
+  // 因此仅在开发构建且真实设备上切换至本机未跟踪配置的 HTTPS 后端。
+  // #ifdef MP-WEIXIN
+  if (import.meta.env.DEV && !isWeChatDevtools()) {
+    return normalizeApiBaseUrl(import.meta.env.VITE_MOBILE_DEVICE_API_BASE_URL) || configured
+  }
+  // #endif
+  return configured
+}
+
+function normalizeApiBaseUrl(value: string | undefined): string {
+  return String(value || '').trim().replace(/\/$/, '')
+}
+
+function isWeChatDevtools(): boolean {
+  // #ifdef MP-WEIXIN
+  try { return uni.getSystemInfoSync().platform === 'devtools' }
+  catch { return false }
+  // #endif
+  return false
 }
 
 export function resolveApiUrl(path: string): string {

@@ -22,6 +22,9 @@ const RULES: MenuRule[] = [
     key: 'requisition', group: 'store', label: '叫货与收货', description: '修改数量、提交叫货、确认收货', path: '/pkg-store/requisition/index', tone: 'orange', icon: '+',
   },
   {
+    key: 'business', group: 'store', label: '本店经营', description: '查看月度经营结果与异常提醒', path: '/pkg-store/business/index', tone: 'green', icon: '▥',
+  },
+  {
     key: 'warehouse', group: 'warehouse', label: '仓库作业中心', description: '叫货、采购、调拨、库存和单据', path: '/pkg-warehouse/operations/index', tone: 'orange', icon: '↗',
   },
   {
@@ -35,6 +38,9 @@ const RULES: MenuRule[] = [
   },
   {
     key: 'exam', group: 'learning', label: '考试中心', description: '答题、交卷、查看成绩', path: '/pkg-learning/exam/index', tone: 'orange', icon: '?',
+  },
+  {
+    key: 'trainingProgress', group: 'learning', label: '培训进度', description: '查看本店员工学习完成情况', path: '/pkg-learning/progress/index', tone: 'blue', icon: '◷',
   },
   {
     key: 'assistant', group: 'learning', label: '员工服务助手', description: '查询制度、流程和培训问题', path: '/pkg-learning/assistant/index', tone: 'slate', icon: '✦',

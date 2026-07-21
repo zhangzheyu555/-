@@ -1,8 +1,8 @@
 import { defineStore } from 'pinia'
-import { currentSession, login as loginApi, logout as logoutApi } from '@/api/auth'
+import { currentSession, login as loginApi, logout as logoutApi, weChatLogin } from '@/api/auth'
 import { ApiError } from '@/api/client'
 import { clearSessionToken, readSessionToken, writeSessionToken } from '@/platform/session'
-import type { LoginRequest, SessionDataScope, SessionUser } from '@/types/auth'
+import type { LoginRequest, LoginResponse, SessionDataScope, SessionUser } from '@/types/auth'
 import { dataScope, hasAnyPermission, hasPermission } from '@/permissions'
 
 export const useSessionStore = defineStore('mobile-session', {
@@ -55,17 +55,23 @@ export const useSessionStore = defineStore('mobile-session', {
       this.submitting = true
       this.error = ''
       try {
-        const response = await loginApi(request)
-        const token = response.token?.trim()
-        if (!token) throw new Error('登录返回的会话凭据不完整')
-        writeSessionToken(token)
-        this.token = token
-        // 登录响应与 /me 使用同一 SessionUser 契约；再次读取可捕获即时权限版本变化。
-        this.user = await currentSession()
-        this.initialized = true
+        await this.completeLogin(loginApi(request))
       } catch (error) {
         this.clear()
         this.error = error instanceof Error ? error.message : '登录失败，请稍后重试'
+        throw error
+      } finally {
+        this.submitting = false
+      }
+    },
+    async loginWithWeChatCode(code: string): Promise<void> {
+      this.submitting = true
+      this.error = ''
+      try {
+        await this.completeLogin(weChatLogin(code))
+      } catch (error) {
+        this.clear()
+        this.error = error instanceof Error ? error.message : '微信登录失败，请稍后重试'
         throw error
       } finally {
         this.submitting = false
@@ -87,6 +93,16 @@ export const useSessionStore = defineStore('mobile-session', {
       this.token = ''
       this.user = null
       this.error = ''
+      this.initialized = true
+    },
+    async completeLogin(responsePromise: Promise<LoginResponse>): Promise<void> {
+      const response = await responsePromise
+      const token = response.token?.trim()
+      if (!token) throw new Error('登录返回的会话凭据不完整')
+      writeSessionToken(token)
+      this.token = token
+      // 登录响应与 /me 使用同一 SessionUser 契约；再次读取可捕获即时权限版本变化。
+      this.user = await currentSession()
       this.initialized = true
     },
   },

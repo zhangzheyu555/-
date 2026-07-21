@@ -2,6 +2,7 @@
 import { onShow } from '@dcloudio/uni-app'
 import { ref } from 'vue'
 import { useContextStore, useMenuStore, useSessionStore } from '@/stores'
+import { runtimePlatform } from '@/platform'
 
 const session = useSessionStore()
 const menu = useMenuStore()
@@ -10,6 +11,7 @@ const username = ref('')
 const password = ref('')
 const showPassword = ref(false)
 const errorMessage = ref('')
+const weChatAvailable = runtimePlatform() === 'mp-weixin'
 
 onShow(async () => {
   if (!session.user && session.token) await session.restore()
@@ -31,6 +33,34 @@ async function submit(): Promise<void> {
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '登录失败，请稍后重试'
   }
+}
+
+async function weChatSignIn(): Promise<void> {
+  errorMessage.value = ''
+  try {
+    const code = await requestWeChatCode()
+    await session.loginWithWeChatCode(code)
+    menu.rebuild(session.user)
+    await context.load(session.user)
+    uni.reLaunch({ url: '/pages/home/index' })
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '微信登录失败，请稍后重试'
+  }
+}
+
+function requestWeChatCode(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    // #ifdef MP-WEIXIN
+    uni.login({
+      provider: 'weixin',
+      success: ({ code }) => code ? resolve(code) : reject(new Error('未获取到微信授权凭据，请重试')),
+      fail: () => reject(new Error('微信授权未完成，请重试')),
+    })
+    // #endif
+    // #ifndef MP-WEIXIN
+    reject(new Error('请在微信小程序中使用微信一键登录'))
+    // #endif
+  })
 }
 </script>
 
@@ -77,6 +107,10 @@ async function submit(): Promise<void> {
       <button class="mobile-primary-button" :disabled="session.submitting" :loading="session.submitting" @click="submit">
         登录工作台
       </button>
+      <button v-if="weChatAvailable" class="wechat-login-button" :disabled="session.submitting" :loading="session.submitting" @click="weChatSignIn">
+        微信一键登录
+      </button>
+      <text v-if="weChatAvailable" class="wechat-hint">首次使用请先以账号密码登录，并在“我的”中绑定微信。</text>
       <text class="login-security">本机仅保存登录凭据，业务数据始终从服务器读取。</text>
       <text class="login-legal">登录即表示同意企业内部使用规范与隐私保护规则</text>
     </view>
@@ -109,5 +143,7 @@ async function submit(): Promise<void> {
 .password-toggle { position: absolute; top: 2rpx; right: 2rpx; min-width: 112rpx; min-height: 88rpx; margin: 0; padding: 0 18rpx; color: $mobile-orange-dark; background: transparent; border-radius: 14rpx; font-size: 24rpx; line-height: 88rpx; }
 .password-toggle::after { border: 0; }
 .login-security { display: block; margin-top: 22rpx; color: $mobile-muted; font-size: 22rpx; line-height: 1.6; text-align: center; }
+.wechat-login-button { width: 100%; min-height: 88rpx; margin: 18rpx 0 0; color: #fff; background: #07c160; border-radius: 14rpx; font-size: 28rpx; font-weight: 700; line-height: 88rpx; }
+.wechat-login-button::after { border: 0; }.wechat-hint { display: block; margin-top: 14rpx; color: $mobile-muted; font-size: 21rpx; line-height: 1.55; text-align: center; }
 .login-legal { display: block; margin-top: 10rpx; color: #a1a6af; font-size: 20rpx; line-height: 1.5; text-align: center; }
 </style>

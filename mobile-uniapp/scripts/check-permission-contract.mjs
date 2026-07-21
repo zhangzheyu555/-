@@ -72,7 +72,7 @@ for (const rule of menuRules) assert(registered.has(rule.path), `菜单路径未
 const expected = {
   BOSS: menuKeys,
   FINANCE: ['summary', 'expenses', 'salary', 'businessAssistant'],
-  STORE_MANAGER: ['inventory', 'requisition', 'rectification', 'expenses', 'salary', 'dailyLoss', 'businessAssistant'],
+  STORE_MANAGER: ['inventory', 'requisition', 'business', 'rectification', 'trainingProgress', 'expenses', 'salary', 'dailyLoss', 'businessAssistant'],
   WAREHOUSE: ['warehouse', 'dailyLoss'],
   OPERATIONS: ['inspection', 'rectification', 'dailyLoss', 'operations', 'operationsMonitor', 'businessAssistant'],
   SUPERVISOR: ['inspection', 'rectification'],

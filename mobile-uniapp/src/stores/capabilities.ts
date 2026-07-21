@@ -18,6 +18,8 @@ export type MobileCapabilityKey =
   | 'operationsMonitor'
   | 'audit'
   | 'businessAssistant'
+  | 'business'
+  | 'trainingProgress'
 
 interface MobileCapabilityRule {
   roles: string[]
@@ -112,6 +114,18 @@ const CAPABILITY_RULES: Record<MobileCapabilityKey, MobileCapabilityRule> = {
   businessAssistant: {
     roles: ['BOSS', 'FINANCE', 'STORE_MANAGER', 'OPERATIONS'],
     anyPermission: ['assistant.use'],
+  },
+  business: {
+    roles: ['STORE_MANAGER'],
+    anyPermission: ['finance.profit.read'],
+    scopeDomain: 'FINANCE',
+    allowedScopeModes: ['ALL', 'STORE_LIST', 'OWN_STORE'],
+  },
+  trainingProgress: {
+    roles: ['STORE_MANAGER'],
+    anyPermission: ['exam.report'],
+    scopeDomain: 'EXAM',
+    allowedScopeModes: ['ALL', 'STORE_LIST', 'OWN_STORE'],
   },
 }
 
