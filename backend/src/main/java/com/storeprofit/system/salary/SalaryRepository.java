@@ -47,8 +47,12 @@ public class SalaryRepository {
   private static final String EMPLOYEE_RECORD_COLUMNS = """
       coalesce(sr.id, '') as id, e.store_id, s.code as store_code, s.name as store_name,
       s.brand_id, b.name as brand_name, :month as month, e.id as employee_id, e.name as employee_name,
-      coalesce(e.position, e.role) as position, sr.attendance, sr.gross, sr.net_pay, sr.normal_hours, sr.ot_hours,
-      sr.work_hours, sr.vacation_left, sr.vacation_note, sr.base,
+      coalesce(e.position, e.role) as position,
+      coalesce(sr.attendance, concat(cast(ema.attendance_days as char), '天')) as attendance,
+      sr.gross, sr.net_pay, coalesce(sr.normal_hours, ema.normal_hours) as normal_hours,
+      coalesce(sr.ot_hours, ema.overtime_hours) as ot_hours,
+      coalesce(sr.work_hours, ema.total_hours) as work_hours,
+      coalesce(sr.vacation_left, ema.vacation_balance) as vacation_left, sr.vacation_note, sr.base,
       sr.social, sr.post, sr.meal, sr.full_attendance, sr.commission, sr.overtime,
       sr.seniority, sr.late_night, sr.subsidy, sr.performance, sr.deduct_uniform, sr.return_uniform,
       coalesce(sr.status, 'PENDING_GENERATION') as status, sr.submitted_by, sr.reviewed_by,
@@ -61,6 +65,9 @@ public class SalaryRepository {
       left join brand b on b.id = s.brand_id and b.tenant_id = s.tenant_id
       left join salary_record sr on sr.tenant_id = e.tenant_id and sr.store_id = e.store_id
         and sr.employee_id = e.id and sr.month = :month
+      left join employee_month_attendance ema on ema.tenant_id = e.tenant_id
+        and ema.store_id = e.store_id and ema.employee_id = e.id and ema.month = :month
+        and ema.status = 'CONFIRMED'
       where e.tenant_id = :tenantId
         and (
           sr.id is not null
@@ -503,11 +510,12 @@ public class SalaryRepository {
 
   public record StoreAttendanceStats(BigDecimal effectiveHours, BigDecimal formalDays) {}
 
-  /** 门店当月考勤汇总：总工时（实习/兼职按半工时）与四个标准岗位的出勤天数合计，用于提成计算。 */
+  /** 门店当月考勤汇总：正常工时（实习/兼职按半工时）与四个标准岗位的出勤天数合计，用于提成计算。加班不稀释产值。 */
   public StoreAttendanceStats storeAttendanceStats(long tenantId, String storeId, String month) {
     return jdbcTemplate.queryForObject("""
-        select coalesce(sum(case when e.employment_type = '兼职' or e.position like '%实习%'
-                                 then a.total_hours / 2 else a.total_hours end), 0) as eff_hours,
+        select coalesce(sum(case when e.employment_type in ('兼职', '长期兼职', '实习')
+                                      or e.position like '%实习%' or e.position like '%水果%'
+                                 then a.normal_hours / 2 else a.normal_hours end), 0) as eff_hours,
                coalesce(sum(case when e.position in ('店长', '领班', '训练员', '营业员')
                                  then a.attendance_days else 0 end), 0) as formal_days
         from employee_month_attendance a
@@ -574,6 +582,28 @@ public class SalaryRepository {
     } catch (EmptyResultDataAccessException ex) {
       return Optional.empty();
     }
+  }
+
+  public void upsertAttendance(
+      long tenantId, long userId, String storeId, String employeeId, String month,
+      BigDecimal attendanceDays, BigDecimal normalHours, BigDecimal overtimeHours, BigDecimal totalHours
+  ) {
+    String id = "ATT-" + tenantId + "-" + storeId + "-" + employeeId + "-" + month;
+    jdbcTemplate.update("""
+        insert into employee_month_attendance(
+          id, tenant_id, store_id, employee_id, month, attendance_days, normal_hours,
+          overtime_hours, total_hours, vacation_balance, source, status, confirmed_by,
+          confirmed_at, created_at, updated_at)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, 4, 'MANUAL', 'CONFIRMED', ?, current_timestamp,
+          current_timestamp, current_timestamp)
+        on duplicate key update
+          attendance_days = values(attendance_days), normal_hours = values(normal_hours),
+          overtime_hours = values(overtime_hours), total_hours = values(total_hours),
+          vacation_balance = 4,
+          source = 'MANUAL', status = 'CONFIRMED', confirmed_by = values(confirmed_by),
+          confirmed_at = current_timestamp, updated_at = current_timestamp
+        """, id, tenantId, storeId, employeeId, month, amount(attendanceDays), amount(normalHours),
+        amount(overtimeHours), amount(totalHours), userId);
   }
 
   public void saveCalculationSnapshot(

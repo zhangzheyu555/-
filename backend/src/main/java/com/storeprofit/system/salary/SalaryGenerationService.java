@@ -29,8 +29,9 @@ public class SalaryGenerationService {
   private static final BigDecimal STD_MEAL = new BigDecimal("300");            // 餐补/月
   private static final BigDecimal FULL_ATTENDANCE_BONUS = new BigDecimal("200");
   private static final BigDecimal DEFAULT_FULL_MONTH_DAYS = new BigDecimal("26");
-  private static final BigDecimal PART_TIME_HOURLY_RATE = new BigDecimal("15"); // 实习/兼职时薪（工资模板新版）
-  private static final BigDecimal AUNTIE_HOURLY_RATE = new BigDecimal("18");    // 长期阿姨(切水果)正式时薪
+  private static final BigDecimal INTERN_HOURLY_RATE = new BigDecimal("15");   // 实习时薪（旧值表）
+  private static final BigDecimal PART_TIME_HOURLY_RATE = new BigDecimal("13"); // 普通兼职时薪（旧值表）
+  private static final BigDecimal AUNTIE_HOURLY_RATE = new BigDecimal("18");    // 长期兼职/水果阿姨默认时薪；个人配置优先
   private static final BigDecimal HOURS_PER_DAY = new BigDecimal("8");
   private static final java.util.Map<String, BigDecimal> POST_WAGE = java.util.Map.of(
       "店长", new BigDecimal("1300"), "领班", new BigDecimal("800"),
@@ -221,18 +222,28 @@ public class SalaryGenerationService {
     SalaryRepository.AttendanceRow attendance = preparation.attendance();
     StringBuilder note = new StringBuilder("考勤来源：" + attendance.source());
 
-    if ("兼职".equals(employee.employmentType())) {
-      // 时薪优先级：员工档案「时薪」选择 > 默认口径（实习/兼职15，长期阿姨正式18，工资模板新版）
+    if (isHourlyEmployee(employee)) {
+      // 时薪优先级：员工档案个人时薪 > 岗位文字中的特殊时薪 > 默认（实习15、兼职13、长期兼职/水果阿姨18）。
       String pos = employee.position() == null ? "" : employee.position();
+      BigDecimal positionRate = hourlyRateInPosition(pos);
       BigDecimal rate = employee.hourlyRate() != null && employee.hourlyRate().compareTo(BigDecimal.ZERO) > 0
           ? employee.hourlyRate()
-          : (pos.contains("阿姨") && !pos.contains("实习") ? AUNTIE_HOURLY_RATE : PART_TIME_HOURLY_RATE);
+          : positionRate != null ? positionRate
+          : ("长期兼职".equals(employee.employmentType()) || pos.contains("水果") || (pos.contains("阿姨") && !pos.contains("实习"))
+              ? AUNTIE_HOURLY_RATE
+              : ("实习".equals(employee.employmentType()) || pos.contains("实习")
+                  ? INTERN_HOURLY_RATE : PART_TIME_HOURLY_RATE));
       BigDecimal hours = attendance.totalHours();
-      BigDecimal gross = hours.multiply(rate).setScale(2, RoundingMode.HALF_UP);
+      BigDecimal hourlyWage = hours.multiply(rate).setScale(2, RoundingMode.HALF_UP);
+      BigDecimal seniority = "长期兼职".equals(employee.employmentType()) ? seniorityPay(employee, month) : ZERO;
+      BigDecimal gross = hourlyWage.add(seniority).setScale(2, RoundingMode.HALF_UP);
       note.append("；按").append(rate.stripTrailingZeros().toPlainString())
           .append("元/时×").append(hours.stripTrailingZeros().toPlainString()).append("小时");
-      return record(storeId, month, employee, attendance, gross, gross,
-          ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, note.toString());
+      if (seniority.compareTo(BigDecimal.ZERO) > 0) {
+        note.append("；长期兼职工龄工资+").append(seniority.stripTrailingZeros().toPlainString());
+      }
+      return record(storeId, month, employee, attendance, gross, hourlyWage,
+          ZERO, ZERO, ZERO, ZERO, seniority, ZERO, ZERO, note.toString());
     }
 
     // 满勤天数与分项折算基准都跟月份走 = 当月天数−4 天休息（模板例：31天月 1900÷27×出勤天数）；
@@ -337,6 +348,18 @@ public class SalaryGenerationService {
     return POST_WAGE.containsKey(p) ? p : null;
   }
 
+  private static boolean isHourlyEmployee(EmployeeResponse employee) {
+    String type = employee.employmentType();
+    String position = employee.position() == null ? "" : employee.position();
+    return "兼职".equals(type) || "长期兼职".equals(type) || "实习".equals(type)
+        || position.contains("实习") || position.contains("水果");
+  }
+
+  private static BigDecimal hourlyRateInPosition(String position) {
+    java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("(?:兼职|实习)[^0-9]{0,4}([0-9]+(?:\\.[0-9]+)?)").matcher(position);
+    return matcher.find() ? new BigDecimal(matcher.group(1)) : null;
+  }
+
   /** 工龄工资：按入职日期到目标月末的整月数分档；仅全职/长期兼职（兼职走时薪不进此分支）。 */
   static BigDecimal seniorityPay(EmployeeResponse employee, String month) {
     if (employee.hireDate() == null || employee.hireDate().isBlank()) return ZERO;
@@ -400,7 +423,7 @@ public class SalaryGenerationService {
 
   private Preparation prepareSalary(long tenantId, String storeId, String month, EmployeeResponse employee) {
     java.util.ArrayList<String> missing = new java.util.ArrayList<>();
-    boolean partTime = "兼职".equals(employee.employmentType());
+    boolean partTime = isHourlyEmployee(employee);
     if (employee.position() == null || employee.position().isBlank()) missing.add("岗位配置");
     SalaryRepository.SalaryProfileRow profile = salaryRepository.salaryProfile(tenantId, employee.id(), month).orElse(null);
     if (!partTime && (profile == null || profile.baseSalary() == null || profile.baseSalary().compareTo(BigDecimal.ZERO) <= 0)) {

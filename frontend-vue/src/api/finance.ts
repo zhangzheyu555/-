@@ -469,6 +469,24 @@ export function generateSalaryWithReport(payload: { storeId: string; month: stri
   return apiPost<SalaryGenerateReport, { storeId: string; month: string }>('/api/salaries/generate-report', payload)
 }
 
+export interface SalaryAttendancePayload {
+  storeId: string
+  employeeId: string
+  month: string
+  attendanceDays: number
+  overtimeHours: number
+  normalHours?: number
+}
+
+export function saveSalaryAttendance(payload: SalaryAttendancePayload) {
+  return apiPut<{
+    attendanceDays: number
+    normalHours: number
+    overtimeHours: number
+    totalHours: number
+  }, SalaryAttendancePayload>('/api/salaries/attendance', payload)
+}
+
 export function markSalaryPaid(id: string) {
   return apiPost<SalaryRecord>(`/api/salaries/${encodeURIComponent(id)}/mark-paid`)
 }

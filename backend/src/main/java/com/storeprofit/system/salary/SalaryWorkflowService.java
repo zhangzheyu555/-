@@ -120,6 +120,54 @@ public class SalaryWorkflowService {
   }
 
   @Transactional
+  public SalaryRepository.AttendanceRow saveAttendance(AuthUser user, SalaryAttendanceRequest request) {
+    requireEditRole(user);
+    if (request == null) {
+      throw new BusinessException("BAD_REQUEST", "考勤记录不能为空", HttpStatus.BAD_REQUEST);
+    }
+    String storeId = salaryQueryService.resolveStoreForWrite(user, request.storeId(), "录入工资考勤");
+    if (storeId == null || storeId.isBlank()) {
+      storeId = SalaryQueryService.requireText(request.storeId(), "STORE_REQUIRED", "请选择门店");
+    }
+    salaryQueryService.requireStoreScope(user, storeId);
+    String employeeId = SalaryQueryService.requireText(request.employeeId(), "EMPLOYEE_REQUIRED", "请选择员工");
+    EmployeeResponse employee = resolveEmployee(user, storeId, employeeId, null, false);
+    String month = SalaryQueryService.normalizeMonth(request.month());
+    BigDecimal days = request.attendanceDays().setScale(2, RoundingMode.HALF_UP);
+    BigDecimal overtimeHours = request.overtimeHours().setScale(2, RoundingMode.HALF_UP);
+    if (days.compareTo(new BigDecimal("31")) > 0) {
+      throw new BusinessException("ATTENDANCE_DAYS_INVALID", "出勤天数不能超过31天", HttpStatus.BAD_REQUEST);
+    }
+    if (overtimeHours.compareTo(new BigDecimal("300")) > 0) {
+      throw new BusinessException("OVERTIME_HOURS_INVALID", "加班小时不能超过300小时", HttpStatus.BAD_REQUEST);
+    }
+    boolean hourlyEmployee = "兼职".equals(employee.employmentType())
+        || "长期兼职".equals(employee.employmentType())
+        || "实习".equals(employee.employmentType())
+        || (employee.position() != null
+            && (employee.position().contains("实习") || employee.position().contains("水果")));
+    BigDecimal normalHours = hourlyEmployee && request.normalHours() != null
+        ? request.normalHours().setScale(2, RoundingMode.HALF_UP)
+        : days.multiply(new BigDecimal("8")).setScale(2, RoundingMode.HALF_UP);
+    if (normalHours.compareTo(new BigDecimal("744")) > 0) {
+      throw new BusinessException("NORMAL_HOURS_INVALID", "正常工时不能超过744小时", HttpStatus.BAD_REQUEST);
+    }
+    BigDecimal totalHours = normalHours.add(overtimeHours).setScale(2, RoundingMode.HALF_UP);
+    salaryRepository.upsertAttendance(
+        user.tenantId(), user.id(), storeId, employee.id(), month,
+        days, normalHours, overtimeHours, totalHours);
+    salaryRepository.logAction(
+        user.tenantId(), user.id(), user.displayName(), "salary_attendance_save",
+        employee.id() + "-" + month, storeId, month,
+        (hourlyEmployee ? "录入计时员工正常工时" : "录入出勤" + days.stripTrailingZeros().toPlainString() + "天，正常工时")
+            + normalHours.stripTrailingZeros().toPlainString() + "小时，加班"
+            + overtimeHours.stripTrailingZeros().toPlainString() + "小时，总工时"
+            + totalHours.stripTrailingZeros().toPlainString() + "小时");
+    return salaryRepository.attendance(user.tenantId(), storeId, employee.id(), month)
+        .orElseThrow(() -> new BusinessException("SAVE_FAILED", "考勤保存失败", HttpStatus.INTERNAL_SERVER_ERROR));
+  }
+
+  @Transactional
   public void delete(AuthUser user, String id) {
     requireEditRole(user);
     String targetId = SalaryQueryService.requireText(id, "ID_REQUIRED", "Salary record id is required");

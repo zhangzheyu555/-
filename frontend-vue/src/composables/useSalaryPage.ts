@@ -230,12 +230,14 @@ export function useSalaryPage() {
 
   function applyRouteDefaults() {
     const qStoreId = typeof route.query.storeId === 'string' ? route.query.storeId : ''
+    const qBrandId = typeof route.query.brandId === 'string' ? Number(route.query.brandId) : undefined
     const qMonth = typeof route.query.month === 'string' ? route.query.month : ''
     const qStatus = typeof route.query.status === 'string' ? route.query.status.toUpperCase() : ''
     if (isStoreManager.value) {
       selectedStoreId.value = businessScope.boundStoreId.value
       selectedBrandId.value = businessScope.brandId.value ?? undefined
     } else {
+      if (qBrandId && brandOptions.value.some((brand) => brand.id === qBrandId)) selectedBrandId.value = qBrandId
       const ids = new Set(accessibleStores.value.map((s) => s.id))
       if (qStoreId && ids.has(qStoreId)) selectedStoreId.value = qStoreId
       else if (isOwnStoreScope.value && accessibleStores.value.length)
@@ -282,7 +284,7 @@ export function useSalaryPage() {
   })
 
   watch(
-    () => [route.query.storeId, route.query.month, route.query.status],
+    () => [route.query.brandId, route.query.storeId, route.query.month, route.query.status],
     () => { applyRouteDefaults() },
   )
 
