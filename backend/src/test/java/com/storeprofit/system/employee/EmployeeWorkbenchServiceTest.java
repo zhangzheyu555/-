@@ -11,6 +11,9 @@ import com.storeprofit.system.operations.ExamCenterModels.ExamAssignmentResponse
 import com.storeprofit.system.operations.ExamCenterRepository;
 import com.storeprofit.system.organization.OrganizationRepository;
 import com.storeprofit.system.organization.StoreResponse;
+import com.storeprofit.system.employeeassistant.EmployeeAssistantService;
+import com.storeprofit.system.employeeassistant.EmployeeAssistantState;
+import com.storeprofit.system.employeeassistant.EmployeeAssistantStatusResponse;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
 import com.storeprofit.system.platform.authorization.PermissionCodes;
@@ -27,8 +30,10 @@ class EmployeeWorkbenchServiceTest {
   private final ExamCenterRepository examCenterRepository = mock(ExamCenterRepository.class);
   private final EmployeeRepository employeeRepository = mock(EmployeeRepository.class);
   private final SalaryRepository salaryRepository = mock(SalaryRepository.class);
+  private final EmployeeAssistantService employeeAssistantService = mock(EmployeeAssistantService.class);
   private final EmployeeWorkbenchService service = new EmployeeWorkbenchService(
-      accessControl, organizationRepository, examCenterRepository, employeeRepository, salaryRepository);
+      accessControl, organizationRepository, examCenterRepository, employeeRepository, salaryRepository,
+      employeeAssistantService);
 
   @Test
   void employeeWorkbenchUsesCurrentEmployeeAndBoundStoreOnly() {
@@ -39,6 +44,7 @@ class EmployeeWorkbenchServiceTest {
         assignment(2L, "rg1", "COMPLETED", "已完成")
     ));
     when(accessControl.hasPermission(employee, PermissionCodes.EMPLOYEE_ASSISTANT_USE)).thenReturn(true);
+    when(employeeAssistantService.health(employee)).thenReturn(assistantStatus(EmployeeAssistantState.READY, true));
 
     EmployeeWorkbenchResponse response = service.workbench(employee);
 
@@ -51,6 +57,25 @@ class EmployeeWorkbenchServiceTest {
         .contains("EXAM", "ASSISTANT");
     verify(accessControl).requireEmployeeWorkbench(employee);
     verify(examCenterRepository).assignments(1L, "rg1", 8L);
+    verify(employeeAssistantService).health(employee);
+  }
+
+  @Test
+  void employeeWorkbenchDoesNotAdvertiseAnUnavailableAssistant() {
+    AuthUser employee = user("EMPLOYEE", "rg1");
+    when(organizationRepository.store(1L, "rg1")).thenReturn(Optional.of(store("rg1")));
+    when(examCenterRepository.assignments(1L, "rg1", 8L)).thenReturn(List.of());
+    when(accessControl.hasPermission(employee, PermissionCodes.EMPLOYEE_ASSISTANT_USE)).thenReturn(true);
+    when(employeeAssistantService.health(employee)).thenReturn(
+        assistantStatus(EmployeeAssistantState.UNCONFIGURED, false));
+
+    EmployeeWorkbenchResponse response = service.workbench(employee);
+
+    assertThat(response.assistant().enabled()).isFalse();
+    assertThat(response.assistant().state()).isEqualTo("UNCONFIGURED");
+    assertThat(response.assistant().route()).isEmpty();
+    assertThat(response.workItems()).extracting(EmployeeWorkbenchResponse.WorkItem::type)
+        .doesNotContain("ASSISTANT");
   }
 
   @Test
@@ -102,6 +127,29 @@ class EmployeeWorkbenchServiceTest {
         .contains("salary", "exam");
   }
 
+  @Test
+  void employeeProfileUsesBoundAuthUserBeforeLegacyNameOrEmployeeIdMatching() {
+    AuthUser employee = user("EMPLOYEE", "rg1");
+    when(organizationRepository.store(1L, "rg1")).thenReturn(Optional.of(store("rg1")));
+    when(employeeRepository.records(1L, null, "rg1", null)).thenReturn(List.of(
+        new EmployeeResponse("archive-employee-a", "rg1", "RG1", "荆州之星店", 1L, "如果",
+            "员工档案姓名", null, "店员", "店员", "全职", BigDecimal.valueOf(3500),
+            "在职", "2026-07-01", null,
+            null, null, null, null, null, null, null, null, null,
+            8L, "different-login-name", true, null)
+    ));
+    when(salaryRepository.latestEmployeeRecord(
+        1L, "rg1", List.of("archive-employee-a", "rg1_emp_01", "8"), "员工档案姓名"))
+        .thenReturn(Optional.empty());
+    when(examCenterRepository.assignments(1L, "rg1", 8L)).thenReturn(List.of());
+
+    EmployeeProfileResponse response = service.profile(employee);
+
+    assertThat(response.archive().linked()).isTrue();
+    assertThat(response.archive().employeeId()).isEqualTo("archive-employee-a");
+    assertThat(response.archive().name()).isEqualTo("员工档案姓名");
+  }
+
   private AuthUser user(String role, String storeId) {
     return new AuthUser(8L, 1L, "测试租户", "rg1_emp_01", "hash", "RG1员工一",
         role, storeId, true, 1L);
@@ -133,6 +181,17 @@ class EmployeeWorkbenchServiceTest {
         "COMPLETED".equals(status) ? BigDecimal.valueOf(95) : null,
         "COMPLETED".equals(status) ? Boolean.TRUE : null,
         null
+    );
+  }
+
+  private EmployeeAssistantStatusResponse assistantStatus(EmployeeAssistantState state, boolean canAsk) {
+    return new EmployeeAssistantStatusResponse(
+        state == EmployeeAssistantState.READY,
+        state != EmployeeAssistantState.UNCONFIGURED,
+        state,
+        state == EmployeeAssistantState.READY ? "员工服务助手已就绪" : "员工服务助手未配置",
+        false,
+        canAsk
     );
   }
 }

@@ -6,6 +6,8 @@ import com.storeprofit.system.employee.EmployeeWorkbenchResponse.Profile;
 import com.storeprofit.system.employee.EmployeeWorkbenchResponse.Store;
 import com.storeprofit.system.employee.EmployeeWorkbenchResponse.WorkItem;
 import com.storeprofit.system.employee.EmployeeWorkbenchResponse.WorkSummary;
+import com.storeprofit.system.employeeassistant.EmployeeAssistantService;
+import com.storeprofit.system.employeeassistant.EmployeeAssistantStatusResponse;
 import com.storeprofit.system.operations.ExamCenterModels.ExamAssignmentResponse;
 import com.storeprofit.system.operations.ExamCenterRepository;
 import com.storeprofit.system.organization.OrganizationRepository;
@@ -38,19 +40,22 @@ public class EmployeeWorkbenchService {
   private final ExamCenterRepository examCenterRepository;
   private final EmployeeRepository employeeRepository;
   private final SalaryRepository salaryRepository;
+  private final EmployeeAssistantService employeeAssistantService;
 
   public EmployeeWorkbenchService(
       AccessControlService accessControl,
       OrganizationRepository organizationRepository,
       ExamCenterRepository examCenterRepository,
       EmployeeRepository employeeRepository,
-      SalaryRepository salaryRepository
+      SalaryRepository salaryRepository,
+      EmployeeAssistantService employeeAssistantService
   ) {
     this.accessControl = accessControl;
     this.organizationRepository = organizationRepository;
     this.examCenterRepository = examCenterRepository;
     this.employeeRepository = employeeRepository;
     this.salaryRepository = salaryRepository;
+    this.employeeAssistantService = employeeAssistantService;
   }
 
   public EmployeeWorkbenchResponse workbench(AuthUser user) {
@@ -117,10 +122,17 @@ public class EmployeeWorkbenchService {
   }
 
   private AssistantEntry assistantEntry(AuthUser user) {
-    boolean enabled = accessControl.hasPermission(user, PermissionCodes.EMPLOYEE_ASSISTANT_USE);
-    return enabled
-        ? new AssistantEntry(true, "READY", "员工服务助手可用，可查询标准话术和处理建议。", "/employee-assistant")
-        : new AssistantEntry(false, "DISABLED", "员工服务助手暂未授权，请联系老板开通。", "");
+    if (!accessControl.hasPermission(user, PermissionCodes.EMPLOYEE_ASSISTANT_USE)) {
+      return new AssistantEntry(false, "DISABLED", "员工服务助手暂未授权，请联系老板开通。", "");
+    }
+    EmployeeAssistantStatusResponse status = employeeAssistantService.health(user);
+    boolean canAsk = status != null && status.canAsk();
+    return new AssistantEntry(
+        canAsk,
+        status == null || status.state() == null ? "UNAVAILABLE" : status.state().name(),
+        status == null ? "员工服务助手暂时不可用，请稍后重试" : status.message(),
+        canAsk ? "/employee-assistant" : ""
+    );
   }
 
   private List<WorkItem> workItems(
@@ -193,13 +205,21 @@ public class EmployeeWorkbenchService {
 
   private Optional<EmployeeResponse> employeeArchive(AuthUser user, String storeId) {
     List<EmployeeResponse> employees = employeeRepository.records(user.tenantId(), null, storeId, null);
+    List<EmployeeResponse> byAuthUser = employees.stream()
+        .filter(employee -> employee.authUserId() != null && employee.authUserId().longValue() == user.id())
+        .toList();
+    if (byAuthUser.size() == 1) {
+      return Optional.of(byAuthUser.get(0));
+    }
     String username = normalize(user.username());
     String userIdText = String.valueOf(user.id());
-    List<EmployeeResponse> byId = employees.stream()
-        .filter(employee -> equalsIgnoreCase(employee.id(), username) || equalsIgnoreCase(employee.id(), userIdText))
+    List<EmployeeResponse> byAccount = employees.stream()
+        .filter(employee -> equalsIgnoreCase(employee.accountUsername(), username)
+            || equalsIgnoreCase(employee.id(), username)
+            || equalsIgnoreCase(employee.id(), userIdText))
         .toList();
-    if (byId.size() == 1) {
-      return Optional.of(byId.get(0));
+    if (byAccount.size() == 1) {
+      return Optional.of(byAccount.get(0));
     }
     String displayName = normalize(user.displayName());
     List<EmployeeResponse> byName = employees.stream()
