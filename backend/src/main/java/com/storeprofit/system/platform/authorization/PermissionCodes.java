@@ -68,6 +68,8 @@ public final class PermissionCodes {
   public static final String EMPLOYEE_ASSISTANT_USE = "employee_assistant.use";
   public static final String EMPLOYEE_ASSISTANT_KNOWLEDGE_MANAGE = "employee_assistant.knowledge_manage";
   public static final String EMPLOYEE_ASSISTANT_HANDOFF_MANAGE = "employee_assistant.handoff_manage";
+  public static final String KNOWLEDGE_BASE_SEARCH = "knowledge_base.search";
+  public static final String KNOWLEDGE_BASE_MANAGE = "knowledge_base.manage";
   public static final String ATTACHMENT_READ = "attachment.read";
   public static final String ATTACHMENT_WRITE = "attachment.write";
   public static final String TODO_READ = "todo.read";
@@ -132,6 +134,8 @@ public final class PermissionCodes {
       EMPLOYEE_ASSISTANT_USE,
       EMPLOYEE_ASSISTANT_KNOWLEDGE_MANAGE,
       EMPLOYEE_ASSISTANT_HANDOFF_MANAGE,
+      KNOWLEDGE_BASE_SEARCH,
+      KNOWLEDGE_BASE_MANAGE,
       ATTACHMENT_READ,
       ATTACHMENT_WRITE,
       TODO_READ,

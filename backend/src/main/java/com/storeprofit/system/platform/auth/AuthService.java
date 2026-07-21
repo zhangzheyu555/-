@@ -46,8 +46,6 @@ public class AuthService {
   private final DataScopeService dataScopeService;
   private final WorkspaceAccessResolver workspaceAccessResolver;
   private final BusinessScopeResolver businessScopeResolver;
-  private final WeChatMiniProgramRepository weChatMiniProgramRepository;
-  private final WeChatMiniProgramService weChatMiniProgramService;
   private final long tokenTtlHours;
   private final SecureRandom secureRandom = new SecureRandom();
   private final ConcurrentMap<String, FailedLoginWindow> failedLogins = new ConcurrentHashMap<>();
@@ -61,8 +59,6 @@ public class AuthService {
       DataScopeService dataScopeService,
       WorkspaceAccessResolver workspaceAccessResolver,
       BusinessScopeResolver businessScopeResolver,
-      WeChatMiniProgramRepository weChatMiniProgramRepository,
-      WeChatMiniProgramService weChatMiniProgramService,
       @Value("${app.auth.token-ttl-hours:12}") long tokenTtlHours
   ) {
     this.authRepository = authRepository;
@@ -72,24 +68,7 @@ public class AuthService {
     this.dataScopeService = dataScopeService;
     this.workspaceAccessResolver = workspaceAccessResolver;
     this.businessScopeResolver = businessScopeResolver;
-    this.weChatMiniProgramRepository = weChatMiniProgramRepository;
-    this.weChatMiniProgramService = weChatMiniProgramService;
     this.tokenTtlHours = tokenTtlHours;
-  }
-
-  /** Compatibility constructor retained for focused authorization tests. */
-  public AuthService(
-      AuthRepository authRepository,
-      PasswordService passwordService,
-      AuditRepository auditRepository,
-      AuthorizationService authorizationService,
-      DataScopeService dataScopeService,
-      WorkspaceAccessResolver workspaceAccessResolver,
-      BusinessScopeResolver businessScopeResolver,
-      long tokenTtlHours
-  ) {
-    this(authRepository, passwordService, auditRepository, authorizationService, dataScopeService,
-        workspaceAccessResolver, businessScopeResolver, null, null, tokenTtlHours);
   }
 
   /** Compatibility constructor retained for focused authorization tests. */
@@ -109,8 +88,6 @@ public class AuthService {
         dataScopeService,
         new WorkspaceAccessResolver(),
         null,
-        null,
-        null,
         tokenTtlHours
     );
   }
@@ -126,10 +103,6 @@ public class AuthService {
         authRepository,
         passwordService,
         auditRepository,
-        null,
-        null,
-        null,
-        null,
         null,
         null,
         tokenTtlHours
@@ -162,73 +135,17 @@ public class AuthService {
     attemptKeys.forEach(failedLogins::remove);
     // Resolve permissions and the effective single-store context before issuing a token. A store
     // manager with an invalid binding must not receive a usable session token.
-    return issueSession(user);
-  }
-
-  @Transactional
-  public LoginResponse weChatLogin(WeChatLoginRequest request, String sourceIp) {
-    requireWeChatSupport();
-    long tenantId = request.tenantId() == null ? TenantDefaults.DEFAULT_TENANT_ID : request.tenantId();
-    WeChatMiniProgramService.Identity identity = weChatMiniProgramService.exchangeCode(request.code());
-    long userId = weChatMiniProgramRepository.boundUserId(tenantId, weChatMiniProgramService.appId(), identity.openid())
-        .orElseThrow(() -> new BusinessException(
-            "WECHAT_NOT_BOUND", "该微信尚未绑定系统账号，请先使用账号密码登录后绑定微信", HttpStatus.UNAUTHORIZED));
-    AuthUser user = authRepository.user(tenantId, userId)
-        .orElseThrow(() -> new BusinessException("WECHAT_NOT_BOUND", "微信绑定的账号不存在，请联系管理员", HttpStatus.UNAUTHORIZED));
-    if (!user.enabled()) {
-      authRepository.deleteTokensForUser(user.tenantId(), user.id());
-      throw new BusinessException("ACCOUNT_DISABLED", "账号已停用，请联系管理员", HttpStatus.FORBIDDEN);
-    }
-    LoginResponse response = issueSession(user);
-    auditRepository.writeLog(user, new AuditLogRequest(
-        "微信小程序登录", "auth_user", String.valueOf(user.id()), user.storeId(), null,
-        "微信一键登录成功，来源地址 " + safeSourceIp(sourceIp), null, null));
-    return response;
-  }
-
-  @Transactional
-  public WeChatBindingStatusResponse bindWeChat(AuthUser user, WeChatLoginRequest request) {
-    requireWeChatSupport();
-    WeChatMiniProgramService.Identity identity = weChatMiniProgramService.exchangeCode(request.code());
-    Long ownerId = weChatMiniProgramRepository.boundUserId(user.tenantId(), weChatMiniProgramService.appId(), identity.openid())
-        .orElse(null);
-    if (ownerId != null && ownerId.longValue() != user.id()) {
-      throw new BusinessException("WECHAT_ALREADY_BOUND", "该微信已绑定其他系统账号，请联系管理员处理", HttpStatus.CONFLICT);
-    }
-    weChatMiniProgramRepository.bind(user.tenantId(), user.id(), weChatMiniProgramService.appId(), identity.openid(), identity.unionid());
-    auditRepository.writeLog(user, new AuditLogRequest(
-        "绑定微信小程序", "auth_user", String.valueOf(user.id()), user.storeId(), null,
-        "已绑定微信一键登录", null, null));
-    return new WeChatBindingStatusResponse(true, true);
-  }
-
-  public WeChatBindingStatusResponse weChatBindingStatus(AuthUser user) {
-    if (weChatMiniProgramRepository == null || weChatMiniProgramService == null
-        || !weChatMiniProgramService.configured()) {
-      return new WeChatBindingStatusResponse(false, false);
-    }
-    return new WeChatBindingStatusResponse(true,
-        weChatMiniProgramRepository.isBound(user.tenantId(), user.id(), weChatMiniProgramService.appId()));
-  }
-
-  private LoginResponse issueSession(AuthUser user) {
     SessionUser sessionUser = toSessionUser(user);
     String token = newToken();
     authRepository.deleteTokensForUser(user.tenantId(), user.id());
-    authRepository.createToken(token, user.tenantId(), user.id(), user.permissionVersion(),
-        OffsetDateTime.now().plusHours(tokenTtlHours));
+    authRepository.createToken(
+        token,
+        user.tenantId(),
+        user.id(),
+        user.permissionVersion(),
+        OffsetDateTime.now().plusHours(tokenTtlHours)
+    );
     return new LoginResponse(token, sessionUser);
-  }
-
-  private void requireWeChatSupport() {
-    if (weChatMiniProgramRepository == null || weChatMiniProgramService == null) {
-      throw new BusinessException("WECHAT_LOGIN_UNAVAILABLE", "微信登录暂未配置，请使用账号密码登录", HttpStatus.SERVICE_UNAVAILABLE);
-    }
-  }
-
-  private String safeSourceIp(String sourceIp) {
-    String value = sourceIp == null ? "unknown" : sourceIp.trim();
-    return value.isBlank() ? "unknown" : value.substring(0, Math.min(64, value.length()));
   }
 
   private List<String> loginAttemptKeys(long tenantId, String username, String sourceIp) {

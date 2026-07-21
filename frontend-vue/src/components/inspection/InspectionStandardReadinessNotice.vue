@@ -24,7 +24,7 @@ const emit = defineEmits<{ refresh: [] }>()
 <template>
   <div class="inspection-standard-note" :class="{ muted: props.ready, invalid: props.hasStandard && !props.ready }">
     <div>
-      <span v-if="props.ready">{{ props.standard.title }} {{ props.standard.version }} · 105条（物料40 / 卫生47 / 服务18） · {{ props.stats.fullScore }}分（满分200） · 合格线{{ props.stats.passScore }}分 · 红线 {{ props.stats.redlineCount }} 条 · 黄线 {{ props.stats.yellowLineCount }} 条</span>
+      <span v-if="props.ready">{{ props.standard.title }} {{ props.standard.version }} · 105条（物料40 / 卫生47 / 服务18） · {{ props.stats.fullScore }}分 · 合格线{{ props.stats.passScore }}分 · 红线 {{ props.stats.redlineCount }} 条 · 黄线 {{ props.stats.yellowLineCount }} 条</span>
       <span v-else-if="props.standard.validationError" class="danger">当前标准未通过校验，只能只读查看，不能保存巡检。</span>
       <span v-else>暂无稽核标准</span>
     </div>

@@ -71,7 +71,8 @@ export const useWarehouseStore = defineStore('warehouse', {
       const rows = await getWarehouses()
       this.warehouses = rows
       if (!rows.some((row) => String(row.id) === String(this.selectedWarehouseId))) {
-        this.selectedWarehouseId = rows.find((row) => row.code === 'JZ-CENTRAL')?.id || rows[0]?.id || ''
+        const accessibleRows = rows.filter((row) => row.enabled !== false && row.canRead !== false)
+        this.selectedWarehouseId = accessibleRows.find((row) => row.type === 'CENTRAL')?.id || accessibleRows[0]?.id || ''
         this.transferContext = null
       }
       return rows

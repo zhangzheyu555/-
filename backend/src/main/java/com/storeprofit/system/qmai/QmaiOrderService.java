@@ -54,9 +54,11 @@ public class QmaiOrderService {
   private static final String SHOP_LIST_METHOD = "v3/org/shop/getShopList";
 
   private final QmaiConfigService configService;
+  private final QmaiOutboundPolicy outboundPolicy;
 
-  public QmaiOrderService(QmaiConfigService configService) {
+  public QmaiOrderService(QmaiConfigService configService, QmaiOutboundPolicy outboundPolicy) {
     this.configService = configService;
+    this.outboundPolicy = outboundPolicy;
   }
 
   /** 按数据范围拉取最近 N 天营业额。allowedStoreIds 为 null 仅用于已验证的 ALL。 */
@@ -400,6 +402,7 @@ public class QmaiOrderService {
     body.put("params", bizParams);
 
     String url = cfg.baseUrl().replaceAll("/+$", "") + "/" + method;
+    outboundPolicy.requireAllowed(url);
     Map<String, Object> resp = restClient(cfg).post()
         .uri(url)
         .contentType(MediaType.APPLICATION_JSON)

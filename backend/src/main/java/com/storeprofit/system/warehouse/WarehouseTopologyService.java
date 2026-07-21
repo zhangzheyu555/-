@@ -113,8 +113,13 @@ public class WarehouseTopologyService {
       throw new BusinessException("WAREHOUSE_REQUIRED", "请选择仓库", HttpStatus.BAD_REQUEST);
     }
     FacilityRow row = repository.facility(user.tenantId(), warehouseId)
-        .orElseThrow(() -> new BusinessException(
-            "WAREHOUSE_NOT_FOUND", "仓库不存在或不属于当前企业", HttpStatus.NOT_FOUND));
+        .orElse(null);
+    if (row == null) {
+      if (repository.facilityExistsForOtherTenant(user.tenantId(), warehouseId)) {
+        deny(user, action, warehouseId, "仓库不在当前账号的数据范围内");
+      }
+      throw new BusinessException("WAREHOUSE_NOT_FOUND", "仓库不存在", HttpStatus.NOT_FOUND);
+    }
     if (!row.enabled()) {
       throw new BusinessException("WAREHOUSE_DISABLED", "仓库已停用，不能继续操作", HttpStatus.CONFLICT);
     }
@@ -412,9 +417,13 @@ public class WarehouseTopologyService {
   }
 
   private void deny(AuthUser user, String action, FacilityRow facility, String reason) {
+    deny(user, action, facility.id(), reason);
+  }
+
+  private void deny(AuthUser user, String action, long warehouseId, String reason) {
     try {
       auditRepository.writePermissionDenied(
-          user, action, "WAREHOUSE", Long.toString(facility.id()), null, reason);
+          user, action, "WAREHOUSE", Long.toString(warehouseId), null, reason);
     } catch (RuntimeException ex) {
       log.warn("Failed to audit warehouse denial for user {}: {}", user.id(), ex.getMessage());
     }

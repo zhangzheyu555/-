@@ -55,12 +55,21 @@ public class ExpenseController {
     return ApiResponse.ok(expenseService.claims(authService.requireUser(authorization), month, brandId, storeId, status));
   }
 
+  @GetMapping("/{id}")
+  public ApiResponse<ExpenseClaimResponse> claim(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id
+  ) {
+    return ApiResponse.ok(expenseService.claim(authService.requireUser(authorization), id));
+  }
+
   @PostMapping
   public ApiResponse<ExpenseClaimResponse> create(
       @RequestHeader(value = "Authorization", required = false) String authorization,
+      @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
       @Valid @RequestBody ExpenseClaimRequest request
   ) {
-    return ApiResponse.ok(expenseService.save(authService.requireUser(authorization), null, request));
+    return ApiResponse.ok(expenseService.save(authService.requireUser(authorization), null, request, idempotencyKey));
   }
 
   @PutMapping("/{id}")
@@ -160,6 +169,16 @@ public class ExpenseController {
       @PathVariable String id
   ) {
     expenseService.delete(authService.requireUser(authorization), id);
+    return ApiResponse.ok();
+  }
+
+  @DeleteMapping("/{id}/attachments/{attachmentId}")
+  public ApiResponse<Void> deleteAttachment(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id,
+      @PathVariable long attachmentId
+  ) {
+    expenseService.deleteAttachment(authService.requireUser(authorization), id, attachmentId);
     return ApiResponse.ok();
   }
 

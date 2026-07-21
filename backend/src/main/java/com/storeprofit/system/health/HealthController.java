@@ -1,6 +1,10 @@
 package com.storeprofit.system.health;
 
 import com.storeprofit.system.common.ApiResponse;
+import com.storeprofit.system.platform.auth.AccessControlService;
+import com.storeprofit.system.platform.auth.AuthService;
+import com.storeprofit.system.platform.auth.AuthUser;
+import jakarta.servlet.http.HttpServletRequest;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -13,7 +17,7 @@ import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationInfo;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.info.BuildProperties;
+import org.springframework.http.HttpHeaders;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -21,44 +25,52 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/health")
 public class HealthController {
-  private final BuildProperties buildProperties;
   private final Flyway flyway;
   private final DataSource dataSource;
-
-  @Value("${app.inspection.detect-url:http://127.0.0.1:8000/detect}")
-  private String inspectionDetectUrl;
+  private final AuthService authService;
+  private final AccessControlService accessControl;
 
   @Value("${app.environment}")
   private String applicationEnvironment;
 
   public HealthController(
-      @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")
-      org.springframework.beans.factory.ObjectProvider<BuildProperties> buildPropertiesProvider,
       Flyway flyway,
-      DataSource dataSource
+      DataSource dataSource,
+      AuthService authService,
+      AccessControlService accessControl
   ) {
-    this.buildProperties = buildPropertiesProvider.getIfAvailable();
     this.flyway = flyway;
     this.dataSource = dataSource;
+    this.authService = authService;
+    this.accessControl = accessControl;
   }
 
+  /**
+   * Anonymous liveness probe. It intentionally does not touch dependent services or expose
+   * deployment metadata, so a public reverse-proxy health check cannot reveal the runtime shape.
+   */
   @GetMapping
   public ApiResponse<Map<String, Object>> health() {
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("status", "UP");
+    result.put("service", "store-profit-backend");
     result.put("time", OffsetDateTime.now().toString());
+    return ApiResponse.ok(result);
+  }
+
+  /**
+   * Authenticated readiness diagnostics for controlled operations only. The authentication filter
+   * protects this sub-path before it reaches the controller; the dashboard permission keeps the
+   * database identity and deployment state limited to the system administrator.
+   */
+  @GetMapping("/diagnostics")
+  public ApiResponse<Map<String, Object>> diagnostics(HttpServletRequest request) {
+    AuthUser user = authService.requireUser(request.getHeader(HttpHeaders.AUTHORIZATION));
+    accessControl.requireSystemDashboardRead(user);
+
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("status", "UP");
     result.put("environment", applicationEnvironment);
-
-    // Build info
-    if (buildProperties != null) {
-      result.put("sourceVersion", buildProperties.get("sourceVersion"));
-      result.put("buildTime", buildProperties.get("time"));
-    } else {
-      result.put("sourceVersion", "dev");
-      result.put("buildTime", "unknown");
-    }
-
-    // Flyway migration version
     try {
       MigrationInfo current = flyway.info().current();
       result.put("databaseMigrationVersion",
@@ -85,12 +97,6 @@ public class HealthController {
     } catch (SQLException exception) {
       throw new IllegalStateException("Database health identity check failed", exception);
     }
-
-    // Inspection service status (non-blocking check)
-    result.put("inspectionServiceStatus", "CONFIGURED");
-    result.put("inspectionModelStatus", "UNKNOWN");
-    result.put("inspectionDetectUrl", inspectionDetectUrl);
-
     return ApiResponse.ok(result);
   }
 }

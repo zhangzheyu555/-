@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPut } from './http'
+import { apiDelete, apiGet, apiPost, apiPut } from './http'
 
 export interface OperationLog {
   id: number
@@ -64,6 +64,10 @@ export function getBrands() {
 
 export function updateStore(payload: StorePayload) {
   return apiPut<void, StorePayload>('/api/stores', payload)
+}
+
+export function createStore(payload: StorePayload) {
+  return apiPost<void, StorePayload>('/api/stores', payload)
 }
 
 export function deleteStore(id: string) {

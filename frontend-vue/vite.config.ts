@@ -6,6 +6,12 @@ function backendProxy(target: string) {
   return {
     target,
     changeOrigin: true,
+    // The browser talks to Vite, not directly to the API. Preserve that
+    // same-origin boundary at the proxy hop so a local preview port does not
+    // trigger the backend's cross-origin request rejection.
+    headers: {
+      origin: target,
+    },
     configure(proxy: { on: (event: 'error', handler: (error: Error, request: unknown, response: unknown) => void) => void }) {
       proxy.on('error', (_error, _request, response) => {
         const serverResponse = response as ServerResponse

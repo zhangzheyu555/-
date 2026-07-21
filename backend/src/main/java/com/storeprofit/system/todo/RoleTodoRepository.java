@@ -356,6 +356,35 @@ public class RoleTodoRepository {
     return namedJdbcTemplate.query(sql.toString(), params, this::mapExpense);
   }
 
+  /**
+   * This is a read-only projection of the daily-loss review queue.  The report remains owned by
+   * DailyLossService: callers must use its review endpoint rather than a generic todo transition.
+   */
+  public List<DailyLossReviewTodoRow> pendingDailyLossReviews(
+      long tenantId,
+      Long brandId,
+      String storeId,
+      int limit
+  ) {
+    if (!tableExists("daily_loss_report")) {
+      return List.of();
+    }
+    StringBuilder sql = new StringBuilder("""
+        select r.id, r.store_id, s.name as store_name, b.name as brand_name,
+               r.loss_date, r.submitted_at
+        from daily_loss_report r
+        join store_branch s on s.id = r.store_id and s.tenant_id = r.tenant_id
+        left join brand b on b.id = s.brand_id and b.tenant_id = s.tenant_id
+        where r.tenant_id = :tenantId
+          and r.status = 'SUBMITTED'
+        """);
+    MapSqlParameterSource params = new MapSqlParameterSource("tenantId", tenantId);
+    addScopeFilters(sql, params, brandId, storeId, "s", "r");
+    sql.append(" order by r.submitted_at asc, r.loss_date asc, r.id limit :limit");
+    params.addValue("limit", limit);
+    return namedJdbcTemplate.query(sql.toString(), params, this::mapDailyLossReview);
+  }
+
   public List<ProfitRiskTodoRow> profitRiskEntries(long tenantId, Long brandId, String storeId, int limit) {
     StringBuilder sql = new StringBuilder("""
         select *
@@ -416,7 +445,10 @@ public class RoleTodoRepository {
     }
     String normalizedTodoId = todoId.trim();
     if (normalizedTodoId.startsWith("expense-")) {
-      return markExpenseHandled(tenantId, idAfterPrefix(normalizedTodoId, "expense-"), actorUserId);
+      // Expense claims have their own submit/review state machine. Do not retain a repository
+      // shortcut that can move a claim to 已完成 outside ExpenseService, even if a future caller
+      // accidentally reaches this generic to-do completion path.
+      return 0;
     }
     if (normalizedTodoId.startsWith("inspection-")) {
       // The completion is stored in todo_action. Historical inspection scores and outcomes are immutable.
@@ -446,25 +478,6 @@ public class RoleTodoRepository {
       return idAfterPrefix(normalized, "store-receipt-");
     }
     return "";
-  }
-
-  private int markExpenseHandled(long tenantId, String expenseId, Long actorUserId) {
-    if (expenseId.isBlank()) {
-      return 0;
-    }
-    return namedJdbcTemplate.update("""
-        update expense_claim
-        set status = '已完成',
-            reviewed_by = coalesce(:actorUserId, reviewed_by),
-            reviewed_at = current_timestamp,
-            updated_at = current_timestamp
-        where tenant_id = :tenantId and id = :id
-        """,
-        new MapSqlParameterSource()
-            .addValue("tenantId", tenantId)
-            .addValue("id", expenseId)
-            .addValue("actorUserId", actorUserId)
-    );
   }
 
   private int markWarehouseHandled(long tenantId, String requisitionId, Long actorUserId) {
@@ -601,6 +614,19 @@ public class RoleTodoRepository {
     );
   }
 
+  private DailyLossReviewTodoRow mapDailyLossReview(ResultSet rs, int rowNum) throws SQLException {
+    Date lossDate = rs.getDate("loss_date");
+    Timestamp submittedAt = rs.getTimestamp("submitted_at");
+    return new DailyLossReviewTodoRow(
+        rs.getString("id"),
+        rs.getString("store_id"),
+        rs.getString("store_name"),
+        rs.getString("brand_name"),
+        lossDate == null ? null : lossDate.toLocalDate().toString(),
+        submittedAt == null ? null : submittedAt.toLocalDateTime().toString()
+    );
+  }
+
   private ProfitRiskTodoRow mapProfitRisk(ResultSet rs, int rowNum) throws SQLException {
     BigDecimal income = rs.getBigDecimal("income");
     BigDecimal net = rs.getBigDecimal("net");
@@ -705,6 +731,16 @@ public class RoleTodoRepository {
       String reason,
       String status,
       String createdAt
+  ) {
+  }
+
+  public record DailyLossReviewTodoRow(
+      String id,
+      String storeId,
+      String storeName,
+      String brandName,
+      String lossDate,
+      String submittedAt
   ) {
   }
 

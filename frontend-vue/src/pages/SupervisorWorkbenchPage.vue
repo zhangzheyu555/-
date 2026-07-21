@@ -2365,6 +2365,7 @@ onUnmounted(() => {
 
 .upload-button {
   width: fit-content;
+  min-height: 44px;
   overflow: hidden;
   position: relative;
 }

@@ -188,7 +188,7 @@ public class FinanceWorkbenchService {
     requireFinanceAccess(user);
     String id = requireTodoId(todoId);
     if (id.startsWith("expense-")) {
-      throw new BusinessException("BAD_ACTION", "报销事项请使用通过、驳回或要求补充资料", HttpStatus.CONFLICT);
+      rejectLegacyExpenseCompletion(user, id);
     }
     if (id.startsWith("salary-check-") || id.startsWith("finance-data-")) {
       String note = request == null || request.note() == null || request.note().isBlank()
@@ -198,6 +198,32 @@ public class FinanceWorkbenchService {
       return new FinanceTodoActionResponse(id, "已核对", "已处理", note);
     }
     return roleTodoService.resolve(user, RoleTodoAudience.FINANCE, id, request);
+  }
+
+  /**
+   * A reimbursement can only move through its explicit approval state machine.  This legacy
+   * finance-workbench action is rejected before it can write a generic completion, but the
+   * attempted bypass must still survive the surrounding transaction rollback in the audit log.
+   */
+  private void rejectLegacyExpenseCompletion(AuthUser user, String todoId) {
+    String expenseId = todoId.substring("expense-".length());
+    ExpenseClaimResponse claim = expenseService.claim(user, expenseId);
+    actionRepository.saveRejectedOperationLog(new RoleTodoOperationLogRecord(
+        user.tenantId(),
+        user.id(),
+        user.displayName(),
+        "expense_approval_legacy_completion_rejected",
+        "expense_claim",
+        claim.id(),
+        claim.storeId(),
+        claim.month(),
+        "报销审批必须通过报销审核流程，不能通过通用待办完成"
+    ));
+    throw new BusinessException(
+        "EXPENSE_APPROVAL_WORKFLOW_REQUIRED",
+        "报销审批必须通过报销审核流程，不能通过通用待办完成",
+        HttpStatus.CONFLICT
+    );
   }
 
   @Transactional
@@ -217,8 +243,8 @@ public class FinanceWorkbenchService {
     String finalNote = note.startsWith("要求补充资料") ? note : "要求补充资料：" + note;
     if (id.startsWith("expense-")) {
       String expenseId = id.substring("expense-".length());
-      expenseService.reject(user, expenseId, new ExpenseReviewRequest(finalNote));
-      return new FinanceTodoActionResponse(todoId, "要求补充资料", "已处理", finalNote);
+      expenseService.requestInfo(user, expenseId, new ExpenseReviewRequest(finalNote));
+      return new FinanceTodoActionResponse(todoId, "要求补充资料", "待补资料", finalNote);
     }
     if (id.startsWith("profit-risk-") || id.startsWith("salary-check-") || id.startsWith("finance-data-")) {
       recordGeneratedAction(user, id, "REQUEST_INFO", finalNote, "PENDING_INFO");

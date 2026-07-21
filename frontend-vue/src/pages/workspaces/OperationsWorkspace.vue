@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ClipboardCheck, GraduationCap, Settings2 } from 'lucide-vue-next'
+import { ClipboardCheck, GraduationCap, PackageMinus, Settings2 } from 'lucide-vue-next'
 import PageHeader from '../../components/common/PageHeader.vue'
 import { PERMISSIONS } from '../../permissions/permissions'
 import { useAuthStore } from '../../stores/auth'
@@ -20,6 +20,13 @@ const modules = computed(() => [
     to: '/operations/inspection/reviews',
     icon: ClipboardCheck,
     permission: PERMISSIONS.INSPECTION_MANAGE,
+  },
+  {
+    label: '每日报损复核',
+    description: '按已授权门店查看已提交报损，核对照片和明细后完成复核。',
+    to: '/daily-loss',
+    icon: PackageMinus,
+    permission: PERMISSIONS.DAILY_LOSS_READ,
   },
   {
     label: '培训考试',

@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { AlertTriangle, FileText, Image, Paperclip, RefreshCw, Trash2, X } from 'lucide-vue-next'
 import {
   createExpense,
+  deleteExpenseAttachment,
   submitExpense,
   updateExpense,
   uploadExpenseAttachment,
@@ -36,6 +37,7 @@ const previewUrl = ref('')
 const previewFailed = ref(false)
 const previewOpen = ref(false)
 const confirmDialog = ref(false)
+const createIdempotencyKey = ref('')
 let selectionGeneration = 0
 
 const title = computed(() => props.claim ? '编辑报销' : '新增报销')
@@ -67,10 +69,10 @@ onBeforeUnmount(() => {
 })
 
 function emptyForm(): ExpenseClaimPayload {
-  const now = new Date()
   return {
     storeId: props.lockedStoreId || props.stores[0]?.id || '',
-    month: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`,
+    month: currentMonth(),
+    expenseDate: currentDate(),
     amount: 0,
     category: '',
     reason: '',
@@ -85,6 +87,7 @@ function resetForm() {
     ? {
         storeId: props.lockedStoreId || claim.storeId,
         month: claim.month,
+        expenseDate: claim.expenseDate || currentDate(),
         amount: Number(claim.amount || 0),
         category: claim.category || '',
         reason: claim.reason || '',
@@ -95,6 +98,7 @@ function resetForm() {
   fileType.value = ''
   previewFailed.value = false
   error.value = ''
+  createIdempotencyKey.value = claim ? '' : newIdempotencyKey()
   if (fileInput.value) fileInput.value.value = ''
 }
 
@@ -207,6 +211,7 @@ function requestClose() {
     return
   }
   releasePreview()
+  discardNewClaimKey()
   emit('close')
 }
 
@@ -223,6 +228,7 @@ function onBackdrop() {
 function onDismiss() {
   confirmDialog.value = false
   releasePreview()
+  discardNewClaimKey()
   emit('close')
 }
 
@@ -241,8 +247,16 @@ async function save(shouldSubmit: boolean) {
     error.value = '请选择报销月份。'
     return
   }
+  if (!isValidDate(form.expenseDate)) {
+    error.value = '请选择有效的报销日期。'
+    return
+  }
   if (!Number.isFinite(Number(form.amount)) || Number(form.amount) <= 0) {
     error.value = '请输入大于 0 的报销金额。'
+    return
+  }
+  if (!String(form.category || '').trim()) {
+    error.value = '请填写报销类别。'
     return
   }
   if (!String(form.reason || '').trim()) {
@@ -252,23 +266,46 @@ async function save(shouldSubmit: boolean) {
 
   saving.value = true
   try {
+    // Supplements live in a separate table and never appear in `attachments`.
+    // Only an attachment explicitly referenced by the old imageUrl is the
+    // replaceable primary receipt; do not delete any other evidence.
+    const previousPrimaryAttachmentId = file.value ? primaryAttachmentId(props.claim) : undefined
+    const payload: ExpenseClaimPayload = {
+      ...form,
+      storeId,
+      expenseDate: form.expenseDate,
+      amount: Number(form.amount),
+      category: String(form.category || '').trim(),
+      reason: String(form.reason || '').trim(),
+    }
     let saved = props.claim
-      ? await updateExpense(props.claim.id, { ...form, storeId, amount: Number(form.amount) })
-      : await createExpense({ ...form, storeId, amount: Number(form.amount) })
+      ? await updateExpense(props.claim.id, payload)
+      : await createExpense(payload, currentCreateIdempotencyKey())
     if (file.value) {
       const attachment = await uploadExpenseAttachment(file.value, saved.storeId, saved.id)
+      const attachmentUrl = String(attachment.url || attachment.downloadUrl || '').trim()
+      if (!attachmentUrl) throw new Error('报销凭证上传成功但未返回访问地址，请刷新页面后重试。')
       saved = await updateExpense(saved.id, {
         storeId: saved.storeId,
         month: saved.month,
+        expenseDate: payload.expenseDate,
         amount: Number(saved.amount),
         category: saved.category,
         reason: saved.reason,
-        imageUrl: attachment.downloadUrl,
+        imageUrl: attachmentUrl,
       })
+      if (previousPrimaryAttachmentId !== undefined) {
+        try {
+          await deleteExpenseAttachment(saved.id, previousPrimaryAttachmentId)
+        } catch {
+          throw new Error('新报销凭证已保存，但旧凭证删除失败，请刷新页面后重试。')
+        }
+      }
     }
     if (shouldSubmit) saved = await submitExpense(saved.id)
     releasePreview()
     captureSnapshot()
+    if (!props.claim) createIdempotencyKey.value = ''
     emit('saved', saved)
   } catch (reason) {
     error.value = displayError(reason)
@@ -277,9 +314,50 @@ async function save(shouldSubmit: boolean) {
   }
 }
 
+function newIdempotencyKey() {
+  return crypto.randomUUID()
+}
+
+function currentCreateIdempotencyKey() {
+  if (!createIdempotencyKey.value) createIdempotencyKey.value = newIdempotencyKey()
+  return createIdempotencyKey.value
+}
+
+function discardNewClaimKey() {
+  if (!props.claim) createIdempotencyKey.value = ''
+}
+
+function primaryAttachmentId(claim?: ExpenseClaim | null) {
+  const imageUrl = String(claim?.imageUrl || '').trim()
+  if (!imageUrl) return undefined
+  return claim?.attachments?.find((attachment) => {
+    return [attachment.previewUrl, attachment.downloadUrl].some((url) => String(url || '').trim() === imageUrl)
+  })?.id
+}
+
 function displayError(reason: unknown) {
   const message = reason instanceof Error ? reason.message : String(reason || '')
   return message || '报销保存失败，请稍后重试。'
+}
+
+function currentMonth() {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+}
+
+function currentDate() {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+}
+
+function isValidDate(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''))
+  if (!match) return false
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const date = new Date(year, month - 1, day)
+  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day
 }
 </script>
 
@@ -322,13 +400,17 @@ function displayError(reason: unknown) {
             <input v-model="form.month" type="month" :disabled="saving" />
           </label>
           <label>
-            报销金额
-            <input v-model.number="form.amount" type="number" min="0" step="0.01" placeholder="请输入金额" :disabled="saving" />
+            报销日期
+            <input v-model="form.expenseDate" type="date" :disabled="saving" />
           </label>
         </div>
         <label>
+          报销金额
+          <input v-model.number="form.amount" type="number" min="0" step="0.01" placeholder="请输入金额" :disabled="saving" />
+        </label>
+        <label>
           报销类别
-          <input v-model.trim="form.category" type="text" placeholder="例如：物料采购、设备维修" :disabled="saving" />
+          <input v-model.trim="form.category" type="text" maxlength="80" placeholder="例如：物料采购、设备维修" :disabled="saving" />
         </label>
         <label>
           报销说明

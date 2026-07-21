@@ -181,15 +181,7 @@ public class TrainingVideoService {
     if (!canManage(user) && !accessControl.hasPermission(user, PermissionCodes.EXAM_REPORT)) {
       throw new BusinessException("FORBIDDEN", "没有查看观看进度统计的权限", HttpStatus.FORBIDDEN);
     }
-    List<ViewerProgressRow> rows = repository.progressReport(user.tenantId());
-    if ("STORE_MANAGER".equals(AccessControlService.canonicalRole(user.role()))) {
-      String storeId = user.storeId();
-      if (storeId == null || storeId.isBlank()) {
-        throw new BusinessException("STORE_MANAGER_SCOPE_INVALID", "店长未绑定门店，不能查看培训进度", HttpStatus.FORBIDDEN);
-      }
-      return rows.stream().filter(row -> storeId.equals(row.storeId())).toList();
-    }
-    return rows;
+    return repository.progressReport(user.tenantId());
   }
 
   private VideoRow requireVideo(AuthUser user, long videoId) {

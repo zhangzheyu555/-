@@ -2,6 +2,7 @@
 import { onBeforeUnmount, ref, watch } from 'vue'
 import { Download, Image, ImageOff, LoaderCircle, RefreshCw, X } from 'lucide-vue-next'
 import {
+  deleteExpenseAttachment,
   downloadExpenseAttachment,
   expenseClaimAttachmentDisplayName,
   fetchExpenseAttachment,
@@ -11,11 +12,22 @@ import UiButton from '../ui/UiButton.vue'
 
 type PreviewState = 'loading' | 'ready' | 'error'
 
-const props = defineProps<{ attachments: ExpenseAttachment[] }>()
+const props = withDefaults(defineProps<{
+  attachments: ExpenseAttachment[]
+  expenseId?: string
+  removable?: boolean
+}>(), {
+  expenseId: '',
+  removable: false,
+})
+const emit = defineEmits<{
+  deleted: [attachment: ExpenseAttachment]
+}>()
 
 const imageUrls = ref<Record<string, string>>({})
 const imageStates = ref<Record<string, PreviewState>>({})
 const downloadingId = ref('')
+const deletingId = ref('')
 const preview = ref<{ url: string; alt: string } | null>(null)
 const error = ref('')
 const controllers = new Map<string, AbortController>()
@@ -98,6 +110,20 @@ async function download(attachment: ExpenseAttachment) {
     downloadingId.value = ''
   }
 }
+
+async function remove(attachment: ExpenseAttachment) {
+  if (!props.removable || !props.expenseId || deletingId.value) return
+  deletingId.value = String(attachment.id)
+  error.value = ''
+  try {
+    await deleteExpenseAttachment(props.expenseId, attachment.id)
+    emit('deleted', attachment)
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '删除报销凭证失败，请稍后重试。'
+  } finally {
+    deletingId.value = ''
+  }
+}
 </script>
 
 <template>
@@ -121,18 +147,31 @@ async function download(attachment: ExpenseAttachment) {
         <Image v-else :size="18" />
       </button>
       <span class="expense-attachment-name">{{ expenseClaimAttachmentDisplayName(attachment) }}</span>
-      <button
-        v-if="isImage(attachment) && imageStates[String(attachment.id)] === 'error'"
-        class="expense-attachment-action"
-        type="button"
-        @click="retry(attachment)"
-      >
-        <RefreshCw :size="14" />重试
-      </button>
-      <button class="expense-attachment-action" type="button" :disabled="downloadingId === String(attachment.id)" @click="download(attachment)">
-        <LoaderCircle v-if="downloadingId === String(attachment.id)" class="spin" :size="14" />
-        <Download v-else :size="14" />下载
-      </button>
+      <span class="expense-attachment-actions">
+        <button
+          v-if="isImage(attachment) && imageStates[String(attachment.id)] === 'error'"
+          class="expense-attachment-action"
+          type="button"
+          @click="retry(attachment)"
+        >
+          <RefreshCw :size="14" />重试
+        </button>
+        <button class="expense-attachment-action" type="button" :disabled="Boolean(deletingId) || downloadingId === String(attachment.id)" @click="download(attachment)">
+          <LoaderCircle v-if="downloadingId === String(attachment.id)" class="spin" :size="14" />
+          <Download v-else :size="14" />下载
+        </button>
+        <button
+          v-if="props.removable && props.expenseId"
+          class="expense-attachment-action danger"
+          type="button"
+          :disabled="Boolean(deletingId)"
+          :aria-label="`删除 ${expenseClaimAttachmentDisplayName(attachment)}`"
+          @click="remove(attachment)"
+        >
+          <LoaderCircle v-if="deletingId === String(attachment.id)" class="spin" :size="14" />
+          <X v-else :size="14" />删除
+        </button>
+      </span>
     </article>
     <span v-if="error" class="attachment-error" role="alert">{{ error }}</span>
   </div>
@@ -211,6 +250,12 @@ async function download(attachment: ExpenseAttachment) {
   white-space: nowrap;
 }
 
+.expense-attachment-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .expense-attachment-action {
   display: inline-flex;
   min-height: 30px;
@@ -228,6 +273,15 @@ async function download(attachment: ExpenseAttachment) {
 .expense-attachment-action:hover:not(:disabled),
 .expense-attachment-action:focus-visible {
   background: var(--primary-soft);
+}
+
+.expense-attachment-action.danger {
+  color: var(--bad);
+}
+
+.expense-attachment-action.danger:hover:not(:disabled),
+.expense-attachment-action.danger:focus-visible {
+  background: color-mix(in srgb, var(--bad) 10%, transparent);
 }
 
 .attachment-error {
@@ -293,7 +347,7 @@ async function download(attachment: ExpenseAttachment) {
     grid-template-columns: 52px minmax(0, 1fr);
   }
 
-  .expense-attachment-action {
+  .expense-attachment-actions {
     grid-column: 2;
     justify-self: start;
   }

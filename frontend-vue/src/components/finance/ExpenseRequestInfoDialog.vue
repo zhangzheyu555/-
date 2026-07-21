@@ -6,6 +6,8 @@ import ModalFooter from '../ui/ModalFooter.vue'
 import UiButton from '../ui/UiButton.vue'
 import UnsavedChangesDialog from '../ui/UnsavedChangesDialog.vue'
 
+const MAX_AUDIT_NOTE_LENGTH = 255
+
 const props = defineProps<{ expense: ExpenseClaim }>()
 const emit = defineEmits<{
   close: []
@@ -48,6 +50,11 @@ async function submit() {
     noteInput.value?.focus()
     return
   }
+  if (value.length > MAX_AUDIT_NOTE_LENGTH) {
+    error.value = `补充资料说明不能超过${MAX_AUDIT_NOTE_LENGTH}个字符。`
+    noteInput.value?.focus()
+    return
+  }
   submitting.value = true
   error.value = ''
   try {
@@ -77,8 +84,9 @@ async function submit() {
           <div v-if="error" class="error-box" role="alert">{{ error }}</div>
           <label>
             <span>需要补充的资料</span>
-            <textarea ref="noteInput" v-model="note" rows="5" maxlength="1000" :disabled="submitting" />
+            <textarea ref="noteInput" v-model="note" rows="5" :maxlength="MAX_AUDIT_NOTE_LENGTH" :disabled="submitting" />
             <small>这段说明会保存在审核记录中，并将报销状态改为“待补资料”。</small>
+            <small>补充资料说明最多 {{ MAX_AUDIT_NOTE_LENGTH }} 个字符（当前 {{ note.length }}/{{ MAX_AUDIT_NOTE_LENGTH }}）。</small>
           </label>
           <ModalFooter class="request-footer">
             <template #info><span><FileQuestion :size="15" />通知内容不包含文件本身</span></template>

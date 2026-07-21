@@ -9,6 +9,7 @@ export type MenuIconKey =
   | 'export'
   | 'inspection'
   | 'inventory'
+  | 'knowledge'
   | 'log'
   | 'platform'
   | 'profit'
@@ -28,6 +29,8 @@ export interface PermissionMenuItem {
   financeOrBossOnly?: boolean
   /** 仅用于菜单收敛；路由和后端仍会分别做角色、权限和数据范围校验。 */
   allowedRoles?: readonly string[]
+  /** 仅用于菜单收敛；用于排除即使拥有全量权限也不应看到该入口的角色。 */
+  hiddenRoles?: readonly string[]
   workspacePath?: string
   requiredDataScope?: {
     domain: string
@@ -60,8 +63,8 @@ export const MENU_GROUP_CONFIG: PermissionMenuGroup[] = [
   {
     title: '员工服务',
     items: [
-      { key: 'employee-exams', label: '培训考试', to: '/employee/exams', icon: 'exam', requiredPermission: PERMISSIONS.EXAM_LEARN, allowedRoles: ['EMPLOYEE'] },
-      { key: 'employee-profile', label: '我的资料/工资', to: '/employee/profile', icon: 'users', requiredPermission: PERMISSIONS.EXAM_LEARN, allowedRoles: ['EMPLOYEE'] },
+      { key: 'employee-exams', label: '培训考试', to: '/employee/exams', icon: 'exam', requiredPermission: PERMISSIONS.EXAM_LEARN, allowedRoles: ['EMPLOYEE'], hiddenRoles: ['BOSS'] },
+      { key: 'employee-profile', label: '我的资料/工资', to: '/employee/profile', icon: 'users', requiredPermission: PERMISSIONS.EXAM_LEARN, allowedRoles: ['EMPLOYEE'], hiddenRoles: ['BOSS'] },
     ],
   },
   {
@@ -87,7 +90,7 @@ export const MENU_GROUP_CONFIG: PermissionMenuGroup[] = [
         requiredPermission: PERMISSIONS.SALARY_READ,
         requiredDataScope: { domain: 'SALARY', modes: ['OWN_STORE'] },
       },
-      { key: 'data-export', label: '数据导出', to: '/export', icon: 'export', requiredPermission: PERMISSIONS.FINANCE_EXPORT },
+      { key: 'data-export', label: '数据导出', to: '/export', icon: 'export', requiredPermission: PERMISSIONS.FINANCE_EXPORT, allowedRoles: ['FINANCE'] },
     ],
   },
   {
@@ -113,7 +116,7 @@ export const MENU_GROUP_CONFIG: PermissionMenuGroup[] = [
         to: '/daily-loss',
         icon: 'inventory',
         requiredPermission: PERMISSIONS.DAILY_LOSS_READ,
-        allowedRoles: ['STORE_MANAGER', 'SUPERVISOR', 'FINANCE'],
+        allowedRoles: ['FINANCE'],
       },
       {
         label: '门店详情',
@@ -182,6 +185,7 @@ export const MENU_GROUP_CONFIG: PermissionMenuGroup[] = [
 export const UTILITY_MENU_CONFIG: PermissionMenuItem[] = [
   { key: 'assistant', label: '门店经营助手', to: '/assistant', icon: 'assistant', requiredPermission: PERMISSIONS.ASSISTANT_USE },
   { key: 'employee-assistant', label: '员工服务助手', to: '/employee-assistant', icon: 'assistant', requiredPermission: PERMISSIONS.EMPLOYEE_ASSISTANT_USE },
+  { key: 'knowledge-base', label: '知识库', to: '/knowledge-base', icon: 'knowledge', requiredPermission: PERMISSIONS.KNOWLEDGE_BASE_SEARCH },
 ]
 
 export function resolveMenuGroups(subject: MenuSubject): PermissionMenuGroup[] {
@@ -201,6 +205,7 @@ export function resolveUtilityMenuItems(subject: MenuSubject) {
 function canShow(item: PermissionMenuItem, subject: MenuSubject) {
   if (item.bossOnly && !isBossRole(subject.role)) return false
   if (item.financeOrBossOnly && !canUseFinanceProfitImport(subject.role, subject.permissions)) return false
+  if (item.hiddenRoles?.some((role) => normalizeRoleCode(role) === normalizeRoleCode(subject.role))) return false
   if (item.allowedRoles?.length
     && !isBossRole(subject.role)
     && !item.allowedRoles.some((role) => normalizeRoleCode(role) === normalizeRoleCode(subject.role))) return false

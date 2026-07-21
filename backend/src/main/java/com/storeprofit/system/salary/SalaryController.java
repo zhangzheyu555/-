@@ -150,14 +150,6 @@ public class SalaryController {
     return ApiResponse.ok(salaryGenerationService.generateWithReport(authService.requireUser(authorization), request));
   }
 
-  @PutMapping("/attendance")
-  public ApiResponse<SalaryRepository.AttendanceRow> saveAttendance(
-      @RequestHeader(value = "Authorization", required = false) String authorization,
-      @Valid @RequestBody SalaryAttendanceRequest request
-  ) {
-    return ApiResponse.ok(salaryWorkflowService.saveAttendance(authService.requireUser(authorization), request));
-  }
-
   @PutMapping("/{id}")
   public ApiResponse<SalaryRecordResponse> update(
       @RequestHeader(value = "Authorization", required = false) String authorization,

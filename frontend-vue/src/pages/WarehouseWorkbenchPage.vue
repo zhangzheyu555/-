@@ -81,13 +81,14 @@ const canPurchase = computed(() => Boolean(
   && (isBoss.value || hasPermission(PERMISSIONS.WAREHOUSE_PURCHASE) || centralWarehouse.value.canPurchase),
 ))
 const transferContext = computed(() => warehouse.transferContext)
-const hasTransferRoute = computed(() => Boolean(transferContext.value?.routes.length))
+const transferRoutes = computed(() => transferContext.value?.routes || [])
+const hasTransferRoute = computed(() => transferRoutes.value.length > 0)
 const canCreateTransfer = computed(() => Boolean(
-  transferContext.value?.routes.some((route) => route.actions.canCreate),
+  transferRoutes.value.some((route) => route.actions.canCreate),
 ))
 const canProcessTransfer = computed(() => Boolean(
   transferContext.value?.mode === 'PROACTIVE_ALLOCATION'
-  && transferContext.value.routes.some((route) => (
+  && transferRoutes.value.some((route) => (
     route.actions.canApprove || route.actions.canReject || route.actions.canShip
   )),
 ))
@@ -197,7 +198,8 @@ const transferRoute = computed<RouteLocationRaw>(() => ({
 }))
 
 const warehouseHomeRoute = computed<RouteLocationRaw>(() => ({
-  path: selectedWarehouse.value?.type === 'REGIONAL' ? '/warehouse/shandong' : '/warehouse/central',
+  name: 'warehouse-detail',
+  params: selectedWarehouse.value ? { warehouseId: String(selectedWarehouse.value.id) } : undefined,
 }))
 
 const warehouseCapabilities = computed(() => {
@@ -318,17 +320,16 @@ function currentTab() {
 
 async function setTab(tab: WarehouseTab) {
   try {
-    await router.push(tab === 'transfers' ? transferRoute.value : tabRoutes[tab])
+    await router.push(tab === 'transfers' ? transferRoute.value : (tab === 'warehouse' || tab === 'inventory' ? warehouseHomeRoute.value : tabRoutes[tab]))
   } catch {
     // 当前路由已是目标页时无需提示。
   }
 }
 
 async function openWarehouse(target: WarehouseInfo) {
-  const path = target.type === 'REGIONAL' ? '/warehouse/shandong' : '/warehouse/central'
   try {
     if (String(warehouse.selectedWarehouseId) !== String(target.id)) await warehouse.selectWarehouse(target.id)
-    await router.push(path)
+    await router.push({ name: 'warehouse-detail', params: { warehouseId: String(target.id) } })
   } catch {
     // store 已保留业务错误提示。
   }
@@ -349,12 +350,17 @@ async function selectWarehouse(event: Event) {
 }
 
 async function syncWarehouseFromRoute() {
+  const routeWarehouseParam = Array.isArray(route.params.warehouseId)
+    ? route.params.warehouseId[0]
+    : route.params.warehouseId
   const routeWarehouseId = Array.isArray(route.query.warehouseId)
     ? route.query.warehouseId[0]
     : route.query.warehouseId
   const isTransferRoute = route.name === 'warehouse-transfers'
   const warehouseCode = isTransferRoute ? '' : String(route.meta.warehouseCode || '')
-  const target = isTransferRoute && routeWarehouseId
+  const target = routeWarehouseParam
+    ? accessibleWarehouses.value.find((row) => String(row.id) === String(routeWarehouseParam))
+    : isTransferRoute && routeWarehouseId
     ? accessibleWarehouses.value.find((row) => String(row.id) === String(routeWarehouseId))
     : accessibleWarehouses.value.find((row) => row.code === warehouseCode)
   if (target && String(target.id) !== String(warehouse.selectedWarehouseId)) {
@@ -630,29 +636,38 @@ watch(
 
 <template>
   <div class="warehouse-workbench">
-    <section v-if="currentTab() !== 'overview' && selectedWarehouse" class="warehouse-context-header">
-      <div class="warehouse-context-copy">
-        <div class="warehouse-breadcrumb">
-          <RouterLink to="/warehouse">仓库中心</RouterLink>
-          <span>/</span>
-          <strong>{{ selectedWarehouse.name }}</strong>
+    <section v-if="currentTab() !== 'overview' && selectedWarehouse" class="warehouse-context-section">
+      <section class="warehouse-context-header">
+        <div class="warehouse-context-copy">
+          <div class="warehouse-breadcrumb">
+            <RouterLink to="/warehouse">仓库中心</RouterLink>
+            <span>/</span>
+            <strong>{{ selectedWarehouse.name }}</strong>
+          </div>
+          <div class="warehouse-title-line">
+            <Warehouse :size="22" aria-hidden="true" />
+            <h2>{{ selectedWarehouse.name }}</h2>
+          </div>
+          <div class="warehouse-context-tags" aria-label="仓库身份与能力">
+            <span class="warehouse-type-tag">{{ selectedWarehouse.type === 'CENTRAL' ? '总仓' : '区域分仓' }}</span>
+            <span>{{ selectedWarehouse.regionCode === 'JINGZHOU' ? '荆州区域' : '山东区域' }}</span>
+            <span v-for="capability in warehouseCapabilities" :key="capability">{{ capability }}</span>
+          </div>
         </div>
-        <div class="warehouse-title-line">
-          <Warehouse :size="22" aria-hidden="true" />
-          <h2>{{ selectedWarehouse.name }}</h2>
-        </div>
-        <div class="warehouse-context-tags" aria-label="仓库身份与能力">
-          <span class="warehouse-type-tag">{{ selectedWarehouse.type === 'CENTRAL' ? '总仓' : '区域分仓' }}</span>
-          <span>{{ selectedWarehouse.regionCode === 'JINGZHOU' ? '荆州区域' : '山东区域' }}</span>
-          <span v-for="capability in warehouseCapabilities" :key="capability">{{ capability }}</span>
-        </div>
-      </div>
-      <label v-if="showWarehouseSwitcher" class="warehouse-switcher">
-        <span>切换仓库</span>
-        <select :value="String(selectedWarehouse.id)" aria-label="当前仓库" @change="selectWarehouse">
-          <option v-for="row in accessibleWarehouses" :key="row.id" :value="String(row.id)">{{ row.name }}</option>
-        </select>
-      </label>
+        <label v-if="showWarehouseSwitcher" class="warehouse-switcher">
+          <span>切换仓库</span>
+          <select :value="String(selectedWarehouse.id)" aria-label="当前仓库" @change="selectWarehouse">
+            <option v-for="row in accessibleWarehouses" :key="row.id" :value="String(row.id)">{{ row.name }}</option>
+          </select>
+        </label>
+      </section>
+
+      <SecondaryNavigation
+        class="warehouse-business-navigation"
+        :items="tabs"
+        :model-value="activeNavigationKey"
+        label="仓库业务导航"
+      />
     </section>
 
     <WarehouseNetworkOverview
@@ -708,14 +723,6 @@ watch(
         </div>
       </section>
     </section>
-
-    <SecondaryNavigation
-      v-if="currentTab() !== 'overview'"
-      class="warehouse-business-navigation"
-      :items="tabs"
-      :model-value="activeNavigationKey"
-      label="仓库业务导航"
-    />
 
     <section v-if="isWarehouseEntrance" class="warehouse-overview-grid">
       <div class="content-card overview-card">
@@ -917,6 +924,11 @@ watch(
 .warehouse-workbench {
   width: min(100%, 1280px);
   margin: 0 auto;
+}
+
+.warehouse-context-section {
+  display: grid;
+  gap: 12px;
 }
 
 .warehouse-context-header {

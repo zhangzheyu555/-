@@ -2,7 +2,7 @@ import { reactive } from 'vue'
 import type { ExpenseClaim } from '../api/finance'
 import { useFinanceStore } from '../stores/finance'
 
-type FinanceConfirmationKind = 'reject' | 'escalate'
+type FinanceConfirmationKind = 'reject'
 
 interface FinanceConfirmation {
   open: boolean
@@ -13,6 +13,8 @@ interface FinanceConfirmation {
   note: string
   noteLabel: string
   notePlaceholder: string
+  noteMaxLength: number
+  noteRequired: boolean
   busy: boolean
 }
 
@@ -27,6 +29,8 @@ export function useFinanceActions() {
     note: '',
     noteLabel: '',
     notePlaceholder: '',
+    noteMaxLength: 255,
+    noteRequired: false,
     busy: false,
   })
   let pendingAction: { kind: FinanceConfirmationKind; expense: ExpenseClaim } | null = null
@@ -47,21 +51,7 @@ export function useFinanceActions() {
       note: '票据或说明不完整，请补充后重新提交',
       noteLabel: '驳回原因',
       notePlaceholder: '说明需要补充或调整的内容',
-    })
-  }
-
-  function escalateExpense(expense: ExpenseClaim) {
-    if (confirmation.busy) return
-    pendingAction = { kind: 'escalate', expense }
-    Object.assign(confirmation, {
-      open: true,
-      title: '请输入上报老板的原因',
-      message: '',
-      confirmLabel: '确认上报',
-      confirmVariant: 'primary',
-      note: '报销金额或票据情况需要老板确认',
-      noteLabel: '上报原因',
-      notePlaceholder: '说明需要老板确认的事项',
+      noteRequired: true,
     })
   }
 
@@ -75,11 +65,7 @@ export function useFinanceActions() {
     const action = pendingAction
     confirmation.busy = true
     try {
-      if (action.kind === 'reject') {
-        await finance.rejectExpense(action.expense.id, confirmation.note)
-      } else {
-        await finance.escalate(`expense-${action.expense.id}`, confirmation.note)
-      }
+      await finance.rejectExpense(action.expense.id, confirmation.note)
       resetConfirmation()
     } catch {
       // finance store 已保留业务错误，弹窗保持打开以便重试。
@@ -91,13 +77,13 @@ export function useFinanceActions() {
   function resetConfirmation() {
     confirmation.open = false
     confirmation.note = ''
+    confirmation.noteRequired = false
     pendingAction = null
   }
 
   return {
     approveExpense,
     rejectExpense,
-    escalateExpense,
     confirmation,
     cancelConfirmation,
     confirmAction,

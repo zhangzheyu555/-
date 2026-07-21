@@ -295,6 +295,7 @@ function doneActionLabel(item: RoleTodoItem) {
 
 export function routeForSource(source: string) {
   if (includesText(source, ['exam', '考试', '培训'])) return '/exam-center'
+  if (includesText(source, ['daily_loss', 'daily-loss', '日报损', '报损'])) return '/daily-loss'
   if (includesText(source, ['expense', '报销'])) return '/expenses'
   if (includesText(source, ['finance', 'profit', '利润'])) return '/profit-table'
   if (includesText(source, ['salary', '工资'])) return '/salary'

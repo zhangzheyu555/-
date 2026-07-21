@@ -25,7 +25,8 @@ public record ExpenseClaimResponse(
     List<ExpenseAttachmentResponse> attachments,
     List<ExpenseSupplementResponse> supplements,
     int supplementAttachmentCount,
-    String latestSupplementNote
+    String latestSupplementNote,
+    String reviewNote
 ) {
   public ExpenseClaimResponse {
     attachments = attachments == null ? List.of() : List.copyOf(attachments);
@@ -74,8 +75,33 @@ public record ExpenseClaimResponse(
       LocalDate expenseDate
   ) {
     this(
+        id, storeId, storeCode, storeName, brandId, brandName, month, amount, category, reason,
+        status, imageUrl, submittedBy, reviewedBy, reviewedAt, expenseDate, null
+    );
+  }
+
+  public ExpenseClaimResponse(
+      String id,
+      String storeId,
+      String storeCode,
+      String storeName,
+      Long brandId,
+      String brandName,
+      String month,
+      BigDecimal amount,
+      String category,
+      String reason,
+      String status,
+      String imageUrl,
+      Long submittedBy,
+      Long reviewedBy,
+      LocalDateTime reviewedAt,
+      LocalDate expenseDate,
+      String reviewNote
+  ) {
+    this(
         id, storeId, storeCode, storeName, brandId, brandName, month, expenseDate, amount, category, reason,
-        status, imageUrl, submittedBy, reviewedBy, reviewedAt, List.of(), List.of(), 0, null
+        status, imageUrl, submittedBy, reviewedBy, reviewedAt, List.of(), List.of(), 0, null, reviewNote
     );
   }
 
@@ -83,7 +109,7 @@ public record ExpenseClaimResponse(
     return new ExpenseClaimResponse(
         id, storeId, storeCode, storeName, brandId, brandName, month, expenseDate, amount, category, reason,
         status, imageUrl, submittedBy, reviewedBy, reviewedAt, values, supplements, supplementAttachmentCount,
-        latestSupplementNote
+        latestSupplementNote, reviewNote
     );
   }
 
@@ -97,7 +123,8 @@ public record ExpenseClaimResponse(
         .orElse(null);
     return new ExpenseClaimResponse(
         id, storeId, storeCode, storeName, brandId, brandName, month, expenseDate, amount, category, reason,
-        status, imageUrl, submittedBy, reviewedBy, reviewedAt, attachments, normalized, attachmentCount, latestNote
+        status, imageUrl, submittedBy, reviewedBy, reviewedAt, attachments, normalized, attachmentCount,
+        latestNote, reviewNote
     );
   }
 }

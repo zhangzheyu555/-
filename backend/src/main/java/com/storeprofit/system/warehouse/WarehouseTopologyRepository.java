@@ -42,6 +42,19 @@ public class WarehouseTopologyRepository {
     return facilities(tenantId).stream().filter(row -> row.id() == warehouseId).findFirst();
   }
 
+  /**
+   * Deliberately returns only existence so authorization can distinguish a foreign-tenant ID
+   * from an unknown ID without loading or exposing the foreign warehouse's attributes.
+   */
+  public boolean facilityExistsForOtherTenant(long tenantId, long warehouseId) {
+    Integer count = jdbcTemplate.queryForObject("""
+        select count(*)
+        from warehouse_facility
+        where id = ? and tenant_id <> ?
+        """, Integer.class, warehouseId, tenantId);
+    return count != null && count > 0;
+  }
+
   public Optional<FacilityRow> facilityByCode(long tenantId, String code) {
     String normalized = code == null ? "" : code.trim();
     return facilities(tenantId).stream().filter(row -> row.code().equals(normalized)).findFirst();

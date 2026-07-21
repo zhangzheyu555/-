@@ -20,6 +20,7 @@ import { routeForSource, useBossStore, type BossRiskGroup, type BossRoleProgress
 import { useAuthStore } from '../stores/auth'
 import { PERMISSIONS } from '../permissions/permissions'
 import type { RoleTodoItem } from '../api/todos'
+import { roleTodoActionRoute } from '../utils/roleTodoNavigation'
 
 const route = useRoute()
 const router = useRouter()
@@ -226,7 +227,10 @@ async function scrollToSection() {
 }
 
 function openActionSource(item: RoleTodoItem) {
-  const target = item.action?.targetRoute || item.action?.sourcePage || routeForSource(`${item.sourceModule || ''} ${item.dataSource || ''}`)
+  const target = roleTodoActionRoute(item)
+    || item.action?.targetRoute
+    || item.action?.sourcePage
+    || routeForSource(`${item.sourceModule || ''} ${item.dataSource || ''}`)
   void router.push(target || '/boss')
 }
 

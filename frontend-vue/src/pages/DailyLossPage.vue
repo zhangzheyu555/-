@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   CheckCircle2,
   ChevronDown,
@@ -56,6 +57,7 @@ const RECENT_CATEGORY = 'RECENT'
 
 const auth = useAuthStore()
 const scope = useBusinessScope()
+const route = useRoute()
 const stores = ref<StoreInfo[]>([])
 const items = ref<DailyLossItem[]>([])
 const reports = ref<DailyLossReport[]>([])
@@ -106,7 +108,7 @@ const accessibleStores = computed(() => {
 const effectiveStoreId = computed(() => scope.scopedStoreId(selectedStoreId.value))
 const canSelectAllStores = computed(() => !scope.isStoreManager.value && storeScope.value?.mode === 'ALL')
 const canExport = computed(() => auth.hasPermission(PERMISSIONS.DAILY_LOSS_EXPORT)
-  && (isBossRole(auth.role) || ['FINANCE', 'SUPERVISOR', 'STORE_MANAGER'].includes(normalizeRoleCode(auth.role))))
+  && (isBossRole(auth.role) || normalizeRoleCode(auth.role) === 'FINANCE'))
 const notReportedCount = computed(() => reports.value.filter((report) => statusKey(report) === 'NOT_REPORTED').length)
 const pendingCount = computed(() => reports.value.filter((report) => statusKey(report) === 'SUBMITTED').length)
 const reviewedCount = computed(() => reports.value.filter((report) => ['REVIEWED', 'APPROVED'].includes(statusKey(report))).length)
@@ -185,9 +187,9 @@ async function initialize() {
       return
     }
     stores.value = await getStores()
-    selectedStoreId.value = scope.isStoreManager.value
-      ? scope.boundStoreId.value
-      : (canSelectAllStores.value ? '' : accessibleStores.value[0]?.id || '')
+    selectedStoreId.value = initialStoreId()
+    const requestedMonth = queryValue('month')
+    if (/^\d{4}-(0[1-9]|1[0-2])$/.test(requestedMonth)) selectedMonth.value = requestedMonth
     await refreshData()
   } catch (error) {
     pageError.value = readableError(error, '每日报损暂时无法读取，请稍后刷新。')
@@ -211,6 +213,7 @@ async function refreshData() {
     ])
     items.value = itemRows
     reports.value = reportRows
+    openRequestedReport(reportRows)
     await loadRemoteImages(reportRows)
   } catch (error) {
     pageError.value = readableError(error, '报损数据读取失败，请刷新后重试。')
@@ -464,6 +467,25 @@ function openReport(report: DailyLossReport) {
     return
   }
   detailReport.value = report
+}
+
+function initialStoreId() {
+  if (scope.isStoreManager.value) return scope.boundStoreId.value
+  const requested = queryValue('storeId')
+  if (requested && accessibleStores.value.some((store) => store.id === requested)) return requested
+  return canSelectAllStores.value ? '' : accessibleStores.value[0]?.id || ''
+}
+
+function openRequestedReport(rows: DailyLossReport[]) {
+  const reportId = queryValue('reportId')
+  if (!reportId) return
+  detailReport.value = rows.find((report) => report.id === reportId) || null
+}
+
+function queryValue(key: string) {
+  const raw = route.query[key]
+  const value = Array.isArray(raw) ? raw[0] : raw
+  return typeof value === 'string' ? value.trim() : ''
 }
 
 function closeLayersOnEsc(event: KeyboardEvent) {

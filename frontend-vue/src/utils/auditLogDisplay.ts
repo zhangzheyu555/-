@@ -21,6 +21,10 @@ const ACTION_LABELS: Record<string, string> = {
   'employee_assistant.knowledge_update': '更新员工助手知识草稿',
   'employee_assistant.knowledge_publish': '发布员工助手知识',
   'employee_assistant.knowledge_rollback': '回滚员工助手知识',
+  'knowledge_base.document_upload': '上传知识库资料',
+  'knowledge_base.document_publish': '发布知识库资料',
+  'knowledge_base.document_archive': '下架知识库资料',
+  'knowledge_base.document_download': '下载知识库原始资料',
 
   daily_loss_submit: '提交每日报损单',
   daily_loss_approve: '审核通过每日报损单',
@@ -83,6 +87,7 @@ const TARGET_TYPE_LABELS: Record<string, string> = {
   employee_assistant: '员工服务助手请求',
   employee_assistant_handoff: '员工助手人工转接',
   employee_assistant_knowledge: '员工助手知识库',
+  knowledge_base_document: '知识库资料',
   profit_entry: '利润记录',
   profit_import_preview: '利润导入预览',
   salary_record: '工资记录',

@@ -86,25 +86,30 @@ const serviceState = computed<EmployeeAssistantServiceState>(() => {
 const canAsk = computed(() => !loading.value && (status.value?.canAsk ?? serviceState.value === 'READY'))
 const canViewDeploymentGuide = computed(() => serviceState.value === 'UNCONFIGURED' && auth.role === 'BOSS')
 const pendingUserTurn = computed(() => [...turns.value].reverse().find((turn) => turn.role === 'user'))
+const isKnowledgeFallback = computed(() => serviceState.value === 'UNCONFIGURED'
+  && Boolean(status.value?.knowledgeAvailable)
+  && Boolean(status.value?.canAsk))
 
 const stateBadge = computed(() => {
   if (loading.value && !status.value) return { text: '检查中', cls: 'badge--checking' }
+  if (isKnowledgeFallback.value) return { text: '标准话术可用', cls: 'badge--ready' }
   const map: Record<string, { text: string; cls: string }> = {
-    READY: { text: '已就绪', cls: 'badge--ready' },
-    UNCONFIGURED: { text: '未配置', cls: 'badge--unconfigured' },
-    AUTH_FAILED: { text: '授权异常', cls: 'badge--auth-failed' },
-    UNAVAILABLE: { text: '暂不可用', cls: 'badge--unavailable' },
+    READY: { text: '服务已就绪', cls: 'badge--ready' },
+    UNCONFIGURED: { text: '服务未配置', cls: 'badge--unconfigured' },
+    AUTH_FAILED: { text: '服务授权异常', cls: 'badge--auth-failed' },
+    UNAVAILABLE: { text: '服务暂不可用', cls: 'badge--unavailable' },
   }
   return map[serviceState.value] || map.UNAVAILABLE
 })
 
 const stateMessage = computed(() => {
   if (loading.value) return '正在检查服务状态…'
+  if (isKnowledgeFallback.value) return '仅发送通用服务问题'
   const map: Record<string, string> = {
-    READY: '',
-    UNCONFIGURED: '服务未配置，请联系管理员。',
-    AUTH_FAILED: '授权未通过，请联系管理员检查。',
-    UNAVAILABLE: '服务暂时无法连接，请稍后重试。',
+    READY: '仅发送通用服务问题',
+    UNCONFIGURED: '请联系管理员配置员工助手服务',
+    AUTH_FAILED: '请联系管理员检查员工助手服务授权',
+    UNAVAILABLE: '请稍后点击“检查服务”',
   }
   return map[serviceState.value] || ''
 })
@@ -371,17 +376,21 @@ function scrollToBottom() {
       <div class="ea-topbar__left">
         <MessageSquare :size="18" />
         <h1 class="ea-topbar__title">员工服务助手</h1>
-        <span class="ea-badge" :class="stateBadge.cls" data-testid="employee-assistant-status">{{ stateBadge.text }}</span>
-        <span v-if="stateMessage" class="ea-topbar__hint">{{ stateMessage }}</span>
+        <span class="ea-status" data-testid="employee-assistant-status">
+          <span class="ea-badge" :class="stateBadge.cls">{{ stateBadge.text }}</span>
+          <span v-if="stateMessage" class="ea-topbar__hint">{{ stateMessage }}</span>
+        </span>
       </div>
       <div class="ea-topbar__right">
         <details v-if="canViewDeploymentGuide" class="ea-deploy-guide" data-testid="employee-assistant-deployment-guide">
-          <summary>部署说明</summary>
+          <summary>维护人员部署说明</summary>
           <div class="ea-deploy-guide__body">
-            <p>请由维护人员使用统一安全启动器注入变量，本页不显示或写入任何配置值。</p>
+            <p>请由维护人员使用统一安全启动器在同一进程环境注入变量；本页不会自动读取或显示任何配置值。</p>
+            <p><code>EMPLOYEE_ASSISTANT_PROVIDER=REMOTE</code> 与 <code>EMPLOYEE_ASSISTANT_PROVIDER=MODEL</code> 为二选一配置，不能混用。</p>
+            <p>请使用 <code>verify-employee-assistant-config.ps1</code> 完成部署前校验。历史 <code>DEEPSEEK_*</code> 变量不会被本页读取。</p>
           </div>
         </details>
-        <UiButton variant="ghost" size="sm" :loading="loading" @click="loadStatus"><template #icon><RefreshCw :size="15" /></template>检查</UiButton>
+        <UiButton variant="ghost" size="sm" :loading="loading" @click="loadStatus"><template #icon><RefreshCw :size="15" /></template>检查服务</UiButton>
       </div>
     </header>
 
@@ -471,7 +480,7 @@ function scrollToBottom() {
         <form class="ea-input" @submit.prevent="submitMessage">
           <div class="ea-input__row">
             <textarea ref="inputRef" v-model="message" :disabled="!canAsk || sending" rows="2" maxlength="800" name="employee-assistant-question" autocomplete="off" aria-label="服务问题" placeholder="例如：顾客说饮品太甜，怎样礼貌处理？" @keydown="onKeydown" />
-            <UiButton variant="primary" type="submit" :loading="sending" :disabled="!canAsk || !message.trim()" aria-label="发送"><template #icon><Send :size="17" /></template>发送</UiButton>
+            <UiButton variant="primary" type="submit" :loading="sending" :disabled="!canAsk || !message.trim()" aria-label="发送问题"><template #icon><Send :size="17" /></template>发送问题</UiButton>
           </div>
           <p class="ea-input__hint">请勿发送任何顾客、订单、支付、附件或身份信息 · Ctrl + Enter 发送</p>
         </form>
@@ -489,6 +498,7 @@ function scrollToBottom() {
 .ea-topbar__title { margin: 0; font-size: 15px; font-weight: 700; color: var(--ds-ink, #1a2825); }
 .ea-topbar__hint { font-size: 12px; color: #566b67; }
 .ea-topbar__right { display: flex; align-items: center; gap: 8px; }
+.ea-status { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .ea-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
 .ea-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; }
 .badge--ready { background: #e7f7ef; color: #237153; } .badge--ready::before { background: #237153; }

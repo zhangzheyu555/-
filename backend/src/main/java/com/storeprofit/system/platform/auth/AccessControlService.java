@@ -159,11 +159,11 @@ public class AccessControlService {
 
   public void requireDailyLossRead(AuthUser user) {
     requirePermission(user, PermissionCodes.DAILY_LOSS_READ, "查看每日报损");
-    if (isBoss(user) || hasAnyRole(user, "STORE_MANAGER", "SUPERVISOR", "FINANCE")) {
+    if (isBoss(user) || hasAnyRole(user, "FINANCE")) {
       return;
     }
     deny(user, "查看每日报损", "API", PermissionCodes.DAILY_LOSS_READ, null,
-        "每日报损仅限店长、督导、财务和老板查看");
+        "每日报损查询仅限财务或老板");
   }
 
   public void requireDailyLossCreate(AuthUser user) {
@@ -186,39 +186,245 @@ public class AccessControlService {
 
   public void requireDailyLossExport(AuthUser user) {
     requirePermission(user, PermissionCodes.DAILY_LOSS_EXPORT, "导出每日报损");
-    if (isBoss(user) || hasAnyRole(user, "STORE_MANAGER", "SUPERVISOR", "FINANCE")) {
+    if (isBoss(user) || hasAnyRole(user, "FINANCE")) {
       return;
     }
     deny(user, "导出每日报损", "API", PermissionCodes.DAILY_LOSS_EXPORT, null,
-        "每日报损导出仅限店长、督导、财务和老板");
+        "每日报损 Excel 导出仅限财务或老板");
   }
 
   public void requireExpenseRead(AuthUser user) {
-    requirePermission(user, PermissionCodes.EXPENSE_READ, "查看报销数据");
+    requireExpenseRead(user, null, null, null);
+  }
+
+  /**
+   * Keeps document scope in the denial audit without weakening the role boundary.  Expense data
+   * is financial data: a stale role template or personal override cannot make a supervisor or
+   * employee a reader.
+   */
+  public void requireExpenseRead(AuthUser user, String expenseId, String storeId, String month) {
+    if (!hasPermission(user, PermissionCodes.EXPENSE_READ)) {
+      deny(
+          user,
+          "查看报销数据",
+          "expense_claim",
+          expenseId,
+          storeId,
+          month,
+          "账号不具备权限 " + PermissionCodes.EXPENSE_READ
+      );
+    }
+    if (isBoss(user) || hasAnyRole(user, "FINANCE", "STORE_MANAGER")) {
+      return;
+    }
+    deny(
+        user,
+        "查看报销数据",
+        "expense_claim",
+        expenseId,
+        storeId,
+        month,
+        "报销数据仅限财务、店长或老板查看"
+    );
   }
 
   public void requireExpenseWrite(AuthUser user) {
-    requirePermission(user, PermissionCodes.EXPENSE_CREATE, "录入报销数据");
+    requireExpenseWrite(user, null, null, null);
+  }
+
+  /** Store manager writes remain further constrained by {@link #requireExpenseStoreAccess}. */
+  public void requireExpenseWrite(AuthUser user, String expenseId, String storeId, String month) {
+    if (!hasPermission(user, PermissionCodes.EXPENSE_CREATE)) {
+      deny(
+          user,
+          "录入报销数据",
+          "expense_claim",
+          expenseId,
+          storeId,
+          month,
+          "账号不具备权限 " + PermissionCodes.EXPENSE_CREATE
+      );
+    }
+    if (isBoss(user) || hasAnyRole(user, "FINANCE", "STORE_MANAGER")) {
+      return;
+    }
+    deny(
+        user,
+        "录入报销数据",
+        "expense_claim",
+        expenseId,
+        storeId,
+        month,
+        "报销录入仅限财务、店长或老板"
+    );
+  }
+
+  /**
+   * Reimbursement receipts need both the generic attachment capability and the reimbursement
+   * write boundary.  Keep every refusal tied to the actual expense document so a forged
+   * cross-store upload remains auditable after its enclosing request rolls back.
+   */
+  public void requireExpenseAttachmentWrite(AuthUser user, String expenseId, String storeId, String month) {
+    if (!hasPermission(user, PermissionCodes.ATTACHMENT_WRITE)) {
+      deny(
+          user,
+          "上传报销凭证",
+          "expense_claim",
+          expenseId,
+          storeId,
+          month,
+          "账号不具备权限 " + PermissionCodes.ATTACHMENT_WRITE
+      );
+    }
+    requireExpenseWrite(user, expenseId, storeId, month);
   }
 
   public void requireExpenseReview(AuthUser user) {
-    requirePermission(user, PermissionCodes.EXPENSE_REVIEW, "审核报销数据");
+    requireExpenseReview(user, null, null, null);
+  }
+
+  public void requireExpenseReview(AuthUser user, String expenseId, String storeId, String month) {
+    if (!hasPermission(user, PermissionCodes.EXPENSE_REVIEW)) {
+      deny(
+          user,
+          "审核报销数据",
+          "expense_claim",
+          expenseId,
+          storeId,
+          month,
+          "账号不具备权限 " + PermissionCodes.EXPENSE_REVIEW
+      );
+    }
+    if (isBoss(user) || hasAnyRole(user, "FINANCE")) {
+      return;
+    }
+    deny(
+        user,
+        "审核报销数据",
+        "expense_claim",
+        expenseId,
+        storeId,
+        month,
+        "报销审批仅限财务或老板"
+    );
+  }
+
+  /**
+   * Row-level finance scope rejection is audited against the actual expense document.  Generic
+   * store checks only know a store id, which is insufficient for reimbursement approval traces.
+   */
+  public void requireExpenseStoreAccess(
+      AuthUser user,
+      String expenseId,
+      String storeId,
+      String month,
+      String action
+  ) {
+    String normalizedStoreId = storeId == null ? "" : storeId.trim();
+    if (normalizedStoreId.isBlank()) {
+      deny(user, action, "expense_claim", expenseId, null, month, "未指定门店");
+    }
+    if (hasAllDataScope(user, DataScopeDomains.FINANCE)
+        || allowedStoreIds(user, DataScopeDomains.FINANCE).contains(normalizedStoreId)) {
+      return;
+    }
+    deny(
+        user,
+        action,
+        "expense_claim",
+        expenseId,
+        normalizedStoreId,
+        month,
+        "门店不在当前账号的财务数据范围内"
+    );
+  }
+
+  /** Records a document/store mismatch without degrading the denial to a generic attachment log. */
+  public void requireExpenseDocumentStore(
+      AuthUser user,
+      String expenseId,
+      String documentStoreId,
+      String requestedStoreId,
+      String month,
+      String action
+  ) {
+    String expected = documentStoreId == null ? "" : documentStoreId.trim();
+    String requested = requestedStoreId == null ? "" : requestedStoreId.trim();
+    if (!expected.isBlank() && expected.equals(requested)) {
+      return;
+    }
+    deny(
+        user,
+        action,
+        "expense_claim",
+        expenseId,
+        expected.isBlank() ? requested : expected,
+        month,
+        "报销单所属门店与请求门店不一致"
+    );
   }
 
   public void requireSalaryRead(AuthUser user) {
-    requirePermission(user, PermissionCodes.SALARY_READ, "查看工资数据");
+    requireSalaryRead(user, null, null, null);
+  }
+
+  /**
+   * Salary requests are often rejected before a record can be read or changed.  Retain the
+   * requested record, store and pay period in that denial so a payroll access attempt remains
+   * auditable even when its business transaction rolls back.
+   */
+  public void requireSalaryRead(AuthUser user, String salaryId, String storeId, String month) {
+    requireSalaryPermission(
+        user, PermissionCodes.SALARY_READ, "查看工资数据", salaryId, storeId, month);
   }
 
   public void requireSalaryEdit(AuthUser user) {
-    requirePermission(user, PermissionCodes.SALARY_EDIT, "录入工资数据");
+    requireSalaryEdit(user, null, null, null);
+  }
+
+  public void requireSalaryEdit(AuthUser user, String salaryId, String storeId, String month) {
+    requireSalaryPermission(
+        user, PermissionCodes.SALARY_EDIT, "录入工资数据", salaryId, storeId, month);
   }
 
   public void requireSalaryReview(AuthUser user) {
-    requirePermission(user, PermissionCodes.SALARY_REVIEW, "审核工资数据");
+    requireSalaryReview(user, null, null, null);
+  }
+
+  public void requireSalaryReview(AuthUser user, String salaryId, String storeId, String month) {
+    requireSalaryPermission(
+        user, PermissionCodes.SALARY_REVIEW, "审核工资数据", salaryId, storeId, month);
   }
 
   public void requireSalaryPay(AuthUser user) {
-    requirePermission(user, PermissionCodes.SALARY_PAY, "发放工资");
+    requireSalaryPay(user, null, null, null);
+  }
+
+  public void requireSalaryPay(AuthUser user, String salaryId, String storeId, String month) {
+    requireSalaryPermission(
+        user, PermissionCodes.SALARY_PAY, "发放工资", salaryId, storeId, month);
+  }
+
+  private void requireSalaryPermission(
+      AuthUser user,
+      String permissionCode,
+      String action,
+      String salaryId,
+      String storeId,
+      String month
+  ) {
+    if (hasPermission(user, permissionCode)) {
+      return;
+    }
+    deny(
+        user,
+        action,
+        "salary_record",
+        salaryId == null || salaryId.isBlank() ? permissionCode : salaryId,
+        storeId,
+        month,
+        "账号不具备权限 " + permissionCode
+    );
   }
 
   public void requireAuditRead(AuthUser user) {
@@ -238,7 +444,37 @@ public class AccessControlService {
   }
 
   public void requireDataExport(AuthUser user) {
-    requirePermission(user, PermissionCodes.FINANCE_EXPORT, "导出经营数据");
+    requireDataExport(user, null, null);
+  }
+
+  /**
+   * Exported operating data includes salary information, so it remains a finance-office
+   * responsibility even when a stale personal permission override exists on another role.
+   * Keep the requested scope in the denial audit for direct API calls.
+   */
+  public void requireDataExport(AuthUser user, String requestedStoreId, String requestedMonth) {
+    if (!hasPermission(user, PermissionCodes.FINANCE_EXPORT)) {
+      deny(
+          user,
+          "导出经营数据",
+          "API",
+          PermissionCodes.FINANCE_EXPORT,
+          requestedStoreId,
+          requestedMonth,
+          "账号不具备权限 " + PermissionCodes.FINANCE_EXPORT
+      );
+    }
+    if (!isBoss(user) && !hasAnyRole(user, "FINANCE")) {
+      deny(
+          user,
+          "导出经营数据",
+          "API",
+          PermissionCodes.FINANCE_EXPORT,
+          requestedStoreId,
+          requestedMonth,
+          "经营数据导出仅限财务或老板"
+      );
+    }
   }
 
   public void requireLegacyStorageAccess(AuthUser user) {
@@ -302,7 +538,7 @@ public class AccessControlService {
         "API",
         PermissionCodes.INSPECTION_MANAGE,
         null,
-        "巡检整改复核仅限运营或督导角色"
+        "巡检整改复核仅限督导或老板"
     );
   }
 
@@ -316,6 +552,41 @@ public class AccessControlService {
 
   public void requirePlatformManage(AuthUser user) {
     requirePermission(user, PermissionCodes.PLATFORM_MANAGE, "维护平台配置");
+    if (isBoss(user) || hasAnyRole(user, "SUPERVISOR")) {
+      return;
+    }
+    deny(user, "维护平台配置", "API", PermissionCodes.PLATFORM_MANAGE, null,
+        "企迈平台配置仅限老板或督导维护");
+  }
+
+  /** QMAI data is a platform integration: finance can only read an authorized data scope. */
+  public void requireQmaiRead(AuthUser user) {
+    if (isBoss(user) || hasAnyRole(user, "SUPERVISOR")) {
+      requirePlatformRead(user);
+      return;
+    }
+    if (hasAnyRole(user, "FINANCE")) {
+      requireFinanceRead(user);
+      return;
+    }
+    requirePlatformRead(user);
+    deny(user, "查看企迈经营数据", "API", PermissionCodes.PLATFORM_READ, null,
+        "企迈经营数据仅限老板、督导或已授权财务查看");
+  }
+
+  /** Warehouse may read only the already-calculated material requirement snapshot. */
+  public void requireQmaiRecipeRead(AuthUser user) {
+    if (isBoss(user) || hasAnyRole(user, "SUPERVISOR")) {
+      requirePlatformRead(user);
+      return;
+    }
+    if (hasAnyRole(user, "WAREHOUSE")) {
+      requirePermission(user, PermissionCodes.INVENTORY_READ, "查看配方用量快照");
+      return;
+    }
+    requirePlatformRead(user);
+    deny(user, "查看企迈配方用量", "API", PermissionCodes.PLATFORM_READ, null,
+        "企迈配方用量仅限老板、督导或仓库查看");
   }
 
   public void requireExamRead(AuthUser user) {
@@ -339,7 +610,7 @@ public class AccessControlService {
   }
 
   public void requireOperationsDashboardRead(AuthUser user) {
-    requirePermission(user, PermissionCodes.OPERATIONS_DASHBOARD_READ, "查看运营工作台");
+    requirePermission(user, PermissionCodes.OPERATIONS_DASHBOARD_READ, "查看督导工作台");
   }
 
   public void requireStoreRead(AuthUser user) {
@@ -447,14 +718,49 @@ public class AccessControlService {
     requireBoss(user, "管理员工助手知识库");
   }
 
-  /** Only authorized operations or supervisor users may process handoffs. */
+  /** Only supervisors may process employee-assistant handoffs. */
   public void requireEmployeeAssistantHandoffManage(AuthUser user) {
     requirePermission(user, PermissionCodes.EMPLOYEE_ASSISTANT_HANDOFF_MANAGE, "处理员工助手人工事项");
     if (hasAnyRole(user, "SUPERVISOR")) {
       return;
     }
     deny(user, "处理员工助手人工事项", "API", PermissionCodes.EMPLOYEE_ASSISTANT_HANDOFF_MANAGE, null,
-        "人工事项处理仅限运营或督导角色");
+        "人工事项处理仅限督导角色");
+  }
+
+  /** Search is available only when the role template explicitly includes knowledge-base access. */
+  public void requireKnowledgeBaseSearch(AuthUser user) {
+    requirePermission(user, PermissionCodes.KNOWLEDGE_BASE_SEARCH, "检索知识库");
+  }
+
+  /** Uploading and publishing source documents is restricted to the boss and supervisors. */
+  public void requireKnowledgeBaseManage(AuthUser user) {
+    requirePermission(user, PermissionCodes.KNOWLEDGE_BASE_MANAGE, "管理知识库");
+    if (isBoss(user) || hasAnyRole(user, "SUPERVISOR")) {
+      return;
+    }
+    deny(user, "管理知识库", "API", PermissionCodes.KNOWLEDGE_BASE_MANAGE, null,
+        "知识库管理仅限老板或督导");
+  }
+
+  /** Tenant-wide or role-wide documents may only be published by the boss. */
+  public void requireKnowledgeBaseTenantWideManage(AuthUser user) {
+    requireKnowledgeBaseManage(user);
+    if (isBoss(user)) {
+      return;
+    }
+    deny(user, "发布全企业知识库资料", "KNOWLEDGE_BASE", PermissionCodes.KNOWLEDGE_BASE_MANAGE, null,
+        "督导只能管理本人数据范围内的门店资料");
+  }
+
+  /** Records a single auditable refusal when a document fails row-level visibility checks. */
+  public void requireKnowledgeBaseDocumentRead(AuthUser user, boolean allowed, long documentId) {
+    requireKnowledgeBaseSearch(user);
+    if (allowed) {
+      return;
+    }
+    deny(user, "查看知识库资料", "knowledge_base_document", Long.toString(documentId), null,
+        "资料不在当前账号的角色或门店范围内");
   }
 
   public void requireMigrationManage(AuthUser user) {

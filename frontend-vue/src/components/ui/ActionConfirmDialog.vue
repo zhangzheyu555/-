@@ -15,6 +15,7 @@ const props = withDefaults(defineProps<{
   modelValue?: string
   noteLabel?: string
   notePlaceholder?: string
+  noteMaxLength?: number
   noteRequired?: boolean
 }>(), {
   message: '',
@@ -25,6 +26,7 @@ const props = withDefaults(defineProps<{
   modelValue: '',
   noteLabel: '',
   notePlaceholder: '',
+  noteMaxLength: 0,
   noteRequired: false,
 })
 
@@ -43,7 +45,12 @@ let previouslyFocused: HTMLElement | null = null
 let appRoot: HTMLElement | null = null
 let appWasInert = false
 
-const confirmDisabled = computed(() => props.busy || (props.noteRequired && !props.modelValue.trim()))
+const normalizedNoteMaxLength = computed(() => {
+  const value = Number(props.noteMaxLength)
+  return Number.isSafeInteger(value) && value > 0 ? value : 0
+})
+const noteTooLong = computed(() => Boolean(normalizedNoteMaxLength.value && props.modelValue.length > normalizedNoteMaxLength.value))
+const confirmDisabled = computed(() => props.busy || (props.noteRequired && !props.modelValue.trim()) || noteTooLong.value)
 
 function cancel() {
   if (!props.busy) emit('cancel')
@@ -145,8 +152,12 @@ onBeforeUnmount(() => {
             :value="modelValue"
             :placeholder="notePlaceholder"
             :disabled="busy"
+            :maxlength="normalizedNoteMaxLength || undefined"
             @input="emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)"
           />
+          <span v-if="normalizedNoteMaxLength" class="action-confirm-dialog__hint">
+            最多 {{ normalizedNoteMaxLength }} 个字符（当前 {{ modelValue.length }}/{{ normalizedNoteMaxLength }}）。
+          </span>
           <span v-if="noteRequired && !modelValue.trim()" class="action-confirm-dialog__hint">请填写后再确认。</span>
         </div>
 

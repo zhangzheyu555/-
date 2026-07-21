@@ -79,10 +79,14 @@ public class ExportController {
       @RequestParam(required = false) Long brandId,
       @RequestParam(required = false) String storeId
   ) {
-    AuthUser user = requireExport(authorization);
-    String targetMonth = normalizeMonth(month);
-    List<ProfitEntryResponse> rows = financeService.entries(user, targetMonth, brandId, storeId);
-    writeExportLog(user, "导出利润排行", "profit-ranking", targetMonth);
+    AuthUser user = requireExport(authorization, storeId, month);
+    String targetMonth = normalizeMonth(
+        month, user, "导出利润排行", "profit-ranking", storeId);
+    BusinessScope businessScope = resolveScope(
+        user, DataScopeDomains.FINANCE, storeId, brandId, "导出利润排行", targetMonth);
+    List<ProfitEntryResponse> rows = financeService.entries(
+        user, targetMonth, businessScope.brandId(), businessScope.storeId());
+    writeExportLog(user, "导出利润排行", "profit-ranking", businessScope, targetMonth);
     return csv("门店利润_" + targetMonth + ".csv", toProfitCsv(targetMonth, rows));
   }
 
@@ -93,10 +97,14 @@ public class ExportController {
       @RequestParam(required = false) Long brandId,
       @RequestParam(required = false) String storeId
   ) {
-    AuthUser user = requireExport(authorization);
-    String targetMonth = normalizeMonth(month);
-    List<ExpenseClaimResponse> rows = expenseService.claims(user, targetMonth, brandId, storeId, null);
-    writeExportLog(user, "导出报销记录", "expense-claims", targetMonth);
+    AuthUser user = requireExport(authorization, storeId, month);
+    String targetMonth = normalizeMonth(
+        month, user, "导出报销记录", "expense-claims", storeId);
+    BusinessScope businessScope = resolveScope(
+        user, DataScopeDomains.FINANCE, storeId, brandId, "导出报销记录", targetMonth);
+    List<ExpenseClaimResponse> rows = expenseService.claims(
+        user, targetMonth, businessScope.brandId(), businessScope.storeId(), null);
+    writeExportLog(user, "导出报销记录", "expense-claims", businessScope, targetMonth);
     return csv("报销记录-" + targetMonth + ".csv", toExpenseCsv(rows));
   }
 
@@ -107,22 +115,34 @@ public class ExportController {
       @RequestParam(required = false) Long brandId,
       @RequestParam(required = false) String storeId
   ) {
-    AuthUser user = requireExport(authorization);
-    String targetMonth = normalizeMonth(month);
-    BusinessScope businessScope = businessScopeResolver == null
-        ? new BusinessScope(storeId, null, brandId, null, null)
-        : businessScopeResolver.resolve(
-            user, DataScopeDomains.SALARY, storeId, brandId, "导出工资记录");
+    AuthUser user = requireExport(authorization, storeId, month);
+    String targetMonth = normalizeMonth(
+        month, user, "导出工资记录", "salary-records", storeId);
+    BusinessScope businessScope = resolveScope(
+        user, DataScopeDomains.SALARY, storeId, brandId, "导出工资记录", targetMonth);
     List<SalaryRecordResponse> rows = salaryService.records(
         user, targetMonth, businessScope.brandId(), businessScope.storeId());
-    writeExportLog(user, "导出工资记录", "salary-records", targetMonth);
+    writeExportLog(user, "导出工资记录", "salary-records", businessScope, targetMonth);
     return csv("员工工资-" + targetMonth + ".csv", toSalaryCsv(rows));
   }
 
-  private AuthUser requireExport(String authorization) {
+  private AuthUser requireExport(String authorization, String requestedStoreId, String requestedMonth) {
     AuthUser user = authService.requireUser(authorization);
-    accessControl.requireDataExport(user);
+    accessControl.requireDataExport(user, requestedStoreId, validMonthOrNull(requestedMonth));
     return user;
+  }
+
+  private BusinessScope resolveScope(
+      AuthUser user,
+      String domainCode,
+      String storeId,
+      Long brandId,
+      String action,
+      String month
+  ) {
+    return businessScopeResolver == null
+        ? new BusinessScope(storeId, null, brandId, null, null)
+        : businessScopeResolver.resolve(user, domainCode, storeId, brandId, action, month);
   }
 
   private ResponseEntity<byte[]> csv(String fileName, String content) {
@@ -136,24 +156,64 @@ public class ExportController {
         .body(bytes);
   }
 
-  private void writeExportLog(AuthUser user, String action, String targetId, String month) {
+  private void writeExportLog(
+      AuthUser user,
+      String action,
+      String targetId,
+      BusinessScope businessScope,
+      String month
+  ) {
+    String scope = businessScope.storeId() == null
+        ? "全部授权门店"
+        : "门店=" + businessScope.storeId();
+    if (businessScope.brandId() != null) {
+      scope += "；品牌=" + businessScope.brandId();
+    }
     auditRepository.writeLog(user, new AuditLogRequest(
         action,
         "data_export",
         targetId,
-        null,
+        businessScope.storeId(),
         month,
-        "已下载 CSV 文件",
+        "已下载 CSV 文件；导出范围：" + scope,
         null,
         null
     ));
   }
 
-  private String normalizeMonth(String value) {
+  private String normalizeMonth(
+      String value,
+      AuthUser user,
+      String action,
+      String targetId,
+      String requestedStoreId
+  ) {
     try {
       return YearMonth.parse(value == null || value.isBlank() ? YearMonth.now(BUSINESS_ZONE).toString() : value.trim()).toString();
     } catch (RuntimeException ex) {
+      auditRepository.writeLog(user, new AuditLogRequest(
+          action,
+          "data_export",
+          targetId,
+          blankToNull(requestedStoreId),
+          null,
+          "导出失败：月份格式不正确",
+          null,
+          null
+      ));
       throw new BusinessException("EXPORT_MONTH_INVALID", "月份格式不正确", org.springframework.http.HttpStatus.BAD_REQUEST);
+    }
+  }
+
+  private String blankToNull(String value) {
+    return value == null || value.isBlank() ? null : value.trim();
+  }
+
+  private String validMonthOrNull(String value) {
+    try {
+      return YearMonth.parse(value == null || value.isBlank() ? YearMonth.now(BUSINESS_ZONE).toString() : value.trim()).toString();
+    } catch (RuntimeException ex) {
+      return null;
     }
   }
 
@@ -216,7 +276,7 @@ public class ExportController {
     return csv.toString();
   }
 
-  private String toSalaryCsv(List<SalaryRecordResponse> rows) {
+  static String toSalaryCsv(List<SalaryRecordResponse> rows) {
     StringBuilder csv = new StringBuilder("月份,门店,品牌,员工编号,员工姓名,岗位,基础工资,提成奖金,扣款,实发工资,审核状态,审核时间\n");
     for (SalaryRecordResponse row : rows) {
       java.math.BigDecimal bonus = row.fullAttendance().add(row.commission()).add(row.overtime())
@@ -231,7 +291,7 @@ public class ExportController {
           .append(row.base()).append(',')
           .append(bonus).append(',')
           .append(deduction).append(',')
-          .append(row.gross()).append(',')
+          .append(row.netPay()).append(',')
           .append(escape(salaryStatusLabel(row.status()))).append(',')
           .append(escape(row.reviewedAt() == null ? null : row.reviewedAt().toString()))
           .append('\n');
@@ -239,7 +299,7 @@ public class ExportController {
     return csv.toString();
   }
 
-  private String salaryStatusLabel(String status) {
+  private static String salaryStatusLabel(String status) {
     return switch (status == null ? "DRAFT" : status) {
       case "PENDING_REVIEW" -> "待审核";
       case "APPROVED" -> "已完成";
@@ -250,6 +310,9 @@ public class ExportController {
 
   private static String escape(String value) {
     String safe = value == null ? "" : value;
+    if (!safe.isEmpty() && "=+-@".indexOf(safe.charAt(0)) >= 0) {
+      safe = "'" + safe;
+    }
     return "\"" + safe.replace("\"", "\"\"") + "\"";
   }
 }
