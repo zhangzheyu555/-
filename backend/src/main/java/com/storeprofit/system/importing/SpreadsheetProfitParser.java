@@ -237,7 +237,12 @@ public class SpreadsheetProfitParser {
           continue;
         }
         String text = String.join(" ", cells);
-        StoreResponse store = matchStore(header.storeColumn >= 0 ? cell(cells, header.storeColumn) : text, stores, defaultStoreId).orElse(null);
+        // A tabular file with a dedicated store column must keep that row's source identity.
+        // Falling back to the page's selected store here could silently turn another store (or
+        // an unknown store) into the selected one before the preview scope guard can reject it.
+        String rowStoreText = header.storeColumn >= 0 ? cell(cells, header.storeColumn) : text;
+        String fallbackStoreId = header.storeColumn >= 0 ? "" : defaultStoreId;
+        StoreResponse store = matchStore(rowStoreText, stores, fallbackStoreId).orElse(null);
         String month = normalizeMonth(header.monthColumn >= 0 ? cell(cells, header.monthColumn) : text, defaultMonth);
         rows.add(row("row_" + grid.name + "_" + (i + 1), store, month, values, grid.name + " 第" + (i + 1) + "行"));
       }

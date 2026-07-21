@@ -71,14 +71,33 @@ public class AccessControlService {
    * carries {@link PermissionCodes#FINANCE_PROFIT_WRITE}.
    */
   public void requireFinanceWrite(AuthUser user) {
-    requirePermission(user, PermissionCodes.FINANCE_PROFIT_WRITE, "录入经营数据");
+    requireFinanceWrite(user, null, null);
+  }
+
+  /**
+   * Retains the requested business scope in a rejected-write audit. The permission check must
+   * happen before a write, but that must not make an attempted cross-store write unauditable.
+   */
+  public void requireFinanceWrite(AuthUser user, String requestedStoreId, String requestedMonth) {
+    if (!hasPermission(user, PermissionCodes.FINANCE_PROFIT_WRITE)) {
+      deny(
+          user,
+          "录入经营数据",
+          "API",
+          PermissionCodes.FINANCE_PROFIT_WRITE,
+          requestedStoreId,
+          requestedMonth,
+          "账号不具备权限 " + PermissionCodes.FINANCE_PROFIT_WRITE
+      );
+    }
     if (!isBoss(user) && !hasAnyRole(user, "FINANCE")) {
       deny(
           user,
           "录入经营数据",
           "API",
           PermissionCodes.FINANCE_PROFIT_WRITE,
-          null,
+          requestedStoreId,
+          requestedMonth,
           "经营数据录入仅限财务或老板；店长可查看本店经营结果"
       );
     }
@@ -91,21 +110,36 @@ public class AccessControlService {
    * attempts to grant the dedicated import permission.
    */
   public void requireFinanceImport(AuthUser user) {
-    requirePermission(user, PermissionCodes.FINANCE_PROFIT_IMPORT, "导入经营数据");
-    if (!hasAnyRole(user, "FINANCE")) {
+    requireFinanceImport(user, null, null);
+  }
+
+  public void requireFinanceImport(AuthUser user, String requestedStoreId, String requestedMonth) {
+    if (!hasPermission(user, PermissionCodes.FINANCE_PROFIT_IMPORT)) {
       deny(
           user,
           "导入经营数据",
           "API",
           PermissionCodes.FINANCE_PROFIT_IMPORT,
-          null,
+          requestedStoreId,
+          requestedMonth,
+          "账号不具备权限 " + PermissionCodes.FINANCE_PROFIT_IMPORT
+      );
+    }
+    if (!isBoss(user) && !hasAnyRole(user, "FINANCE")) {
+      deny(
+          user,
+          "导入经营数据",
+          "API",
+          PermissionCodes.FINANCE_PROFIT_IMPORT,
+          requestedStoreId,
+          requestedMonth,
           "月度经营数据导入仅限财务或老板"
       );
     }
     // The eventual commit delegates to FinanceService.save(). Check the write permission here,
     // before a file is accepted or a preview job is allocated, so a finance user with an
     // explicit write DENY receives one clear, auditable refusal at the import boundary.
-    requireFinanceWrite(user);
+    requireFinanceWrite(user, requestedStoreId, requestedMonth);
   }
 
   /** Deletion of profit entries follows the same BOSS-or-FINANCE boundary as writes. */
@@ -653,6 +687,25 @@ public class AccessControlService {
     if (user != null) {
       try {
         auditRepository.writePermissionDenied(user, action, targetType, targetId, storeId, reason);
+      } catch (RuntimeException ex) {
+        log.warn("Failed to write permission denial audit log for user {}: {}", user.id(), ex.getMessage());
+      }
+    }
+    throw new BusinessException("FORBIDDEN", "当前账号没有访问该业务的权限", HttpStatus.FORBIDDEN);
+  }
+
+  private void deny(
+      AuthUser user,
+      String action,
+      String targetType,
+      String targetId,
+      String storeId,
+      String month,
+      String reason
+  ) {
+    if (user != null) {
+      try {
+        auditRepository.writePermissionDenied(user, action, targetType, targetId, storeId, month, reason);
       } catch (RuntimeException ex) {
         log.warn("Failed to write permission denial audit log for user {}: {}", user.id(), ex.getMessage());
       }

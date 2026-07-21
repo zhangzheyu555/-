@@ -70,7 +70,7 @@ class FinanceServiceTest {
 
     service.save(finance, request);
 
-    verify(accessControl).requireFinanceWrite(finance);
+    verify(accessControl).requireFinanceWrite(finance, "rg1", "2026-07");
     verify(accessControl, never()).requireFinanceImport(finance);
     verify(financeRepository).upsert(eq(1L), any(ProfitEntryRequest.class), eq(2L));
     verify(financeRepository).logSave(1L, 2L, "Finance", "rg1", "2026-07");

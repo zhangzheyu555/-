@@ -131,6 +131,7 @@ class ProfitImportPreviewJobServiceTest {
     BusinessException forbidden = new BusinessException(
         "FORBIDDEN", "当前账号没有访问该业务的权限", org.springframework.http.HttpStatus.FORBIDDEN);
     doThrow(forbidden).when(importService).requireImportAccess(manager);
+    doThrow(forbidden).when(importService).requireImportAccess(manager, "store-1", "2026-07");
     ProfitImportPreviewJobService service = new ProfitImportPreviewJobService(importService, Runnable::run);
     ProfitImportPreviewJobResponse preview = service.submit(
         finance,
@@ -150,7 +151,8 @@ class ProfitImportPreviewJobServiceTest {
         manager, preview.jobId(), new ProfitImportJobConfirmRequest(List.of()))).isSameAs(forbidden);
     assertThatThrownBy(() -> service.cancel(manager, preview.jobId())).isSameAs(forbidden);
 
-    verify(importService, times(4)).requireImportAccess(manager);
+    verify(importService, times(3)).requireImportAccess(manager);
+    verify(importService).requireImportAccess(manager, "store-1", "2026-07");
   }
 
   @Test

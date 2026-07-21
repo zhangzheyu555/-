@@ -82,7 +82,27 @@ class AccessControlServiceTest {
         any(String.class),
         any(String.class),
         isNull(),
+        isNull(),
         any(String.class)
+    );
+  }
+
+  @Test
+  void rejectedFinanceWritesKeepTheRequestedStoreAndMonthInTheAuditRecord() {
+    AuthUser supervisor = user("SUPERVISOR", null);
+
+    assertThatThrownBy(() -> service.requireFinanceWrite(supervisor, "rg2", "2026-07"))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
+
+    verify(auditRepository).writePermissionDenied(
+        org.mockito.ArgumentMatchers.eq(supervisor),
+        org.mockito.ArgumentMatchers.eq("录入经营数据"),
+        org.mockito.ArgumentMatchers.eq("API"),
+        org.mockito.ArgumentMatchers.eq(PermissionCodes.FINANCE_PROFIT_WRITE),
+        org.mockito.ArgumentMatchers.eq("rg2"),
+        org.mockito.ArgumentMatchers.eq("2026-07"),
+        org.mockito.ArgumentMatchers.contains("账号不具备权限")
     );
   }
 
@@ -125,6 +145,7 @@ class AccessControlServiceTest {
         any(String.class),
         any(String.class),
         isNull(),
+        isNull(),
         any(String.class)
     );
   }
@@ -151,6 +172,7 @@ class AccessControlServiceTest {
         any(String.class),
         any(String.class),
         any(String.class),
+        isNull(),
         isNull(),
         any(String.class)
     );

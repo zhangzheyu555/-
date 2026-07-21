@@ -230,6 +230,7 @@ class StorageServiceTest {
           target_type varchar(120),
           target_id varchar(120),
           store_id varchar(64),
+          month varchar(7),
           reason varchar(500),
           created_at timestamp default current_timestamp
         )
@@ -254,7 +255,7 @@ class StorageServiceTest {
   private DataSource dataSource() {
     JdbcDataSource dataSource = new JdbcDataSource();
     dataSource.setURL("jdbc:h2:mem:storage-service-" + System.nanoTime()
-        + ";MODE=MySQL;DATABASE_TO_LOWER=TRUE;CASE_INSENSITIVE_IDENTIFIERS=TRUE;DB_CLOSE_DELAY=-1");
+        + ";MODE=MySQL;DATABASE_TO_LOWER=TRUE;CASE_INSENSITIVE_IDENTIFIERS=TRUE;DB_CLOSE_DELAY=-1;NON_KEYWORDS=MONTH");
     dataSource.setUser("sa");
     dataSource.setPassword("");
     return dataSource;

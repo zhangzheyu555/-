@@ -116,7 +116,7 @@ class ProfitImportControllerAuthorizationTest {
         .andExpect(jsonPath("$.code").value("FORBIDDEN"));
 
     verify(auditRepository, times(3)).writePermissionDenied(
-        any(AuthUser.class), any(String.class), any(String.class), any(String.class), any(), any(String.class));
+        any(AuthUser.class), any(String.class), any(String.class), any(String.class), any(), any(), any(String.class));
     verifyNoInteractions(spreadsheetProfitParser, financeService);
   }
 

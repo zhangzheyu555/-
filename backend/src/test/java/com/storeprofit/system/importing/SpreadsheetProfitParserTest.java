@@ -46,6 +46,23 @@ class SpreadsheetProfitParserTest {
   }
 
   @Test
+  void keepsExplicitStoreColumnIdentityInsteadOfFallingBackToTheSelectedStore() {
+    String csv = """
+        门店,月份,营业额,原材料成本
+        荆州之星店,2026-07,2000,400
+        不存在的门店,2026-07,900,100
+        """;
+
+    List<ProfitImportRow> rows = parser.parseCsvText(csv, stores, "rg1", "2026-07");
+
+    assertThat(rows).hasSize(2);
+    assertThat(rows.get(0).storeId()).isEqualTo("rg2");
+    assertThat(rows.get(0).errors()).isEmpty();
+    assertThat(rows.get(1).storeId()).isBlank();
+    assertThat(rows.get(1).errors()).contains("未匹配到门店，请在预览中选择门店");
+  }
+
+  @Test
   void keepsSourceMonthWhenDefaultMonthIsDifferent() {
     String csv = """
         门店,月份,营业总收入,原材料成本

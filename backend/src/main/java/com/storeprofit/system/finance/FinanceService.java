@@ -140,7 +140,10 @@ public class FinanceService {
 
   @Transactional
   public void save(AuthUser user, ProfitEntryRequest request) {
-    accessControl.requireFinanceWrite(user);
+    accessControl.requireFinanceWrite(
+        user,
+        request == null ? null : request.storeId(),
+        request == null ? null : request.month());
     BusinessScope businessScope = resolveBusinessScope(
         user, request == null ? null : request.storeId(), null, "保存利润数据");
     String targetStoreId = businessScope.storeId();

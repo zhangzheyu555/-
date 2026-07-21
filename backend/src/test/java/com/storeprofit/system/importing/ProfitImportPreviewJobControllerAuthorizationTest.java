@@ -92,7 +92,7 @@ class ProfitImportPreviewJobControllerAuthorizationTest {
         .andExpect(jsonPath("$.code").value("FORBIDDEN"));
 
     verify(auditRepository).writePermissionDenied(
-        any(AuthUser.class), any(String.class), any(String.class), any(String.class), any(), any(String.class));
+        any(AuthUser.class), any(String.class), any(String.class), any(String.class), any(), any(), any(String.class));
     verifyNoInteractions(spreadsheetProfitParser, financeService);
   }
 
@@ -128,7 +128,7 @@ class ProfitImportPreviewJobControllerAuthorizationTest {
         .andExpect(jsonPath("$.code").value("FORBIDDEN"));
 
     verify(auditRepository, times(3)).writePermissionDenied(
-        any(AuthUser.class), any(String.class), any(String.class), any(String.class), any(), any(String.class));
+        any(AuthUser.class), any(String.class), any(String.class), any(String.class), any(), any(), any(String.class));
   }
 
   private org.springframework.test.web.servlet.request.MockMultipartHttpServletRequestBuilder previewRequest() {

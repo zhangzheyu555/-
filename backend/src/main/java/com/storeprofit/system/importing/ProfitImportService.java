@@ -83,7 +83,11 @@ public class ProfitImportService {
 
   /** Shared authorization boundary for every spreadsheet-recognition and commit entry point. */
   public void requireImportAccess(AuthUser user) {
-    accessControl.requireFinanceImport(user);
+    requireImportAccess(user, null, null);
+  }
+
+  public void requireImportAccess(AuthUser user, String storeId, String month) {
+    accessControl.requireFinanceImport(user, storeId, month);
   }
 
   /**
@@ -109,7 +113,7 @@ public class ProfitImportService {
       String month,
       boolean applyLegacyStoreManagerLock
   ) {
-    requireImportAccess(user);
+    requireImportAccess(user, storeId, month);
     BusinessScope businessScope = resolveBusinessScope(user, storeId, "预览经营数据导入");
     String targetStoreId = businessScope.storeId();
     validateFile(file);

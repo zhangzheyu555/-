@@ -69,7 +69,7 @@ public class ProfitImportPreviewJobService {
   ) {
     // Check synchronously before allocating a job or scheduling background parsing. The parser
     // repeats the same service-level guard so legacy and asynchronous paths cannot bypass it.
-    profitImportService.requireImportAccess(user);
+    profitImportService.requireImportAccess(user, storeId, month);
     BusinessScope businessScope = businessScopeResolver == null
         ? new BusinessScope(storeId, null, null, null, null)
         : businessScopeResolver.resolve(

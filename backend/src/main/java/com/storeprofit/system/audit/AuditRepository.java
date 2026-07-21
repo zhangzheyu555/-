@@ -5,6 +5,8 @@ import java.sql.SQLException;
 import java.util.List;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 public class AuditRepository {
@@ -47,6 +49,11 @@ public class AuditRepository {
     );
   }
 
+  /**
+   * A denial normally occurs inside a business write transaction. Persist it in a separate
+   * transaction so the expected rollback of the denied operation cannot erase its audit trail.
+   */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
   public void writePermissionDenied(
       com.storeprofit.system.platform.auth.AuthUser user,
       String action,
@@ -55,12 +62,26 @@ public class AuditRepository {
       String storeId,
       String reason
   ) {
+    writePermissionDenied(user, action, targetType, targetId, storeId, null, reason);
+  }
+
+  /** Preserves the requested accounting month when a finance write is rejected before execution. */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void writePermissionDenied(
+      com.storeprofit.system.platform.auth.AuthUser user,
+      String action,
+      String targetType,
+      String targetId,
+      String storeId,
+      String month,
+      String reason
+  ) {
     jdbcTemplate.update("""
         insert into operation_log(
           tenant_id, operator_id, operator_name, action, target_type, target_id,
-          store_id, reason, created_at
+          store_id, month, reason, created_at
         )
-        values (?, ?, ?, 'permission_denied', ?, ?, ?, ?, current_timestamp)
+        values (?, ?, ?, 'permission_denied', ?, ?, ?, ?, ?, current_timestamp)
         """,
         user.tenantId(),
         user.id(),
@@ -68,6 +89,7 @@ public class AuditRepository {
         truncate(requiredText(targetType, "API"), 80),
         truncate(blankToNull(targetId), 120),
         truncate(blankToNull(storeId), 64),
+        truncate(blankToNull(month), 7),
         truncate(requiredText(action + "：" + reason, "权限拒绝"), 255)
     );
   }
