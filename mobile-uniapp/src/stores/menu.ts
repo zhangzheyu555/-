@@ -49,7 +49,7 @@ const RULES: MenuRule[] = [
     key: 'summary', group: 'summary', label: '经营只读摘要', description: '手机查看关键结果，复杂操作回桌面端', path: '/pkg-summary/index', tone: 'green', icon: '▥',
   },
   { key: 'expenses', group: 'finance', label: '报销', description: '申请、补件与审核报销', path: '/pkg-finance/expenses/index', tone: 'orange', icon: '¥' },
-  { key: 'salary', group: 'finance', label: '工资', description: '本店核对与财务审批', path: '/pkg-finance/salary/index', tone: 'green', icon: '￥' },
+  { key: 'salary', group: 'finance', label: '工资', description: '查看权限范围内的工资记录', path: '/pkg-finance/salary/index', tone: 'green', icon: '￥' },
   { key: 'dailyLoss', group: 'store', label: '每日报损', description: '提交报损并跟踪审核', path: '/pkg-store/daily-loss/index', tone: 'orange', icon: '!' },
   { key: 'operations', group: 'operations', label: '运营与盘存', description: '查看盘存任务和运营事项', path: '/pkg-operations/index', tone: 'blue', icon: '✓' },
   { key: 'operationsMonitor', group: 'operations', label: '培训与平台监测', description: '查看学习进度和平台连接状态', path: '/pkg-operations/monitor/index', tone: 'green', icon: '▦' },

@@ -17,6 +17,7 @@ const menu = useMenuStore()
 const context = useContextStore()
 const storeNames = computed(() => context.stores.map((store) => store.name))
 const currentStoreLabel = computed(() => context.currentStore?.name || session.user?.boundStoreName || '请选择当前门店')
+const currentStoreInfo = computed(() => context.currentStore)
 const todayLabel = computed(() => {
   const now = new Date()
   return `${now.getFullYear()}年${String(now.getMonth() + 1).padStart(2, '0')}月${String(now.getDate()).padStart(2, '0')}日`
@@ -186,6 +187,9 @@ function openTodos(): void {
 function openBusiness(): void { uni.navigateTo({ url: '/pkg-store/business/index' }) }
 function money(value: number | undefined): string { return `¥${Number(value || 0).toFixed(2)}` }
 function percent(value: number | undefined): string { return `${Number(value || 0).toFixed(1)}%` }
+function storeStatusLabel(status: string | undefined): string {
+  return String(status || '').toUpperCase() === 'ACTIVE' ? '营业中' : (status || '待确认')
+}
 </script>
 
 <template>
@@ -228,9 +232,9 @@ function percent(value: number | undefined): string { return `${Number(value || 
       </view>
     </view>
 
-    <view v-if="session.user?.role === 'STORE_MANAGER' && latestManagerEntry" class="section-card business-preview">
-      <view class="section-card__head"><view><text class="section-card__eyebrow">本店经营</text><text class="section-card__title">{{ latestManagerEntry.month }} 经营明细</text></view><button class="text-button" @click="openBusiness">查看全部</button></view>
-      <view class="business-preview__grid"><view><text>实收收入</text><b>{{ money(latestManagerEntry.income) }}</b></view><view><text>成本合计</text><b>{{ money(latestManagerEntry.costSum) }}</b></view><view><text>费用合计</text><b>{{ money(latestManagerEntry.expenseSum) }}</b></view><view><text>净利润 · 净利率</text><b :class="{ negative: latestManagerEntry.net < 0 }">{{ money(latestManagerEntry.net) }} · {{ percent(latestManagerEntry.margin) }}</b></view></view>
+    <view v-if="session.user?.role === 'STORE_MANAGER' && currentStoreInfo" class="section-card store-profile-preview">
+      <view class="section-card__head"><view><text class="section-card__eyebrow">我的门店</text><text class="section-card__title">门店基础资料</text></view></view>
+      <view class="store-profile-preview__grid"><view><text>门店名称</text><b>{{ currentStoreInfo.name }}</b></view><view><text>门店编号</text><b>{{ currentStoreInfo.code || currentStoreInfo.id }}</b></view><view><text>所属品牌</text><b>{{ currentStoreInfo.brandName || '待补充' }}</b></view><view><text>门店状态</text><b>{{ storeStatusLabel(currentStoreInfo.status) }}</b></view><view><text>所在区域</text><b>{{ currentStoreInfo.area || '待补充' }}</b></view><view><text>配送仓库</text><b>{{ currentStoreInfo.supplyWarehouseName || '暂未配置' }}</b></view></view>
     </view>
 
     <view v-if="session.user?.role === 'STORE_MANAGER' && warehouse" class="section-card fulfilment-preview">
@@ -256,6 +260,11 @@ function percent(value: number | undefined): string { return `${Number(value || 
     />
 
     <view class="apps-hint"><text>完整功能请进入底部“应用”查看。</text></view>
+
+    <view v-if="session.user?.role === 'STORE_MANAGER' && latestManagerEntry" class="section-card business-preview">
+      <view class="section-card__head"><view><text class="section-card__eyebrow">本店经营</text><text class="section-card__title">{{ latestManagerEntry.month }} 经营明细</text></view><button class="text-button" @click="openBusiness">查看全部</button></view>
+      <view class="business-preview__grid"><view><text>实收收入</text><b>{{ money(latestManagerEntry.income) }}</b></view><view><text>成本合计</text><b>{{ money(latestManagerEntry.costSum) }}</b></view><view><text>费用合计</text><b>{{ money(latestManagerEntry.expenseSum) }}</b></view><view><text>净利润 · 净利率</text><b :class="{ negative: latestManagerEntry.net < 0 }">{{ money(latestManagerEntry.net) }} · {{ percent(latestManagerEntry.margin) }}</b></view></view>
+    </view>
   </view>
 </template>
 
@@ -278,16 +287,20 @@ function percent(value: number | undefined): string { return `${Number(value || 
 .store-selector__value { overflow: hidden; color: #253634; font-size: 27rpx; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
 .store-selector__action { flex: 0 0 auto; color: #27655f; font-size: 23rpx; font-weight: 700; }
 .metric-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16rpx; }
-.metric-card { display: flex; min-height: 166rpx; padding: 22rpx; flex-direction: column; background: #ffffff; border: 1rpx solid #d9e6e3; border-radius: 14rpx; box-shadow: 0 5rpx 14rpx rgba(46, 79, 73, .035); }
-.metric-card--featured { color: #ffffff; background: #27655f; border-color: #27655f; }
+.metric-card { display: flex; min-height: 166rpx; padding: 22rpx; flex-direction: column; background: #ffffff; border: 1rpx solid #d9e6e3; border-radius: 14rpx; }
+.metric-card--featured { background: #edf7f5; border-color: #bddbd5; }
 .metric-card__label { color: #728783; font-size: 22rpx; font-weight: 700; }
-.metric-card--featured .metric-card__label,.metric-card--featured .metric-card__hint { color: rgba(255,255,255,.72); }
+.metric-card--featured .metric-card__label,.metric-card--featured .metric-card__hint { color: #5b827a; }
 .metric-card__number { display: flex; margin-top: 11rpx; align-items: baseline; gap: 5rpx; color: #1f2b2a; font-size: 39rpx; font-weight: 850; line-height: 1; }
-.metric-card--featured .metric-card__number { color: #ffffff; }
+.metric-card--featured .metric-card__number { color: #27655f; }
 .metric-card__unit { color: inherit; font-size: 21rpx; }
 .metric-card__hint { margin-top: auto; color: #718581; font-size: 20rpx; }
 .workspace-message { padding: 18rpx 22rpx; color: #96603b; background: #fff7ed; border: 1rpx solid #f0ddc8; border-radius: 12rpx; font-size: 24rpx; }
 .section-card { padding: 24rpx; background: #ffffff; border: 1rpx solid #d9e6e3; border-radius: 14rpx; box-shadow: 0 5rpx 14rpx rgba(46, 79, 73, .03); }
+.store-profile-preview__grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14rpx; margin-top:14rpx; }
+.store-profile-preview__grid view { display:flex; min-height:94rpx; padding:16rpx; flex-direction:column; justify-content:space-between; background:#f7faf9; border-radius:12rpx; }
+.store-profile-preview__grid text { color:#718581; font-size:21rpx; }
+.store-profile-preview__grid b { overflow:hidden; color:#263633; font-size:25rpx; line-height:1.35; text-overflow:ellipsis; white-space:nowrap; }
 .business-preview__grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14rpx; margin-top:14rpx; }
 .business-preview__grid view { display:flex; min-height:94rpx; padding:16rpx; flex-direction:column; justify-content:space-between; background:#f7faf9; border-radius:12rpx; }
 .business-preview__grid text { color:#718581; font-size:21rpx; }

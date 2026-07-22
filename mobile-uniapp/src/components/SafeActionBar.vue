@@ -39,7 +39,7 @@ const { keyboardStyle } = useKeyboardInset()
 </template>
 
 <style scoped lang="scss">
-.safe-action-placeholder { height: calc(136rpx + env(safe-area-inset-bottom)); }
+.safe-action-placeholder { height: calc(136rpx + env(safe-area-inset-bottom)); flex-shrink: 0; }
 .safe-action-bar {
   position: fixed;
   z-index: 50;
@@ -51,8 +51,8 @@ const { keyboardStyle } = useKeyboardInset()
   border-top: 1rpx solid $mobile-line;
   transition: transform 120ms ease-out;
 }
-.safe-action-bar__inner { display: flex; width: min(100%, 960rpx); margin: 0 auto; gap: 16rpx; }
-.safe-action-bar__button { min-height: 88rpx; margin: 0; padding: 0 28rpx; border-radius: 16rpx; font-size: 28rpx; font-weight: 700; line-height: 88rpx; }
+.safe-action-bar__inner { display: flex; width: min(100%, 960rpx); margin: 0 auto; gap: 16rpx; min-width: 0; }
+.safe-action-bar__button { min-height: 88rpx; margin: 0; padding: 0 28rpx; border-radius: 16rpx; font-size: 28rpx; font-weight: 700; line-height: 1.25; }
 .safe-action-bar__button::after { border: 0; }
 .safe-action-bar__button--secondary { flex: 0 0 auto; color: $mobile-ink; background: $mobile-surface-strong; }
 .safe-action-bar__button--primary { flex: 1; color: #ffffff; background: $mobile-orange; }

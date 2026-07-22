@@ -22,7 +22,7 @@ import type {
   WarehouseRequisition,
   WarehouseReturn,
   InspectionRectification,
-  ExpenseClaim, SalaryRecord, DailyLossItem, DailyLossRecord, OperationLog,
+  ExpenseClaim, SalaryEmployeePage, SalaryRecord, DailyLossItem, DailyLossRecord, OperationLog,
   WarehouseFacility, WarehousePurchaseOrder, WarehouseTransfer, WarehouseTransferContext,
   WarehouseStockMovement, WarehouseItem, WarehouseItemCategory,
   StoreManagerWorkbench,
@@ -51,12 +51,14 @@ export function approveMobilePurchaseOrder(id:string){return apiPost<WarehousePu
 export function receiveMobilePurchaseOrder(id:string,payload:{clientRequestId:string;note?:string;lines:Array<{itemId:number;batchNo:string;receivedDate:string;expiryDate?:string;quantity:number;note?:string}>}){return apiPost<WarehousePurchaseOrder,typeof payload>(`/api/warehouse/purchase-orders/${encodeURIComponent(id)}/receive`,payload,{idempotencyKey:payload.clientRequestId})}
 export function updateMobileWarehouseAlert(itemId:number,payload:{warehouseId:number|string;minStockQuantity:number;alertEnabled:boolean;expiryAlertDays?:number}){return apiPost<void,typeof payload>(`/api/warehouse/items/${itemId}/alert-settings`,payload)}
 export function getMobileWarehouseItems(){return apiGet<WarehouseItem[]>('/api/warehouse/items')}
-export function saveMobileWarehouseItem(payload:{id?:number;code:string;name:string;categoryId:number;unit?:string;spec?:string;warehouseLocation?:string;minStockQuantity?:number;alertEnabled?:boolean;expiryAlertDays?:number;active?:boolean}){return apiPost<void,typeof payload>('/api/warehouse/items',payload)}
+export interface MobileWarehouseItemPayload { id?:number;code:string;name:string;categoryId:number;imageUrl?:string;unit?:string;purchaseUnit?:string;stockUnit?:string;ingredientUnit?:string;unitConversionText?:string;spec?:string;warehouseLocation?:string;unitPrice?:number;shelfLifeDays?:number;minStockQuantity?:number;alertEnabled?:boolean;expiryAlertDays?:number;itemDescription?:string;sortOrder?:number;itemAttributes?:string;active?:boolean;departments?:Array<{departmentName:string;departmentCode?:string;departmentGroup?:string;purchaseMethod?:string;supplierName?:string}> }
+export function saveMobileWarehouseItem(payload:MobileWarehouseItemPayload){return apiPost<void,MobileWarehouseItemPayload>('/api/warehouse/items',payload)}
 export function setMobileWarehouseItemEnabled(itemId:number,enabled:boolean){return apiPost<void,{enabled:boolean}>(`/api/warehouse/items/${itemId}/enabled`,{enabled})}
 export function getMobileWarehouseItemCategories(){return apiGet<WarehouseItemCategory[]>('/api/warehouse/item-categories')}
 export function saveMobileWarehouseItemCategory(payload:{id?:number;name:string;parentId?:number;sortOrder?:number;enabled?:boolean}){return apiPost<WarehouseItemCategory,typeof payload>('/api/warehouse/item-categories',payload)}
 export function setMobileWarehouseItemCategoryEnabled(categoryId:number,enabled:boolean){return apiPost<void,{enabled:boolean}>(`/api/warehouse/item-categories/${categoryId}/enabled`,{enabled})}
 export function deleteMobileWarehouseItemCategory(categoryId:number){return apiDelete<void>(`/api/warehouse/item-categories/${categoryId}`)}
+export function receiveMobileWarehouseStock(payload:{warehouseId:number|string;itemId:number;batchNo:string;receivedDate:string;expiryDate?:string;quantity:number;unitCost:number;note?:string;clientRequestId:string}){return apiPost<void,typeof payload>('/api/warehouse/stock-batches',payload,{idempotencyKey:payload.clientRequestId})}
 
 export function getMobileRequisitions() {
   return apiGet<WarehouseRequisition[]>('/api/warehouse/requisitions')
@@ -330,11 +332,12 @@ export function updateMobileExpense(id: string, payload: { storeId: string; mont
 export function submitMobileExpense(id: string) { return apiPost<ExpenseClaim>(`/api/expenses/${encodeURIComponent(id)}/submit`) }
 export function reviewMobileExpense(id: string, action: 'approve' | 'reject' | 'request-info', note?: string) { return apiPost<ExpenseClaim, { note?: string }>(`/api/expenses/${encodeURIComponent(id)}/${action}`, { note }) }
 export function uploadMobileExpenseSupplement(id: string, filePath: string, note: string) { return apiUpload<ExpenseClaim>(`/api/expenses/${encodeURIComponent(id)}/supplements`, filePath, 'files', { note }) }
-export function getMobileSalaries(query: { month?: string; storeId?: string } = {}) { return apiGet<SalaryRecord[]>('/api/salaries', query) }
+export function getMobileSalaryPage(query: { month?: string; storeId?: string; status?: string; keyword?: string; page?: number; size?: number } = {}) {
+  return apiGet<SalaryEmployeePage>('/api/salaries/employee-page', query)
+}
 export function getMobileSalary(id:string){return apiGet<SalaryRecord>(`/api/salaries/${encodeURIComponent(id)}`)}
 /** 员工本人档案及最近一笔工资；后端仅允许已授权的 EMPLOYEE 账号访问。 */
 export function getMobileEmployeeProfile() { return apiGet<EmployeeSelfProfile>('/api/employee/profile') }
-export function reviewMobileSalary(id: string, action: 'approve' | 'reject' | 'mark-paid', note?: string) { return apiPost<SalaryRecord, { note?: string }>(`/api/salaries/${encodeURIComponent(id)}/${action}`, note ? { note } : undefined) }
 export function getMobileDailyLossItems() { return apiGet<DailyLossItem[]>('/api/daily-loss/items') }
 export function getMobileDailyLossRecords(query: { storeId?: string; date?: string; status?: string } = {}) { return apiGet<DailyLossRecord[]>('/api/daily-loss/records', query) }
 export function createMobileDailyLoss(payload: { storeId: string; lossDate: string; itemId: number; lossQuantity: number; lossReason: string }) { return apiPost<DailyLossRecord, typeof payload>('/api/daily-loss/records', payload) }

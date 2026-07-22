@@ -168,5 +168,12 @@ function attachments(row: ExpenseClaim): ProtectedAttachment[] { return (row.sup
 </template>
 
 <style scoped lang="scss">
+/* 窄屏和键盘弹起时，提交按钮允许换行，凭证列表不再挤压表单。 */
+.panel { min-width: 0; overflow: visible; }
+.form-actions { align-items: stretch; flex-wrap: wrap; }
+.form-actions button { min-width: 0; min-height: 88rpx; white-space: normal; }
+</style>
+
+<style scoped lang="scss">
 .page{min-height:100vh;box-sizing:border-box;padding:24rpx;background:#f2f6f5;color:#202124}.head,.row,.actions,.form-actions,.pending-file{display:flex;align-items:center;justify-content:space-between;gap:12rpx}.eyebrow,.title,.section,.name,.money,.copy,.reason,.supplement-note{display:block}.title{font-size:40rpx;font-weight:750}.eyebrow,.copy{color:#71807d;font-size:24rpx}.section{font-size:30rpx;font-weight:700}.list-heading{margin:28rpx 0 14rpx}.panel,.card,.empty,.notice{margin-top:16rpx;padding:24rpx;background:#fff;border:1rpx solid #d9e6e3;border-radius:16rpx}.panel input,.panel textarea{box-sizing:border-box;width:100%;margin-top:14rpx;padding:18rpx;background:#f7faf9;border-radius:12rpx}.panel textarea{height:130rpx}.receipt-button{width:100%;margin-top:14rpx;background:#e6f3f1;color:#1f5752;font-size:24rpx}.pending-file{margin-top:10rpx;padding:12rpx 16rpx;background:#f7faf9;border-radius:10rpx;color:#59606b;font-size:23rpx}.pending-file button{margin:0;color:#a34b42;background:transparent;font-size:22rpx}.form-actions{margin-top:16rpx}.form-actions button{flex:1;margin:0}.primary{background:#27655f;color:#fff}.text-button{margin:0;background:transparent;color:#1f5752;font-size:24rpx}.money{margin-top:12rpx;font-size:36rpx;font-weight:750}.copy,.reason,.supplement-note{margin-top:8rpx;line-height:1.5}.reason{font-size:26rpx}.supplement-note{padding:14rpx;background:#fff9e8;color:#755d2d;font-size:24rpx}.actions{margin-top:16rpx;justify-content:flex-start;flex-wrap:wrap}.actions button{margin:0;padding:0 22rpx;background:#e6f3f1;color:#1f5752;font-size:24rpx}.empty{text-align:center;color:#71807d}
 </style>

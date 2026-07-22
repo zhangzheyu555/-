@@ -5,7 +5,7 @@ export const EMPTY_SCOPE: SessionDataScope = { mode: 'NONE', storeIds: [], wareh
 export function normalizeRole(role?: string): string {
   const value = String(role || '').trim().toUpperCase()
   if (value === 'ADMIN' || value === 'OWNER') return 'BOSS'
-  if (value === 'OPS') return 'OPERATIONS'
+  if (value === 'OPS' || value === 'OPERATIONS') return 'SUPERVISOR'
   return value
 }
 

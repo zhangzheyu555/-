@@ -1,4 +1,5 @@
 export * from './keyboard'
+export * from './operation-feedback'
 export * from './media'
 export * from './notifications'
 export * from './protected-media'

@@ -215,7 +215,7 @@ function denyAndReturn() {
 </template>
 
 <style scoped lang="scss">
-.page { min-height: 100vh; box-sizing: border-box; padding: 24rpx 24rpx 0; background: #f2f6f5; color: #1c1d22; }
+.page { min-height: 100vh; box-sizing: border-box; padding: 24rpx 24rpx calc(32rpx + env(safe-area-inset-bottom)); background: #f2f6f5; color: #1c1d22; }
 .page-head { display: flex; align-items: center; justify-content: space-between; gap: 18rpx; margin-bottom: 18rpx; }
 .eyebrow, .title, .message-text, .source, .human-note { display: block; }
 .eyebrow { color: #71807d; font-size: 24rpx; letter-spacing: 0; }

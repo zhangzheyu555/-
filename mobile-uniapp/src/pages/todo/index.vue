@@ -7,9 +7,12 @@ import { useSessionStore } from '@/stores'
 import type { RoleTodoItem } from '@/types/business'
 import { canPerformMobileAction } from '@/permissions'
 import { chooseMedia } from '@/platform'
+import { createEdgeSwipeToHomeHandlers } from '@/platform/edgeSwipeHome'
 import { todoAttachmentsFromMedia } from '@/utils/todoAttachment'
+import { todoStage, todoStatusLabel, todoStatusTone } from '@/utils/todoStatus'
 
 const session = useSessionStore()
+const { onTouchStart, onTouchEnd } = createEdgeSwipeToHomeHandlers()
 const todos = ref<RoleTodoItem[]>([])
 const loading = ref(false)
 const error = ref('')
@@ -26,10 +29,10 @@ const statusTabs = [
   { value: 'COMPLETED', label: '已完成' },
 ]
 const filteredTodos = computed(() => activeStatus.value
-  ? todos.value.filter((todo) => todo.status === activeStatus.value)
+  ? todos.value.filter((todo) => todoStage(todo) === activeStatus.value)
   : todos.value)
-const pendingCount = computed(() => todos.value.filter((todo) => !['COMPLETED', 'REJECTED'].includes(todo.status)).length)
-const completedCount = computed(() => todos.value.filter((todo) => todo.status === 'COMPLETED').length)
+const pendingCount = computed(() => todos.value.filter((todo) => !['COMPLETED', 'REJECTED'].includes(todoStage(todo))).length)
+const completedCount = computed(() => todos.value.filter((todo) => todoStage(todo) === 'COMPLETED').length)
 
 onShow(() => { void refresh() })
 onPullDownRefresh(async () => { await refresh(); uni.stopPullDownRefresh() })
@@ -71,29 +74,10 @@ function askNote(title: string) {
   return new Promise<string>((resolve) => uni.showModal({ title, editable: true, placeholderText: '请输入说明', success: (result) => resolve(result.confirm ? String(result.content || '').trim() : ''), fail: () => resolve('') }))
 }
 
-function statusLabel(status: string) {
-  return {
-    PENDING: '待处理',
-    IN_PROGRESS: '处理中',
-    PENDING_REVIEW: '待复核',
-    COMPLETED: '已完成',
-    REJECTED: '已驳回',
-  }[status] || status
-}
-
-function statusTone(status: string): 'warning' | 'info' | 'success' | 'danger' | 'neutral' {
-  return {
-    PENDING: 'danger',
-    IN_PROGRESS: 'info',
-    PENDING_REVIEW: 'warning',
-    COMPLETED: 'success',
-    REJECTED: 'neutral',
-  }[status] as 'warning' | 'info' | 'success' | 'danger' | 'neutral' || 'neutral'
-}
 </script>
 
 <template>
-  <view class="mobile-page todo-page">
+  <view class="mobile-page todo-page" @touchstart="onTouchStart" @touchend="onTouchEnd">
     <view class="todo-topbar"><text>待办中心</text><button class="refresh-button" :loading="loading" :disabled="loading" @click="refresh">刷新</button></view>
     <view class="todo-heading"><view><text class="todo-heading__eyebrow">我的任务</text><text class="todo-heading__title">今日待办</text><text class="todo-heading__description">按优先级处理，复杂事项将跳转至对应业务中心</text></view></view>
     <view class="todo-summary"><view class="todo-summary__item todo-summary__item--main"><text>待处理</text><text>{{ pendingCount }}<text> 项</text></text></view><view class="todo-summary__item"><text>全部待办</text><text>{{ todos.length }}<text> 项</text></text></view><view class="todo-summary__item"><text>已完成</text><text>{{ completedCount }}<text> 项</text></text></view></view>
@@ -107,10 +91,10 @@ function statusTone(status: string): 'warning' | 'info' | 'success' | 'danger' |
     <view v-else-if="!filteredTodos.length" class="state">当前筛选下没有待办事项</view>
     <view v-for="todo in filteredTodos" :key="todo.id" class="todo mobile-feedback" role="button" @click="open(todo)">
       <view class="todo-main">
-        <view class="todo-top"><text class="todo-title">{{ todo.title }}</text><StatusChip :label="statusLabel(todo.status)" :tone="statusTone(todo.status)" /></view>
+        <view class="todo-top"><text class="todo-title">{{ todo.title }}</text><StatusChip :label="todoStatusLabel(todo)" :tone="todoStatusTone(todo)" /></view>
         <text class="todo-copy">{{ todo.summary || '请进入对应应用处理' }}</text>
         <view class="todo-foot"><text class="todo-meta">{{ todo.storeName || todo.storeId || '权限范围内事项' }}</text><text v-if="todo.dueAt" class="todo-meta">{{ todo.dueAt }}</text></view>
-        <view v-if="(canResolve || canEscalate || canClose) && !['COMPLETED','REJECTED'].includes(todo.status)" class="todo-actions" @click.stop>
+        <view v-if="(canResolve || canEscalate || canClose) && !['COMPLETED','REJECTED'].includes(todoStage(todo))" class="todo-actions" @click.stop>
           <button v-if="canResolve" :disabled="Boolean(actingId)" @click.stop="transition(todo,'resolve')">完成并留证</button>
           <button v-if="canEscalate && !todo.escalatedToBoss" :disabled="Boolean(actingId)" @click.stop="transition(todo,'escalate')">升级</button>
           <button v-if="canClose" :disabled="Boolean(actingId)" @click.stop="transition(todo,'close')">关闭</button>
