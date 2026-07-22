@@ -440,7 +440,7 @@ function exportCsv() {
           <label>时薪（兼职/实习/阿姨适用）
             <span class="hourly-row">
               <select v-model="hourlyMode" @change="onHourlyModeChange">
-                <option value="">默认（实习15、兼职13、长期兼职/水果阿姨18；个人配置优先）</option>
+                <option value="">默认（实习兼职15、阿姨18）</option>
                 <option v-for="r in HOURLY_RATE_OPTIONS" :key="r" :value="String(r)">{{ r }} 元/时</option>
                 <option value="custom">自定义…</option>
               </select>

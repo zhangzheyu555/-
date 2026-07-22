@@ -1,6 +1,8 @@
 package com.storeprofit.system.employee;
 
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.audit.AuditLogRequest;
+import com.storeprofit.system.audit.AuditRepository;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
 import com.storeprofit.system.platform.authorization.AuthorizationService;
@@ -20,9 +22,13 @@ import java.util.Set;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Service
 public class EmployeeService {
+  private static final Logger log = LoggerFactory.getLogger(EmployeeService.class);
   /** 员工初始密码（2026-07-17 与用户确认），首次登录后自行修改。 */
   static final String INITIAL_PASSWORD = "Emp@12345";
 
@@ -31,6 +37,7 @@ public class EmployeeService {
   private final BusinessScopeResolver businessScopeResolver;
   private final PasswordService passwordService;
   private final AuthRepository authRepository;
+  private final AuditRepository auditRepository;
 
   @Autowired
   public EmployeeService(
@@ -38,13 +45,26 @@ public class EmployeeService {
       AccessControlService accessControl,
       BusinessScopeResolver businessScopeResolver,
       PasswordService passwordService,
-      AuthRepository authRepository
+      AuthRepository authRepository,
+      AuditRepository auditRepository
   ) {
     this.employeeRepository = employeeRepository;
     this.accessControl = accessControl;
     this.businessScopeResolver = businessScopeResolver;
     this.passwordService = passwordService;
     this.authRepository = authRepository;
+    this.auditRepository = auditRepository;
+  }
+
+  /** Compatibility constructor retained for focused employee-account tests. */
+  public EmployeeService(
+      EmployeeRepository employeeRepository,
+      AccessControlService accessControl,
+      BusinessScopeResolver businessScopeResolver,
+      PasswordService passwordService,
+      AuthRepository authRepository
+  ) {
+    this(employeeRepository, accessControl, businessScopeResolver, passwordService, authRepository, null);
   }
 
   public EmployeeService(
@@ -52,11 +72,7 @@ public class EmployeeService {
       AccessControlService accessControl,
       BusinessScopeResolver businessScopeResolver
   ) {
-    this.employeeRepository = employeeRepository;
-    this.accessControl = accessControl;
-    this.businessScopeResolver = businessScopeResolver;
-    this.passwordService = null;
-    this.authRepository = null;
+    this(employeeRepository, accessControl, businessScopeResolver, null, null, null);
   }
 
   public EmployeeService(
@@ -133,8 +149,7 @@ public class EmployeeService {
 
   public EmployeeResponse detail(AuthUser user, String id) {
     requireEmployeeRead(user);
-    EmployeeResponse record = employeeRepository.record(user.tenantId(), id)
-        .orElseThrow(() -> new BusinessException("NOT_FOUND", "员工不存在", HttpStatus.NOT_FOUND));
+    EmployeeResponse record = employeeForCurrentTenant(user, id, "查看员工档案");
     requireStoreWritable(user, record.storeId(), "查看员工档案");
     return maskForRole(user, record);
   }
@@ -146,6 +161,7 @@ public class EmployeeService {
         .orElseThrow(() -> new BusinessException("NOT_FOUND", "当前账号未关联员工档案", HttpStatus.NOT_FOUND));
   }
 
+  @Transactional
   public EmployeeResponse create(AuthUser user, EmployeeUpsertRequest request) {
     requireEmployeeManage(user);
     validate(user.tenantId(), request);
@@ -155,40 +171,59 @@ public class EmployeeService {
       throw new BusinessException("DUPLICATE", "该门店已有同名员工：" + request.name(), HttpStatus.CONFLICT);
     }
     employeeRepository.upsertProfile(user.tenantId(), id, request, "MANUAL_ENTRY");
-    return employeeRepository.record(user.tenantId(), id).orElseThrow();
+    EmployeeResponse created = employeeRepository.record(user.tenantId(), id).orElseThrow();
+    auditEmployeeChange(user, "新增员工档案", created, "员工档案新增成功", null, employeeAuditState(created));
+    return created;
   }
 
+  @Transactional
   public EmployeeResponse update(AuthUser user, String id, EmployeeUpsertRequest request) {
     requireEmployeeManage(user);
     validate(user.tenantId(), request);
-    EmployeeResponse existing = employeeRepository.record(user.tenantId(), id)
-        .orElseThrow(() -> new BusinessException("NOT_FOUND", "员工不存在", HttpStatus.NOT_FOUND));
+    EmployeeResponse existing = employeeForCurrentTenant(user, id, "修改员工档案");
     requireStoreWritable(user, existing.storeId(), "修改员工档案");
     if (!existing.storeId().equals(request.storeId()) || !existing.name().equals(request.name().trim())) {
       throw new BusinessException("IMMUTABLE", "门店与姓名不支持直接修改（调店/更名请离职后重建档案）",
           HttpStatus.BAD_REQUEST);
     }
     employeeRepository.upsertProfile(user.tenantId(), id, request, "MANUAL_ENTRY");
-    return employeeRepository.record(user.tenantId(), id).orElseThrow();
+    EmployeeResponse updated = employeeRepository.record(user.tenantId(), id).orElseThrow();
+    auditEmployeeChange(
+        user,
+        "修改员工档案",
+        updated,
+        "员工档案修改成功",
+        employeeAuditState(existing),
+        employeeAuditState(updated)
+    );
+    return updated;
   }
 
   /** 删除 = 离职留档（长期保留，工资/考试历史不受影响）+ 禁用账号。 */
+  @Transactional
   public void remove(AuthUser user, String id) {
     requireEmployeeManage(user);
-    EmployeeResponse existing = employeeRepository.record(user.tenantId(), id)
-        .orElseThrow(() -> new BusinessException("NOT_FOUND", "员工不存在", HttpStatus.NOT_FOUND));
+    EmployeeResponse existing = employeeForCurrentTenant(user, id, "员工离职");
     requireStoreWritable(user, existing.storeId(), "员工离职");
     employeeRepository.updateStatus(user.tenantId(), id, "离职");
     if (existing.authUserId() != null) {
       employeeRepository.setAccountEnabled(existing.authUserId(), false);
     }
+    auditEmployeeChange(
+        user,
+        "员工离职",
+        existing,
+        "员工离职办理成功",
+        employeeAuditState(existing),
+        employeeAuditState(existing, "离职", existing.authUserId() != null ? Boolean.FALSE : existing.accountEnabled())
+    );
   }
 
   /** 开号：账号 = 所在门店店长账号-序号（如 ruguo1-1）；兼职员工不开号。 */
+  @Transactional
   public EmployeeAccountResponse createAccount(AuthUser user, String id) {
     requireEmployeeManage(user);
-    EmployeeResponse employee = employeeRepository.record(user.tenantId(), id)
-        .orElseThrow(() -> new BusinessException("NOT_FOUND", "员工不存在", HttpStatus.NOT_FOUND));
+    EmployeeResponse employee = employeeForCurrentTenant(user, id, "开员工账号");
     requireStoreWritable(user, employee.storeId(), "开员工账号");
     if (employee.authUserId() != null) {
       throw new BusinessException("DUPLICATE", "该员工已有账号：" + employee.accountUsername(), HttpStatus.CONFLICT);
@@ -207,6 +242,14 @@ public class EmployeeService {
     long authUserId = employeeRepository.userIdByUsername(user.tenantId(), username)
         .orElseThrow(() -> new BusinessException("INTERNAL", "账号创建后查询失败", HttpStatus.INTERNAL_SERVER_ERROR));
     employeeRepository.linkAccount(user.tenantId(), id, authUserId);
+    auditEmployeeChange(
+        user,
+        "创建员工登录账号",
+        employee,
+        "员工登录账号创建并关联成功",
+        employeeAuditState(employee),
+        employeeAuditState(employee, employee.status(), Boolean.TRUE)
+    );
     return new EmployeeAccountResponse(id, employee.name(), username, INITIAL_PASSWORD);
   }
 
@@ -305,6 +348,83 @@ public class EmployeeService {
     if (accessControl != null && storeId != null && !storeId.isBlank()) {
       accessControl.requireStoreAccess(user, DataScopeDomains.STORE, storeId, action);
     }
+  }
+
+  private EmployeeResponse employeeForCurrentTenant(AuthUser user, String id, String action) {
+    return employeeRepository.record(user.tenantId(), id).orElseGet(() -> {
+      if (employeeRepository.employeeIdBelongsToOtherTenant(user.tenantId(), id)) {
+        denyCrossTenantEmployeeAccess(user, id, action);
+      }
+      throw new BusinessException("NOT_FOUND", "员工不存在", HttpStatus.NOT_FOUND);
+    });
+  }
+
+  private void denyCrossTenantEmployeeAccess(AuthUser user, String employeeId, String action) {
+    if (auditRepository != null && user != null) {
+      try {
+        auditRepository.writePermissionDenied(
+            user,
+            action,
+            "employee",
+            employeeId,
+            null,
+            "员工档案不属于当前企业"
+        );
+      } catch (RuntimeException exception) {
+        // Preserve the authorization boundary even if a best-effort denial audit is unavailable.
+        log.warn("Failed to audit cross-tenant employee denial for user {}: {}", user.id(), exception.getMessage());
+      }
+    }
+    throw new BusinessException("FORBIDDEN", "当前账号没有访问该员工档案的权限", HttpStatus.FORBIDDEN);
+  }
+
+  private void auditEmployeeChange(
+      AuthUser user,
+      String action,
+      EmployeeResponse employee,
+      String reason,
+      String beforeJson,
+      String afterJson
+  ) {
+    if (auditRepository == null) {
+      return;
+    }
+    auditRepository.writeLog(user, new AuditLogRequest(
+        action,
+        "employee",
+        employee.id(),
+        employee.storeId(),
+        null,
+        reason,
+        beforeJson,
+        afterJson
+    ));
+  }
+
+  /**
+   * Audit snapshots deliberately exclude names, phones, salary, birthdays, health certificates,
+   * ID-card values and account credentials. The target id/store id are stored in first-class log
+   * columns, while these fields document the affected workflow state only.
+   */
+  private String employeeAuditState(EmployeeResponse employee) {
+    return employeeAuditState(employee, employee.status(), employee.accountEnabled());
+  }
+
+  private String employeeAuditState(EmployeeResponse employee, String status, Boolean accountEnabled) {
+    return "{\"status\":\"" + jsonString(status)
+        + "\",\"employmentType\":\"" + jsonString(employee.employmentType())
+        + "\",\"position\":\"" + jsonString(employee.position())
+        + "\",\"accountLinked\":" + (employee.authUserId() != null || Boolean.TRUE.equals(accountEnabled))
+        + ",\"accountEnabled\":" + (accountEnabled == null ? "null" : accountEnabled)
+        + "}";
+  }
+
+  private String jsonString(String value) {
+    if (value == null) {
+      return "";
+    }
+    return value.replace("\\", "\\\\").replace("\"", "\\\"")
+        .replace("\n", "\\n").replace("\r", "\\r");
   }
 
   private EmployeeResponse maskForRole(AuthUser user, EmployeeResponse record) {

@@ -25,8 +25,8 @@ const STORE_SCOPE = ['ALL', 'STORE_LIST', 'OWN_STORE']
 const WAREHOUSE_SCOPE = ['ALL', 'WAREHOUSE_LIST', 'CENTRAL_WAREHOUSE', 'STORE_LIST', 'OWN_STORE']
 
 export const MOBILE_ACTION_RULES: Record<MobileAction, ActionRule> = {
-  'todo.resolve': { roles: ['FINANCE', 'STORE_MANAGER', 'WAREHOUSE', 'OPERATIONS', 'SUPERVISOR'], permission: 'todo.transition' },
-  'todo.escalate': { roles: ['FINANCE', 'STORE_MANAGER', 'WAREHOUSE', 'OPERATIONS', 'SUPERVISOR'], permission: 'todo.transition', denyBoss: true },
+  'todo.resolve': { roles: ['FINANCE', 'STORE_MANAGER', 'WAREHOUSE', 'SUPERVISOR'], permission: 'todo.transition' },
+  'todo.escalate': { roles: ['FINANCE', 'STORE_MANAGER', 'WAREHOUSE', 'SUPERVISOR'], permission: 'todo.transition', denyBoss: true },
   'todo.close': { roles: ['BOSS'], permission: 'todo.transition', bossOnly: true },
   'expense.create': { roles: ['STORE_MANAGER', 'FINANCE'], permission: 'expense.create', scopeDomain: 'FINANCE', scopeModes: STORE_SCOPE },
   'expense.review': { roles: ['FINANCE'], permission: 'expense.review', scopeDomain: 'FINANCE', scopeModes: STORE_SCOPE },
@@ -34,7 +34,7 @@ export const MOBILE_ACTION_RULES: Record<MobileAction, ActionRule> = {
   'salary.review': { roles: ['FINANCE'], permission: 'salary.review', scopeDomain: 'SALARY', scopeModes: STORE_SCOPE },
   'salary.pay': { roles: ['FINANCE'], permission: 'salary.pay', scopeDomain: 'SALARY', scopeModes: STORE_SCOPE },
   'dailyLoss.create': { roles: ['STORE_MANAGER'], permission: 'daily_loss.create', scopeDomain: 'WAREHOUSE', scopeModes: WAREHOUSE_SCOPE },
-  'dailyLoss.review': { roles: ['WAREHOUSE', 'OPERATIONS'], permission: 'daily_loss.review', scopeDomain: 'WAREHOUSE', scopeModes: WAREHOUSE_SCOPE },
+  'dailyLoss.review': { roles: ['WAREHOUSE', 'SUPERVISOR'], permission: 'daily_loss.review', scopeDomain: 'WAREHOUSE', scopeModes: WAREHOUSE_SCOPE },
   'warehouse.requisition.review': { roles: ['WAREHOUSE'], permission: 'warehouse.requisition.review', scopeDomain: 'WAREHOUSE', scopeModes: WAREHOUSE_SCOPE },
   'warehouse.requisition.ship': { roles: ['WAREHOUSE'], permission: 'warehouse.requisition.process', scopeDomain: 'WAREHOUSE', scopeModes: WAREHOUSE_SCOPE },
   'warehouse.return.review': { roles: ['WAREHOUSE'], permission: 'warehouse.requisition.review', scopeDomain: 'WAREHOUSE', scopeModes: WAREHOUSE_SCOPE },
@@ -45,11 +45,11 @@ export const MOBILE_ACTION_RULES: Record<MobileAction, ActionRule> = {
   'warehouse.transfer.ship': { roles: ['WAREHOUSE'], permission: 'warehouse.transfer.ship', scopeDomain: 'WAREHOUSE', scopeModes: WAREHOUSE_SCOPE },
   'warehouse.transfer.receive': { roles: ['WAREHOUSE'], permission: 'warehouse.transfer.receive', scopeDomain: 'WAREHOUSE', scopeModes: WAREHOUSE_SCOPE },
   'warehouse.alert.configure': { roles: ['WAREHOUSE'], permission: 'warehouse.configure', scopeDomain: 'WAREHOUSE', scopeModes: WAREHOUSE_SCOPE },
-  'inventory.manage': { roles: ['OPERATIONS'], permission: 'inventory.manage', scopeDomain: 'WAREHOUSE', scopeModes: WAREHOUSE_SCOPE },
-  'inventory.review': { roles: ['OPERATIONS'], permission: 'inventory.review' },
-  'employeeAssistant.handoff.claim': { roles: ['OPERATIONS'], permission: 'employee_assistant.handoff_manage' },
-  'employeeAssistant.handoff.reply': { roles: ['OPERATIONS'], permission: 'employee_assistant.handoff_manage' },
-  'employeeAssistant.handoff.close': { roles: ['OPERATIONS'], permission: 'employee_assistant.handoff_manage' },
+  'inventory.manage': { roles: ['SUPERVISOR'], permission: 'inventory.manage', scopeDomain: 'WAREHOUSE', scopeModes: WAREHOUSE_SCOPE },
+  'inventory.review': { roles: ['SUPERVISOR'], permission: 'inventory.review' },
+  'employeeAssistant.handoff.claim': { roles: ['SUPERVISOR'], permission: 'employee_assistant.handoff_manage' },
+  'employeeAssistant.handoff.reply': { roles: ['SUPERVISOR'], permission: 'employee_assistant.handoff_manage' },
+  'employeeAssistant.handoff.close': { roles: ['SUPERVISOR'], permission: 'employee_assistant.handoff_manage' },
 }
 
 export function canPerformMobileAction(user: SessionUser | null | undefined, action: MobileAction): boolean {

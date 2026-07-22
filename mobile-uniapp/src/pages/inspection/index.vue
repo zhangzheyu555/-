@@ -74,6 +74,10 @@ const filterDateFrom = ref('')
 const filterDateTo = ref('')
 const filterResultIndex = ref(0)
 const resultOptions = [{ label: '全部结果', value: '' }, { label: '巡检通过', value: 'true' }, { label: '需要整改', value: 'false' }]
+const unavailableStoreStatuses = new Set([
+  'INACTIVE', 'DISABLED', 'CLOSED', 'DELETED',
+  '停业', '停业中', '已停业', '关闭', '已关闭', '停用', '已停用',
+])
 
 const hasCapability = computed(() => canUseMobileCapability(session.user, 'inspection'))
 const canRead = computed(() => hasCapability.value && session.hasPermission(MOBILE_PERMISSIONS.inspectionRead))
@@ -139,7 +143,7 @@ async function refresh() {
 }
 
 function scopedStores(apiStores: StoreInfo[]) {
-  if (apiStores.length) return apiStores.filter((store) => !store.status || store.status === 'ACTIVE')
+  if (apiStores.length) return apiStores.filter((store) => isSelectableStore(store.status))
   const scope = session.dataScope('INSPECTION')
   const scopedIds = scope?.storeIds || []
   const fallback = scopedIds.map((id) => ({ id, code: id, name: id, brandId: 0 }))
@@ -152,6 +156,11 @@ function scopedStores(apiStores: StoreInfo[]) {
     })
   }
   return fallback
+}
+
+function isSelectableStore(status?: string) {
+  const normalized = String(status || '').trim().toUpperCase()
+  return !normalized || !unavailableStoreStatuses.has(normalized)
 }
 
 function initializeDraftItems() {
@@ -189,8 +198,19 @@ async function addPhotos() {
   uploading.value = true
   errorMessage.value = ''
   actionMessage.value = ''
+  let assets: Awaited<ReturnType<typeof chooseMedia>>
   try {
-    const assets = await chooseMedia({ count: Math.max(1, 3 - photos.value.length), source: 'both', kinds: ['image'] })
+    assets = await chooseMedia({ count: Math.max(1, 3 - photos.value.length), source: 'both', kinds: ['image'] })
+  } catch (error) {
+    errorMessage.value = friendlyError(error, '无法打开相机或相册，请检查微信权限后重试。')
+    uploading.value = false
+    return
+  }
+  if (!assets.length) {
+    uploading.value = false
+    return
+  }
+  try {
     for (const asset of assets) {
       const businessId = `inspection-${selectedStoreId.value}-draft`
       const attachment = await uploadMobileInspectionAttachment(asset.path, selectedStoreId.value, businessId)
@@ -212,7 +232,7 @@ async function addPhotos() {
       }
     }
   } catch (error) {
-    errorMessage.value = friendlyError(error, '照片选择或上传失败，请检查网络后重试。')
+    errorMessage.value = friendlyError(error, '照片上传失败，请检查网络后重试。')
   } finally {
     uploading.value = false
   }
@@ -432,6 +452,8 @@ function friendlyError(error: unknown, fallback: string) {
   if (status === 401) return '登录已过期，请重新登录。'
   if (code === 'INSPECTION_EVIDENCE_UNLINKED') return '每张现场照片都必须关联至少一个正式巡检条款。'
   if (code === 'INSPECTION_STANDARD_STALE') return '巡检标准已更新，请刷新后重新确认。'
+  const message = String((error as { message?: string })?.message || '').trim()
+  if (message) return message
   return fallback
 }
 

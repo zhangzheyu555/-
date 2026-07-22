@@ -2,9 +2,8 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ExternalLink, X } from 'lucide-vue-next'
 import PageHeader from '../components/common/PageHeader.vue'
-import { apiGet, apiPut } from '../api/http'
+import { apiGet, apiPut, http } from '../api/http'
 import { useAuthStore } from '../stores/auth'
-import { FRUIT_YIELD, RECIPES } from '../data/fruitUsage'
 
 interface QmaiConfigView {
   configured: boolean
@@ -25,7 +24,9 @@ interface QmaiConfigView {
 }
 
 const auth = useAuthStore()
-const canManage = computed(() => auth.hasPermission('platform.manage'))
+// Personal permission overrides never elevate non-BOSS/SUPERVISOR users to credential management.
+const canManage = computed(() => auth.hasPermission('platform.manage')
+  && ['BOSS', 'SUPERVISOR'].includes(auth.role))
 
 /* ---------------- 品牌切换（每品牌独立一套企迈凭证与数据） ---------------- */
 const BRANDS = [
@@ -165,6 +166,24 @@ interface TurnoverSummary {
   items: ItemRow[]
 }
 
+interface QmaiRevenueRow {
+  storeId: string
+  orderCount: number
+  revenue: number
+  refund: number
+  cost: number
+}
+
+interface QmaiProductRow {
+  storeId: string
+  itemName: string
+  categoryName: string
+  quantity: number
+  refundQuantity: number
+  revenue: number
+  refund: number
+}
+
 const turnover = ref<TurnoverSummary | null>(null)
 const turnoverLoading = ref(false)
 const turnoverError = ref('')
@@ -187,8 +206,8 @@ interface ConsoleIncome {
 // 是否走后台令牌通道（非默认品牌：单店、按支付渠道）
 const isConsoleBrand = computed(() => brand.value !== 'ruguo')
 // 数据面板是否显示：默认品牌看 openapi 凭证；令牌品牌看是否已粘贴令牌
-const panelReady = computed(() =>
-  isConsoleBrand.value ? !!qmai.value?.consoleTokenSet : !!qmai.value?.configured)
+// 本地已导入的企迈快照可在未配置实时凭证时安全只读查看；不会触发外网请求。
+const panelReady = computed(() => isConsoleBrand.value ? !!qmai.value?.consoleTokenSet : true)
 const income = ref<ConsoleIncome | null>(null)
 const incomeLoading = ref(false)
 const incomeError = ref('')
@@ -423,7 +442,11 @@ const itemTotals = computed(() => {
   return t
 })
 
-/* ---------------- 物料用量测算：配方（5月产品用量核算表）× 杯数 → 水果采购斤数 ---------------- */
+/*
+ * Legacy browser-held recipe catalogue.  It is deliberately disabled: grams, yields and
+ * conversion factors are now owned by the server-side recipe catalogue and must never be
+ * calculated from browser-provided inputs.
+ *
 // 每个配方产品的杯数：可手输，也可用当月企迈商品销量一键填充后再改
 const cupInputs = reactive<Record<string, number>>({})
 const usageFillMsg = ref('')
@@ -558,6 +581,56 @@ function exportUsageExcel() {
   downloadCsv(lines, `${brandLabel.value}_物料用量测算_${monthLabel.value}.csv`)
 }
 
+*/
+
+/* ---------------- 服务端配方目录 × 本地销量快照 → 用量快照 ---------------- */
+interface RecipeUsageFruit {
+  fruit: string
+  netGrams: number
+  rawGrams: number
+  rawJin: number
+  approximate: boolean
+}
+
+interface RecipeUsageSnapshot {
+  month: string
+  matchedProductCount: number
+  calculation: { totalCups: number; fruits: RecipeUsageFruit[] }
+}
+
+const recipeUsage = ref<RecipeUsageSnapshot | null>(null)
+const recipeUsageLoading = ref(false)
+const recipeUsageError = ref('')
+const usageResult = computed(() => recipeUsage.value?.calculation ?? {
+  totalCups: 0,
+  fruits: [] as RecipeUsageFruit[],
+})
+
+async function loadRecipeUsage() {
+  recipeUsageLoading.value = true
+  recipeUsageError.value = ''
+  try {
+    recipeUsage.value = await apiGet<RecipeUsageSnapshot>(
+      `/api/qmai/recipe-usage?month=${encodeURIComponent(month.value)}&brand=${encodeURIComponent(brand.value)}`,
+    )
+  } catch (e) {
+    recipeUsage.value = null
+    recipeUsageError.value = e instanceof Error ? e.message : '读取配方用量快照失败。'
+  } finally {
+    recipeUsageLoading.value = false
+  }
+}
+
+function clearRecipeUsage() {
+  recipeUsage.value = null
+  recipeUsageError.value = ''
+}
+
+function exportUsageExcel() {
+  if (!usageResult.value.fruits.length) return
+  void downloadServerCsv(`/api/qmai/recipe-usage.csv?month=${encodeURIComponent(month.value)}&brand=${encodeURIComponent(brand.value)}`)
+}
+
 function shiftMonth(delta: number) {
   const [y, m] = month.value.split('-').map(Number)
   const d = new Date(y, m - 1 + delta, 1)
@@ -572,23 +645,41 @@ function shiftMonth(delta: number) {
 function refreshActive() {
   if (isConsoleBrand.value) {
     loadIncome()
+  } else if (activeTab.value === 'usage') {
+    loadRecipeUsage()
   } else {
     loadTurnover()
   }
 }
 
 async function loadTurnover() {
-  if (!qmai.value?.configured) {
-    turnover.value = null
-    return
-  }
   turnoverLoading.value = true
   turnoverError.value = ''
   try {
-    turnover.value = await apiGet<TurnoverSummary>(
-      `/api/qmai/summary?month=${month.value}&brand=${brand.value}`, { timeout: 300000 })
-    if (turnover.value?.mode === 'ERROR') {
-      turnoverError.value = turnover.value.note || '企迈接口暂时不可用。'
+    const query = `month=${encodeURIComponent(month.value)}&brand=${encodeURIComponent(brand.value)}`
+    const [revenueRows, productRows] = await Promise.all([
+      apiGet<QmaiRevenueRow[]>(`/api/qmai/revenue?${query}`),
+      apiGet<QmaiProductRow[]>(`/api/qmai/products?${query}`),
+    ])
+    const shops = revenueRows.map((row) => ({
+      shopCode: row.storeId, shopName: row.storeId, bizDate: month.value,
+      validOrderCount: row.orderCount, totalAmountSum: row.revenue, incomeSum: row.revenue,
+      costSum: row.cost, refundSum: row.refund, profitSum: row.revenue - row.cost - row.refund,
+    }))
+    const items = productRows.map((row) => ({
+      shopCode: row.storeId, shopName: row.storeId, itemName: row.itemName,
+      categoryName: row.categoryName, num: row.quantity, incomeSum: row.revenue,
+      costSum: 0, refundSum: row.refund, refundNum: row.refundQuantity,
+    }))
+    turnover.value = {
+      mode: 'SNAPSHOT', note: '已读取本地企迈导入快照，未发起外网请求。', days: 0,
+      generatedAt: new Date().toISOString(),
+      totalAmount: shops.reduce((sum, row) => sum + row.totalAmountSum, 0),
+      income: shops.reduce((sum, row) => sum + row.incomeSum, 0),
+      cost: shops.reduce((sum, row) => sum + row.costSum, 0),
+      refund: shops.reduce((sum, row) => sum + row.refundSum, 0),
+      profit: shops.reduce((sum, row) => sum + row.profitSum, 0),
+      orderCount: shops.reduce((sum, row) => sum + row.validOrderCount, 0), shops, items,
     }
   } catch (e) {
     turnoverError.value = e instanceof Error ? e.message : '拉取营业额失败。'
@@ -602,86 +693,13 @@ function exportExcel() {
   if (!t?.shops?.length) {
     return
   }
-  const rangeLabel = monthLabel.value
-  const header = ['门店', '统计区间', '实收(营业额)', '成本', '毛利', '退款', '应收', '记录数']
-  const lines = [header.join(',')]
-  for (const row of t.shops) {
-    lines.push([
-      `"${(row.shopName || '').replace(/"/g, '""')}"`,
-      row.bizDate,
-      row.incomeSum,
-      row.costSum,
-      row.profitSum,
-      row.refundSum,
-      row.totalAmountSum,
-      row.validOrderCount,
-    ].join(','))
-  }
-  lines.push(['合计', '', t.income, t.cost, t.profit, t.refund, t.totalAmount, t.orderCount].join(','))
-  downloadCsv(lines, `${brandLabel.value}_企迈营业额_${rangeLabel}_${t.generatedAt?.slice(0, 10) || ''}.csv`)
+  void downloadServerCsv(`/api/qmai/revenue.csv?month=${encodeURIComponent(month.value)}&brand=${encodeURIComponent(brand.value)}`)
 }
 
 function exportItemsExcel() {
-  const t = turnover.value
-  if (!t) {
-    return
-  }
-  const csvText = (s: string) => `"${(s || '').replace(/"/g, '""')}"`
-  const tt = itemTotals.value
-  const lines: string[] = []
-  let kind: string
-  const scope = itemScope.value === 'drink' ? '饮品' : itemScope.value === 'other' ? '其他商品' : '商品'
-  if (itemView.value === 'summary') {
-    // 全门店汇总：每个商品一行，销量为全部门店累加
-    kind = `企迈${scope}销售汇总`
-    const rows = sortedSummaryItems.value
-    if (!rows.length) {
-      return
-    }
-    lines.push(['商品', '类别', '售卖门店数',
-      itemScope.value === 'drink' ? '总销量(杯)' : '总销量',
-      '实收', '成本', '退款', '退款数量'].join(','))
-    for (const row of rows) {
-      lines.push([
-        csvText(row.itemName),
-        csvText(row.categoryName),
-        row.shopCount,
-        qtyFmt(row.num),
-        row.incomeSum.toFixed(2),
-        row.costSum.toFixed(2),
-        row.refundSum.toFixed(2),
-        qtyFmt(row.refundNum),
-      ].join(','))
-    }
-    lines.push(['合计', '', '', qtyFmt(tt.num), tt.income.toFixed(2), tt.cost.toFixed(2),
-      tt.refund.toFixed(2), qtyFmt(tt.refundNum)].join(','))
-  } else {
-    kind = `企迈${scope}销售明细`
-    const rows = sortedItems.value
-    if (!rows.length) {
-      return
-    }
-    lines.push(['门店', '商品', '类别', '销量', '实收', '成本', '退款', '退款数量'].join(','))
-    for (const row of rows) {
-      lines.push([
-        csvText(row.shopName),
-        csvText(row.itemName),
-        csvText(row.categoryName),
-        row.num,
-        row.incomeSum,
-        row.costSum,
-        row.refundSum,
-        row.refundNum,
-      ].join(','))
-    }
-    lines.push(['合计', '', '', qtyFmt(tt.num), tt.income.toFixed(2), tt.cost.toFixed(2),
-      tt.refund.toFixed(2), qtyFmt(tt.refundNum)].join(','))
-  }
-  const shopLabel = itemShopFilter.value
-    ? '_' + (itemShopOptions.value.find((s) => s.code === itemShopFilter.value)?.name || itemShopFilter.value)
-    : ''
-  downloadCsv(lines,
-    `${brandLabel.value}_${kind}_${monthLabel.value}${shopLabel}_${t.generatedAt?.slice(0, 10) || ''}.csv`)
+  if (!turnover.value?.items.length) return
+  // 导出由后端从授权范围快照生成并写审计，避免浏览器绕过导出权限或审计。
+  void downloadServerCsv(`/api/qmai/products.csv?month=${encodeURIComponent(month.value)}&brand=${encodeURIComponent(brand.value)}`)
 }
 
 function downloadCsv(lines: string[], filename: string) {
@@ -696,6 +714,24 @@ function downloadCsv(lines: string[], filename: string) {
   a.click()
   document.body.removeChild(a)
   URL.revokeObjectURL(url)
+}
+
+async function downloadServerCsv(path: string) {
+  try {
+    const response = await http.get<Blob>(path, { responseType: 'blob' })
+    const url = URL.createObjectURL(response.data)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = path.includes('products') ? `${brandLabel.value}_企迈商品销量_${monthLabel.value}.csv`
+      : path.includes('recipe-usage') ? `${brandLabel.value}_物料用量测算_${monthLabel.value}.csv`
+        : `${brandLabel.value}_企迈营业额_${monthLabel.value}.csv`
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(url)
+  } catch (e) {
+    turnoverError.value = e instanceof Error ? e.message : '导出失败，请稍后重试。'
+  }
 }
 
 function exportActive() {
@@ -988,38 +1024,24 @@ onMounted(loadQmai)
 
       <template v-else-if="activeTab === 'usage'">
         <div class="items-toolbar">
-          <button class="refresh" :disabled="!turnover?.items?.length" @click="fillCupsFromQmai">
-            用 {{ monthLabel }} 企迈销量填充杯数
+          <button class="refresh" :disabled="recipeUsageLoading" @click="loadRecipeUsage">
+            {{ recipeUsageLoading ? '生成中…' : `按 ${monthLabel} 销量生成快照` }}
           </button>
-          <button @click="clearCups">清空</button>
-          <span class="msg muted">配方来自《5月产品用量核算表·单杯用量》，共 {{ RECIPES.length }} 个产品；杯数可手动输入或修改，结果实时更新。</span>
+          <button @click="clearRecipeUsage">清空</button>
+          <span class="msg muted">配方目录、单杯克重和折算系数由服务端按租户与品牌管理；浏览器不可编辑。</span>
         </div>
-        <p v-if="usageFillMsg" class="msg muted">{{ usageFillMsg }}</p>
-
-        <div class="usage-grid">
-          <label v-for="r in RECIPES" :key="r.name" class="usage-cell">
-            <span class="usage-name">{{ r.name }}</span>
-            <input v-model.number="cupInputs[r.name]" type="number" min="0" placeholder="0" />
-          </label>
-        </div>
-
-        <details v-if="usageUnmatched.length" class="usage-unmatched">
-          <summary>配方表没有的售卖商品（{{ usageUnmatched.length }} 个，未计入测算）</summary>
-          <p class="msg muted">
-            <span v-for="u in usageUnmatched" :key="u.name" class="unmatched-item">{{ u.name }}（{{ qtyFmt(u.num) }}杯）</span>
-          </p>
-        </details>
+        <p v-if="recipeUsageError" class="msg warn-text">{{ recipeUsageError }}</p>
+        <p v-else-if="recipeUsageLoading" class="msg muted">正在读取受管配方目录与本地销量快照…</p>
 
         <template v-if="usageResult.fruits.length">
           <h4 class="usage-title">
-            水果采购测算 · {{ usageResult.products }} 个产品 · {{ qtyFmt(usageResult.cups) }} 杯
+            水果采购测算 · {{ recipeUsage?.matchedProductCount || 0 }} 个匹配商品 · {{ qtyFmt(usageResult.totalCups) }} 杯
           </h4>
           <table class="turnover-table">
             <thead>
               <tr>
                 <th>水果</th>
                 <th class="num">配方用量（公斤）</th>
-                <th class="num">出肉率</th>
                 <th class="num">折算采购毛重（斤）</th>
                 <th>备注</th>
               </tr>
@@ -1027,28 +1049,14 @@ onMounted(loadQmai)
             <tbody>
               <tr v-for="f in usageResult.fruits" :key="f.fruit">
                 <td>{{ f.fruit }}</td>
-                <td class="num">{{ kg(f.netG) }}</td>
-                <td class="num">{{ FRUIT_YIELD[f.fruit] ? (FRUIT_YIELD[f.fruit] * 100).toFixed(1) + '%' : '—' }}</td>
-                <td class="num income">{{ jin(f.rawG) }}</td>
-                <td class="muted">{{ f.approx ? '无出肉率数据，按 1:1 折算' : '' }}</td>
-              </tr>
-            </tbody>
-          </table>
-
-          <h4 v-if="usageResult.others.length" class="usage-title">其他物料（非水果）</h4>
-          <table v-if="usageResult.others.length" class="turnover-table usage-others">
-            <thead>
-              <tr><th>物料</th><th class="num">用量（公斤）</th></tr>
-            </thead>
-            <tbody>
-              <tr v-for="o in usageResult.others" :key="o.label">
-                <td>{{ o.label }}</td>
-                <td class="num">{{ kg(o.g) }}</td>
+                <td class="num">{{ (Number(f.netGrams) / 1000).toFixed(3) }}</td>
+                <td class="num income">{{ Number(f.rawJin).toFixed(3) }}</td>
+                <td class="muted">{{ f.approximate ? '无出肉率数据，按 1:1 折算' : '' }}</td>
               </tr>
             </tbody>
           </table>
         </template>
-        <p v-else class="msg muted">输入杯数（或点上方按钮用企迈销量填充）后，这里会算出每种水果的配方用量和折算采购毛重。</p>
+        <p v-else-if="!recipeUsageLoading && !recipeUsageError" class="msg muted">点击上方按钮后，系统会以服务端受管目录和授权范围内销量生成不可编辑的用量快照。</p>
       </template>
 
       </template>

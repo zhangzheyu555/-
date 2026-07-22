@@ -256,7 +256,7 @@ class AccessControlServiceTest {
   }
 
   @Test
-  void supervisorUsesDailyLossReadBoundaryAfterTakingOperationsWorkspace() {
+  void supervisorCannotReadDailyLossEvenWhenPersonalPermissionExistsAndDenialIsAudited() {
     AuthorizationService authorizationService = mock(AuthorizationService.class);
     AccessControlService dailyLossAccess = new AccessControlService(
         authService,
@@ -268,7 +268,22 @@ class AccessControlServiceTest {
     AuthUser supervisor = user("SUPERVISOR", null);
     when(authorizationService.hasPermission(supervisor, PermissionCodes.DAILY_LOSS_READ)).thenReturn(true);
 
-    dailyLossAccess.requireDailyLossRead(supervisor);
+    assertThatThrownBy(() -> dailyLossAccess.requireDailyLossRead(supervisor))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> {
+          BusinessException forbidden = (BusinessException) error;
+          assertThat(forbidden.getCode()).isEqualTo("FORBIDDEN");
+          assertThat(forbidden.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+        });
+
+    verify(auditRepository).writePermissionDenied(
+        org.mockito.ArgumentMatchers.eq(supervisor),
+        org.mockito.ArgumentMatchers.eq("查看每日报损"),
+        org.mockito.ArgumentMatchers.eq("API"),
+        org.mockito.ArgumentMatchers.eq(PermissionCodes.DAILY_LOSS_READ),
+        isNull(),
+        org.mockito.ArgumentMatchers.contains("仅限财务或老板")
+    );
   }
 
   @Test

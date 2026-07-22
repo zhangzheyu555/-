@@ -12,7 +12,9 @@ import com.storeprofit.system.finance.FinanceService;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthService;
 import com.storeprofit.system.platform.auth.AuthUser;
+import com.storeprofit.system.platform.authorization.BusinessScope;
 import com.storeprofit.system.platform.authorization.BusinessScopeResolver;
+import com.storeprofit.system.platform.authorization.DataScopeDomains;
 import com.storeprofit.system.salary.SalaryService;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -35,6 +37,12 @@ class ExportControllerScopeTest {
   @Test
   void profitAndExpenseExportsForwardStoreIdInsteadOfIgnoringIt() {
     when(authService.requireUser("Bearer token")).thenReturn(manager);
+    when(businessScopeResolver.resolve(
+        manager, DataScopeDomains.FINANCE, "other-store", 9L, "导出利润排行", "2026-07"))
+        .thenReturn(new BusinessScope("other-store", null, 9L, null, null));
+    when(businessScopeResolver.resolve(
+        manager, DataScopeDomains.FINANCE, "other-store", 9L, "导出报销记录", "2026-07"))
+        .thenReturn(new BusinessScope("other-store", null, 9L, null, null));
     when(financeService.entries(manager, "2026-07", 9L, "other-store"))
         .thenReturn(List.of());
     when(expenseService.claims(manager, "2026-07", 9L, "other-store", null))
@@ -52,10 +60,11 @@ class ExportControllerScopeTest {
     when(authService.requireUser("Bearer token")).thenReturn(manager);
     when(businessScopeResolver.resolve(
         manager,
-        com.storeprofit.system.platform.authorization.DataScopeDomains.SALARY,
+        DataScopeDomains.SALARY,
         "other-store",
         10L,
-        "导出工资记录"
+        "导出工资记录",
+        "2026-07"
     )).thenThrow(new BusinessException(
         "FORBIDDEN", "当前账号只能访问绑定门店的数据", HttpStatus.FORBIDDEN));
 

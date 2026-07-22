@@ -8,9 +8,9 @@ import java.math.BigDecimal;
 
 public record SalaryRecordRequest(
     String storeId,
-    @NotBlank String month,
+    @NotBlank(message = "工资月份不能为空") String month,
     String employeeId,
-    @NotBlank String employeeName,
+    @NotBlank(message = "员工姓名不能为空") String employeeName,
     String position,
     String attendance,
     BigDecimal gross,

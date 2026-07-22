@@ -20,9 +20,9 @@ defineEmits<{
   reject: [expense: ExpenseClaim]
   requestInfo: [expense: ExpenseClaim]
   supplement: [expense: ExpenseClaim]
-  escalate: [expense: ExpenseClaim]
   edit: [expense: ExpenseClaim]
   submit: [expense: ExpenseClaim]
+  attachmentDeleted: [expense: ExpenseClaim]
 }>()
 
 function money(value?: number) {
@@ -56,7 +56,7 @@ function canEdit(status: string) {
 }
 
 function canSupplement(status: string) {
-  return !['已完成', '已通过', 'APPROVED'].includes(status)
+  return ['待补资料', 'REQUEST_INFO'].includes(status)
 }
 
 function supplementAttachments(expense: ExpenseClaim): ExpenseSupplementAttachment[] {
@@ -78,6 +78,22 @@ function supplementCount(expense: ExpenseClaim) {
 
 function hasSupplement(expense: ExpenseClaim) {
   return Boolean(supplementNote(expense) || supplementCount(expense))
+}
+
+function reviewNote(expense: ExpenseClaim) {
+  return String(expense.reviewNote || '').trim()
+}
+
+function shouldShowReviewNote(expense: ExpenseClaim) {
+  return Boolean(reviewNote(expense)) && [
+    '待补资料',
+    'REQUEST_INFO',
+    '已驳回',
+    'REJECTED',
+    '已完成',
+    '已通过',
+    'APPROVED',
+  ].includes(expense.status)
 }
 </script>
 
@@ -104,11 +120,23 @@ function hasSupplement(expense: ExpenseClaim) {
             <span>日期：{{ expense.expenseDate || '-' }}</span>
             <span>品牌：{{ expense.brandName || '-' }}</span>
           </div>
+          <div v-if="shouldShowReviewNote(expense)" class="review-note">
+            <MessageSquareText :size="15" />
+            <div>
+              <b>财务说明</b>
+              <p>{{ reviewNote(expense) }}</p>
+            </div>
+          </div>
           <div v-if="claimAttachments(expense).length" class="claim-evidence">
             <div class="supplement-count">
               <Paperclip :size="14" />报销凭证 {{ claimAttachments(expense).length }} 张
             </div>
-            <ExpenseClaimAttachments :attachments="claimAttachments(expense)" />
+            <ExpenseClaimAttachments
+              :attachments="claimAttachments(expense)"
+              :expense-id="expense.id"
+              :removable="props.editable && canEdit(expense.status)"
+              @deleted="$emit('attachmentDeleted', expense)"
+            />
           </div>
           <div v-if="hasSupplement(expense)" class="supplement-evidence">
             <div v-if="supplementNote(expense)" class="supplement-note">
@@ -141,16 +169,6 @@ function hasSupplement(expense: ExpenseClaim) {
               <FileQuestion :size="14" />
             </button>
             <button
-              v-if="props.editable"
-              class="mini-button"
-              type="button"
-              :disabled="props.actioningId === expense.id"
-              @click="$emit('supplement', expense)"
-            >
-              补充资料
-              <Paperclip :size="14" />
-            </button>
-            <button
               class="mini-button"
               type="button"
               :disabled="props.actioningId === expense.id"
@@ -158,15 +176,6 @@ function hasSupplement(expense: ExpenseClaim) {
             >
               驳回
               <XCircle :size="14" />
-            </button>
-            <button
-              class="mini-button"
-              type="button"
-              :disabled="props.actioningId === expense.id"
-              @click="$emit('escalate', expense)"
-            >
-              上报老板
-              <Send :size="14" />
             </button>
             <button
               class="mini-button primary"
@@ -284,6 +293,35 @@ function hasSupplement(expense: ExpenseClaim) {
   align-items: flex-start;
   gap: 7px;
   color: var(--primary-dark);
+}
+
+.review-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 10px;
+  padding: 9px 10px;
+  border-left: 3px solid var(--primary);
+  border-radius: 6px;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+}
+
+.review-note > div {
+  display: grid;
+  gap: 2px;
+}
+
+.review-note b,
+.review-note p {
+  font-size: 12px;
+}
+
+.review-note p {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.55;
+  white-space: pre-wrap;
 }
 
 .supplement-note > div {

@@ -44,8 +44,7 @@ public class ApiAuthenticationFilter extends OncePerRequestFilter {
     if (!path.startsWith("/api/") || "OPTIONS".equalsIgnoreCase(request.getMethod())) {
       return true;
     }
-    return ("POST".equalsIgnoreCase(request.getMethod())
-            && ("/api/auth/login".equals(path) || "/api/auth/wechat/login".equals(path)))
+    return ("POST".equalsIgnoreCase(request.getMethod()) && "/api/auth/login".equals(path))
         || ("GET".equalsIgnoreCase(request.getMethod()) && "/api/health".equals(path))
         // This endpoint is authenticated by its HMAC signature in ElemeWebhookService.
         || ("POST".equalsIgnoreCase(request.getMethod()) && "/api/eleme/message".equals(path));

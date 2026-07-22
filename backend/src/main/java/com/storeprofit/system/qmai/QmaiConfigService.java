@@ -23,10 +23,16 @@ public class QmaiConfigService {
 
   private final QmaiProperties properties;
   private final QmaiConfigRepository repository;
+  private final QmaiCredentialCipher credentialCipher;
 
-  public QmaiConfigService(QmaiProperties properties, QmaiConfigRepository repository) {
+  public QmaiConfigService(
+      QmaiProperties properties,
+      QmaiConfigRepository repository,
+      QmaiCredentialCipher credentialCipher
+  ) {
     this.properties = properties;
     this.repository = repository;
+    this.credentialCipher = credentialCipher;
   }
 
   /** 品牌参数归一化：空值回退默认品牌。 */
@@ -52,13 +58,13 @@ public class QmaiConfigService {
     if (row.isPresent()) {
       QmaiConfigRepository.QmaiConfigRow r = row.get();
       if (notBlank(r.openId())) {
-        openId = r.openId();
+        openId = credentialCipher.decrypt(r.openId());
       }
       if (notBlank(r.grantCode())) {
-        grantCode = r.grantCode();
+        grantCode = credentialCipher.decrypt(r.grantCode());
       }
       if (notBlank(r.openKey())) {
-        openKey = r.openKey();
+        openKey = credentialCipher.decrypt(r.openKey());
       }
       if (notBlank(r.baseUrl())) {
         baseUrl = r.baseUrl();
@@ -70,13 +76,13 @@ public class QmaiConfigService {
         shops = splitCsv(r.shops());
       }
       if (notBlank(r.consoleAccount())) {
-        consoleAccount = r.consoleAccount();
+        consoleAccount = credentialCipher.decrypt(r.consoleAccount());
       }
       if (notBlank(r.consolePassword())) {
-        consolePassword = r.consolePassword();
+        consolePassword = credentialCipher.decrypt(r.consolePassword());
       }
       if (notBlank(r.consoleToken())) {
-        consoleToken = r.consoleToken();
+        consoleToken = credentialCipher.decrypt(r.consoleToken());
       }
       source = "DB";
     }
@@ -90,24 +96,26 @@ public class QmaiConfigService {
       String actorName) {
     String b = normBrand(brand);
     Optional<QmaiConfigRepository.QmaiConfigRow> existing = repository.find(tenantId, b);
-    String openId = pick(form.openId(), existing.map(QmaiConfigRepository.QmaiConfigRow::openId));
+    String openId = pick(form.openId(), existing.map(r -> credentialCipher.decrypt(r.openId())));
     String grantCode = pick(form.grantCode(),
-        existing.map(QmaiConfigRepository.QmaiConfigRow::grantCode));
+        existing.map(r -> credentialCipher.decrypt(r.grantCode())));
     // openKey / 后台密码属敏感项：表单留空表示“不修改”，沿用已存值。
-    String openKey = pick(form.openKey(), existing.map(QmaiConfigRepository.QmaiConfigRow::openKey));
+    String openKey = pick(form.openKey(), existing.map(r -> credentialCipher.decrypt(r.openKey())));
     String consoleAccount = pick(form.consoleAccount(),
-        existing.map(QmaiConfigRepository.QmaiConfigRow::consoleAccount));
+        existing.map(r -> credentialCipher.decrypt(r.consoleAccount())));
     String consolePassword = pick(form.consolePassword(),
-        existing.map(QmaiConfigRepository.QmaiConfigRow::consolePassword));
+        existing.map(r -> credentialCipher.decrypt(r.consolePassword())));
     String consoleToken = pick(form.consoleToken(),
-        existing.map(QmaiConfigRepository.QmaiConfigRow::consoleToken));
+        existing.map(r -> credentialCipher.decrypt(r.consoleToken())));
     String baseUrl = form.baseUrl() != null && !form.baseUrl().isBlank()
         ? form.baseUrl().trim() : properties.getBaseUrl();
     String version = form.version() != null && !form.version().isBlank()
         ? form.version().trim() : properties.getVersion();
     String shops = form.shops() != null ? form.shops().trim() : "";
-    repository.upsert(tenantId, b, openId, grantCode, openKey, baseUrl, version, shops,
-        consoleAccount, consolePassword, consoleToken, actorId, actorName);
+    repository.upsert(tenantId, b, credentialCipher.encrypt(openId), credentialCipher.encrypt(grantCode),
+        credentialCipher.encrypt(openKey), baseUrl, version, shops,
+        credentialCipher.encrypt(consoleAccount), credentialCipher.encrypt(consolePassword),
+        credentialCipher.encrypt(consoleToken), actorId, actorName);
   }
 
   /** 给前端的安全视图：不含任何明文密钥，只给是否已配置、掩码与门店。 */

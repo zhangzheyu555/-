@@ -5,7 +5,7 @@
     { "path": "pages/todo/index", "style": { "navigationBarTitleText": "待办", "enablePullDownRefresh": true } },
     { "path": "pages/todo-detail/index", "style": { "navigationBarTitleText": "待办详情", "enablePullDownRefresh": true } },
     { "path": "pages/apps/index", "style": { "navigationBarTitleText": "应用", "enablePullDownRefresh": true } },
-    { "path": "pages/message/index", "style": { "navigationBarTitleText": "消息", "enablePullDownRefresh": true } },
+    { "path": "pages/message/index", "style": { "navigationBarTitleText": "业务动态", "enablePullDownRefresh": true } },
     { "path": "pages/profile/index", "style": { "navigationBarTitleText": "我的" } }
   ],
   "subPackages": [
@@ -20,6 +20,7 @@
     { "root": "pkg-warehouse", "pages": [
       { "path": "index", "style": { "navigationBarTitleText": "仓库待办", "enablePullDownRefresh": true } },
       { "path": "operations/index", "style": { "navigationBarTitleText": "仓库作业中心", "enablePullDownRefresh": true } },
+      { "path": "material-edit/index", "style": { "navigationBarTitleText": "物料与批次", "enablePullDownRefresh": true } },
       { "path": "item-detail/index", "style": { "navigationBarTitleText": "物料详情", "enablePullDownRefresh": true } }
     ] },
     { "root": "pkg-inspection", "pages": [

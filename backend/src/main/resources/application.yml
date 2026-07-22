@@ -81,15 +81,14 @@ app:
     base-url: ${QMAI_BASE_URL:https://openapi.qmai.cn}
     version: ${QMAI_VERSION:1.0}
     timeout: ${QMAI_TIMEOUT:20s}
+    # 默认拒绝任何企迈出站；本地验收仅可设 MOCK 且地址必须为 loopback。
+    outbound-mode: ${QMAI_OUTBOUND_MODE:DISABLED}
+    # 仅由部署密钥系统注入的 Base64 AES 密钥；缺失时拒绝持久化凭证。
+    credential-encryption-key: ${QMAI_CREDENTIAL_ENCRYPTION_KEY:}
     # 已授权门店（shopCode:门店名:本系统storeId），逗号分隔
     shops: ${QMAI_SHOPS:}
   auth:
     token-ttl-hours: 12
-  wechat-mini-program:
-    # 仅后端读取；请在部署密钥系统注入，绝不提交 AppSecret 或发送到小程序。
-    app-id: ${WECHAT_MINI_PROGRAM_APP_ID:}
-    app-secret: ${WECHAT_MINI_PROGRAM_APP_SECRET:}
-    base-url: ${WECHAT_MINI_PROGRAM_BASE_URL:https://api.weixin.qq.com}
   training:
     video-playback-ticket-ttl-seconds: ${TRAINING_VIDEO_PLAYBACK_TICKET_TTL_SECONDS:1800}
     # 开发和单实例默认使用本地短期票据。预发布/生产多实例必须显式开启，并且
@@ -127,9 +126,9 @@ app:
     risk-overdue-count: ${APP_EXAM_RISK_OVERDUE_COUNT:3}
     risk-average-score: ${APP_EXAM_RISK_AVERAGE_SCORE:70}
   cors:
-    # 用环境变量 APP_CORS_ALLOWED_ORIGINS 覆盖(逗号分隔), 不设置则用默认值
-    # 这样换 IP/域名只改 .env, 不用重新打包 jar
-    allowed-origin-patterns: ${APP_CORS_ALLOWED_ORIGINS:http://localhost:*,http://127.0.0.1:*}
+    allowed-origin-patterns:
+      - "http://localhost:*"
+      - "http://127.0.0.1:*"
   assistant:
     deepseek:
       enabled: ${DEEPSEEK_ENABLED:true}

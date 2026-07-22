@@ -14,6 +14,7 @@ import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -43,7 +44,17 @@ public class ExpenseRepository {
         select ec.id, ec.store_id, s.code as store_code, s.name as store_name,
                s.brand_id, b.name as brand_name, ec.month, ec.expense_date, ec.amount, ec.category,
                ec.reason, ec.status, ec.image_url, ec.submitted_by, ec.reviewed_by,
-               ec.reviewed_at
+               ec.reviewed_at,
+               (
+                 select ol.reason
+                 from operation_log ol
+                 where ol.tenant_id = ec.tenant_id
+                   and ol.target_type = 'expense_claim'
+                   and ol.target_id = ec.id
+                   and ol.action in ('expense_request_info', 'reimbursement_reject', 'reimbursement_approve')
+                 order by ol.created_at desc, ol.id desc
+                 limit 1
+               ) as review_note
         from expense_claim ec
         join store_branch s on s.id = ec.store_id and s.tenant_id = ec.tenant_id
         left join brand b on b.id = s.brand_id and b.tenant_id = s.tenant_id
@@ -80,7 +91,17 @@ public class ExpenseRepository {
         select ec.id, ec.store_id, s.code as store_code, s.name as store_name,
                s.brand_id, b.name as brand_name, ec.month, ec.expense_date, ec.amount, ec.category,
                ec.reason, ec.status, ec.image_url, ec.submitted_by, ec.reviewed_by,
-               ec.reviewed_at
+               ec.reviewed_at,
+               (
+                 select ol.reason
+                 from operation_log ol
+                 where ol.tenant_id = ec.tenant_id
+                   and ol.target_type = 'expense_claim'
+                   and ol.target_id = ec.id
+                   and ol.action in ('expense_request_info', 'reimbursement_reject', 'reimbursement_approve')
+                 order by ol.created_at desc, ol.id desc
+                 limit 1
+               ) as review_note
         from expense_claim ec
         join store_branch s on s.id = ec.store_id and s.tenant_id = ec.tenant_id
         left join brand b on b.id = s.brand_id and b.tenant_id = s.tenant_id
@@ -98,6 +119,19 @@ public class ExpenseRepository {
     return jdbcTemplate.queryForList(
         "select store_id from expense_claim where tenant_id = ? and id = ?",
         String.class,
+        tenantId,
+        id
+    ).stream().findFirst();
+  }
+
+  /** Minimal record used only to enrich authorization-denial audits before the main scoped read. */
+  public Optional<ClaimScope> claimScope(long tenantId, String id) {
+    return jdbcTemplate.query("""
+        select id, store_id, month
+        from expense_claim
+        where tenant_id = ? and id = ?
+        """,
+        (rs, rowNum) -> new ClaimScope(rs.getString("id"), rs.getString("store_id"), rs.getString("month")),
         tenantId,
         id
     ).stream().findFirst();
@@ -145,35 +179,63 @@ public class ExpenseRepository {
     );
   }
 
-  public void upsert(long tenantId, String id, ExpenseClaimRequest request, String status, Long submittedBy) {
+  /**
+   * Saves a draft only while the existing claim remains editable.  The affected-row result is
+   * intentionally exposed so callers can distinguish a concurrent submit/review from a normal
+   * validation failure instead of overwriting a newer workflow state.
+   */
+  public boolean upsert(long tenantId, String id, ExpenseClaimRequest request, String status, Long submittedBy) {
     if (claimExists(tenantId, id)) {
-      update(tenantId, id, request);
-      return;
+      return update(tenantId, id, request) > 0;
     }
     insert(tenantId, id, request, status, submittedBy);
+    return true;
   }
 
-  public void updateStatus(long tenantId, String id, String status, Long submittedBy, Long reviewedBy) {
-    jdbcTemplate.update("""
+  /** Inserts a deterministic idempotent-create row exactly once; the caller reads the winner on retry. */
+  public boolean insertIfAbsent(long tenantId, String id, ExpenseClaimRequest request, String status, Long submittedBy) {
+    try {
+      insert(tenantId, id, request, status, submittedBy);
+      return true;
+    } catch (DuplicateKeyException duplicate) {
+      return false;
+    }
+  }
+
+  /**
+   * Atomically moves a claim from exactly one expected state.  This is the workflow's optimistic
+   * concurrency boundary: a retry or a second reviewer receives zero affected rows and must not
+   * create another approval/rejection audit record.
+   */
+  public int updateStatus(
+      long tenantId,
+      String id,
+      String expectedStatus,
+      String status,
+      Long submittedBy,
+      Long reviewedBy
+  ) {
+    return jdbcTemplate.update("""
         update expense_claim set
           status = ?,
           submitted_by = coalesce(?, submitted_by),
           reviewed_by = ?,
-          reviewed_at = case when ? is null then reviewed_at else current_timestamp end,
+          reviewed_at = case when ? is null then null else current_timestamp end,
           updated_at = current_timestamp
-        where tenant_id = ? and id = ?
+        where tenant_id = ? and id = ? and status = ?
         """,
         status,
         submittedBy,
         reviewedBy,
         reviewedBy,
         tenantId,
-        id
+        id,
+        expectedStatus
     );
   }
 
-  public void markSupplemented(long tenantId, String id, long submittedBy) {
-    jdbcTemplate.update("""
+  public int markSupplemented(long tenantId, String id, long submittedBy) {
+    return jdbcTemplate.update("""
         update expense_claim set
           status = ?,
           submitted_by = ?,
@@ -190,8 +252,29 @@ public class ExpenseRepository {
     );
   }
 
-  public int delete(long tenantId, String id) {
-    return jdbcTemplate.update("delete from expense_claim where tenant_id = ? and id = ?", tenantId, id);
+  /** Deletes a draft and its primary receipt blobs in one transaction. */
+  public int deleteDraft(long tenantId, String id) {
+    int deleted = jdbcTemplate.update(
+        "delete from expense_claim where tenant_id = ? and id = ? and status = ?",
+        tenantId,
+        id,
+        ExpenseService.STATUS_DRAFT
+    );
+    if (deleted > 0) {
+      jdbcTemplate.update("""
+          delete from warehouse_attachment
+          where tenant_id = ? and business_id = ? and business_type in ('EXPENSE', 'EXPENSE_CLAIM')
+          """, tenantId, id);
+    }
+    return deleted;
+  }
+
+  public int deleteAttachment(long tenantId, String expenseId, String storeId, long attachmentId) {
+    return jdbcTemplate.update("""
+        delete from warehouse_attachment
+        where tenant_id = ? and id = ? and store_id = ? and business_id = ?
+          and business_type in ('EXPENSE', 'EXPENSE_CLAIM')
+        """, tenantId, attachmentId, storeId, expenseId);
   }
 
   public boolean storeExists(long tenantId, String storeId) {
@@ -248,12 +331,13 @@ public class ExpenseRepository {
           id, tenant_id, store_id, month, expense_date, amount, category, reason, status,
           image_url, submitted_by, created_at
         )
-        values (?, ?, ?, ?, current_date, ?, ?, ?, ?, ?, ?, current_timestamp)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
         """,
         id,
         tenantId,
         request.storeId(),
         request.month(),
+        java.sql.Date.valueOf(request.expenseDate()),
         amount(request.amount()),
         blankToNull(request.category()),
         blankToNull(request.reason()),
@@ -263,12 +347,12 @@ public class ExpenseRepository {
     );
   }
 
-  private void update(long tenantId, String id, ExpenseClaimRequest request) {
-    jdbcTemplate.update("""
+  private int update(long tenantId, String id, ExpenseClaimRequest request) {
+    return jdbcTemplate.update("""
         update expense_claim set
           store_id = ?,
           month = ?,
-          expense_date = coalesce(expense_date, current_date),
+          expense_date = ?,
           amount = ?,
           category = ?,
           reason = ?,
@@ -276,10 +360,11 @@ public class ExpenseRepository {
           reviewed_by = null,
           reviewed_at = null,
           updated_at = current_timestamp
-        where tenant_id = ? and id = ?
+        where tenant_id = ? and id = ? and status in ('草稿', '待补资料', '已驳回')
         """,
         request.storeId(),
         request.month(),
+        java.sql.Date.valueOf(request.expenseDate()),
         amount(request.amount()),
         blankToNull(request.category()),
         blankToNull(request.reason()),
@@ -306,7 +391,8 @@ public class ExpenseRepository {
         getLongOrNull(rs, "submitted_by"),
         getLongOrNull(rs, "reviewed_by"),
         getDateTimeOrNull(rs, "reviewed_at"),
-        getDateOrNull(rs, "expense_date")
+        getDateOrNull(rs, "expense_date"),
+        rs.getString("review_note")
     );
   }
 
@@ -349,5 +435,8 @@ public class ExpenseRepository {
     }
     sql.append(" and ").append(storeColumn).append(" in (:scopeStoreIds)");
     params.addValue("scopeStoreIds", storeIds);
+  }
+
+  public record ClaimScope(String id, String storeId, String month) {
   }
 }

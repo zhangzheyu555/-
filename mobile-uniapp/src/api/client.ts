@@ -1,4 +1,5 @@
 import { expireSession, readSessionToken } from '@/platform/session'
+import { showOperationFailure } from '@/platform/operation-feedback'
 import { resolveApiUrl } from '@/platform/runtime'
 import { uploadFile } from '@/platform/upload'
 import type { ApiEnvelope, QueryParams, RequestOptions, UploadOptions } from '@/types/api'
@@ -40,17 +41,22 @@ export async function apiUpload<T>(
   formData?: Record<string, string>,
   options: UploadOptions = {},
 ): Promise<T> {
-  const response = await uploadFile({
-    path,
-    filePath,
-    fieldName,
-    formData: { ...formData, ...options.formData },
-    headers: buildHeaders(options),
-  }).catch(() => {
-    throw new ApiError('上传失败，请检查网络后重试')
-  })
-  const payload = parsePayload<T>(response.data)
-  return unwrap(payload, response.statusCode, options)
+  try {
+    const response = await uploadFile({
+      path,
+      filePath,
+      fieldName,
+      formData: { ...formData, ...options.formData },
+      headers: buildHeaders(options),
+    }).catch(() => {
+      throw new ApiError('上传失败，请检查网络后重试')
+    })
+    const payload = parsePayload<T>(response.data)
+    return unwrap(payload, response.statusCode, options)
+  } catch (error) {
+    showOperationFailure('操作失败', error)
+    throw error
+  }
 }
 
 function request<T>(
@@ -59,7 +65,7 @@ function request<T>(
   body?: unknown,
   options: RequestOptions = {},
 ): Promise<T> {
-  return new Promise((resolve, reject) => {
+  const pending = new Promise<T>((resolve, reject) => {
     let url: string
     try {
       url = resolveApiUrl(path)
@@ -83,6 +89,11 @@ function request<T>(
       },
       fail: () => reject(new ApiError('网络连接失败，请检查网络后重试')),
     })
+  })
+  if (method === 'GET') return pending
+  return pending.catch((error: unknown) => {
+    showOperationFailure('操作失败', error)
+    throw error
   })
 }
 

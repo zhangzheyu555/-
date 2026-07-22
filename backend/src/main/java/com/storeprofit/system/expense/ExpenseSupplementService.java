@@ -3,6 +3,7 @@ package com.storeprofit.system.expense;
 import com.storeprofit.system.common.BusinessException;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
+import com.storeprofit.system.todo.BusinessTodoService;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -41,6 +42,7 @@ public class ExpenseSupplementService {
   private final ExpenseRepository expenseRepository;
   private final ExpenseSupplementRepository supplementRepository;
   private final AccessControlService accessControl;
+  private final BusinessTodoService businessTodoService;
   private final Path storageRoot;
 
   @Autowired
@@ -48,9 +50,10 @@ public class ExpenseSupplementService {
       ExpenseRepository expenseRepository,
       ExpenseSupplementRepository supplementRepository,
       AccessControlService accessControl,
+      BusinessTodoService businessTodoService,
       @Value("${app.storage.expense-supplements-root}") String storageRoot
   ) {
-    this(expenseRepository, supplementRepository, accessControl, Path.of(storageRoot));
+    this(expenseRepository, supplementRepository, accessControl, businessTodoService, Path.of(storageRoot));
   }
 
   ExpenseSupplementService(
@@ -59,9 +62,20 @@ public class ExpenseSupplementService {
       AccessControlService accessControl,
       Path storageRoot
   ) {
+    this(expenseRepository, supplementRepository, accessControl, null, storageRoot);
+  }
+
+  ExpenseSupplementService(
+      ExpenseRepository expenseRepository,
+      ExpenseSupplementRepository supplementRepository,
+      AccessControlService accessControl,
+      BusinessTodoService businessTodoService,
+      Path storageRoot
+  ) {
     this.expenseRepository = expenseRepository;
     this.supplementRepository = supplementRepository;
     this.accessControl = accessControl;
+    this.businessTodoService = businessTodoService;
     this.storageRoot = storageRoot.toAbsolutePath().normalize();
   }
 
@@ -72,11 +86,14 @@ public class ExpenseSupplementService {
       String note,
       List<MultipartFile> files
   ) {
-    accessControl.requireExpenseWrite(user);
     ExpenseClaimResponse claim = requireClaim(user, expenseId);
-    accessControl.requireStoreAccess(user, claim.storeId(), "补充报销资料");
+    accessControl.requireExpenseWrite(user, claim.id(), claim.storeId(), claim.month());
+    accessControl.requireExpenseStoreAccess(user, claim.id(), claim.storeId(), claim.month(), "补充报销资料");
     if (ExpenseService.STATUS_APPROVED.equals(claim.status())) {
       throw new BusinessException("BAD_STATUS", "已完成的报销不能继续补充资料", HttpStatus.CONFLICT);
+    }
+    if (!ExpenseService.STATUS_SUPPLEMENT.equals(claim.status())) {
+      throw new BusinessException("BAD_STATUS", "只有待补资料的报销可以提交补充材料", HttpStatus.CONFLICT);
     }
 
     String normalizedNote = normalizeNote(note);
@@ -107,7 +124,9 @@ public class ExpenseSupplementService {
             user.id()
         );
       }
-      expenseRepository.markSupplemented(user.tenantId(), claim.id(), user.id());
+      if (expenseRepository.markSupplemented(user.tenantId(), claim.id(), user.id()) == 0) {
+        throw new BusinessException("EXPENSE_STATE_CHANGED", "报销单状态已变化，请刷新后重试", HttpStatus.CONFLICT);
+      }
       expenseRepository.logAction(
           user.tenantId(),
           user.id(),
@@ -118,6 +137,10 @@ public class ExpenseSupplementService {
           claim.month(),
           "提交报销补充资料，附件数量：" + uploads.size()
       );
+      if (businessTodoService != null) {
+        businessTodoService.reconcileExpenseReviewForStore(
+            user.tenantId(), claim.storeId(), claim.month());
+      }
       return requireClaim(user, claim.id()).withSupplements(
           supplementRepository.supplements(user.tenantId(), claim.id()));
     } catch (RuntimeException ex) {
@@ -129,18 +152,19 @@ public class ExpenseSupplementService {
   }
 
   public List<ExpenseSupplementResponse> supplements(AuthUser user, String expenseId) {
-    accessControl.requireExpenseRead(user);
     ExpenseClaimResponse claim = requireClaim(user, expenseId);
-    accessControl.requireStoreAccess(user, claim.storeId(), "查看报销补充资料");
+    accessControl.requireExpenseRead(user, claim.id(), claim.storeId(), claim.month());
+    accessControl.requireExpenseStoreAccess(user, claim.id(), claim.storeId(), claim.month(), "查看报销补充资料");
     return supplementRepository.supplements(user.tenantId(), claim.id());
   }
 
   public AttachmentContent attachment(AuthUser user, String expenseId, long attachmentId, boolean download) {
-    accessControl.requireExpenseRead(user);
     ExpenseSupplementRepository.AttachmentMetadata metadata = supplementRepository
         .attachment(user.tenantId(), normalizeExpenseId(expenseId), attachmentId)
         .orElseThrow(() -> new BusinessException("ATTACHMENT_NOT_FOUND", "附件不存在", HttpStatus.NOT_FOUND));
-    accessControl.requireStoreAccess(user, metadata.storeId(), "查看报销补充资料附件");
+    accessControl.requireExpenseRead(user, metadata.expenseId(), metadata.storeId(), metadata.month());
+    accessControl.requireExpenseStoreAccess(
+        user, metadata.expenseId(), metadata.storeId(), metadata.month(), "查看报销补充资料附件");
     Path path = resolveStoragePath(user.tenantId(), metadata.storageKey());
     try {
       if (!Files.isRegularFile(path)) {
@@ -163,7 +187,7 @@ public class ExpenseSupplementService {
             "reimbursement_attachment_download",
             metadata.expenseId(),
             metadata.storeId(),
-            null,
+            metadata.month(),
             "下载报销补充资料附件"
         );
       }

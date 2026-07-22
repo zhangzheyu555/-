@@ -38,9 +38,11 @@ public class QmaiConsoleService {
   private static final String INCOME_METHOD = "data-center/trd/pc/list-business-income";
 
   private final QmaiConfigService configService;
+  private final QmaiOutboundPolicy outboundPolicy;
 
-  public QmaiConsoleService(QmaiConfigService configService) {
+  public QmaiConsoleService(QmaiConfigService configService, QmaiOutboundPolicy outboundPolicy) {
     this.configService = configService;
+    this.outboundPolicy = outboundPolicy;
   }
 
   /**
@@ -215,6 +217,7 @@ public class QmaiConsoleService {
   @SuppressWarnings("unchecked")
   Map<String, Object> call(String token, String sellerId, String path, Map<String, Object> body) {
     String url = GATEWAY + "/" + path.replaceFirst("^/+", "");
+    outboundPolicy.requireAllowed(url);
     // 后台鉴权：cookie qm_seller_token + ALL_DATA_SELLERID（选中门店），配真实 console 请求头。
     String cookie = "qm_seller_token=" + token
         + (sellerId != null && !sellerId.isBlank() ? "; ALL_DATA_SELLERID=" + sellerId : "");

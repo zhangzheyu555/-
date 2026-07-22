@@ -84,7 +84,7 @@ function statusLabel(status: EmployeeAssistantHandoff['status']) {
 
 <template>
   <section class="employee-handoff-page">
-    <PageHeader subtitle="仅授权的运营或督导可查看门店范围内的人工事项；列表只显示已脱敏问题。">
+    <PageHeader subtitle="仅授权的督导可查看门店范围内的人工事项；列表只显示已脱敏问题。">
       <template #actions><UiButton :loading="loading" @click="load"><template #icon><RefreshCw :size="16" /></template>刷新</UiButton></template>
     </PageHeader>
     <p v-if="pageError" class="error-box" role="alert">{{ pageError }}</p>

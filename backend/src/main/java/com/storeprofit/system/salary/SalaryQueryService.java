@@ -61,10 +61,10 @@ public class SalaryQueryService {
   }
 
   public List<SalaryRecordResponse> records(AuthUser user, String month, Long brandId, String storeId, boolean allMonths) {
-    requireReadRole(user);
     String targetMonth = allMonths ? null : normalizeMonth(month);
+    requireReadRole(user, null, storeId, targetMonth);
     DataScope dataScope = salaryScope(user);
-    BusinessScope businessScope = resolveBusinessScope(user, storeId, brandId, "查看工资数据");
+    BusinessScope businessScope = resolveBusinessScope(user, storeId, brandId, "查看工资数据", targetMonth);
     String targetStoreId = resolveStoreScope(user, businessScope.storeId(), dataScope);
     return salaryRecords(
         user.tenantId(), targetMonth, businessScope.brandId(), targetStoreId, dataScope).stream()
@@ -73,10 +73,10 @@ public class SalaryQueryService {
   }
 
   public SalaryPageResponse recordsPaged(AuthUser user, String month, Long brandId, String storeId, int page, int size) {
-    requireReadRole(user);
     String targetMonth = normalizeMonth(month);
+    requireReadRole(user, null, storeId, targetMonth);
     DataScope dataScope = salaryScope(user);
-    BusinessScope businessScope = resolveBusinessScope(user, storeId, brandId, "查看工资数据");
+    BusinessScope businessScope = resolveBusinessScope(user, storeId, brandId, "查看工资数据", targetMonth);
     String targetStoreId = resolveStoreScope(user, businessScope.storeId(), dataScope);
     SalaryRepository.SalaryPageResult result = salaryPage(
         user.tenantId(), targetMonth, businessScope.brandId(), targetStoreId, page, size, dataScope);
@@ -90,12 +90,12 @@ public class SalaryQueryService {
   public SalaryEmployeePageResponse employeePage(
       AuthUser user, String month, Long brandId, String storeId, String status, String keyword, int page, int size
   ) {
-    requireReadRole(user);
     String targetMonth = normalizeMonth(month);
+    requireReadRole(user, null, storeId, targetMonth);
     int safePage = validatePage(page);
     int safeSize = validateSize(size);
     DataScope dataScope = salaryScope(user);
-    BusinessScope businessScope = resolveBusinessScope(user, storeId, brandId, "查看工资数据");
+    BusinessScope businessScope = resolveBusinessScope(user, storeId, brandId, "查看工资数据", targetMonth);
     String targetStoreId = resolveStoreScope(user, businessScope.storeId(), dataScope);
 
     String statusFilter = blankToNull(status);
@@ -136,9 +136,9 @@ public class SalaryQueryService {
   }
 
   public List<SalaryAvailableMonth> availableMonths(AuthUser user, String storeId) {
-    requireReadRole(user);
+    requireReadRole(user, null, storeId, null);
     DataScope dataScope = salaryScope(user);
-    BusinessScope businessScope = resolveBusinessScope(user, storeId, null, "查看工资月份");
+    BusinessScope businessScope = resolveBusinessScope(user, storeId, null, "查看工资月份", null);
     String targetStoreId = resolveStoreScope(user, businessScope.storeId(), dataScope);
     return dataScope == null
         ? salaryRepository.availableMonths(user.tenantId(), targetStoreId)
@@ -163,10 +163,11 @@ public class SalaryQueryService {
       Long brandId,
       String storeId
   ) {
-    requireReadRole(user);
     String targetMonth = normalizeMonth(month);
+    requireReadRole(user, null, storeId, targetMonth);
     DataScope dataScope = salaryScope(user);
-    BusinessScope businessScope = resolveBusinessScope(user, storeId, brandId, "查看工资经营指标");
+    BusinessScope businessScope = resolveBusinessScope(
+        user, storeId, brandId, "查看工资经营指标", targetMonth);
     String targetStoreId = resolveStoreScope(user, businessScope.storeId(), dataScope);
 
     List<SalaryRepository.SalaryBusinessMetricStoreRow> stores = salaryRepository.businessMetricStores(
@@ -249,22 +250,25 @@ public class SalaryQueryService {
   }
 
   public SalaryRecordResponse getRecord(AuthUser user, String id) {
-    requireReadRole(user);
+    String targetId = requireText(id, "ID_REQUIRED", "工资记录编号不能为空");
+    SalaryRecordResponse auditRecord = salaryRepository.record(user.tenantId(), targetId).orElse(null);
+    requireReadRole(
+        user,
+        targetId,
+        auditRecord == null ? null : auditRecord.storeId(),
+        auditRecord == null ? null : auditRecord.month()
+    );
     return maskForRole(user, requireRecord(user, id));
   }
 
   public SalaryRecordResponse requireRecord(AuthUser user, String id) {
     String targetId = requireText(id, "ID_REQUIRED", "工资记录编号不能为空");
-    DataScope dataScope = salaryScope(user);
-    SalaryRecordResponse record = (dataScope == null
-        ? salaryRepository.record(user.tenantId(), targetId)
-        : salaryRepository.record(user.tenantId(), targetId, dataScope))
-        .orElseGet(() -> {
-          salaryRepository.recordStoreId(user.tenantId(), targetId)
-              .ifPresent(storeId -> requireStoreScope(user, storeId));
-          throw new BusinessException("NOT_FOUND", "未找到工资记录", HttpStatus.NOT_FOUND);
-        });
-    if (dataScope == null) {
+    SalaryRecordResponse record = salaryRepository.record(user.tenantId(), targetId)
+        .orElseThrow(() -> new BusinessException("NOT_FOUND", "未找到工资记录", HttpStatus.NOT_FOUND));
+    if (businessScopeResolver != null) {
+      businessScopeResolver.resolve(
+          user, DataScopeDomains.SALARY, record.storeId(), null, "查看工资数据", record.month());
+    } else {
       requireStoreScope(user, record.storeId());
     }
     return record;
@@ -297,9 +301,9 @@ public class SalaryQueryService {
     return record;
   }
 
-  private void requireReadRole(AuthUser user) {
+  private void requireReadRole(AuthUser user, String salaryId, String storeId, String month) {
     if (accessControl != null) {
-      accessControl.requireSalaryRead(user);
+      accessControl.requireSalaryRead(user, salaryId, storeId, month);
       return;
     }
     if (!AccessControlService.hasAnyRole(user, "FINANCE", "STORE_MANAGER")) {
@@ -341,7 +345,16 @@ public class SalaryQueryService {
   }
 
   public String resolveStoreForWrite(AuthUser user, String requestedStoreId, String action) {
-    BusinessScope scope = resolveBusinessScope(user, requestedStoreId, null, action);
+    return resolveStoreForWrite(user, requestedStoreId, action, null);
+  }
+
+  public String resolveStoreForWrite(
+      AuthUser user,
+      String requestedStoreId,
+      String action,
+      String auditMonth
+  ) {
+    BusinessScope scope = resolveBusinessScope(user, requestedStoreId, null, action, auditMonth);
     return requireText(scope.storeId(), "STORE_REQUIRED", "请选择门店");
   }
 
@@ -372,7 +385,7 @@ public class SalaryQueryService {
     try {
       return YearMonth.parse(value.trim()).toString();
     } catch (Exception ex) {
-      throw new BusinessException("BAD_MONTH", "Month must use YYYY-MM", HttpStatus.BAD_REQUEST);
+      throw new BusinessException("BAD_MONTH", "月份格式必须使用 YYYY-MM", HttpStatus.BAD_REQUEST);
     }
   }
 
@@ -431,11 +444,12 @@ public class SalaryQueryService {
       AuthUser user,
       String storeId,
       Long brandId,
-      String action
+      String action,
+      String auditMonth
   ) {
     if (businessScopeResolver != null) {
       return businessScopeResolver.resolve(
-          user, DataScopeDomains.SALARY, storeId, brandId, action);
+          user, DataScopeDomains.SALARY, storeId, brandId, action, auditMonth);
     }
     String requestedStoreId = blankToNull(storeId);
     if (requestedStoreId == null && isStoreManager(user)) {

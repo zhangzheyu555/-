@@ -26,6 +26,19 @@ import org.springframework.web.multipart.MultipartFile;
 
 @Service
 public class StorageService {
+  /** Receipt images are deliberately bounded because this endpoint stores bytes in MySQL. */
+  private static final long MAX_EXPENSE_ATTACHMENT_BYTES = 10L * 1024 * 1024;
+  private static final Map<String, String> EXPENSE_IMAGE_EXTENSION_FORMATS = Map.of(
+      "jpg", "JPEG",
+      "jpeg", "JPEG",
+      "png", "PNG",
+      "webp", "WEBP"
+  );
+  private static final Map<String, String> EXPENSE_IMAGE_CONTENT_TYPE_FORMATS = Map.of(
+      "image/jpeg", "JPEG",
+      "image/png", "PNG",
+      "image/webp", "WEBP"
+  );
   private static final Set<String> ALLOWED_WRITE_KEYS = Set.of(
       "stores",
       "entries",
@@ -277,13 +290,36 @@ public class StorageService {
       boolean historicalInspectionEndpoint
   ) {
     String normalizedStoreId = normalizeStoreId(storeId);
-    accessControl.requireAttachmentWrite(user, normalizedStoreId);
+    String normalizedBusinessType = normalizeBusinessType(businessType);
+    String normalizedBusinessId = normalizeBusinessId(businessId);
+    boolean expenseAttachment = isExpenseAttachment(normalizedBusinessType);
+    if (expenseAttachment) {
+      // Do the document-aware checks first.  Generic attachment authorization only knows a store
+      // id, whereas a reimbursement denial must retain the document and month in its audit row.
+      ExpenseClaimScope expense = expenseClaimScope(user.tenantId(), normalizedBusinessId);
+      if (expense == null) {
+        throw new BusinessException(
+            "ATTACHMENT_BUSINESS_NOT_FOUND", "附件关联的业务记录不存在", HttpStatus.BAD_REQUEST);
+      }
+      accessControl.requireExpenseAttachmentWrite(
+          user, normalizedBusinessId, expense.storeId(), expense.month());
+      accessControl.requireExpenseStoreAccess(
+          user, normalizedBusinessId, expense.storeId(), expense.month(), "上传报销凭证");
+      accessControl.requireExpenseDocumentStore(
+          user,
+          normalizedBusinessId,
+          expense.storeId(),
+          normalizedStoreId,
+          expense.month(),
+          "上传报销凭证"
+      );
+    } else {
+      accessControl.requireAttachmentWrite(user, normalizedStoreId);
+    }
     requireStoreExists(user.tenantId(), normalizedStoreId);
     if (file == null || file.isEmpty()) {
       throw new BusinessException("EMPTY_UPLOAD_FILE", "请先选择要上传的附件", HttpStatus.BAD_REQUEST);
     }
-    String normalizedBusinessType = normalizeBusinessType(businessType);
-    String normalizedBusinessId = normalizeBusinessId(businessId);
     boolean inspectionRecordEvidence = "INSPECTION_RECORD".equals(normalizedBusinessType);
     boolean rectificationEvidence = "INSPECTION_RECTIFICATION".equals(normalizedBusinessType);
     if (inspectionRecordEvidence
@@ -308,6 +344,11 @@ public class StorageService {
     String contentType = file.getContentType() == null || file.getContentType().isBlank()
         ? "application/octet-stream"
         : file.getContentType().trim();
+    if (expenseAttachment) {
+      requireEditableExpenseClaim(
+          user.tenantId(), normalizedStoreId, normalizedBusinessId);
+      validateExpenseAttachmentMetadata(file, fileName, contentType);
+    }
     if ((inspectionRecordEvidence || rectificationEvidence) && !isImageContentType(contentType)) {
       throw new BusinessException(
           "INSPECTION_EVIDENCE_IMAGE_REQUIRED", "巡检现场证据必须上传图片原图", HttpStatus.BAD_REQUEST);
@@ -321,6 +362,9 @@ public class StorageService {
     if ((inspectionRecordEvidence || rectificationEvidence) && !hasImageSignature(content)) {
       throw new BusinessException(
           "INSPECTION_EVIDENCE_IMAGE_REQUIRED", "巡检现场证据必须上传可识别的图片原图", HttpStatus.BAD_REQUEST);
+    }
+    if (expenseAttachment) {
+      validateExpenseAttachmentSignature(fileName, contentType, content);
     }
     KeyHolder keyHolder = new GeneratedKeyHolder();
     jdbcTemplate.update(connection -> {
@@ -344,7 +388,15 @@ public class StorageService {
       return statement;
     }, keyHolder);
     Long id = keyHolder.getKey() == null ? null : keyHolder.getKey().longValue();
-    logUpload(user, normalizedStoreId, normalizedBusinessType, normalizedBusinessId, fileName);
+    logUpload(
+        user,
+        normalizedStoreId,
+        normalizedBusinessType,
+        normalizedBusinessId,
+        fileName,
+        expenseAttachment
+            ? expenseClaimMonth(user.tenantId(), normalizedStoreId, normalizedBusinessId)
+            : null);
     return new StorageUploadResponse(
         id,
         fileName,
@@ -379,7 +431,16 @@ public class StorageService {
         return Optional.empty();
       }
       requireDailyLossAttachmentRead(user, attachment.businessType());
-      if ("INSPECTION_RECTIFICATION".equals(attachment.businessType())) {
+      if (isExpenseAttachment(attachment.businessType())) {
+        // Reimbursement evidence follows finance data scope, not the looser generic attachment
+        // scope. This closes legacy attachment-read permissions from exposing finance receipts.
+        String expenseMonth = expenseClaimMonth(
+            user.tenantId(), attachment.storeId(), attachment.businessId());
+        accessControl.requireExpenseRead(
+            user, attachment.businessId(), attachment.storeId(), expenseMonth);
+        accessControl.requireExpenseStoreAccess(
+            user, attachment.businessId(), attachment.storeId(), expenseMonth, "查看报销凭证");
+      } else if ("INSPECTION_RECTIFICATION".equals(attachment.businessType())) {
         accessControl.requireInspectionRead(user);
         accessControl.requireStoreAccess(
             user, DataScopeDomains.INSPECTION, attachment.storeId(), "查看巡检整改证据");
@@ -672,6 +733,124 @@ public class StorageService {
     return jpeg || png || gif || webp;
   }
 
+  private void validateExpenseAttachmentMetadata(
+      MultipartFile file,
+      String fileName,
+      String contentType
+  ) {
+    if (file.getSize() > MAX_EXPENSE_ATTACHMENT_BYTES) {
+      throw new BusinessException(
+          "EXPENSE_ATTACHMENT_TOO_LARGE", "报销凭证图片不能超过 10MB", HttpStatus.BAD_REQUEST);
+    }
+    String extensionFormat = EXPENSE_IMAGE_EXTENSION_FORMATS.get(fileExtension(fileName));
+    String contentTypeFormat = EXPENSE_IMAGE_CONTENT_TYPE_FORMATS.get(normalizeContentType(contentType));
+    if (extensionFormat == null || contentTypeFormat == null || !extensionFormat.equals(contentTypeFormat)) {
+      throw new BusinessException(
+          "EXPENSE_ATTACHMENT_IMAGE_REQUIRED",
+          "报销凭证仅支持 JPG、JPEG、PNG 或 WebP 图片，文件扩展名和类型必须一致",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+  }
+
+  private void validateExpenseAttachmentSignature(String fileName, String contentType, byte[] content) {
+    if (content != null && content.length > MAX_EXPENSE_ATTACHMENT_BYTES) {
+      throw new BusinessException(
+          "EXPENSE_ATTACHMENT_TOO_LARGE", "报销凭证图片不能超过 10MB", HttpStatus.BAD_REQUEST);
+    }
+    String expectedFormat = EXPENSE_IMAGE_EXTENSION_FORMATS.get(fileExtension(fileName));
+    String declaredFormat = EXPENSE_IMAGE_CONTENT_TYPE_FORMATS.get(normalizeContentType(contentType));
+    String actualFormat = expenseImageFormat(content);
+    if (expectedFormat == null || !expectedFormat.equals(declaredFormat) || !expectedFormat.equals(actualFormat)) {
+      throw new BusinessException(
+          "EXPENSE_ATTACHMENT_IMAGE_REQUIRED",
+          "报销凭证图片内容与文件类型不一致，请重新选择原始图片",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+  }
+
+  private String fileExtension(String fileName) {
+    if (fileName == null) {
+      return "";
+    }
+    int dot = fileName.lastIndexOf('.');
+    if (dot < 1 || dot == fileName.length() - 1) {
+      return "";
+    }
+    return fileName.substring(dot + 1).trim().toLowerCase(java.util.Locale.ROOT);
+  }
+
+  private String normalizeContentType(String contentType) {
+    return contentType == null ? "" : contentType.trim().toLowerCase(java.util.Locale.ROOT);
+  }
+
+  private String expenseImageFormat(byte[] content) {
+    if (content == null) {
+      return null;
+    }
+    boolean jpeg = content.length >= 3
+        && (content[0] & 0xff) == 0xff && (content[1] & 0xff) == 0xd8 && (content[2] & 0xff) == 0xff;
+    if (jpeg) {
+      return "JPEG";
+    }
+    boolean png = content.length >= 8
+        && (content[0] & 0xff) == 0x89 && content[1] == 0x50 && content[2] == 0x4e && content[3] == 0x47
+        && content[4] == 0x0d && content[5] == 0x0a && content[6] == 0x1a && content[7] == 0x0a;
+    if (png) {
+      return "PNG";
+    }
+    boolean webp = content.length >= 12
+        && content[0] == 'R' && content[1] == 'I' && content[2] == 'F' && content[3] == 'F'
+        && content[8] == 'W' && content[9] == 'E' && content[10] == 'B' && content[11] == 'P';
+    return webp ? "WEBP" : null;
+  }
+
+  private void requireEditableExpenseClaim(long tenantId, String storeId, String expenseId) {
+    String status = jdbcTemplate.queryForList(
+        "select status from expense_claim where tenant_id = ? and store_id = ? and id = ?",
+        String.class,
+        tenantId,
+        storeId,
+        expenseId
+    ).stream().findFirst().orElse(null);
+    if (status == null) {
+      throw new BusinessException(
+          "ATTACHMENT_BUSINESS_NOT_FOUND", "附件关联的业务记录不存在或不属于该门店", HttpStatus.BAD_REQUEST);
+    }
+    if (!Set.of("草稿", "待补资料", "已驳回").contains(status)) {
+      throw new BusinessException(
+          "EXPENSE_ATTACHMENT_STATUS_INVALID",
+          "只有草稿、待补资料或已驳回的报销可以上传凭证",
+          HttpStatus.CONFLICT
+      );
+    }
+  }
+
+  private String expenseClaimMonth(long tenantId, String storeId, String expenseId) {
+    return jdbcTemplate.queryForList(
+        "select month from expense_claim where tenant_id = ? and store_id = ? and id = ?",
+        String.class,
+        tenantId,
+        storeId,
+        expenseId
+    ).stream().findFirst().orElse(null);
+  }
+
+  private ExpenseClaimScope expenseClaimScope(long tenantId, String expenseId) {
+    return jdbcTemplate.query("""
+        select store_id, month
+        from expense_claim
+        where tenant_id = ? and id = ?
+        """,
+        (rs, rowNum) -> new ExpenseClaimScope(rs.getString("store_id"), rs.getString("month")),
+        tenantId,
+        expenseId
+    ).stream().findFirst().orElse(null);
+  }
+
+  private record ExpenseClaimScope(String storeId, String month) {}
+
   public record AttachmentContent(String fileName, String contentType, long fileSize, byte[] content) {}
 
   public record TrainingVideoAttachment(long id, String fileName, String contentType, long fileSize) {}
@@ -895,19 +1074,31 @@ public class StorageService {
         """, user.tenantId(), user.id(), user.displayName(), key);
   }
 
-  private void logUpload(AuthUser user, String storeId, String businessType, String businessId, String fileName) {
+  private void logUpload(
+      AuthUser user,
+      String storeId,
+      String businessType,
+      String businessId,
+      String fileName,
+      String month
+  ) {
     String action = isExpenseAttachment(businessType) ? "reimbursement_attachment_upload" : "attachment_upload";
+    String targetType = isExpenseAttachment(businessType) ? "expense_claim" : businessType;
     jdbcTemplate.update("""
-        insert into operation_log(tenant_id, operator_id, operator_name, action, target_type, target_id, store_id, reason, created_at)
-        values (?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+        insert into operation_log(
+          tenant_id, operator_id, operator_name, action, target_type, target_id,
+          store_id, month, reason, created_at
+        )
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
         """,
         user.tenantId(),
         user.id(),
         user.displayName(),
         action,
-        businessType,
+        targetType,
         businessId,
         storeId,
+        month,
         fileName
     );
   }
@@ -940,9 +1131,15 @@ public class StorageService {
       targetType = "inspection_rectification";
       reason = "下载巡检整改证据";
     }
+    String month = isExpenseAttachment(attachment.businessType())
+        ? expenseClaimMonth(user.tenantId(), attachment.storeId(), attachment.businessId())
+        : null;
     jdbcTemplate.update("""
-        insert into operation_log(tenant_id, operator_id, operator_name, action, target_type, target_id, store_id, reason, created_at)
-        values (?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+        insert into operation_log(
+          tenant_id, operator_id, operator_name, action, target_type, target_id,
+          store_id, month, reason, created_at
+        )
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
         """,
         user.tenantId(),
         user.id(),
@@ -951,6 +1148,7 @@ public class StorageService {
         targetType,
         attachment.businessId(),
         attachment.storeId(),
+        month,
         reason);
   }
 

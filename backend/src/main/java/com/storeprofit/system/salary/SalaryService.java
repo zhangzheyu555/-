@@ -645,7 +645,7 @@ public class SalaryService {
     try {
       return YearMonth.parse(value.trim()).toString();
     } catch (Exception ex) {
-      throw new BusinessException("BAD_MONTH", "Month must use YYYY-MM", HttpStatus.BAD_REQUEST);
+      throw new BusinessException("BAD_MONTH", "月份格式必须使用 YYYY-MM", HttpStatus.BAD_REQUEST);
     }
   }
 

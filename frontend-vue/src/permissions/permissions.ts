@@ -55,6 +55,8 @@ export const PERMISSIONS = {
   EMPLOYEE_ASSISTANT_USE: 'employee_assistant.use',
   EMPLOYEE_ASSISTANT_KNOWLEDGE_MANAGE: 'employee_assistant.knowledge_manage',
   EMPLOYEE_ASSISTANT_HANDOFF_MANAGE: 'employee_assistant.handoff_manage',
+  KNOWLEDGE_BASE_SEARCH: 'knowledge_base.search',
+  KNOWLEDGE_BASE_MANAGE: 'knowledge_base.manage',
   ATTACHMENT_READ: 'attachment.read',
   ATTACHMENT_WRITE: 'attachment.write',
   TODO_READ: 'todo.read',

@@ -14,7 +14,10 @@ import org.springframework.stereotype.Service;
 public class AuthorizationService {
   private static final Set<String> EMPLOYEE_PERMISSION_CEILING = Set.of(
       PermissionCodes.EXAM_LEARN,
-      PermissionCodes.EMPLOYEE_ASSISTANT_USE
+      PermissionCodes.EMPLOYEE_ASSISTANT_USE,
+      // Published knowledge is intentionally read-only and still filtered by tenant/role/store in
+      // KnowledgeBaseService. It must remain available to ordinary employees, not only managers.
+      PermissionCodes.KNOWLEDGE_BASE_SEARCH
   );
   /** Supervisor takes over operations, never finance, payroll, account, store, or central-warehouse control. */
   private static final Set<String> SUPERVISOR_PERMISSION_CEILING = Set.of(
@@ -23,6 +26,9 @@ public class AuthorizationService {
       PermissionCodes.FINANCE_PROFIT_WRITE,
       PermissionCodes.FINANCE_PROFIT_IMPORT,
       PermissionCodes.FINANCE_PROFIT_DELETE,
+      PermissionCodes.EXPENSE_CREATE,
+      PermissionCodes.EXPENSE_READ,
+      PermissionCodes.EXPENSE_REVIEW,
       PermissionCodes.SALARY_READ,
       PermissionCodes.SALARY_EDIT,
       PermissionCodes.SALARY_REVIEW,
@@ -181,7 +187,6 @@ public class AuthorizationService {
           PermissionCodes.WAREHOUSE_CENTRAL_MANAGE,
           PermissionCodes.WAREHOUSE_STORE_READ,
           PermissionCodes.WAREHOUSE_REQUISITION_REVIEW,
-          PermissionCodes.DAILY_LOSS_READ,
           PermissionCodes.DAILY_LOSS_REVIEW,
           PermissionCodes.EXAM_LEARN,
           PermissionCodes.ATTACHMENT_READ,
@@ -197,9 +202,7 @@ public class AuthorizationService {
           PermissionCodes.EMPLOYEE_MANAGE,
           PermissionCodes.FINANCE_PROFIT_READ,
           PermissionCodes.FINANCE_PROFIT_WRITE,
-          PermissionCodes.DAILY_LOSS_READ,
           PermissionCodes.DAILY_LOSS_CREATE,
-          PermissionCodes.DAILY_LOSS_EXPORT,
           PermissionCodes.EXPENSE_CREATE,
           PermissionCodes.EXPENSE_READ,
           PermissionCodes.SALARY_READ,
@@ -226,7 +229,6 @@ public class AuthorizationService {
           PermissionCodes.INVENTORY_READ,
           PermissionCodes.INVENTORY_MANAGE,
           PermissionCodes.INVENTORY_REVIEW,
-          PermissionCodes.DAILY_LOSS_READ,
           PermissionCodes.DAILY_LOSS_REVIEW,
           PermissionCodes.INSPECTION_READ,
           PermissionCodes.INSPECTION_MANAGE,

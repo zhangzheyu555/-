@@ -94,7 +94,7 @@ public class ExpenseSupplementRepository {
     try {
       AttachmentMetadata value = jdbcTemplate.queryForObject("""
           select esa.id, esa.expense_id, esa.file_name, esa.content_type, esa.file_size,
-                 esa.storage_key, esa.uploaded_by, esa.uploaded_at, ec.store_id
+                 esa.storage_key, esa.uploaded_by, esa.uploaded_at, ec.store_id, ec.month
           from expense_supplement_attachment esa
           join expense_claim ec
             on ec.tenant_id = esa.tenant_id and ec.id = esa.expense_id
@@ -109,7 +109,8 @@ public class ExpenseSupplementRepository {
               rs.getLong("file_size"),
               rs.getString("storage_key"),
               rs.getObject("uploaded_by", Long.class),
-              dateTime(rs.getTimestamp("uploaded_at"))
+              dateTime(rs.getTimestamp("uploaded_at")),
+              rs.getString("month")
           ),
           tenantId,
           expenseId,
@@ -172,7 +173,8 @@ public class ExpenseSupplementRepository {
       long fileSize,
       String storageKey,
       Long uploadedBy,
-      LocalDateTime uploadedAt
+      LocalDateTime uploadedAt,
+      String month
   ) {
   }
 }

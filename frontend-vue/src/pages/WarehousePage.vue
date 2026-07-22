@@ -61,6 +61,31 @@ const requisitions = computed(() => overview.value?.requisitions || [])
 const shippedRequisitions = computed(() => requisitions.value.filter((row) => row.status === 'SHIPPED'))
 const filteredItems = computed(() => activeItems.value.filter(matchesSelectedCategory))
 const selectedCategoryLabel = computed(() => categoryLabel(warehouse.selectedCategory))
+
+function accessibleWarehouseRows() {
+  return warehouse.warehouses.filter((row) => row.enabled !== false && row.canRead !== false)
+}
+
+function warehouseForCurrentRoute() {
+  const rows = accessibleWarehouseRows()
+  const routeWarehouseId = Array.isArray(route.params.warehouseId)
+    ? route.params.warehouseId[0]
+    : route.params.warehouseId
+  if (routeWarehouseId) {
+    return rows.find((row) => String(row.id) === String(routeWarehouseId)) || null
+  }
+  const warehouseCode = String(route.meta.warehouseCode || '')
+  if (warehouseCode) {
+    return rows.find((row) => row.code === warehouseCode) || null
+  }
+  if (route.name === 'warehouse-transfers') {
+    const warehouseId = Array.isArray(route.query.warehouseId)
+      ? route.query.warehouseId[0]
+      : route.query.warehouseId
+    if (warehouseId) return rows.find((row) => String(row.id) === String(warehouseId)) || null
+  }
+  return rows.find((row) => row.type === 'CENTRAL') || rows[0] || null
+}
 watch(
   () => filteredItems.value.map((item) => item.id).join(','),
   () => {
@@ -108,7 +133,23 @@ async function refresh() {
       await warehouse.loadWarehouses()
       await Promise.all([warehouse.loadOverview(warehouse.selectedWarehouseId), warehouse.loadCategories()])
     } else {
-      await warehouse.loadAll()
+      await warehouse.loadWarehouses()
+      const target = warehouseForCurrentRoute()
+      if (!target) {
+        localError.value = '当前账号暂无可访问的仓库，请联系管理员授权。'
+        return
+      }
+      await Promise.all([
+        warehouse.selectWarehouse(target.id),
+        warehouse.loadCategories(),
+        warehouse.loadReturns(),
+      ])
+      if (route.name === 'warehouse-overview') {
+        await router.replace({
+          name: 'warehouse-detail',
+          params: { warehouseId: String(target.id) },
+        })
+      }
     }
   } catch {
     localError.value = warehouse.error || '仓库数据加载失败'
@@ -162,6 +203,13 @@ function addItemToRequisition(item: WarehouseItem) {
 onMounted(() => {
   void refresh()
 })
+
+watch(
+  () => route.name,
+  (name, previousName) => {
+    if (name === 'warehouse-overview' && previousName !== 'warehouse-overview') void refresh()
+  },
+)
 </script>
 
 <template>
@@ -234,6 +282,7 @@ onMounted(() => {
       </div>
     </template>
 
+    <div v-else-if="!businessScope.configurationError.value && showWorkbench && !overview" class="empty-state">{{ localError || '当前账号暂无可访问的仓库，请联系管理员授权。' }}</div>
     <div v-else-if="!businessScope.configurationError.value && overview" class="empty-state">当前角色无权访问仓库中心。</div>
 
     <ActionConfirmDialog

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { BarChart3, Bot, Building2, ClipboardCheck, ClipboardPenLine, Download, GraduationCap, Home, LogOut, Package, ReceiptText, ShieldCheck, UserRound, UserRoundCog, Warehouse } from 'lucide-vue-next'
+import { BarChart3, BookOpen, Bot, Building2, ClipboardCheck, ClipboardPenLine, Download, GraduationCap, Home, LogOut, Package, ReceiptText, ShieldCheck, UserRound, UserRoundCog, Warehouse } from 'lucide-vue-next'
 import { useAuthStore } from '../../stores/auth'
 import {
   resolveMenuGroups,
@@ -40,6 +40,7 @@ const menuIcons: Record<MenuIconKey, unknown> = {
   export: Download,
   inspection: ClipboardCheck,
   inventory: Package,
+  knowledge: BookOpen,
   log: ClipboardPenLine,
   platform: ShieldCheck,
   profit: BarChart3,

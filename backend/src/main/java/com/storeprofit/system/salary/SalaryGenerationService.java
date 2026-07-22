@@ -73,9 +73,9 @@ public class SalaryGenerationService {
   }
 
   public SalaryGenerateReport previewGeneration(AuthUser user, String storeId, String month) {
-    requireEditRole(user);
-    storeId = resolveStoreForWrite(user, storeId, "预览生成工资");
+    requireEditRole(user, storeId, month);
     String effectiveMonth = SalaryQueryService.normalizeMonth(month);
+    storeId = resolveStoreForWrite(user, storeId, "预览生成工资", effectiveMonth);
     requireStoreScope(user, storeId);
     if (employeeRepository == null) {
       throw new BusinessException("EMPLOYEE_REPOSITORY_UNAVAILABLE", "Employee repository is not available", HttpStatus.INTERNAL_SERVER_ERROR);
@@ -134,12 +134,12 @@ public class SalaryGenerationService {
   }
 
   private GenerateResult generateInternal(AuthUser user, SalaryGenerateRequest request) {
-    requireEditRole(user);
     if (request == null) {
       throw new BusinessException("BAD_REQUEST", "Salary generation payload is required", HttpStatus.BAD_REQUEST);
     }
-    String storeId = resolveStoreForWrite(user, request.storeId(), "生成工资");
+    requireEditRole(user, request.storeId(), request.month());
     String month = SalaryQueryService.normalizeMonth(request.month());
+    String storeId = resolveStoreForWrite(user, request.storeId(), "生成工资", month);
     requireStoreScope(user, storeId);
     if (!salaryRepository.storeExists(user.tenantId(), storeId)) {
       throw new BusinessException("STORE_NOT_FOUND", "门店不存在或不属于当前企业", HttpStatus.BAD_REQUEST);
@@ -526,7 +526,7 @@ public class SalaryGenerationService {
 
   private Preparation prepareSalary(long tenantId, String storeId, String month, EmployeeResponse employee) {
     java.util.ArrayList<String> missing = new java.util.ArrayList<>();
-    boolean partTime = isHourlyEmployee(employee);
+    boolean partTime = "兼职".equals(employee.employmentType());
     if (employee.position() == null || employee.position().isBlank()) missing.add("岗位配置");
     SalaryRepository.SalaryProfileRow profile = salaryRepository.salaryProfile(tenantId, employee.id(), month).orElse(null);
     if (!partTime && (profile == null || profile.baseSalary() == null || profile.baseSalary().compareTo(BigDecimal.ZERO) <= 0)) {
@@ -594,9 +594,9 @@ public class SalaryGenerationService {
     return "SALGEN-" + month.replace("-", "") + "-" + employeeId;
   }
 
-  private void requireEditRole(AuthUser user) {
+  private void requireEditRole(AuthUser user, String storeId, String month) {
     if (accessControl != null) {
-      accessControl.requireSalaryEdit(user);
+      accessControl.requireSalaryEdit(user, null, storeId, month);
       return;
     }
     if (!AccessControlService.hasAnyRole(user, "FINANCE")) {
@@ -626,10 +626,10 @@ public class SalaryGenerationService {
     }
   }
 
-  private String resolveStoreForWrite(AuthUser user, String storeId, String action) {
+  private String resolveStoreForWrite(AuthUser user, String storeId, String action, String month) {
     if (businessScopeResolver != null) {
       String resolved = businessScopeResolver.resolve(
-          user, DataScopeDomains.SALARY, storeId, null, action).storeId();
+          user, DataScopeDomains.SALARY, storeId, null, action, month).storeId();
       return SalaryQueryService.requireText(resolved, "STORE_REQUIRED", "请选择门店");
     }
     String requested = SalaryQueryService.blankToNull(storeId);

@@ -19,9 +19,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Service
 public class OrganizationService {
+  private static final Logger log = LoggerFactory.getLogger(OrganizationService.class);
   private final OrganizationRepository organizationRepository;
   private final DataScopeService dataScopeService;
   private final AccessControlService accessControl;
@@ -81,8 +84,9 @@ public class OrganizationService {
   }
 
   @Transactional
-  public void upsertStore(AuthUser user, StoreUpsertRequest request) {
+  public void upsertStore(AuthUser user, StoreUpsertRequest input) {
     requireStoreManage(user);
+    StoreUpsertRequest request = normalizeStoreRequest(input);
     StoreResponse existing = organizationRepository.store(user.tenantId(), request.id()).orElse(null);
     if (businessScopeResolver != null && existing != null) {
       businessScopeResolver.resolve(
@@ -92,40 +96,49 @@ public class OrganizationService {
       accessControl.requireStoreAccess(user, DataScopeDomains.STORE, request.id(), "维护门店档案");
     }
     if (organizationRepository.storeIdBelongsToOtherTenant(user.tenantId(), request.id())) {
-      throw new BusinessException("STORE_CONFLICT", "门店ID已被其他企业使用", HttpStatus.CONFLICT);
+      denyCrossTenantStoreAccess(user, request.id());
     }
     if (!organizationRepository.brandExists(user.tenantId(), request.brandId())) {
       throw new BusinessException("BRAND_NOT_FOUND", "品牌不存在或不属于当前企业", HttpStatus.BAD_REQUEST);
+    }
+    if (organizationRepository.storeCodeBelongsToAnotherStore(
+        user.tenantId(), request.code(), request.id())) {
+      throw duplicateStoreCodeException();
     }
     if (request.supplyWarehouseId() != null) {
       throw new BusinessException(
           "SUPPLY_WAREHOUSE_READ_ONLY", "供货仓由门店区域自动确定，不能手工指定", HttpStatus.BAD_REQUEST);
     }
-    // The short constructors exist only for focused legacy unit tests. The Spring-managed
-    // production service always has WarehouseTopologyService and therefore always executes
-    // the explicit region/supply-warehouse validation below.
-    if (warehouseTopologyService == null) {
-      organizationRepository.upsertStore(user.tenantId(), request);
-      return;
-    }
     String regionCode = request.regionCode();
-    if ((regionCode == null || regionCode.isBlank()) && existing != null) {
+    if (warehouseTopologyService != null && (regionCode == null || regionCode.isBlank()) && existing != null) {
       regionCode = existing.regionCode();
     }
     FacilityRow supplyWarehouse = null;
-    if (regionCode != null && !regionCode.isBlank()) {
+    if (warehouseTopologyService != null && regionCode != null && !regionCode.isBlank()) {
       regionCode = warehouseTopologyService.normalizeRegion(regionCode);
       supplyWarehouse = warehouseTopologyService.resolveSupplyWarehouse(user.tenantId(), regionCode);
     }
-    if (enabledStatus(request.status()) && (regionCode == null || supplyWarehouse == null)) {
+    if (warehouseTopologyService != null && enabledStatus(request.status()) && (regionCode == null || supplyWarehouse == null)) {
       throw new BusinessException(
           "STORE_SUPPLY_WAREHOUSE_REQUIRED", "启用门店前必须明确选择荆州或山东区域并绑定供货仓", HttpStatus.CONFLICT);
     }
     StoreUpsertRequest normalized = new StoreUpsertRequest(
         request.id(), request.code(), request.name(), request.brandId(), request.area(),
         request.manager(), request.openDate(), request.status(), request.note(), regionCode, null);
-    organizationRepository.upsertStore(
-        user.tenantId(), normalized, supplyWarehouse == null ? null : supplyWarehouse.id());
+    try {
+      if (warehouseTopologyService == null) {
+        organizationRepository.upsertStore(user.tenantId(), normalized);
+      } else {
+        organizationRepository.upsertStore(
+            user.tenantId(), normalized, supplyWarehouse == null ? null : supplyWarehouse.id());
+      }
+    } catch (DataIntegrityViolationException exception) {
+      if (organizationRepository.storeCodeBelongsToAnotherStore(
+          user.tenantId(), request.code(), request.id())) {
+        throw duplicateStoreCodeException();
+      }
+      throw exception;
+    }
     auditStore(
         user,
         existing == null ? "新增门店档案" : "保存门店档案",
@@ -164,6 +177,60 @@ public class OrganizationService {
   private boolean enabledStatus(String status) {
     String value = status == null || status.isBlank() ? "营业中" : status.trim();
     return "营业中".equals(value) || "ACTIVE".equalsIgnoreCase(value);
+  }
+
+  private StoreUpsertRequest normalizeStoreRequest(StoreUpsertRequest request) {
+    if (request == null) {
+      throw new BusinessException("STORE_REQUEST_REQUIRED", "请填写门店档案", HttpStatus.BAD_REQUEST);
+    }
+    String storeId = normalizeStoreId(request.id());
+    String name = request.name() == null ? "" : request.name().trim();
+    if (name.isBlank()) {
+      throw new BusinessException("STORE_NAME_REQUIRED", "请填写门店名称", HttpStatus.BAD_REQUEST);
+    }
+    if (request.brandId() == null || request.brandId() <= 0) {
+      throw new BusinessException("STORE_BRAND_REQUIRED", "请选择品牌", HttpStatus.BAD_REQUEST);
+    }
+    String status = request.status() == null || request.status().isBlank() ? "营业中" : request.status().trim();
+    if (!("营业中".equals(status) || "停用".equals(status) || "停业".equals(status)
+        || "ACTIVE".equalsIgnoreCase(status))) {
+      throw new BusinessException("STORE_STATUS_INVALID", "门店状态仅支持营业中、停用或停业", HttpStatus.BAD_REQUEST);
+    }
+    return new StoreUpsertRequest(
+        storeId,
+        request.code() == null ? null : request.code().trim(),
+        name,
+        request.brandId(),
+        request.area(),
+        request.manager(),
+        request.openDate(),
+        status,
+        request.note(),
+        request.regionCode(),
+        request.supplyWarehouseId()
+    );
+  }
+
+  private BusinessException duplicateStoreCodeException() {
+    return new BusinessException("STORE_CODE_DUPLICATE", "门店编号已存在，请更换后再保存", HttpStatus.CONFLICT);
+  }
+
+  private void denyCrossTenantStoreAccess(AuthUser user, String storeId) {
+    if (auditRepository != null && user != null) {
+      try {
+        auditRepository.writePermissionDenied(
+            user,
+            "维护门店档案",
+            "API",
+            storeId,
+            storeId,
+            "门店不属于当前企业"
+        );
+      } catch (RuntimeException exception) {
+        log.warn("Failed to audit cross-tenant store denial for user {}: {}", user.id(), exception.getMessage());
+      }
+    }
+    throw new BusinessException("FORBIDDEN", "当前账号没有访问该门店档案的权限", HttpStatus.FORBIDDEN);
   }
 
   private String normalizeStoreId(String storeId) {

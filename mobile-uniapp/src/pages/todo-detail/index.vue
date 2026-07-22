@@ -7,7 +7,8 @@ import StatePanel from '@/components/StatePanel.vue'
 import StatusTimeline, { type TimelineItem } from '@/components/StatusTimeline.vue'
 import { useSessionStore } from '@/stores'
 import type { RoleTodoItem } from '@/types/business'
-import { routeForTodo } from '@/utils/todoRoute'
+import { navigateToTodo } from '@/utils/todoRoute'
+import { isTodoResult, todoStatusLabel, todoStatusTone } from '@/utils/todoStatus'
 
 const session = useSessionStore()
 const todoId = ref('')
@@ -15,13 +16,11 @@ const item = ref<RoleTodoItem | null>(null)
 const loading = ref(false)
 const error = ref('')
 
-const statusLabel = computed(() => ({
-  PENDING: '待处理', IN_PROGRESS: '处理中', PENDING_REVIEW: '待复核',
-  COMPLETED: '已完成', REJECTED: '已驳回', RISK: '风险待处理',
-}[item.value?.status || ''] || item.value?.status || '未知状态'))
+const statusLabel = computed(() => item.value ? todoStatusLabel(item.value) : '未知状态')
+const statusTone = computed(() => item.value ? todoStatusTone(item.value) : 'neutral')
 const timeline = computed<TimelineItem[]>(() => item.value ? [
-  { label: '业务事项已产生', time: item.value.updatedAt, done: true },
-  { label: item.value.processStatus || statusLabel.value, time: item.value.dueAt, done: ['COMPLETED','REJECTED'].includes(item.value.status) },
+  { label: '业务事项已产生', time: item.value.occurredAt, done: true },
+  { label: item.value.processStatus || statusLabel.value, time: item.value.dueAt, done: isTodoResult(item.value) },
 ] : [])
 
 onLoad((query) => {
@@ -45,7 +44,7 @@ async function load() {
 
 function openBusiness() {
   if (!item.value) return
-  uni.navigateTo({ url: routeForTodo(item.value, session.user?.role || '') })
+  navigateToTodo(item.value, session.user?.role || '')
 }
 </script>
 
@@ -55,7 +54,7 @@ function openBusiness() {
     <StatePanel v-else-if="error" type="error" title="待办不可用" :description="error" action-text="重新加载" @action="load" />
     <template v-else-if="item">
       <view class="hero">
-        <view class="hero-top"><text class="eyebrow">{{ item.sourceModule || '业务待办' }}</text><StatusChip :label="statusLabel" tone="warning" /></view>
+        <view class="hero-top"><text class="eyebrow">{{ item.sourceModule || '业务待办' }}</text><StatusChip :label="statusLabel" :tone="statusTone" /></view>
         <text class="title">{{ item.title }}</text>
         <text class="summary">{{ item.summary }}</text>
       </view>
@@ -64,7 +63,7 @@ function openBusiness() {
         <view class="row"><text>所属门店</text><text>{{ item.storeName || item.storeId || '权限范围内事项' }}</text></view>
         <view class="row"><text>截止时间</text><text>{{ item.dueAt || '未设置' }}</text></view>
         <view class="row"><text>业务编号</text><text>{{ item.sourceRecordId || item.id }}</text></view>
-        <view class="row"><text>更新时间</text><text>{{ item.updatedAt || '—' }}</text></view>
+        <view class="row"><text>业务发生时间</text><text>{{ item.occurredAt || '—' }}</text></view>
       </view>
       <view class="detail"><StatusTimeline :items="timeline" /></view>
       <button class="primary" @click="openBusiness">{{ item.action?.label || '进入业务中心处理' }}</button>

@@ -79,6 +79,26 @@ class SalaryControllerTest {
   }
 
   @Test
+  void saveAttendanceUsesAuthenticatedUserAndDelegatesToWorkflow() {
+    SalaryAttendanceRequest request = new SalaryAttendanceRequest(
+        "s1", "emp-1", "2026-05",
+        new BigDecimal("26"), new BigDecimal("2.5"), new BigDecimal("208"));
+    SalaryRepository.AttendanceRow attendance = new SalaryRepository.AttendanceRow(
+        new BigDecimal("26.00"), new BigDecimal("208.00"), new BigDecimal("2.50"),
+        new BigDecimal("210.50"), new BigDecimal("4.00"), "MANUAL", "CONFIRMED");
+    when(authService.requireUser("Bearer token")).thenReturn(boss);
+    when(salaryWorkflowService.saveAttendance(boss, request)).thenReturn(attendance);
+
+    ApiResponse<SalaryRepository.AttendanceRow> result = controller.saveAttendance(
+        "Bearer token", request);
+
+    assertThat(result.success()).isTrue();
+    assertThat(result.data()).isSameAs(attendance);
+    verify(authService).requireUser("Bearer token");
+    verify(salaryWorkflowService).saveAttendance(boss, request);
+  }
+
+  @Test
   void updateAndDeleteUsePathId() {
     SalaryRecordRequest request = request();
     SalaryRecordResponse row = response("pay-1");

@@ -215,6 +215,21 @@ public class BusinessTodoService {
     reconcile(tenantId, normalizeMonth(month), null);
   }
 
+  /**
+   * Internal, document-triggered reconciliation for one store's reimbursement review queue.
+   * It deliberately does not recalculate profit, salary, or another store's todo rules: a store
+   * manager submitting a reimbursement has no authority to mutate those derived workflows.
+   */
+  @Transactional
+  public void reconcileExpenseReviewForStore(long tenantId, String storeId, String month) {
+    String targetStoreId = requireText(storeId, "TODO_STORE_REQUIRED", "报销待办缺少门店");
+    String targetMonth = normalizeMonth(month);
+    List<BusinessTodoDraft> drafts = pendingExpenseDrafts(tenantId, targetMonth).stream()
+        .filter(draft -> targetStoreId.equals(draft.storeId()))
+        .toList();
+    reconcileRule(tenantId, RULE_EXPENSE_REVIEW, targetMonth, drafts, targetStoreId);
+  }
+
   public DownloadedTodoAttachment attachment(AuthUser user, String todoId, String attachmentId) {
     accessControl.requireTodoRead(user);
     BusinessTodoRow row = requireVisible(user, todoId);

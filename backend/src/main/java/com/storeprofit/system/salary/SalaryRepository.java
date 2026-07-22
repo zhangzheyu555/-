@@ -493,12 +493,14 @@ public class SalaryRepository {
             submitted_by = coalesce(?, submitted_by),
             reviewed_by = ?,
             reviewed_at = case when ? is null then reviewed_at else current_timestamp end,
+            review_note = case when ? is null then review_note else null end,
             version = version + 1,
             updated_at = current_timestamp
         where tenant_id = ? and id = ? and version = ?
         """,
         status,
         submittedBy,
+        reviewedBy,
         reviewedBy,
         reviewedBy,
         tenantId,

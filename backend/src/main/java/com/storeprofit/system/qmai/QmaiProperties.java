@@ -38,6 +38,15 @@ public class QmaiProperties {
 
   private Duration timeout = Duration.ofSeconds(20);
 
+  /**
+   * Outbound access is opt-in.  Local QA can only call a loopback mock; a real integration
+   * requires an explicit LIVE setting supplied by deployment configuration.
+   */
+  private String outboundMode = "DISABLED";
+
+  /** AES key (base64, 16/24/32 bytes) used only to encrypt persisted platform secrets. */
+  private String credentialEncryptionKey = "";
+
   /** 是否具备真实调用凭证。缺任意一项即不能发起真实业务查询。 */
   public boolean isConfigured() {
     return notBlank(openId) && notBlank(grantCode) && notBlank(openKey);
@@ -146,5 +155,21 @@ public class QmaiProperties {
 
   public void setTimeout(Duration timeout) {
     this.timeout = timeout;
+  }
+
+  public String getOutboundMode() {
+    return outboundMode;
+  }
+
+  public void setOutboundMode(String outboundMode) {
+    this.outboundMode = outboundMode;
+  }
+
+  public String getCredentialEncryptionKey() {
+    return credentialEncryptionKey;
+  }
+
+  public void setCredentialEncryptionKey(String credentialEncryptionKey) {
+    this.credentialEncryptionKey = credentialEncryptionKey;
   }
 }

@@ -96,7 +96,8 @@ class SalaryWorkflowServiceTest {
         "employee-2", "store-2", "二店", "张三", "值班组长", new BigDecimal("4800.00"), "在职");
     SalaryAssignmentRequest assignment = new SalaryAssignmentRequest("store-1", "2026-05", "employee-2");
     SalaryRecordResponse saved = mock(SalaryRecordResponse.class);
-    when(salaryQueryService.resolveStoreForWrite(boss, "store-1", "添加员工到工资名单"))
+    when(salaryQueryService.resolveStoreForWrite(
+        boss, "store-1", "添加员工到工资名单", "2026-05"))
         .thenReturn("store-1");
     when(employeeRepository.record(1L, "employee-2")).thenReturn(Optional.of(employee));
     when(salaryRepository.recordForEmployeeMonth(1L, "employee-2", "2026-05"))
@@ -135,7 +136,8 @@ class SalaryWorkflowServiceTest {
     EmployeeResponse employee = employee(
         "employee-2", "store-2", "二店", "张三", "值班组长", new BigDecimal("4800.00"), "在职");
     SalaryRecordResponse existing = mock(SalaryRecordResponse.class);
-    when(salaryQueryService.resolveStoreForWrite(boss, "store-1", "添加员工到工资名单"))
+    when(salaryQueryService.resolveStoreForWrite(
+        boss, "store-1", "添加员工到工资名单", "2026-05"))
         .thenReturn("store-1");
     when(employeeRepository.record(1L, "employee-2")).thenReturn(Optional.of(employee));
     when(salaryRepository.recordForEmployeeMonth(1L, "employee-2", "2026-05"))
@@ -164,7 +166,8 @@ class SalaryWorkflowServiceTest {
     // 不会盲信前端的应发合计。
     SalaryRecordRequest request = manualSalaryRequest("1.00", "200.00");
 
-    when(salaryQueryService.resolveStoreForWrite(boss, "store-1", "保存工资记录"))
+    when(salaryQueryService.resolveStoreForWrite(
+        boss, "store-1", "保存工资记录", "2026-05"))
         .thenReturn("store-1");
     when(employeeRepository.record(1L, "employee-night")).thenReturn(Optional.of(employee));
     when(salaryRepository.record(1L, "salary-night"))

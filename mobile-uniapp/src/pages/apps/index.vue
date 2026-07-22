@@ -2,10 +2,12 @@
 import { onPullDownRefresh, onShow } from '@dcloudio/uni-app'
 import PageHeader from '@/components/PageHeader.vue'
 import { useMenuStore, useSessionStore } from '@/stores'
+import { createEdgeSwipeToHomeHandlers } from '@/platform/edgeSwipeHome'
 import type { MobileMenuItem } from '@/types/navigation'
 
 const session = useSessionStore()
 const menu = useMenuStore()
+const { onTouchStart, onTouchEnd } = createEdgeSwipeToHomeHandlers()
 
 onShow(() => { void initialize() })
 onPullDownRefresh(async () => {
@@ -27,7 +29,7 @@ function open(item: MobileMenuItem) {
 </script>
 
 <template>
-  <view class="mobile-page apps-page">
+  <view class="mobile-page apps-page" @touchstart="onTouchStart" @touchend="onTouchEnd">
     <PageHeader eyebrow="按账号权限开放" title="全部应用" description="只显示当前角色和数据范围内可使用的移动功能" />
     <view v-if="!menu.groups.length" class="state">当前账号暂无可用移动应用。</view>
     <view v-for="group in menu.groups" :key="group.key" class="group">

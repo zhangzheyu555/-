@@ -56,15 +56,31 @@ public class BusinessScopeResolver {
       Long requestedBrandId,
       String action
   ) {
+    return resolve(user, domainCode, requestedStoreId, requestedBrandId, action, null);
+  }
+
+  /**
+   * Resolves a business scope while preserving the accounting month in a rejected audit row.
+   * Most callers do not carry a month, but finance workflows do and must not lose it on a
+   * store/brand mismatch before their business service starts.
+   */
+  public BusinessScope resolve(
+      AuthUser user,
+      String domainCode,
+      String requestedStoreId,
+      Long requestedBrandId,
+      String action,
+      String auditMonth
+  ) {
     String domain = normalizeDomain(domainCode);
     if (isStoreManager(user)) {
       BusinessScope bound = requireStoreManagerScope(user, domain, action);
       String requestedStore = normalize(requestedStoreId);
       if (requestedStore != null && !requestedStore.equals(bound.storeId())) {
-        deny(user, action, "STORE", requestedStore, requestedStore, "店长请求了其他门店");
+        deny(user, action, "STORE", requestedStore, requestedStore, auditMonth, "店长请求了其他门店");
       }
       if (requestedBrandId != null && !requestedBrandId.equals(bound.brandId())) {
-        deny(user, action, "BRAND", requestedBrandId.toString(), bound.storeId(), "店长请求了其他品牌");
+        deny(user, action, "BRAND", requestedBrandId.toString(), bound.storeId(), auditMonth, "店长请求了其他品牌");
       }
       return bound;
     }
@@ -74,13 +90,13 @@ public class BusinessScopeResolver {
     StoreIdentity store = null;
     if (storeId != null) {
       if (!AccessControlService.isBoss(user) && !dataScope.allowsStore(storeId)) {
-        deny(user, action, "STORE", storeId, storeId, "门店不在当前账号的数据范围内");
+        deny(user, action, "STORE", storeId, storeId, auditMonth, "门店不在当前账号的数据范围内");
       }
       store = repository.store(user.tenantId(), storeId)
           .orElseThrow(() -> new BusinessException(
               "STORE_NOT_FOUND", "门店不存在或不属于当前企业", HttpStatus.BAD_REQUEST));
       if (requestedBrandId != null && requestedBrandId.longValue() != store.brandId()) {
-        deny(user, action, "BRAND", requestedBrandId.toString(), storeId, "品牌与门店不匹配");
+        deny(user, action, "BRAND", requestedBrandId.toString(), storeId, auditMonth, "品牌与门店不匹配");
       }
     } else if (requestedBrandId != null && !repository.brandExists(user.tenantId(), requestedBrandId)) {
       throw new BusinessException("BRAND_NOT_FOUND", "品牌不存在或不属于当前企业", HttpStatus.BAD_REQUEST);
@@ -165,9 +181,21 @@ public class BusinessScopeResolver {
       String storeId,
       String reason
   ) {
+    deny(user, action, targetType, targetId, storeId, null, reason);
+  }
+
+  private void deny(
+      AuthUser user,
+      String action,
+      String targetType,
+      String targetId,
+      String storeId,
+      String month,
+      String reason
+  ) {
     if (user != null) {
       try {
-        auditRepository.writePermissionDenied(user, action, targetType, targetId, storeId, reason);
+        auditRepository.writePermissionDenied(user, action, targetType, targetId, storeId, month, reason);
       } catch (RuntimeException ex) {
         log.warn("Failed to write business-scope denial audit for user {}: {}", user.id(), ex.getMessage());
       }

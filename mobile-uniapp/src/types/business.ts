@@ -31,6 +31,10 @@ export interface SalaryRecord {
   base?:number|null; social?:number|null; post?:number|null; meal?:number|null; fullAttendance?:number|null; commission?:number|null; overtime?:number|null; seniority?:number|null; lateNight?:number|null; subsidy?:number|null; performance?:number|null; deductUniform?:number|null; returnUniform?:number|null
   status?: string; submittedBy?:number; reviewedBy?:number; reviewedAt?:string; reviewNote?: string; paidAt?: string; version?:number
 }
+export interface SalaryEmployeePage {
+  content: SalaryRecord[]; rows?: SalaryRecord[]; total: number; totalElements?: number
+  page: number; size: number; totalPages: number
+}
 export interface EmployeeSelfProfile {
   profile: { userId: number; username: string; displayName: string; role: string }
   store: { storeId: string; storeName: string; brandName?: string | null }
@@ -70,6 +74,7 @@ export interface WarehouseItem {
   unit?: string
   purchaseUnit?: string
   stockUnit?: string
+  ingredientUnit?: string
   unitConversionText?: string
   spec?: string
   warehouseLocation?: string
@@ -87,6 +92,7 @@ export interface WarehouseItem {
   nearestExpiryDate?: string
   itemDescription?: string
   itemAttributes?: string
+  departments?: Array<{departmentName:string;departmentCode?:string;departmentGroup?:string;purchaseMethod?:string;supplierName?:string}>
   stockStatus: string
   alertLevel: string
   alertText?: string
@@ -187,7 +193,7 @@ export interface WarehouseOverview {
   movements?: WarehouseStockMovement[]
   stockBatches?: WarehouseStockBatch[]
 }
-export interface WarehouseFacility { id:number|string; code:string; name:string; type:string; enabled:boolean; canPurchase?:boolean; canRequestTransfer?:boolean; canApproveTransfer?:boolean; canShipTransfer?:boolean; canReceiveTransfer?:boolean }
+export interface WarehouseFacility { id:number|string; code:string; name:string; type:string; enabled:boolean; parentWarehouseId?:number|string; parentWarehouseName?:string; canPurchase?:boolean; canRequestTransfer?:boolean; canApproveTransfer?:boolean; canShipTransfer?:boolean; canReceiveTransfer?:boolean }
 export interface WarehouseSupplier { id:number; name:string; active:boolean }
 export interface WarehousePurchaseOrderLine { itemId:number; itemName:string; unit?:string; orderedQuantity:number; receivedQuantity:number; unitCost:number; note?:string }
 export interface WarehousePurchaseOrder { id:string; supplierName?:string; warehouseId?:number|string; warehouseName?:string; status:string; statusLabel:string; totalAmount:number; createdAt?:string; lines:WarehousePurchaseOrderLine[] }
@@ -195,7 +201,7 @@ export interface WarehouseStockMovement { id:number; itemId:number; itemName:str
 export interface WarehouseStockBatch { id:number; itemId:number; itemName:string; warehouseId?:number|string; warehouseName?:string; batchNo:string; receivedDate:string; expiryDate?:string; quantity:number; unitCost:number; status:string }
 export interface WarehouseTransferLine { id?:number; itemId:number; itemName:string; requestedQuantity:number; approvedQuantity:number; reservedQuantity?:number; shippedQuantity:number; receivedQuantity:number; inTransitQuantity:number; unitCost?:number; amount?:number; note?:string; unit?:string }
 export interface WarehouseTransfer { id:string; transferNo?:string; status:string; statusLabel?:string; sourceWarehouseId:number|string; sourceWarehouseName:string; targetWarehouseId:number|string; targetWarehouseName:string; totalAmount:number; requestedBy?:string; approvedBy?:string; shippedBy?:string; receivedBy?:string; cancelledBy?:string; note?:string; reviewNote?:string; lines:WarehouseTransferLine[]; createdAt?:string; submittedAt?:string; reviewedAt?:string; shippedAt?:string; receivedAt?:string; cancelledAt?:string }
-export interface WarehouseTransferContext { currentWarehouse:{id:number|string;name:string}; routes:Array<{sourceWarehouse:{id:number|string;name:string};targetWarehouse:{id:number|string;name:string};actions:{canCreate:boolean;canSubmit:boolean;canApprove:boolean;canReject:boolean;canShip:boolean;canReceive:boolean;canCancel:boolean};materials:Array<{itemId:number;itemName:string;unit?:string;availableQuantity:number}>}> }
+export interface WarehouseTransferContext { currentWarehouse:{id:number|string;name:string}; mode?:string; workbenchLabel?:string; todos?:{draft?:number;pendingApproval?:number;pendingShipment?:number;pendingReceipt?:number;completed?:number}; routes:Array<{sourceWarehouse:{id:number|string;name:string};targetWarehouse:{id:number|string;name:string};actions:{canCreate:boolean;canSubmit:boolean;canApprove:boolean;canReject:boolean;canShip:boolean;canReceive:boolean;canCancel:boolean};materials:Array<{itemId:number;itemName:string;unit?:string;availableQuantity:number}>}> }
 
 export interface RequisitionCreatePayload {
   storeId?: string
@@ -227,6 +233,7 @@ export interface RoleTodoItem {
     params?: Record<string, unknown>
   }
   updatedAt?: string
+  occurredAt?: string
 }
 
 export interface RoleTodoResponse {

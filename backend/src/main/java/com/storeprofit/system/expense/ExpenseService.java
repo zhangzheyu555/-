@@ -12,9 +12,15 @@ import com.storeprofit.system.platform.authorization.DataScopeService;
 import com.storeprofit.system.todo.BusinessTodoService;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.ZoneId;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -78,12 +84,15 @@ public class ExpenseService {
   }
 
   public List<ExpenseClaimResponse> claims(AuthUser user, String month, Long brandId, String storeId, String status) {
-    requireReadRole(user);
     String targetMonth = normalizeMonth(month);
     DataScope dataScope = expenseScope(user);
-    BusinessScope businessScope = resolveBusinessScope(user, storeId, brandId, "查看报销数据");
+    String requestedStoreId = blankToNull(storeId);
+    requireReadRole(user, null, requestedStoreId, targetMonth);
+    requireRequestedExpenseStoreScope(user, null, requestedStoreId, targetMonth, "查看报销数据");
+    BusinessScope businessScope = resolveBusinessScope(user, storeId, brandId, "查看报销数据", targetMonth);
+    requireReadRole(user, null, businessScope.storeId(), targetMonth);
     if (businessScope.storeId() != null) {
-      requireStoreScope(user, businessScope.storeId());
+      requireStoreScope(user, businessScope.storeId(), null, targetMonth);
       return enrichClaims(user.tenantId(), expenseClaims(
           user.tenantId(), targetMonth, businessScope.brandId(), businessScope.storeId(),
           blankToNull(status), dataScope));
@@ -92,22 +101,97 @@ public class ExpenseService {
         user.tenantId(), targetMonth, businessScope.brandId(), null, blankToNull(status), dataScope));
   }
 
+  /** Returns one scoped claim for a desktop detail page without exposing another store's record. */
+  public ExpenseClaimResponse claim(AuthUser user, String id) {
+    String targetId = requireText(id, "ID_REQUIRED", "报销单编号不能为空");
+    ExpenseRepository.ClaimScope scope = expenseRepository.claimScope(user.tenantId(), targetId).orElse(null);
+    requireReadRole(user, targetId, scope == null ? null : scope.storeId(), scope == null ? null : scope.month());
+    return requireClaim(user, targetId);
+  }
+
   @Transactional
   public ExpenseClaimResponse save(AuthUser user, String id, ExpenseClaimRequest request) {
-    requireWriteRole(user);
+    return save(user, id, request, null);
+  }
+
+  /**
+   * A retried create must reuse a stable idempotency key.  Updates keep their path id / optimistic
+   * workflow boundary and do not use this create-only key.
+   */
+  @Transactional
+  public ExpenseClaimResponse save(
+      AuthUser user,
+      String id,
+      ExpenseClaimRequest request,
+      String idempotencyKey
+  ) {
+    String normalizedIdempotencyKey = normalizeIdempotencyKey(idempotencyKey);
+    boolean idempotentCreate = (id == null || id.isBlank()) && normalizedIdempotencyKey != null;
+    String targetId = idempotentCreate ? idempotentCreateId(user, normalizedIdempotencyKey) : normalizeId(id);
+    requireWriteRole(
+        user,
+        targetId,
+        request == null ? null : request.storeId(),
+        request == null ? null : request.month());
+    requireRequestedExpenseStoreScope(
+        user,
+        targetId,
+        request == null ? null : blankToNull(request.storeId()),
+        request == null ? null : blankToNull(request.month()),
+        "保存报销数据"
+    );
     BusinessScope businessScope = resolveBusinessScope(
-        user, request == null ? null : request.storeId(), null, "保存报销数据");
+        user,
+        request == null ? null : request.storeId(),
+        null,
+        "保存报销数据",
+        request == null ? null : blankToNull(request.month()));
     ExpenseClaimRequest normalized = normalizeRequest(request, businessScope.storeId());
-    requireStoreScope(user, normalized.storeId());
+    requireStoreScope(user, normalized.storeId(), targetId, normalized.month());
     if (!expenseRepository.storeExists(user.tenantId(), normalized.storeId())) {
       throw new BusinessException("STORE_NOT_FOUND", "门店不存在或不属于当前企业", HttpStatus.BAD_REQUEST);
     }
-    String targetId = normalizeId(id);
-    expenseRepository.claimStoreId(user.tenantId(), targetId)
-        .ifPresent(existingStoreId -> requireStoreScope(user, existingStoreId));
+    ExpenseRepository.ClaimScope existingScope = expenseRepository.claimScope(user.tenantId(), targetId).orElse(null);
+    if (existingScope != null) {
+      requireStoreScope(user, existingScope.storeId(), existingScope.id(), existingScope.month());
+      if (idempotentCreate) {
+        ExpenseClaimResponse existing = requireClaimForUser(user, targetId);
+        if (!sameCreatePayload(existing, normalized)) {
+          throw new BusinessException(
+              "IDEMPOTENCY_KEY_REUSED",
+              "同一请求标识不能用于不同的报销内容",
+              HttpStatus.CONFLICT
+          );
+        }
+        return existing;
+      }
+      if (!existingScope.storeId().equals(normalized.storeId())) {
+        throw new BusinessException(
+            "EXPENSE_STORE_IMMUTABLE",
+            "已创建的报销不能变更门店，请新建报销单",
+            HttpStatus.CONFLICT
+        );
+      }
+    }
     scopedClaim(user.tenantId(), targetId, expenseScope(user))
         .ifPresent(this::requireEditableStatus);
-    expenseRepository.upsert(user.tenantId(), targetId, normalized, STATUS_DRAFT, null);
+    boolean saved = idempotentCreate
+        ? expenseRepository.insertIfAbsent(user.tenantId(), targetId, normalized, STATUS_DRAFT, null)
+        : expenseRepository.upsert(user.tenantId(), targetId, normalized, STATUS_DRAFT, null);
+    if (!saved && idempotentCreate) {
+      ExpenseClaimResponse existing = requireClaimForUser(user, targetId);
+      if (sameCreatePayload(existing, normalized)) {
+        return existing;
+      }
+      throw new BusinessException(
+          "IDEMPOTENCY_KEY_REUSED",
+          "同一请求标识不能用于不同的报销内容",
+          HttpStatus.CONFLICT
+      );
+    }
+    if (!saved) {
+      throw stateChanged();
+    }
     expenseRepository.logAction(
         user.tenantId(),
         user.id(),
@@ -118,23 +202,29 @@ public class ExpenseService {
         normalized.month(),
         "保存店长报销草稿"
     );
-    reconcileTodos(user, normalized.month());
+    reconcileTodos(user, normalized.storeId(), normalized.month());
     return requireClaim(user, targetId);
   }
 
   @Transactional
   public ExpenseClaimResponse submit(AuthUser user, String id) {
-    requireWriteRole(user);
-    ExpenseClaimResponse claim = requireClaimForUser(user, id);
-    if (STATUS_APPROVED.equals(claim.status())) {
-      throw new BusinessException("BAD_STATUS", "已完成的报销不能重复提交", HttpStatus.CONFLICT);
+    String targetId = requireText(id, "ID_REQUIRED", "报销单编号不能为空");
+    ExpenseRepository.ClaimScope scope = expenseRepository.claimScope(user.tenantId(), targetId).orElse(null);
+    requireWriteRole(user, targetId, scope == null ? null : scope.storeId(), scope == null ? null : scope.month());
+    ExpenseClaimResponse claim = requireClaimForUser(user, targetId);
+    if (!isSubmittableStatus(claim.status())) {
+      throw new BusinessException(
+          "BAD_STATUS", "只有草稿、待补资料或已驳回的报销可以提交", HttpStatus.CONFLICT);
     }
     if (claim.amount() != null
         && claim.amount().compareTo(BigDecimal.ZERO) > 0
         && !expenseRepository.hasControlledImageAttachment(user.tenantId(), claim.id(), claim.storeId())) {
       throw new BusinessException("REIMBURSEMENT_IMAGE_REQUIRED", "有金额报销必须先上传图片凭证", HttpStatus.BAD_REQUEST);
     }
-    expenseRepository.updateStatus(user.tenantId(), claim.id(), STATUS_PENDING, user.id(), null);
+    if (expenseRepository.updateStatus(
+        user.tenantId(), claim.id(), claim.status(), STATUS_PENDING, user.id(), null) == 0) {
+      throw stateChanged();
+    }
     expenseRepository.logAction(
         user.tenantId(),
         user.id(),
@@ -145,43 +235,60 @@ public class ExpenseService {
         claim.month(),
         "提交店长每日报销"
     );
-    reconcileTodos(user, claim.month());
+    reconcileTodos(user, claim.storeId(), claim.month());
     return requireClaim(user, claim.id());
   }
 
   @Transactional
   public ExpenseClaimResponse requestInfo(AuthUser user, String id, ExpenseReviewRequest request) {
-    requireReviewRole(user);
-    ExpenseClaimResponse claim = requireClaim(user, id);
+    String targetId = requireText(id, "ID_REQUIRED", "报销单编号不能为空");
+    ExpenseRepository.ClaimScope scope = expenseRepository.claimScope(user.tenantId(), targetId).orElse(null);
+    requireReviewRole(user, targetId, scope == null ? null : scope.storeId(), scope == null ? null : scope.month());
+    ExpenseClaimResponse claim = requireClaim(user, targetId);
     if (!STATUS_PENDING.equals(claim.status())) {
       throw new BusinessException("BAD_STATUS", "只有待审核的报销可以要求补充资料", HttpStatus.CONFLICT);
     }
     String note = reviewNote(request, "请补充票据或业务说明");
-    expenseRepository.updateStatus(user.tenantId(), claim.id(), STATUS_SUPPLEMENT, null, user.id());
+    if (expenseRepository.updateStatus(
+        user.tenantId(), claim.id(), STATUS_PENDING, STATUS_SUPPLEMENT, null, user.id()) == 0) {
+      throw stateChanged();
+    }
     expenseRepository.logAction(
         user.tenantId(), user.id(), user.displayName(), "expense_request_info", claim.id(), claim.storeId(), claim.month(), note);
-    reconcileTodos(user, claim.month());
+    reconcileTodos(user, claim.storeId(), claim.month());
     return requireClaim(user, claim.id());
   }
 
   @Transactional
   public ExpenseClaimResponse approve(AuthUser user, String id, ExpenseReviewRequest request) {
-    requireReviewRole(user);
     return review(user, id, STATUS_APPROVED, "reimbursement_approve", reviewNote(request, "报销审核通过"));
   }
 
   @Transactional
   public ExpenseClaimResponse reject(AuthUser user, String id, ExpenseReviewRequest request) {
-    requireReviewRole(user);
-    return review(user, id, STATUS_REJECTED, "reimbursement_reject", reviewNote(request, "报销已驳回"));
+    return review(
+        user,
+        id,
+        STATUS_REJECTED,
+        "reimbursement_reject",
+        requireLength(
+            request == null ? null : request.note(),
+            "REJECT_REASON_REQUIRED",
+            "请填写驳回原因",
+            255,
+            "驳回原因不能超过255字"
+        )
+    );
   }
 
   @Transactional
   public void delete(AuthUser user, String id) {
-    requireWriteRole(user);
-    ExpenseClaimResponse claim = requireClaimForUser(user, id);
-    if (STATUS_APPROVED.equals(claim.status())) {
-      throw new BusinessException("BAD_STATUS", "已完成的报销不能删除", HttpStatus.CONFLICT);
+    String targetId = requireText(id, "ID_REQUIRED", "报销单编号不能为空");
+    ExpenseRepository.ClaimScope scope = expenseRepository.claimScope(user.tenantId(), targetId).orElse(null);
+    requireWriteRole(user, targetId, scope == null ? null : scope.storeId(), scope == null ? null : scope.month());
+    ExpenseClaimResponse claim = requireClaimForUser(user, targetId);
+    if (!STATUS_DRAFT.equals(claim.status())) {
+      throw new BusinessException("BAD_STATUS", "只有草稿状态的报销可以删除", HttpStatus.CONFLICT);
     }
     if (supplementRepository != null && supplementRepository.hasSupplements(user.tenantId(), claim.id())) {
       throw new BusinessException(
@@ -190,9 +297,9 @@ public class ExpenseService {
           HttpStatus.CONFLICT
       );
     }
-    int deleted = expenseRepository.delete(user.tenantId(), claim.id());
+    int deleted = expenseRepository.deleteDraft(user.tenantId(), claim.id());
     if (deleted == 0) {
-      throw new BusinessException("NOT_FOUND", "报销记录不存在", HttpStatus.NOT_FOUND);
+      throw stateChanged();
     }
     expenseRepository.logAction(
         user.tenantId(),
@@ -204,15 +311,47 @@ public class ExpenseService {
         claim.month(),
         "删除店长报销草稿"
     );
-    reconcileTodos(user, claim.month());
+    reconcileTodos(user, claim.storeId(), claim.month());
+  }
+
+  /** Deletes only an editable claim's primary receipt; submitted evidence remains immutable. */
+  @Transactional
+  public void deleteAttachment(AuthUser user, String expenseId, long attachmentId) {
+    String targetId = requireText(expenseId, "ID_REQUIRED", "报销单编号不能为空");
+    ExpenseRepository.ClaimScope scope = expenseRepository.claimScope(user.tenantId(), targetId).orElse(null);
+    requireWriteRole(user, targetId, scope == null ? null : scope.storeId(), scope == null ? null : scope.month());
+    if (attachmentId <= 0) {
+      throw new BusinessException("BAD_ATTACHMENT_ID", "附件编号不正确", HttpStatus.BAD_REQUEST);
+    }
+    ExpenseClaimResponse claim = requireClaimForUser(user, targetId);
+    requireEditableStatus(claim);
+    if (expenseRepository.deleteAttachment(user.tenantId(), claim.id(), claim.storeId(), attachmentId) == 0) {
+      throw new BusinessException("ATTACHMENT_NOT_FOUND", "报销凭证不存在", HttpStatus.NOT_FOUND);
+    }
+    expenseRepository.logAction(
+        user.tenantId(),
+        user.id(),
+        user.displayName(),
+        "reimbursement_attachment_delete",
+        claim.id(),
+        claim.storeId(),
+        claim.month(),
+        "删除报销初始凭证"
+    );
   }
 
   private ExpenseClaimResponse review(AuthUser user, String id, String status, String action, String reason) {
-    ExpenseClaimResponse claim = requireClaim(user, id);
+    String targetId = requireText(id, "ID_REQUIRED", "报销单编号不能为空");
+    ExpenseRepository.ClaimScope scope = expenseRepository.claimScope(user.tenantId(), targetId).orElse(null);
+    requireReviewRole(user, targetId, scope == null ? null : scope.storeId(), scope == null ? null : scope.month());
+    ExpenseClaimResponse claim = requireClaim(user, targetId);
     if (!STATUS_PENDING.equals(claim.status())) {
       throw new BusinessException("BAD_STATUS", "只有待审核的报销可以审核", HttpStatus.CONFLICT);
     }
-    expenseRepository.updateStatus(user.tenantId(), claim.id(), status, null, user.id());
+    if (expenseRepository.updateStatus(
+        user.tenantId(), claim.id(), STATUS_PENDING, status, null, user.id()) == 0) {
+      throw stateChanged();
+    }
     expenseRepository.logAction(
         user.tenantId(),
         user.id(),
@@ -223,7 +362,7 @@ public class ExpenseService {
         claim.month(),
         reason
     );
-    reconcileTodos(user, claim.month());
+    reconcileTodos(user, claim.storeId(), claim.month());
     return requireClaim(user, claim.id());
   }
 
@@ -231,16 +370,22 @@ public class ExpenseService {
     if (request == null) {
       throw new BusinessException("BAD_REQUEST", "请完整填写报销信息", HttpStatus.BAD_REQUEST);
     }
+    String month = normalizeMonth(requireText(request.month(), "MONTH_REQUIRED", "报销月份不能为空"));
+    String expenseDate = normalizeExpenseDate(request.expenseDate(), month);
     BigDecimal amount = amount(request.amount());
     if (amount.compareTo(BigDecimal.ZERO) <= 0) {
       throw new BusinessException("BAD_AMOUNT", "报销金额必须大于0", HttpStatus.BAD_REQUEST);
     }
+    if (amount.compareTo(new BigDecimal("999999999999.99")) > 0) {
+      throw new BusinessException("BAD_AMOUNT", "报销金额不能超过999999999999.99", HttpStatus.BAD_REQUEST);
+    }
     return new ExpenseClaimRequest(
         requireText(resolvedStoreId, "STORE_REQUIRED", "请选择门店"),
-        normalizeMonth(request.month()),
+        month,
+        expenseDate,
         amount,
-        request.category(),
-        request.reason(),
+        requireLength(request.category(), "CATEGORY_REQUIRED", "报销类别不能为空", 80, "报销类别不能超过80字"),
+        requireLength(request.reason(), "REASON_REQUIRED", "报销说明不能为空", 2000, "报销说明不能超过2000字"),
         request.imageUrl()
     );
   }
@@ -252,14 +397,16 @@ public class ExpenseService {
   private ExpenseClaimResponse requireClaim(AuthUser user, String id) {
     String targetId = requireText(id, "ID_REQUIRED", "报销单编号不能为空");
     DataScope dataScope = expenseScope(user);
+    ExpenseRepository.ClaimScope rawScope = expenseRepository.claimScope(user.tenantId(), targetId).orElse(null);
     ExpenseClaimResponse claim = scopedClaim(user.tenantId(), targetId, dataScope)
         .orElseGet(() -> {
-          expenseRepository.claimStoreId(user.tenantId(), targetId)
-              .ifPresent(storeId -> requireStoreScope(user, storeId));
+          if (rawScope != null) {
+            requireStoreScope(user, rawScope.storeId(), rawScope.id(), rawScope.month());
+          }
           throw new BusinessException("NOT_FOUND", "报销记录不存在", HttpStatus.NOT_FOUND);
         });
     if (dataScope == null) {
-      requireStoreScope(user, claim.storeId());
+      requireStoreScope(user, claim.storeId(), claim.id(), claim.month());
     }
     return enrichClaim(user.tenantId(), claim);
   }
@@ -286,9 +433,13 @@ public class ExpenseService {
     }
   }
 
-  private void requireReadRole(AuthUser user) {
+  private boolean isSubmittableStatus(String status) {
+    return STATUS_DRAFT.equals(status) || STATUS_SUPPLEMENT.equals(status) || STATUS_REJECTED.equals(status);
+  }
+
+  private void requireReadRole(AuthUser user, String expenseId, String storeId, String month) {
     if (accessControl != null) {
-      accessControl.requireExpenseRead(user);
+      accessControl.requireExpenseRead(user, expenseId, storeId, month);
       return;
     }
     if (!AccessControlService.hasAnyRole(user, "FINANCE", "STORE_MANAGER")) {
@@ -296,9 +447,9 @@ public class ExpenseService {
     }
   }
 
-  private void requireWriteRole(AuthUser user) {
+  private void requireWriteRole(AuthUser user, String expenseId, String storeId, String month) {
     if (accessControl != null) {
-      accessControl.requireExpenseWrite(user);
+      accessControl.requireExpenseWrite(user, expenseId, storeId, month);
       return;
     }
     if (!AccessControlService.hasAnyRole(user, "FINANCE", "STORE_MANAGER")) {
@@ -306,9 +457,9 @@ public class ExpenseService {
     }
   }
 
-  private void requireReviewRole(AuthUser user) {
+  private void requireReviewRole(AuthUser user, String expenseId, String storeId, String month) {
     if (accessControl != null) {
-      accessControl.requireExpenseReview(user);
+      accessControl.requireExpenseReview(user, expenseId, storeId, month);
       return;
     }
     if (!AccessControlService.hasAnyRole(user, "FINANCE")) {
@@ -316,16 +467,16 @@ public class ExpenseService {
     }
   }
 
-  private void requireStoreScope(AuthUser user, String storeId) {
+  private void requireStoreScope(AuthUser user, String storeId, String expenseId, String month) {
     DataScope dataScope = expenseScope(user);
     if (dataScope != null && !dataScope.allowsStore(storeId)) {
       if (accessControl != null) {
-        accessControl.requireStoreAccess(user, DataScopeDomains.FINANCE, storeId, "处理报销数据");
+        accessControl.requireExpenseStoreAccess(user, expenseId, storeId, month, "处理报销数据");
       }
       throw new BusinessException("FORBIDDEN", "当前账号只能处理授权门店的报销数据", HttpStatus.FORBIDDEN);
     }
     if (accessControl != null) {
-      accessControl.requireStoreAccess(user, DataScopeDomains.FINANCE, storeId, "处理报销数据");
+      accessControl.requireExpenseStoreAccess(user, expenseId, storeId, month, "处理报销数据");
       return;
     }
     if (!isStoreManager(user)) {
@@ -337,13 +488,33 @@ public class ExpenseService {
     }
   }
 
+  /**
+   * Apply the document-aware finance scope before the generic business-scope resolver.  Otherwise
+   * a forged store parameter is rejected as a generic STORE event without the report month in its
+   * audit trace, which is insufficient for reimbursement verification.
+   */
+  private void requireRequestedExpenseStoreScope(
+      AuthUser user,
+      String expenseId,
+      String storeId,
+      String month,
+      String action
+  ) {
+    if (accessControl != null && storeId != null && !storeId.isBlank()) {
+      accessControl.requireExpenseStoreAccess(user, expenseId, storeId.trim(), month, action);
+    }
+  }
+
   private boolean isStoreManager(AuthUser user) {
     return "STORE_MANAGER".equals(user.role());
   }
 
-  private void reconcileTodos(AuthUser user, String month) {
+  private void reconcileTodos(AuthUser user, String storeId, String month) {
     if (businessTodoService != null) {
-      businessTodoService.reconcileAfterFinanceMutation(user, month);
+      // A reimbursement mutation is already role- and store-scope checked above. Reconcile only
+      // the affected store's reimbursement-review queue; do not let a store manager's action
+      // recalculate profit, salary, or another store's derived workflows.
+      businessTodoService.reconcileExpenseReviewForStore(user.tenantId(), storeId, month);
     }
   }
 
@@ -365,11 +536,62 @@ public class ExpenseService {
     }
   }
 
+  private String normalizeExpenseDate(String value, String month) {
+    String normalized = requireText(value, "EXPENSE_DATE_REQUIRED", "报销日期不能为空");
+    try {
+      LocalDate date = LocalDate.parse(normalized);
+      if (!YearMonth.from(date).toString().equals(month)) {
+        throw new BusinessException("EXPENSE_DATE_MONTH_MISMATCH", "报销日期必须属于所选月份", HttpStatus.BAD_REQUEST);
+      }
+      return date.toString();
+    } catch (BusinessException ex) {
+      throw ex;
+    } catch (Exception ex) {
+      throw new BusinessException("BAD_EXPENSE_DATE", "报销日期格式必须为 YYYY-MM-DD", HttpStatus.BAD_REQUEST);
+    }
+  }
+
   private String normalizeId(String id) {
     if (id != null && !id.isBlank()) {
       return id.trim();
     }
     return "EXP" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 8);
+  }
+
+  private String normalizeIdempotencyKey(String value) {
+    if (value == null || value.isBlank()) {
+      return null;
+    }
+    String normalized = value.trim();
+    if (normalized.length() > 120 || !normalized.matches("[A-Za-z0-9._:-]+")) {
+      throw new BusinessException(
+          "BAD_IDEMPOTENCY_KEY",
+          "请求标识格式不正确",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+    return normalized;
+  }
+
+  private String idempotentCreateId(AuthUser user, String key) {
+    try {
+      byte[] digest = MessageDigest.getInstance("SHA-256").digest(
+          (user.tenantId() + "|" + user.id() + "|" + key).getBytes(StandardCharsets.UTF_8));
+      return "EXP-IDEMP-" + HexFormat.of().formatHex(digest, 0, 16);
+    } catch (NoSuchAlgorithmException ex) {
+      throw new IllegalStateException("SHA-256 不可用", ex);
+    }
+  }
+
+  private boolean sameCreatePayload(ExpenseClaimResponse existing, ExpenseClaimRequest request) {
+    return existing != null
+        && Objects.equals(existing.storeId(), request.storeId())
+        && Objects.equals(existing.month(), request.month())
+        && Objects.equals(existing.expenseDate() == null ? null : existing.expenseDate().toString(), request.expenseDate())
+        && existing.amount() != null
+        && existing.amount().compareTo(request.amount()) == 0
+        && Objects.equals(existing.category(), request.category())
+        && Objects.equals(existing.reason(), request.reason());
   }
 
   private String requireText(String value, String code, String message) {
@@ -379,11 +601,25 @@ public class ExpenseService {
     return value.trim();
   }
 
+  private String requireLength(String value, String code, String requiredMessage, int maxLength, String tooLongMessage) {
+    String normalized = requireText(value, code, requiredMessage);
+    if (normalized.length() > maxLength) {
+      throw new BusinessException(code + "_TOO_LONG", tooLongMessage, HttpStatus.BAD_REQUEST);
+    }
+    return normalized;
+  }
+
   private String reviewNote(ExpenseReviewRequest request, String fallback) {
     if (request == null || request.note() == null || request.note().isBlank()) {
       return fallback;
     }
-    return request.note().trim();
+    return requireLength(
+        request.note(),
+        "REVIEW_NOTE_REQUIRED",
+        "审核说明不能为空",
+        255,
+        "审核说明不能超过255字"
+    );
   }
 
   private String blankToNull(String value) {
@@ -391,7 +627,17 @@ public class ExpenseService {
   }
 
   private BigDecimal amount(BigDecimal value) {
-    return value == null ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP) : value.setScale(2, RoundingMode.HALF_UP);
+    if (value == null) {
+      throw new BusinessException("AMOUNT_REQUIRED", "报销金额不能为空", HttpStatus.BAD_REQUEST);
+    }
+    if (value.scale() > 2) {
+      throw new BusinessException("BAD_AMOUNT", "报销金额最多保留2位小数", HttpStatus.BAD_REQUEST);
+    }
+    return value.setScale(2, RoundingMode.UNNECESSARY);
+  }
+
+  private BusinessException stateChanged() {
+    return new BusinessException("EXPENSE_STATE_CHANGED", "报销单状态已变化，请刷新后重试", HttpStatus.CONFLICT);
   }
 
   private DataScope expenseScope(AuthUser user) {
@@ -408,11 +654,12 @@ public class ExpenseService {
       AuthUser user,
       String storeId,
       Long brandId,
-      String action
+      String action,
+      String auditMonth
   ) {
     if (businessScopeResolver != null) {
       return businessScopeResolver.resolve(
-          user, DataScopeDomains.FINANCE, storeId, brandId, action);
+          user, DataScopeDomains.FINANCE, storeId, brandId, action, auditMonth);
     }
     String requestedStoreId = blankToNull(storeId);
     if (requestedStoreId == null && isStoreManager(user)) {

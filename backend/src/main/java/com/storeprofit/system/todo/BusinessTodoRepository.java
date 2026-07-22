@@ -247,7 +247,9 @@ public class BusinessTodoRepository {
         left join brand b on b.id = s.brand_id and b.tenant_id = s.tenant_id
         where e.tenant_id = :tenantId
           and e.month = :month
-          and e.status in ('待审核', '待补资料', 'PENDING', 'PENDING_INFO')
+          -- “待补资料”正在等待店长补件，不是财务可审核的待办。保留它会让财务
+          -- 看见一个无法继续处理的陈旧待办，并可能诱发重复审批操作。
+          and e.status in ('待审核', 'PENDING')
         order by e.created_at asc, e.id
         """,
         new MapSqlParameterSource()

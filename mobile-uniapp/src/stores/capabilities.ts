@@ -43,18 +43,18 @@ const CAPABILITY_RULES: Record<MobileCapabilityKey, MobileCapabilityRule> = {
   },
   warehouse: {
     roles: ['WAREHOUSE'],
-    anyPermission: ['warehouse.requisition.process', 'warehouse.central.read'],
+    anyPermission: ['warehouse.requisition.process', 'warehouse.requisition.review', 'warehouse.central.read', 'warehouse.purchase', 'warehouse.configure', 'warehouse.transfer.request', 'warehouse.transfer.approve', 'warehouse.transfer.ship', 'warehouse.transfer.receive'],
     scopeDomain: 'WAREHOUSE',
     allowedScopeModes: ['ALL', 'WAREHOUSE_LIST', 'CENTRAL_WAREHOUSE'],
   },
   inspection: {
-    roles: ['OPERATIONS', 'SUPERVISOR'],
+    roles: ['SUPERVISOR'],
     anyPermission: ['inspection.manage', 'inspection.read'],
     scopeDomain: 'INSPECTION',
     allowedScopeModes: ['ALL', 'STORE_LIST', 'OWN_STORE'],
   },
   rectification: {
-    roles: ['STORE_MANAGER', 'OPERATIONS', 'SUPERVISOR'],
+    roles: ['STORE_MANAGER', 'SUPERVISOR'],
     anyPermission: ['todo.transition', 'inspection.manage'],
     scopeDomain: 'INSPECTION',
     allowedScopeModes: ['ALL', 'STORE_LIST', 'OWN_STORE'],
@@ -94,17 +94,17 @@ const CAPABILITY_RULES: Record<MobileCapabilityKey, MobileCapabilityRule> = {
     allowedScopeModes: ['ALL', 'STORE_LIST', 'OWN_STORE', 'SELF'],
   },
   dailyLoss: {
-    roles: ['STORE_MANAGER', 'WAREHOUSE', 'OPERATIONS'],
+    roles: ['STORE_MANAGER', 'WAREHOUSE', 'SUPERVISOR'],
     anyPermission: ['daily_loss.read', 'daily_loss.create', 'daily_loss.review'],
     scopeDomain: 'WAREHOUSE',
     allowedScopeModes: ['ALL', 'WAREHOUSE_LIST', 'STORE_LIST', 'OWN_STORE'],
   },
   operations: {
-    roles: ['OPERATIONS'],
+    roles: ['SUPERVISOR'],
     anyPermission: ['operations.dashboard.read', 'inventory.read', 'inventory.manage', 'inventory.review', 'exam.report', 'platform.read', 'employee_assistant.handoff_manage'],
   },
   operationsMonitor: {
-    roles: ['OPERATIONS'],
+    roles: ['SUPERVISOR'],
     anyPermission: ['exam.report', 'platform.read', 'employee_assistant.handoff_manage'],
   },
   audit: {
@@ -112,7 +112,7 @@ const CAPABILITY_RULES: Record<MobileCapabilityKey, MobileCapabilityRule> = {
     anyPermission: ['system.audit.read'],
   },
   businessAssistant: {
-    roles: ['BOSS', 'FINANCE', 'STORE_MANAGER', 'OPERATIONS'],
+    roles: ['BOSS', 'FINANCE', 'STORE_MANAGER', 'SUPERVISOR'],
     anyPermission: ['assistant.use'],
   },
   business: {

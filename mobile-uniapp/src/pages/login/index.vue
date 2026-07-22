@@ -140,10 +140,11 @@ function requestWeChatCode(): Promise<string> {
 .login-error { margin: 0 0 22rpx; padding: 18rpx 22rpx; color: #97362f; background: #fff0ed; border-radius: 16rpx; font-size: 25rpx; line-height: 1.5; }
 .password-field { position: relative; }
 .password-input { padding-right: 124rpx; }
-.password-toggle { position: absolute; top: 2rpx; right: 2rpx; min-width: 112rpx; min-height: 88rpx; margin: 0; padding: 0 18rpx; color: $mobile-orange-dark; background: transparent; border-radius: 14rpx; font-size: 24rpx; line-height: 88rpx; }
+.password-toggle { position: absolute; top: 2rpx; right: 2rpx; min-width: 112rpx; min-height: 88rpx; margin: 0; padding: 0 18rpx; color: $mobile-orange-dark; background: transparent; border: 0; border-radius: 14rpx; font-size: 24rpx; line-height: 88rpx; }
 .password-toggle::after { border: 0; }
+.login-sheet > .mobile-primary-button { display: flex; width: 100%; border: 0; }
 .login-security { display: block; margin-top: 22rpx; color: $mobile-muted; font-size: 22rpx; line-height: 1.6; text-align: center; }
-.wechat-login-button { width: 100%; min-height: 88rpx; margin: 18rpx 0 0; color: #fff; background: #07c160; border-radius: 14rpx; font-size: 28rpx; font-weight: 700; line-height: 88rpx; }
+.wechat-login-button { display: flex; width: 100%; min-height: 88rpx; margin: 18rpx 0 0; color: #fff; background: #07c160; border: 0; border-radius: 14rpx; font-size: 28rpx; font-weight: 700; line-height: 88rpx; }
 .wechat-login-button::after { border: 0; }.wechat-hint { display: block; margin-top: 14rpx; color: $mobile-muted; font-size: 21rpx; line-height: 1.55; text-align: center; }
 .login-legal { display: block; margin-top: 10rpx; color: #a1a6af; font-size: 20rpx; line-height: 1.5; text-align: center; }
 </style>

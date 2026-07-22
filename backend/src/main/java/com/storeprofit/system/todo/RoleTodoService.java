@@ -11,6 +11,7 @@ import com.storeprofit.system.todo.RoleTodoActionRepository.RoleTodoOperationLog
 import com.storeprofit.system.todo.RoleTodoEscalationRepository.RoleTodoEscalationRecord;
 import com.storeprofit.system.todo.RoleTodoEscalationRepository.RoleTodoEscalationRow;
 import com.storeprofit.system.todo.RoleTodoRepository.DataImportIssueTodoRow;
+import com.storeprofit.system.todo.RoleTodoRepository.DailyLossReviewTodoRow;
 import com.storeprofit.system.todo.RoleTodoRepository.ExpenseTodoRow;
 import com.storeprofit.system.todo.RoleTodoRepository.InspectionTodoRow;
 import com.storeprofit.system.todo.RoleTodoRepository.ProfitRiskTodoRow;
@@ -100,6 +101,17 @@ public class RoleTodoService {
           .map(row -> applyCompletion(inspectionItem(row, updatedAt, escalatedTodoIds), completedActions, bossResolvedSourceTodoIds))
           .toList());
     }
+    if (includesDailyLossReview(audience)) {
+      // Daily-loss review shares the STORE scope used by DailyLossService for supervisors.
+      // This only projects a SUBMITTED source record; it never lets generic todo completion
+      // bypass DailyLossService.reviewReport's lock, authorization, and audit trail.
+      StoreQueryScope dailyLossScope = effectiveStoreScope(
+          user, normalized.storeId(), DataScopeDomains.STORE);
+      scopedItems.addAll(queryStoreRows(dailyLossScope, storeId -> roleTodoRepository.pendingDailyLossReviews(
+          user.tenantId(), effectiveBrandId, storeId, normalized.limit())).stream()
+          .map(row -> dailyLossReviewItem(row, updatedAt))
+          .toList());
+    }
     if (includesWarehouse(audience)) {
       StoreQueryScope warehouseScope = effectiveStoreScope(
           user, normalized.storeId(), DataScopeDomains.WAREHOUSE);
@@ -185,7 +197,13 @@ public class RoleTodoService {
     String normalizedTodoId = requireText(todoId, "BAD_TODO", "Todo id is required");
     String reason = requireText(request == null ? null : request.reason(), "BAD_REASON", "Escalation reason is required");
     String severity = normalizeEscalationSeverity(request == null ? null : request.severity());
-    requireVisibleTodo(user, sourceAudience, normalizedTodoId);
+    RoleTodoItemResponse visibleTodo = requireVisibleTodo(user, sourceAudience, normalizedTodoId);
+    if (isExpenseTodo(visibleTodo)) {
+      rejectLegacyExpenseEscalation(user, visibleTodo);
+    }
+    if (isDailyLossReviewTodo(visibleTodo)) {
+      rejectLegacyDailyLossEscalation(user, visibleTodo);
+    }
     String escalationId = "esc-" + UUID.randomUUID();
     String bossTodoId = "boss-escalation-" + escalationId;
     escalationRepository.save(new RoleTodoEscalationRecord(
@@ -217,7 +235,7 @@ public class RoleTodoService {
     String normalizedTodoId = requireText(todoId, "BAD_TODO", "Todo id is required");
     RoleTodoItemResponse visibleTodo = requireVisibleTodo(user, audience, normalizedTodoId);
     if (isInspectionTodo(visibleTodo)) {
-      actionRepository.saveOperationLog(new RoleTodoOperationLogRecord(
+      actionRepository.saveRejectedOperationLog(new RoleTodoOperationLogRecord(
           user.tenantId(),
           user.id(),
           user.displayName(),
@@ -232,6 +250,12 @@ public class RoleTodoService {
           "INSPECTION_RECTIFICATION_WORKFLOW_REQUIRED",
           "巡检整改需先上传现场证据并提交运营复核，不能通过通用待办直接完成",
           HttpStatus.CONFLICT);
+    }
+    if (isExpenseTodo(visibleTodo)) {
+      rejectLegacyExpenseCompletion(user, visibleTodo.id(), visibleTodo);
+    }
+    if (isDailyLossReviewTodo(visibleTodo)) {
+      rejectLegacyDailyLossCompletion(user, visibleTodo.id(), visibleTodo);
     }
     validateSourceReadyForManualCompletion(user, audience, normalizedTodoId);
     String note = requireText(request == null ? null : request.note(), "BAD_NOTE", "Processing note is required");
@@ -271,6 +295,13 @@ public class RoleTodoService {
     RoleTodoEscalationRow escalation = escalationRepository
         .findOpenByBossTodoId(user.tenantId(), normalizedTodoId)
         .orElseThrow(() -> new BusinessException("TODO_NOT_FOUND", "Boss todo is not open", HttpStatus.NOT_FOUND));
+    RoleTodoItemResponse sourceTodo = sourceTodoForBossAction(user, escalation);
+    if (isExpenseTodoId(escalation.sourceTodoId())) {
+      rejectLegacyExpenseCompletion(user, escalation.sourceTodoId(), sourceTodo);
+    }
+    if (isDailyLossReviewTodo(sourceTodo)) {
+      rejectLegacyDailyLossCompletion(user, escalation.sourceTodoId(), sourceTodo);
+    }
     String note = Optional.ofNullable(request)
         .map(RoleTodoCompletionRequest::note)
         .map(String::trim)
@@ -280,7 +311,6 @@ public class RoleTodoService {
       throw new BusinessException("BAD_NOTE", "Processing note is required", HttpStatus.BAD_REQUEST);
     }
     RoleTodoItemResponse bossTodo = escalationItem(escalation, now());
-    RoleTodoItemResponse sourceTodo = sourceTodoForBossAction(user, escalation);
     RoleTodoActionResultResponse result = saveCompletion(user, bossTodo, normalizedTodoId, actionType, note, request);
     saveCompletion(user, sourceTodo, escalation.sourceTodoId(), actionType + "_SOURCE", note, null);
     roleTodoRepository.markSourceHandled(user.tenantId(), escalation.sourceTodoId(), user.id());
@@ -755,6 +785,37 @@ public class RoleTodoService {
     );
   }
 
+  private RoleTodoItemResponse dailyLossReviewItem(DailyLossReviewTodoRow row, String updatedAt) {
+    String month = monthFromDate(row.lossDate());
+    return new RoleTodoItemResponse(
+        "daily-loss-review-" + row.id(),
+        "每日报损待复核：" + display(row.storeName(), row.storeId()),
+        "报损日期 " + display(row.lossDate(), "未填写") + " 已由门店提交，请核对明细和现场照片后复核。",
+        "PENDING",
+        82,
+        row.brandName(),
+        row.storeId(),
+        row.storeName(),
+        month,
+        "督导",
+        dueAtFromDateTime(row.submittedAt()),
+        "每日报损",
+        row.id(),
+        "待督导复核",
+        false,
+        "daily_loss_report",
+        updatedAt,
+        row.submittedAt(),
+        new RoleTodoActionResponse("daily-loss", "查看每日报损并复核", params(
+            "reportId", row.id(),
+            "storeId", row.storeId(),
+            "month", month,
+            "lossDate", row.lossDate(),
+            "mode", "review"
+        ))
+    );
+  }
+
   public BossTodoDashboardResponse bossDashboard(AuthUser user, RoleTodoQuery query) {
     requireTodoRead(user);
     requireAudienceAccess(user, RoleTodoAudience.BOSS);
@@ -929,6 +990,72 @@ public class RoleTodoService {
             || (item.id() != null && item.id().startsWith("inspection-")));
   }
 
+  private boolean isExpenseTodo(RoleTodoItemResponse item) {
+    return item != null && ("expense_claim".equals(item.dataSource()) || isExpenseTodoId(item.id()));
+  }
+
+  private boolean isExpenseTodoId(String todoId) {
+    return todoId != null && todoId.startsWith("expense-") && todoId.length() > "expense-".length();
+  }
+
+  private boolean isDailyLossReviewTodo(RoleTodoItemResponse item) {
+    return item != null
+        && ("daily_loss_report".equals(item.dataSource())
+            || (item.id() != null && item.id().startsWith("daily-loss-review-")));
+  }
+
+  /**
+   * Expense approval is a controlled state machine. A generic to-do completion must never be
+   * able to turn an expense into an approved/handled record, including through a boss escalation.
+   */
+  private void rejectLegacyExpenseCompletion(
+      AuthUser user,
+      String todoId,
+      RoleTodoItemResponse expenseTodo
+  ) {
+    String expenseId = isExpenseTodoId(todoId) ? todoId.substring("expense-".length()) : todoId;
+    actionRepository.saveRejectedOperationLog(new RoleTodoOperationLogRecord(
+        user.tenantId(),
+        user.id(),
+        user.displayName(),
+        "expense_approval_legacy_completion_rejected",
+        "expense_claim",
+        expenseId,
+        expenseTodo == null ? null : expenseTodo.storeId(),
+        expenseTodo == null ? null : expenseTodo.month(),
+        "报销审批必须通过报销审核流程，不能通过通用待办完成"
+    ));
+    throw new BusinessException(
+        "EXPENSE_APPROVAL_WORKFLOW_REQUIRED",
+        "报销审批必须通过报销审核流程，不能通过通用待办完成",
+        HttpStatus.CONFLICT);
+  }
+
+  /**
+   * An expense must not be escalated through the generic to-do workflow: that would create a
+   * boss to-do which still cannot legally approve, reject, or close the expense. The boss keeps
+   * the explicit expense approval endpoints instead.
+   */
+  private void rejectLegacyExpenseEscalation(AuthUser user, RoleTodoItemResponse expenseTodo) {
+    String todoId = expenseTodo == null ? null : expenseTodo.id();
+    String expenseId = isExpenseTodoId(todoId) ? todoId.substring("expense-".length()) : todoId;
+    actionRepository.saveRejectedOperationLog(new RoleTodoOperationLogRecord(
+        user.tenantId(),
+        user.id(),
+        user.displayName(),
+        "expense_approval_legacy_escalation_rejected",
+        "expense_claim",
+        expenseId,
+        expenseTodo == null ? null : expenseTodo.storeId(),
+        expenseTodo == null ? null : expenseTodo.month(),
+        "报销审批必须通过报销审核流程，不能通过通用待办上报老板待办"
+    ));
+    throw new BusinessException(
+        "EXPENSE_APPROVAL_WORKFLOW_REQUIRED",
+        "报销审批必须通过报销审核流程，不能通过通用待办上报老板待办",
+        HttpStatus.CONFLICT);
+  }
+
   private RoleTodoItemResponse applyOverdue(RoleTodoItemResponse item) {
     if (!List.of("PENDING", "REMINDER").contains(item.status())) {
       return item;
@@ -966,6 +1093,50 @@ public class RoleTodoService {
         item.occurredAt(),
         item.action()
     );
+  }
+
+  private void rejectLegacyDailyLossCompletion(
+      AuthUser user,
+      String todoId,
+      RoleTodoItemResponse dailyLossTodo
+  ) {
+    String reportId = todoId != null && todoId.startsWith("daily-loss-review-")
+        ? todoId.substring("daily-loss-review-".length())
+        : dailyLossTodo == null ? todoId : dailyLossTodo.sourceRecordId();
+    actionRepository.saveRejectedOperationLog(new RoleTodoOperationLogRecord(
+        user.tenantId(),
+        user.id(),
+        user.displayName(),
+        "daily_loss_review_legacy_completion_rejected",
+        "daily_loss_report",
+        reportId,
+        dailyLossTodo == null ? null : dailyLossTodo.storeId(),
+        dailyLossTodo == null ? null : dailyLossTodo.month(),
+        "日报损复核必须通过每日报损复核流程，不能通过通用待办完成"
+    ));
+    throw new BusinessException(
+        "DAILY_LOSS_REVIEW_WORKFLOW_REQUIRED",
+        "日报损复核必须通过每日报损复核流程，不能通过通用待办完成",
+        HttpStatus.CONFLICT);
+  }
+
+  private void rejectLegacyDailyLossEscalation(AuthUser user, RoleTodoItemResponse dailyLossTodo) {
+    String reportId = dailyLossTodo == null ? null : dailyLossTodo.sourceRecordId();
+    actionRepository.saveRejectedOperationLog(new RoleTodoOperationLogRecord(
+        user.tenantId(),
+        user.id(),
+        user.displayName(),
+        "daily_loss_review_legacy_escalation_rejected",
+        "daily_loss_report",
+        reportId,
+        dailyLossTodo == null ? null : dailyLossTodo.storeId(),
+        dailyLossTodo == null ? null : dailyLossTodo.month(),
+        "日报损复核必须通过每日报损复核流程，不能通过通用待办上报老板待办"
+    ));
+    throw new BusinessException(
+        "DAILY_LOSS_REVIEW_WORKFLOW_REQUIRED",
+        "日报损复核必须通过每日报损复核流程，不能通过通用待办上报老板待办",
+        HttpStatus.CONFLICT);
   }
 
   private RoleTodoItemResponse withStatus(RoleTodoItemResponse item, String status, String processStatus) {
@@ -1191,6 +1362,10 @@ public class RoleTodoService {
 
   private boolean includesFinance(RoleTodoAudience audience) {
     return List.of(RoleTodoAudience.BOSS, RoleTodoAudience.FINANCE).contains(audience);
+  }
+
+  private boolean includesDailyLossReview(RoleTodoAudience audience) {
+    return List.of(RoleTodoAudience.BOSS, RoleTodoAudience.SUPERVISOR).contains(audience);
   }
 
   private boolean includesDataImport(RoleTodoAudience audience) {

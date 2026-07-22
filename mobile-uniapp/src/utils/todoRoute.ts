@@ -23,6 +23,16 @@ export function routeForTodo(todo: RoleTodoItem, role: string): string {
   return appendParams(base, todo.action?.params)
 }
 
+export function navigateToTodo(todo: RoleTodoItem, role: string): void {
+  const url = routeForTodo(todo, role)
+  const path = url.split('?')[0] || url
+  if (['/pages/home/index', '/pages/todo/index', '/pages/apps/index', '/pages/message/index', '/pages/profile/index'].includes(path)) {
+    uni.switchTab({ url: path })
+    return
+  }
+  uni.navigateTo({ url })
+}
+
 function routeForSource(sourceModule: string | undefined, role: string): string {
   const source = String(sourceModule || '').trim()
   if (source.includes('巡店') || source.includes('巡检')) {

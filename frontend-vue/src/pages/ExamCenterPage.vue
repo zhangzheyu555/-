@@ -896,8 +896,9 @@ onBeforeUnmount(() => {
 
     <div v-if="reviewDetail" class="overlay" role="dialog" aria-modal="true" aria-label="考试阅卷" @click.self="requestCloseReview"><form class="drawer wide-drawer" @submit.prevent="completeReview"><header><div><h3>{{ reviewDetail.task.examineeName }} · 阅卷</h3><span>{{ reviewDetail.task.examTitle || reviewDetail.task.paperName }}</span></div><UiButton variant="ghost" icon-only aria-label="关闭阅卷" title="关闭" @click="requestCloseReview"><template #icon><X :size="18" /></template></UiButton></header><div class="review-answer-list"><article v-for="(item, index) in reviewDetail.answers" :key="item.answerId"><h4>{{ index + 1 }}. {{ item.questionText }} <span>{{ item.maxScore }} 分</span></h4><dl><div><dt>考生答案</dt><dd>{{ item.userAnswer || '未作答' }}</dd></div><div><dt>参考答案</dt><dd>{{ item.standardAnswer || '由阅卷人判断' }}</dd></div></dl><div class="review-score"><label>得分<input v-model.number="item.awardedScore" type="number" min="0" :max="item.maxScore" step="0.01" /></label><label>评语<input v-model.trim="item.reviewComment" /></label></div></article><label class="review-note">阅卷备注<textarea v-model.trim="reviewDetail.reviewNote" rows="3" /></label></div><ModalFooter><UiButton variant="secondary" @click="requestCloseReview">取消</UiButton><UiButton variant="primary" type="submit" :loading="saving">完成阅卷</UiButton></ModalFooter></form></div>
 
-    <div v-if="activeAssignment && activePaper" class="overlay exam-taking" role="dialog" aria-modal="true" aria-label="考试作答">
-      <form class="take-panel exam-answer-panel" @submit.prevent="submitExam">
+    <Teleport to="body">
+      <div v-if="activeAssignment && activePaper" class="overlay exam-taking" role="dialog" aria-modal="true" aria-label="考试作答">
+        <form class="take-panel exam-answer-panel" @submit.prevent="submitExam">
         <header>
           <div>
             <h3>{{ activeAssignment.examTitle }}</h3>
@@ -937,8 +938,9 @@ onBeforeUnmount(() => {
           <UiButton class="exam-mobile-question-action" variant="secondary" :disabled="submitting || activeQuestionIndex >= activePaper.questions.length - 1" @click="moveExamQuestion(1)">下一题</UiButton>
           <UiButton class="exam-submit-action" variant="primary" type="submit" :loading="submitting"><template #icon><Send :size="15" /></template>提交考试</UiButton>
         </ModalFooter>
-      </form>
-    </div>
+        </form>
+      </div>
+    </Teleport>
 
     <div v-if="playingVideo" class="overlay exam-taking" role="dialog" aria-modal="true" aria-label="观看学习视频"><section class="take-panel video-panel"><header><div><h3>{{ playingVideo.title }}</h3><span>{{ playingVideo.courseTitle || playingVideo.category || '学习视频' }} · 当前进度 {{ Math.round(playingVideoPercent) }}%</span></div><UiButton variant="ghost" icon-only aria-label="关闭视频" title="关闭" @click="closeVideo"><template #icon><X :size="18" /></template></UiButton></header><div class="switch-warning" :class="{ danger: seekBlocked }">{{ seekBlocked ? '不能快进到还没看过的位置，已回到当前进度。' : '学习视频不支持快进，可回看已观看的部分；观看进度自动保存。' }}</div><video ref="playerRef" class="video-player" :src="videoBlobUrl" controls controlslist="noplaybackrate nodownload" disablePictureInPicture @loadedmetadata="handleVideoLoadedMetadata" @timeupdate="handleVideoTimeUpdate" @seeking="handleVideoSeeking" @ratechange="handleVideoRateChange" @pause="() => void flushVideoProgress()" @ended="() => void flushVideoProgress(true)" /></section></div>
 

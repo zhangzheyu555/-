@@ -11,19 +11,19 @@ import ActionConfirmDialog from '../components/ui/ActionConfirmDialog.vue'
 import BrandSelect from '../components/common/BrandSelect.vue'
 import { useFinanceActions } from '../composables/useFinanceActions'
 import { useBusinessScope } from '../composables/useBusinessScope'
-import { submitExpense, type ExpenseClaim } from '../api/finance'
+import { submitExpense, type ExpenseClaim, type ExpenseClaimQuery } from '../api/finance'
 import { getStores, type StoreInfo } from '../api/operations'
 import { useFinanceStore } from '../stores/finance'
 import { useAuthStore } from '../stores/auth'
 import { PERMISSIONS } from '../permissions/permissions'
-import { isSameBrand, normalizeBrandName } from '../utils/brand'
+import { normalizeBrandName } from '../utils/brand'
 
 const finance = useFinanceStore()
 const actions = useFinanceActions()
 const auth = useAuthStore()
 const scope = useBusinessScope()
 const selectedMonth = ref('')
-const selectedBrand = ref(scope.isStoreManager.value ? scope.brandName.value : '')
+const selectedBrand = ref(scope.isStoreManager.value ? String(scope.brandId.value || '') : '')
 const selectedStore = ref(scope.scopedStoreId())
 const selectedStatus = ref('')
 const stores = ref<StoreInfo[]>([])
@@ -36,25 +36,42 @@ const requestInfoExpense = ref<ExpenseClaim | null>(null)
 
 const canEditExpense = computed(() => auth.hasPermission(PERMISSIONS.EXPENSE_CREATE))
 const canReviewExpense = computed(() => auth.hasPermission(PERMISSIONS.EXPENSE_REVIEW))
-const brandOptions = computed(() => Array.from(new Set(stores.value.map((item) => normalizeBrandName(item.brandName) || '').filter(Boolean))).map((name) => ({ name })))
+const brandOptions = computed(() => {
+  const seen = new Set<number>()
+  return stores.value.flatMap((store) => {
+    const id = Number(store.brandId)
+    const name = normalizeBrandName(store.brandName)
+    if (!Number.isSafeInteger(id) || id <= 0 || !name || seen.has(id)) return []
+    seen.add(id)
+    return [{ id, name }]
+  })
+})
+const selectedBrandId = computed<number | undefined>(() => {
+  const value = Number(selectedBrand.value)
+  return Number.isSafeInteger(value) && value > 0 ? value : undefined
+})
 const storeOptions = computed(() => {
   return stores.value
-    .filter((store) => !selectedBrand.value || isSameBrand(store.brandName, selectedBrand.value))
+    .filter((store) => !selectedBrandId.value || Number(store.brandId) === selectedBrandId.value)
     .map((store) => ({
       value: store.id,
       label: store.name || store.id,
       brandName: normalizeBrandName(store.brandName),
     }))
 })
-const statusOptions = computed(() => Array.from(new Set(finance.expenseReviews.map((item) => item.status || '').filter(Boolean))))
-const filteredExpenses = computed(() => finance.expenseReviews.filter((item) => {
-  if (scope.isStoreManager.value && item.storeId !== scope.boundStoreId.value) return false
-  if (selectedMonth.value && item.month !== selectedMonth.value) return false
-  if (selectedBrand.value && !isSameBrand(item.brandName, selectedBrand.value)) return false
-  if (selectedStore.value && item.storeId !== selectedStore.value) return false
-  if (selectedStatus.value && item.status !== selectedStatus.value) return false
-  return true
+const statusOptions = computed(() => Array.from(new Set([
+  ...finance.expenseReviews.map((item) => item.status || ''),
+  selectedStatus.value,
+].filter(Boolean))))
+const expenseQuery = computed<ExpenseClaimQuery>(() => ({
+  month: selectedMonth.value || undefined,
+  brandId: selectedBrandId.value,
+  storeId: scope.scopedStoreId(selectedStore.value) || undefined,
+  status: selectedStatus.value || undefined,
 }))
+// The API is the data-boundary authority.  It receives every selected filter;
+// this page intentionally does not simulate server filtering over a stale list.
+const filteredExpenses = computed(() => finance.expenseReviews)
 const pendingCount = computed(() => filteredExpenses.value.filter((item) => !['已完成', '已通过', 'APPROVED', '已驳回', 'REJECTED'].includes(item.status)).length)
 const doneCount = computed(() => filteredExpenses.value.filter((item) => ['已完成', '已通过', 'APPROVED'].includes(item.status)).length)
 const totalAmount = computed(() => filteredExpenses.value.reduce((total, item) => total + Number(item.amount || 0), 0))
@@ -85,7 +102,7 @@ async function refresh() {
   try {
     const results = await Promise.allSettled([
       loadStores(),
-      finance.load(),
+      finance.load(expenseQuery.value),
     ])
 
     for (const result of results) {
@@ -108,7 +125,7 @@ async function loadStores() {
       brandId: scope.brandId.value || 0,
       brandName: scope.brandName.value,
     }] : []
-    selectedBrand.value = scope.brandName.value
+    selectedBrand.value = String(scope.brandId.value || '')
     selectedStore.value = storeId
     return
   }
@@ -187,6 +204,12 @@ async function onSaved() {
   await refresh()
 }
 
+async function onClaimAttachmentDeleted() {
+  finance.error = ''
+  finance.actionMessage = '报销凭证已删除'
+  await refresh()
+}
+
 onMounted(() => {
   void refresh()
 })
@@ -195,6 +218,10 @@ watch(selectedBrand, () => {
   if (selectedStore.value && !storeOptions.value.some((store) => store.value === selectedStore.value)) {
     selectedStore.value = storeOptions.value[0]?.value || ''
   }
+})
+
+watch([selectedMonth, selectedBrand, selectedStore, selectedStatus], () => {
+  void refresh()
 })
 </script>
 
@@ -261,9 +288,9 @@ watch(selectedBrand, () => {
       @reject="actions.rejectExpense"
       @supplement="openSupplement"
       @request-info="openRequestInfo"
-      @escalate="actions.escalateExpense"
       @edit="editExpense"
       @submit="submitForReview"
+      @attachment-deleted="onClaimAttachmentDeleted"
     />
     <ExpenseFormDrawer
       v-if="formOpen"
@@ -295,6 +322,8 @@ watch(selectedBrand, () => {
       :confirm-variant="actions.confirmation.confirmVariant"
       :note-label="actions.confirmation.noteLabel"
       :note-placeholder="actions.confirmation.notePlaceholder"
+      :note-max-length="actions.confirmation.noteMaxLength"
+      :note-required="actions.confirmation.noteRequired"
       :busy="actions.confirmation.busy"
       @cancel="actions.cancelConfirmation"
       @confirm="actions.confirmAction"

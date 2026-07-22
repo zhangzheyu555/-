@@ -1,11 +1,11 @@
 import { defineStore } from 'pinia'
 import {
   approveExpense,
-  escalateFinanceTodo,
   getExpenses,
   rejectExpense,
   requestExpenseInfo,
   type ExpenseClaim,
+  type ExpenseClaimQuery,
 } from '../api/finance'
 
 interface FinanceState {
@@ -14,6 +14,8 @@ interface FinanceState {
   actioningId: string
   error: string
   actionMessage: string
+  loadSerial: number
+  lastExpenseQuery: ExpenseClaimQuery
 }
 
 export const useFinanceStore = defineStore('finance', {
@@ -23,18 +25,29 @@ export const useFinanceStore = defineStore('finance', {
     actioningId: '',
     error: '',
     actionMessage: '',
+    loadSerial: 0,
+    lastExpenseQuery: {},
   }),
   actions: {
-    async load() {
+    async load(query: ExpenseClaimQuery = {}) {
+      const requestedQuery = { ...query }
+      this.lastExpenseQuery = requestedQuery
+      const serial = ++this.loadSerial
       this.loading = true
       this.error = ''
       try {
-        this.expenseReviews = await getExpenses()
+        const rows = await getExpenses(requestedQuery)
+        // A user can change multiple filters in quick succession.  Keep the
+        // most recent response authoritative instead of rendering an older
+        // query after the latest one has already been requested.
+        if (serial !== this.loadSerial) return
+        this.expenseReviews = rows
       } catch (error) {
+        if (serial !== this.loadSerial) return
         this.error = error instanceof Error ? error.message : '报销数据加载失败'
         this.expenseReviews = []
       } finally {
-        this.loading = false
+        if (serial === this.loadSerial) this.loading = false
       }
     },
     async approveExpense(id: string) {
@@ -55,19 +68,13 @@ export const useFinanceStore = defineStore('finance', {
         this.actionMessage = '已要求补充资料'
       })
     },
-    async escalate(todoId: string, reason: string) {
-      await this.runAction(todoId, async () => {
-        await escalateFinanceTodo(todoId, reason || '该事项需要老板确认')
-        this.actionMessage = '已上报老板'
-      })
-    },
     async runAction(id: string, action: () => Promise<void>) {
       this.actioningId = id
       this.error = ''
       this.actionMessage = ''
       try {
         await action()
-        await this.load()
+        await this.load(this.lastExpenseQuery)
       } catch (error) {
         this.error = error instanceof Error ? error.message : '操作失败'
         throw error

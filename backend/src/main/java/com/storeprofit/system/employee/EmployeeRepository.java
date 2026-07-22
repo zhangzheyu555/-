@@ -321,6 +321,20 @@ public class EmployeeRepository {
     return count != null && count > 0;
   }
 
+  /**
+   * Distinguishes a foreign-tenant employee id from an unknown one without returning any
+   * employee data. Services use this only to preserve the authorization boundary (403 vs 404).
+   */
+  public boolean employeeIdBelongsToOtherTenant(long tenantId, String id) {
+    Integer count = jdbcTemplate.queryForObject(
+        "select count(*) from employee where id = ? and tenant_id <> ?",
+        Integer.class,
+        id,
+        tenantId
+    );
+    return count != null && count > 0;
+  }
+
   public void updateStatus(long tenantId, String id, String status) {
     jdbcTemplate.update(
         "update employee set status = ?, updated_at = current_timestamp where tenant_id = ? and id = ?",

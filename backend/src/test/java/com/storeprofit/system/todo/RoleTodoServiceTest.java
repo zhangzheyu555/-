@@ -447,8 +447,8 @@ class RoleTodoServiceTest {
     RoleTodoEscalationResponse financeEscalation = service.escalate(
         finance(),
         RoleTodoAudience.FINANCE,
-        "expense-exp-s1",
-        new RoleTodoEscalationRequest("凭证和金额不一致，需要老板最终判断", "RISK")
+        "profit-risk-s1-2026-07",
+        new RoleTodoEscalationRequest("利润异常需要老板最终判断", "RISK")
     );
     RoleTodoEscalationResponse warehouseEscalation = service.escalate(
         warehouse(),
@@ -638,12 +638,12 @@ class RoleTodoServiceTest {
   }
 
   @Test
-  void financeCanEscalateTodoWithReasonAndBossCanSeeIt() {
+  void financeCanEscalateProfitRiskTodoWithReasonAndBossCanSeeIt() {
     RoleTodoEscalationResponse escalation = service.escalate(
         finance(),
         RoleTodoAudience.FINANCE,
-        "expense-exp-s1",
-        new RoleTodoEscalationRequest("\u51ed\u8bc1\u7f3a\u5931\uff0c\u95e8\u5e97\u65e0\u6cd5\u8865\u9f50", "RISK")
+        "profit-risk-s1-2026-07",
+        new RoleTodoEscalationRequest("成本异常，门店无法自行核实", "RISK")
     );
 
     assertThat(escalation.escalationId()).isNotBlank();
@@ -659,9 +659,34 @@ class RoleTodoServiceTest {
         .orElseThrow();
     assertThat(bossItem.status()).isEqualTo("RISK");
     assertThat(bossItem.sourceModule()).isEqualTo("\u8d22\u52a1\u4e0a\u62a5");
-    assertThat(bossItem.sourceRecordId()).isEqualTo("expense-exp-s1");
+    assertThat(bossItem.sourceRecordId()).isEqualTo("profit-risk-s1-2026-07");
     assertThat(bossItem.escalatedToBoss()).isTrue();
-    assertThat(bossItem.summary()).contains("\u51ed\u8bc1\u7f3a\u5931");
+    assertThat(bossItem.summary()).contains("成本异常");
+  }
+
+  @Test
+  void expenseTodoCannotBeEscalatedThroughGenericWorkflowAndTheRejectionIsAudited() {
+    assertThatThrownBy(() -> service.escalate(
+        finance(),
+        RoleTodoAudience.FINANCE,
+        "expense-exp-s1",
+        new RoleTodoEscalationRequest("报销需要老板处理", "RISK")
+    ))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode())
+            .isEqualTo("EXPENSE_APPROVAL_WORKFLOW_REQUIRED"));
+
+    assertThat(jdbcTemplate.queryForObject(
+        "select count(*) from todo_escalation where source_todo_id = 'expense-exp-s1'",
+        Integer.class)).isZero();
+    assertThat(jdbcTemplate.queryForObject("""
+        select count(*) from operation_log
+        where action = 'expense_approval_legacy_escalation_rejected'
+          and target_type = 'expense_claim'
+          and target_id = 'exp-s1'
+          and store_id = 's1'
+          and month = '2026-07'
+        """, Integer.class)).isEqualTo(1);
   }
 
   @Test
@@ -696,7 +721,7 @@ class RoleTodoServiceTest {
     RoleTodoActionResultResponse result = service.resolve(
         finance(),
         RoleTodoAudience.FINANCE,
-        "expense-exp-s1",
+        "profit-risk-s1-2026-07",
         new RoleTodoCompletionRequest(
             "已经核对凭证和金额，允许进入后续流程",
             List.of(new RoleTodoAttachmentRequest("receipt.txt", "text/plain", attachmentBase64))
@@ -708,21 +733,21 @@ class RoleTodoServiceTest {
     assertThat(service.todos(finance(), RoleTodoAudience.FINANCE, new RoleTodoQuery(false, null, 50, null, null))
         .items())
         .extracting(RoleTodoItemResponse::id)
-        .doesNotContain("expense-exp-s1");
+        .doesNotContain("profit-risk-s1-2026-07");
     RoleTodoItemResponse doneItem = service.todos(finance(), RoleTodoAudience.FINANCE, new RoleTodoQuery(true, "DONE", 50, null, null))
         .items()
         .stream()
-        .filter(item -> "expense-exp-s1".equals(item.id()))
+        .filter(item -> "profit-risk-s1-2026-07".equals(item.id()))
         .findFirst()
         .orElseThrow();
     assertThat(doneItem.status()).isEqualTo("DONE");
     assertThat(doneItem.processStatus()).contains("已经核对凭证");
     assertThat(jdbcTemplate.queryForObject(
-        "select count(*) from todo_action_attachment where todo_id = 'expense-exp-s1'",
+        "select count(*) from todo_action_attachment where todo_id = 'profit-risk-s1-2026-07'",
         Integer.class
     )).isEqualTo(1);
     byte[] stored = jdbcTemplate.queryForObject(
-        "select content from todo_action_attachment where todo_id = 'expense-exp-s1'",
+        "select content from todo_action_attachment where todo_id = 'profit-risk-s1-2026-07'",
         byte[].class
     );
     assertThat(new String(stored, StandardCharsets.UTF_8)).isEqualTo("receipt checked");
@@ -733,7 +758,7 @@ class RoleTodoServiceTest {
     service.resolve(
         finance(),
         RoleTodoAudience.FINANCE,
-        "expense-exp-s1",
+        "profit-risk-s1-2026-07",
         new RoleTodoCompletionRequest("财务已核对，事项完成", List.of())
     );
 
@@ -745,7 +770,7 @@ class RoleTodoServiceTest {
           and operator_name = 'FINANCE'
           and action = 'todo_resolve'
           and target_type = 'role_todo'
-          and target_id = 'expense-exp-s1'
+          and target_id = 'profit-risk-s1-2026-07'
           and store_id = 's1'
           and month = '2026-07'
           and reason = '财务已核对，事项完成'
@@ -759,31 +784,31 @@ class RoleTodoServiceTest {
     service.resolve(
         finance(),
         RoleTodoAudience.FINANCE,
-        "expense-exp-s1",
+        "profit-risk-s1-2026-07",
         new RoleTodoCompletionRequest("已处理，默认列表不再展示", List.of())
     );
 
     RoleTodoResponse response = service.todos(finance(), RoleTodoAudience.FINANCE, new RoleTodoQuery(false, null, 50, null, null));
 
     assertThat(response.items()).extracting(RoleTodoItemResponse::id)
-        .doesNotContain("expense-exp-s1");
+        .doesNotContain("profit-risk-s1-2026-07");
     assertThat(response.stats()).filteredOn(stat -> "DONE".equals(stat.status()))
         .singleElement()
         .satisfies(stat -> assertThat(stat.count()).isEqualTo(1));
   }
 
   @Test
-  void resolvingNonInspectionTodoDoesNotChangeInspectionRawOutcome() {
+  void resolvingProfitTodoDoesNotChangeExpenseOrInspectionBusinessState() {
     service.resolve(
         finance(),
         RoleTodoAudience.FINANCE,
-        "expense-exp-s1",
-        new RoleTodoCompletionRequest("财务已核对金额和凭证，报销事项完成", List.of())
+        "profit-risk-s1-2026-07",
+        new RoleTodoCompletionRequest("财务已核对成本与利润数据", List.of())
     );
     assertThat(jdbcTemplate.queryForObject(
         "select status from expense_claim where id = 'exp-s1'",
         String.class
-    )).isEqualTo("已完成");
+    )).isEqualTo("待审核");
     assertThat(jdbcTemplate.queryForObject(
         "select passed from inspection_record where id = 'insp-s1'",
         Integer.class
@@ -792,6 +817,34 @@ class RoleTodoServiceTest {
         "select count(*) from todo_action where todo_id = 'inspection-insp-s1' and status = 'DONE'",
         Integer.class
     )).isZero();
+  }
+
+  @Test
+  void expenseTodoCannotBeResolvedThroughGenericWorkflowAndTheRejectionIsAudited() {
+    assertThatThrownBy(() -> service.resolve(
+        finance(),
+        RoleTodoAudience.FINANCE,
+        "expense-exp-s1",
+        new RoleTodoCompletionRequest("报销已核对", List.of())
+    ))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode())
+            .isEqualTo("EXPENSE_APPROVAL_WORKFLOW_REQUIRED"));
+
+    assertThat(jdbcTemplate.queryForObject(
+        "select status from expense_claim where id = 'exp-s1'",
+        String.class)).isEqualTo("待审核");
+    assertThat(jdbcTemplate.queryForObject(
+        "select count(*) from todo_action where todo_id = 'expense-exp-s1' and status = 'DONE'",
+        Integer.class)).isZero();
+    assertThat(jdbcTemplate.queryForObject("""
+        select count(*) from operation_log
+        where action = 'expense_approval_legacy_completion_rejected'
+          and target_type = 'expense_claim'
+          and target_id = 'exp-s1'
+          and store_id = 's1'
+          and month = '2026-07'
+        """, Integer.class)).isEqualTo(1);
   }
 
   @Test

@@ -183,7 +183,7 @@ class ExpenseSupplementServiceTest {
   void enforcesExpenseRoleAndStoreScopeForSubmitAndRead() {
     AuthUser warehouse = user(5L, "WAREHOUSE", "s1");
     doThrow(new BusinessException("FORBIDDEN", "forbidden", HttpStatus.FORBIDDEN))
-        .when(accessControl).requireExpenseWrite(warehouse);
+        .when(accessControl).requireExpenseWrite(warehouse, "exp-1", "s1", "2026-05");
     assertBusinessCode(
         () -> service.submit(warehouse, "exp-1", "补充说明", List.of()),
         "FORBIDDEN"
@@ -191,12 +191,13 @@ class ExpenseSupplementServiceTest {
 
     AuthUser otherManager = manager("s2");
     doThrow(new BusinessException("FORBIDDEN", "forbidden", HttpStatus.FORBIDDEN))
-        .when(accessControl).requireStoreAccess(otherManager, "s1", "补充报销资料");
+        .when(accessControl).requireExpenseStoreAccess(
+            otherManager, "exp-1", "s1", "2026-05", "补充报销资料");
     assertBusinessCode(
         () -> service.submit(otherManager, "exp-1", "补充说明", List.of()),
         "FORBIDDEN"
     );
-    verify(accessControl).requireExpenseWrite(warehouse);
+    verify(accessControl).requireExpenseWrite(warehouse, "exp-1", "s1", "2026-05");
   }
 
   @Test
@@ -213,7 +214,8 @@ class ExpenseSupplementServiceTest {
 
     AuthUser otherManager = manager("s2");
     doThrow(new BusinessException("FORBIDDEN", "forbidden", HttpStatus.FORBIDDEN))
-        .when(accessControl).requireStoreAccess(otherManager, "s1", "查看报销补充资料附件");
+        .when(accessControl).requireExpenseStoreAccess(
+            otherManager, "exp-1", "s1", "2026-05", "查看报销补充资料附件");
     assertBusinessCode(
         () -> service.attachment(otherManager, "exp-1", attachmentId, false),
         "FORBIDDEN"

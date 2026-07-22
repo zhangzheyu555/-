@@ -185,6 +185,20 @@ public class OrganizationRepository {
     return count != null && count > 0;
   }
 
+  public boolean storeCodeBelongsToAnotherStore(long tenantId, String code, String storeId) {
+    if (code == null || code.isBlank()) {
+      return false;
+    }
+    Integer count = jdbcTemplate.queryForObject(
+        "select count(*) from store_branch where tenant_id = ? and code = ? and id <> ?",
+        Integer.class,
+        tenantId,
+        code.trim(),
+        storeId
+    );
+    return count != null && count > 0;
+  }
+
   public int brandCount(long tenantId) {
     Integer count = jdbcTemplate.queryForObject("select count(*) from brand where tenant_id = ?", Integer.class, tenantId);
     return count == null ? 0 : count;

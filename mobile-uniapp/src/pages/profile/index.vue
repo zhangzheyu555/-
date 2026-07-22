@@ -6,11 +6,13 @@ import StatusChip from '@/components/StatusChip.vue'
 import { getMobileEmployeeProfile } from '@/api/business'
 import { bindWeChat as bindWeChatApi, weChatBindingStatus } from '@/api/auth'
 import { checkVersion, promptVersionUpdate, requestNotification, runtimePlatform } from '@/platform'
+import { createEdgeSwipeToHomeHandlers } from '@/platform/edgeSwipeHome'
 import { useContextStore, useMenuStore, useSessionStore } from '@/stores'
 import type { EmployeeSelfProfile } from '@/types/business'
 import type { WeChatBindingStatus } from '@/types/auth'
 
 const session = useSessionStore()
+const { onTouchStart, onTouchEnd } = createEdgeSwipeToHomeHandlers()
 const menu = useMenuStore()
 const context = useContextStore()
 const versionMessage = ref('')
@@ -112,7 +114,7 @@ async function logout(): Promise<void> {
 </script>
 
 <template>
-  <view class="mobile-page profile-page mobile-stack">
+  <view class="mobile-page profile-page mobile-stack" @touchstart="onTouchStart" @touchend="onTouchEnd">
     <view class="profile-hero">
       <view class="profile-avatar">{{ session.user?.displayName?.charAt(0) || '?' }}</view>
       <view class="profile-copy">

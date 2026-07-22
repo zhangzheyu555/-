@@ -163,11 +163,6 @@ function applyInitialScope() {
   actionError.value = '该门店已停用或不在当前工资权限范围内，不能继续查看或编辑工资。'
 }
 
-function updateBrand(event: Event) {
-  const value = (event.target as HTMLSelectElement).value
-  page.selectedBrandId.value = value ? Number(value) : undefined
-}
-
 async function previewGeneration() {
   if (!page.effectiveStoreId.value || page.effectiveStoreId.value === 'all') {
     actionError.value = '请先选择具体门店，再生成本月工资。'
@@ -349,7 +344,6 @@ async function saveDetails(record: SalaryRecord, attendanceDays: number, overtim
     actionError.value = userError(error, '工资明细保存失败。')
   }
 }
-
 watch(page.filteredRows, (rows) => {
   if (!rows.some((row) => rowKey(row) === selectedRowKey.value)) selectedRowKey.value = rows[0] ? rowKey(rows[0]) : ''
 }, { immediate: true })
@@ -379,18 +373,8 @@ onMounted(async () => {
       <div class="title-block"><h1>{{ title }}</h1><span>{{ page.selectedMonth.value }} · {{ page.total.value }} 名员工</span></div>
       <div class="head-controls">
         <input v-model="page.selectedMonth.value" type="month" aria-label="月份" />
-        <select
-          v-if="!page.isStoreManager.value"
-          :value="page.selectedBrandId.value ?? ''"
-          :disabled="page.storesLoading.value || page.isOwnStoreScope.value"
-          aria-label="品牌"
-          @change="updateBrand"
-        >
-          <option value="">全部品牌</option>
-          <option v-for="brand in page.brandOptions.value" :key="brand.id" :value="brand.id">{{ brand.name }}</option>
-        </select>
           <select v-if="!page.isStoreManager.value" v-model="page.selectedStoreId.value" :disabled="page.storesLoading.value || page.isOwnStoreScope.value" aria-label="门店">
-            <option v-if="!page.isOwnStoreScope.value" value="all">{{ page.selectedBrandId.value === undefined ? '全部授权门店' : '该品牌全部门店' }}</option>
+            <option v-if="!page.isOwnStoreScope.value" value="all">全部授权门店</option>
           <option v-for="store in page.filteredAccessibleStores.value" :key="store.id" :value="store.id">{{ store.name }}</option>
         </select>
         <select v-model="page.statusFilter.value" aria-label="工资状态"><option v-for="option in STATUS_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option></select>
@@ -463,11 +447,11 @@ onMounted(async () => {
       />
       <SalaryDetailPanel
         :record="selectedRecord" :revenue="revenue ?? 0" :can-edit="page.canEdit.value" :can-review="page.canReview.value" :can-pay="page.canPay.value"
-      :actioning-id="workflow.actioningId.value"
+        :actioning-id="workflow.actioningId.value"
         @submit="workflow.doSubmit" @approve="workflow.doApprove" @reject="workflow.doReject" @mark-paid="markPaid"
-      @preview="previewGeneration"
-      @save-attendance="saveAttendance"
-      @save-details="saveDetails"
+        @preview="previewGeneration"
+        @save-attendance="saveAttendance"
+        @save-details="saveDetails"
       />
     </section>
 
@@ -529,7 +513,7 @@ onMounted(async () => {
 .business-metrics article { min-height: 92px; padding: 14px 18px; border: 1px solid #dfe8e6; border-radius: 6px; background: #fff; }.business-metrics > article > span { color: #526765; font-size: 14px; }.business-metrics b { display: block; margin-top: 8px; font-size: 25px; line-height: 1; font-variant-numeric: tabular-nums; }.business-metrics small { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 9px; color: #6f817f; font-size: 12px; }.business-metrics small span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.business-metrics small button,.aux-warning button,.page-error button { flex: none; padding: 0; border: 0; background: transparent; color: #27756e; font-size: 12px; font-weight: 600; cursor: pointer; }
 .rule-bar { border: 1px solid #d9e7e5; border-radius: 5px; background: #f9fbfb; }.rule-bar summary { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 40px; padding: 0 14px; color: #526765; cursor: pointer; list-style: none; }.rule-bar summary::-webkit-details-marker { display: none; }.rule-bar summary > span { display: inline-flex; align-items: center; gap: 10px; }.rule-bar summary b { color: #276b65; font-size: 14px; }.rule-bar summary span:last-child { color: #27756e; font-size: 13px; }.rule-bar[open] summary svg { transform: rotate(180deg); }.rule-bar > div { padding: 10px 14px; border-top: 1px solid #e2ebe9; color: #526765; font-size: 13px; }
 .table-tools { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 2px; }.table-tools > div { display: flex; gap: 8px; }.table-tools > .salary-search { width: 300px; flex: none; }.filter-button { border: 1px solid #d8e4e2; background: #fff; color: #526765; }
-.salary-workspace { display: grid; grid-template-columns: minmax(0, 3fr) minmax(400px, 2fr); gap: 18px; align-items: start; min-width: 0; }
+.salary-workspace { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 18px; align-items: start; min-width: 0; }
 .page-error,.aux-warning { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 12px; border-radius: 4px; font-size: 13px; }.page-error { border: 1px solid #efc9c2; background: #fff5f3; color: #a93f31; }.aux-warning { border: 1px solid #eadfbd; background: #fffaf0; color: #7b6533; }.inline-error,.success-box { padding: 9px 12px; border-radius: 4px; font-size: 13px; }.inline-error { border-left: 3px solid #d8583f; background: #fff2ef; color: #b94736; }.success-box { border-left: 3px solid #276b65; background: #eef7f5; color: #245f59; }
 @media (max-width: 1120px) { .salary-workspace { grid-template-columns: 1fr; }.business-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 </style>

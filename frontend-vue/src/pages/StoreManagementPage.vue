@@ -1,7 +1,8 @@
 ﻿<script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { Home, Pencil, Power, RefreshCw, Trash2, X } from 'lucide-vue-next'
+import { Home, Pencil, Plus, Power, RefreshCw, Trash2, X } from 'lucide-vue-next'
 import {
+  createStore,
   deleteStore,
   getBrands,
   getStores,
@@ -28,10 +29,15 @@ const editorOpen = ref(false)
 const editingStore = ref<StoreInfo | null>(null)
 const confirmTarget = ref<{ type: 'toggle' | 'delete'; store: StoreInfo } | null>(null)
 const form = reactive<StorePayload>(emptyForm())
+const statusFilter = ref<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL')
 
-const activeStoreCount = computed(() => stores.value.filter((store) => !store.status || store.status === '营业中').length)
+const activeStoreCount = computed(() => stores.value.filter(isActiveStore).length)
+const filteredStores = computed(() => stores.value.filter((store) => {
+  if (statusFilter.value === 'ALL') return true
+  return statusFilter.value === 'ACTIVE' ? isActiveStore(store) : !isActiveStore(store)
+}))
 const canManageStores = computed(() => isBossRole(auth.role))
-const editorTitle = computed(() => editingStore.value ? `编辑门店档案：${editingStore.value.name}` : '编辑门店档案')
+const editorTitle = computed(() => editingStore.value ? `编辑门店档案：${editingStore.value.name}` : '新增门店档案')
 const confirmTitle = computed(() => {
   const target = confirmTarget.value
   if (!target) return ''
@@ -91,7 +97,7 @@ function brandName(id: number) {
 }
 
 function isActiveStore(store: StoreInfo) {
-  return !store.status || store.status === '营业中'
+  return !store.status || store.status === '营业中' || store.status.toUpperCase() === 'ACTIVE'
 }
 
 function payloadFromStore(store: StoreInfo, overrides: Partial<StorePayload> = {}): StorePayload {
@@ -118,6 +124,14 @@ function openEditor(store: StoreInfo) {
   editorOpen.value = true
 }
 
+function openCreateEditor() {
+  editingStore.value = null
+  Object.assign(form, emptyForm())
+  error.value = ''
+  notice.value = ''
+  editorOpen.value = true
+}
+
 function closeEditor() {
   if (saving.value) return
   editorOpen.value = false
@@ -127,11 +141,12 @@ function closeEditor() {
 
 async function saveEditor() {
   if (!canSaveEditor.value || saving.value) return
+  const creating = !editingStore.value
   saving.value = true
   error.value = ''
   notice.value = ''
   try {
-    await updateStore({
+    const payload = {
       id: form.id.trim(),
       code: form.code?.trim() || '',
       name: form.name.trim(),
@@ -142,8 +157,13 @@ async function saveEditor() {
       status: form.status || '营业中',
       note: form.note?.trim() || '',
       regionCode: form.regionCode?.trim() || '',
-    })
-    notice.value = '门店档案已保存。'
+    }
+    if (creating) {
+      await createStore(payload)
+    } else {
+      await updateStore(payload)
+    }
+    notice.value = creating ? '门店档案已新增。' : '门店档案已保存。'
     editorOpen.value = false
     editingStore.value = null
     Object.assign(form, emptyForm())
@@ -201,6 +221,9 @@ onMounted(() => {
     <PageHeader>
       <template #actions>
         <div class="store-toolbar">
+          <button v-if="canManageStores" class="primary-button" type="button" :disabled="loading || saving" @click="openCreateEditor">
+            <Plus :size="16" />新增门店
+          </button>
           <button class="ghost-button" type="button" :disabled="loading" @click="load">
             <RefreshCw :size="16" />刷新
           </button>
@@ -229,12 +252,20 @@ onMounted(() => {
 
     <section class="content-card">
       <div class="table-heading">
-        <div class="stores-title">
+          <div class="stores-title">
             <Home :size="20" />
             <div>
               <h3>门店档案</h3>
             </div>
           </div>
+        <label class="store-status-filter">
+          状态筛选
+          <select v-model="statusFilter" aria-label="门店状态筛选">
+            <option value="ALL">全部</option>
+            <option value="ACTIVE">启用</option>
+            <option value="INACTIVE">停用</option>
+          </select>
+        </label>
       </div>
       <div v-if="loading && !stores.length" class="empty-state compact">正在读取门店档案...</div>
       <div v-else class="table-wrap">
@@ -252,7 +283,7 @@ onMounted(() => {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="store in stores" :key="store.id">
+            <tr v-for="store in filteredStores" :key="store.id">
               <td><b>{{ store.name }}</b><small>{{ store.id }}</small></td>
               <td>{{ store.code || '-' }}</td>
               <td><BrandBadge :brand-name="store.brandName || brandName(store.brandId)" /></td>
@@ -274,6 +305,9 @@ onMounted(() => {
                 </div>
               </td>
             </tr>
+            <tr v-if="!filteredStores.length">
+              <td class="empty-table-row" :colspan="canManageStores ? 8 : 7">暂无符合当前状态筛选的门店</td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -285,7 +319,7 @@ onMounted(() => {
           <header>
             <div>
               <h2>{{ editorTitle }}</h2>
-              <span>修改会写入 MySQL 门店档案，并保留操作日志。</span>
+              <span>保存会提交门店档案，并保留操作日志。</span>
             </div>
             <button class="icon-button" type="button" :disabled="saving" aria-label="关闭门店编辑" title="关闭" @click="closeEditor">
               <X :size="20" />
@@ -295,7 +329,7 @@ onMounted(() => {
           <div class="store-form-grid">
             <label>
               门店 ID
-              <input v-model.trim="form.id" disabled />
+              <input v-model.trim="form.id" :disabled="Boolean(editingStore)" required placeholder="例如 RG003" />
             </label>
             <label>
               门店编号
@@ -345,7 +379,7 @@ onMounted(() => {
           <footer>
             <button class="ghost-button" type="button" :disabled="saving" @click="closeEditor">取消</button>
             <button class="primary-button" type="submit" :disabled="saving || !canSaveEditor">
-              {{ saving ? '保存中...' : '保存门店档案' }}
+              {{ saving ? '保存中...' : editingStore ? '保存门店档案' : '新增门店' }}
             </button>
           </footer>
         </form>
@@ -389,6 +423,32 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.store-status-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.store-status-filter select {
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 28px 6px 10px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+}
+
+.empty-table-row {
+  padding: 28px 16px;
+  color: var(--muted);
+  text-align: center;
 }
 
 .row-actions {

@@ -1,5 +1,17 @@
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig, loadEnv, type Plugin } from 'vite'
 import uni from '@dcloudio/vite-plugin-uni'
+
+function disableDCloudShadowPreload(): Plugin {
+  return {
+    name: 'disable-dcloud-shadow-preload',
+    enforce: 'pre',
+    transform(code, id) {
+      if (!id.includes('@dcloudio/uni-mp-weixin') || !id.endsWith('uni.mp.esm.js')) return null
+      const transformed = code.replace(/\n\s*preloadAsset\(\);\n/, '\n')
+      return transformed === code ? null : { code: transformed, map: null }
+    },
+  }
+}
 
 function isCandidateOutput(outputDirectory: string | undefined): boolean {
   return /(^|[\\/])dist[\\/]candidate([\\/]|$)/i.test(String(outputDirectory || ''))
@@ -45,7 +57,7 @@ export default defineConfig(({ command, mode }) => {
   }
 
   return {
-    plugins: [uni()],
+    plugins: [disableDCloudShadowPreload(), uni()],
     server: proxyTarget
       ? {
           proxy: {

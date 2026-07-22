@@ -231,7 +231,7 @@ public class EmployeeAssistantService {
       String handoffCategory = mandatoryHandoffCategory(sanitized.value());
       if (handoffCategory != null) {
         outcome = "HUMAN_REQUIRED_" + handoffCategory;
-        return response("此问题需要人工处理，请点击“转人工处理”提交给运营或督导。", requestId,
+        return response("此问题需要人工处理，请点击“转人工处理”提交给督导。", requestId,
             conversationId, true, EmployeeAssistantAnswerSource.HUMAN_REQUIRED, null, null, null, handoffCategory);
       }
 

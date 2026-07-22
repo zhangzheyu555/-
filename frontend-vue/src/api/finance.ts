@@ -17,6 +17,7 @@ export interface ExpenseClaim {
   submittedBy?: number
   reviewedBy?: number
   reviewedAt?: string
+  reviewNote?: string
   attachments?: ExpenseAttachment[]
   supplements?: ExpenseSupplement[]
   supplementAttachmentCount?: number
@@ -95,18 +96,34 @@ export interface ProfitEntry {
 export interface ExpenseClaimPayload {
   storeId: string
   month: string
+  expenseDate: string
   amount: number
   category?: string
   reason?: string
   imageUrl?: string
 }
 
+/**
+ * Server-side filters accepted by GET /api/expenses.  Keep this separate from
+ * the page's presentation state so a filter switch never merely hides rows
+ * that were fetched for a different scope.
+ */
+export interface ExpenseClaimQuery {
+  month?: string
+  brandId?: number
+  storeId?: string
+  status?: string
+}
+
 export interface StorageUpload {
   id?: number
   fileName: string
   contentType?: string
-  sizeBytes: number
-  downloadUrl: string
+  fileSize?: number
+  /** Current StorageUploadResponse field returned by the backend. */
+  url?: string
+  /** Compatibility with older upload gateways. */
+  downloadUrl?: string
 }
 
 export interface ProfitEntryPayload {
@@ -286,12 +303,26 @@ export interface SalaryRecordPayload {
   returnUniform?: number
 }
 
-export function getExpenses() {
-  return apiGet<ExpenseClaim[]>('/api/expenses')
+export function getExpenses(params: ExpenseClaimQuery = {}) {
+  const query = new URLSearchParams()
+  const month = String(params.month || '').trim()
+  const storeId = String(params.storeId || '').trim()
+  const status = String(params.status || '').trim()
+  if (month) query.set('month', month)
+  if (typeof params.brandId === 'number' && Number.isFinite(params.brandId) && params.brandId > 0) {
+    query.set('brandId', String(params.brandId))
+  }
+  if (storeId) query.set('storeId', storeId)
+  if (status) query.set('status', status)
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  return apiGet<ExpenseClaim[]>(`/api/expenses${suffix}`)
 }
 
-export function createExpense(payload: ExpenseClaimPayload) {
-  return apiPost<ExpenseClaim, ExpenseClaimPayload>('/api/expenses', payload)
+export function createExpense(payload: ExpenseClaimPayload, idempotencyKey?: string) {
+  const key = String(idempotencyKey || '').trim()
+  return apiPost<ExpenseClaim, ExpenseClaimPayload>('/api/expenses', payload, key
+    ? { headers: { 'Idempotency-Key': key } }
+    : undefined)
 }
 
 export function updateExpense(id: string, payload: ExpenseClaimPayload) {
@@ -396,6 +427,10 @@ export function rejectExpense(id: string, note?: string) {
 
 export function deleteExpense(id: string) {
   return apiDelete<void>(`/api/expenses/${encodeURIComponent(id)}`)
+}
+
+export function deleteExpenseAttachment(expenseId: string, attachmentId: string | number) {
+  return apiDelete<void>(`/api/expenses/${encodeURIComponent(expenseId)}/attachments/${encodeURIComponent(String(attachmentId))}`)
 }
 
 export function uploadExpenseAttachment(file: File, storeId: string, expenseId: string) {
@@ -555,11 +590,4 @@ export async function exportSalaryCsv(params: { month?: string; brandId?: number
   link.download = `salary-export-${params.month || 'all'}.csv`
   link.click()
   window.URL.revokeObjectURL(url)
-}
-
-export function escalateFinanceTodo(todoId: string, reason: string, severity = 'RISK') {
-  return apiPost<unknown, { reason: string; severity: string }>(`/api/finance/todos/${encodeURIComponent(todoId)}/escalate`, {
-    reason,
-    severity,
-  })
 }

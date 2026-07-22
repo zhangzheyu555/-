@@ -22,6 +22,7 @@ const AssistantPage = () => import('../pages/AssistantPage.vue')
 const EmployeeAssistantPage = () => import('../pages/EmployeeAssistantPage.vue')
 const EmployeeWorkbenchPage = () => import('../pages/EmployeeWorkbenchPage.vue')
 const EmployeeProfilePage = () => import('../pages/EmployeeProfilePage.vue')
+const KnowledgeBasePage = () => import('../pages/KnowledgeBasePage.vue')
 const DailyLossPage = () => import('../pages/DailyLossPage.vue')
 const OperationLogPage = () => import('../pages/OperationLogPage.vue')
 const NoPermissionPage = () => import('../pages/NoPermissionPage.vue')
@@ -61,10 +62,11 @@ const appChildren: RouteRecordRaw[] = [
 
   { path: 'assistant', name: 'assistant', component: AssistantPage, meta: permissionMeta(PERMISSIONS.ASSISTANT_USE, { menuKey: 'assistant', title: '门店经营助手' }) },
   { path: 'employee-assistant', name: 'employee-assistant', component: EmployeeAssistantPage, meta: permissionMeta(PERMISSIONS.EMPLOYEE_ASSISTANT_USE, { menuKey: 'employee-assistant', title: '员工服务助手' }) },
+  { path: 'knowledge-base', name: 'knowledge-base', component: KnowledgeBasePage, meta: permissionMeta(PERMISSIONS.KNOWLEDGE_BASE_SEARCH, { menuKey: 'knowledge-base', title: '知识库' }) },
   // 已下线的辅助页面：保留旧链接兼容，统一回到员工服务助手。
   { path: 'employee-assistant/knowledge', redirect: '/employee-assistant' },
   { path: 'employee-assistant/handoffs', redirect: '/employee-assistant' },
-  { path: 'daily-loss', name: 'daily-loss', component: DailyLossPage, meta: permissionMeta(PERMISSIONS.DAILY_LOSS_READ, { menuKey: 'daily-loss', title: '每日报损', allowedRoles: ['STORE_MANAGER', 'SUPERVISOR', 'FINANCE'] }) },
+  { path: 'daily-loss', name: 'daily-loss', component: DailyLossPage, meta: permissionMeta(PERMISSIONS.DAILY_LOSS_READ, { menuKey: 'daily-loss', title: '每日报损', allowedRoles: ['FINANCE', 'SUPERVISOR'] }) },
   { path: 'profit', name: 'profit', component: ProfitOverviewPage, meta: permissionMeta(PERMISSIONS.FINANCE_PROFIT_READ, { menuKey: 'profit-overview', title: '利润概览' }) },
   { path: 'profit-table', name: 'profit-table', component: ProfitTablePage, meta: permissionMeta(PERMISSIONS.FINANCE_PROFIT_READ, { menuKey: 'profit-table', title: '利润表' }) },
   { path: 'data-entry', name: 'data-entry', component: DataEntryPage, meta: permissionMeta(PERMISSIONS.FINANCE_PROFIT_WRITE, { menuKey: 'data-entry', title: '数据录入' }) },
@@ -77,7 +79,7 @@ const appChildren: RouteRecordRaw[] = [
     }),
   },
   { path: 'expenses', name: 'expenses', component: ExpensePage, meta: permissionMeta(PERMISSIONS.EXPENSE_READ, { menuKey: 'expenses', title: '报销栏' }) },
-  { path: 'export', name: 'export', component: DataExportPage, meta: permissionMeta(PERMISSIONS.FINANCE_EXPORT, { menuKey: 'data-export', title: '数据导出' }) },
+  { path: 'export', name: 'export', component: DataExportPage, meta: permissionMeta(PERMISSIONS.FINANCE_EXPORT, { menuKey: 'data-export', title: '数据导出', allowedRoles: ['FINANCE'] }) },
   { path: 'store-detail', name: 'store-detail', component: StoreDetailPage, meta: permissionMeta(PERMISSIONS.STORE_READ, { menuKey: 'store-detail', title: '门店详情' }) },
   { path: 'stores', name: 'stores', component: StoreManagementPage, meta: permissionMeta(PERMISSIONS.STORE_MANAGE, { menuKey: 'store-management', title: '门店管理', bossOnly: true }) },
   { path: 'staff', name: 'staff-profiles', component: StaffProfilePage, meta: permissionMeta(PERMISSIONS.EMPLOYEE_READ, { menuKey: 'staff-profiles', title: '员工档案' }) },
@@ -94,6 +96,7 @@ const appChildren: RouteRecordRaw[] = [
 
   { path: 'warehouse/central', name: 'warehouse-central', component: CentralWarehouseWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_READ, { moduleKey: 'warehouse', menuKey: 'warehouse-center', warehouseTab: 'warehouse', warehouseSection: 'inventory', warehouseCode: 'JZ-CENTRAL', title: '荆州总仓' }) },
   { path: 'warehouse/shandong', name: 'warehouse-shandong', component: CentralWarehouseWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_READ, { moduleKey: 'warehouse', menuKey: 'warehouse-center', warehouseTab: 'warehouse', warehouseSection: 'inventory', warehouseCode: 'SD-REGIONAL', title: '山东分仓' }) },
+  { path: 'warehouse/detail/:warehouseId', name: 'warehouse-detail', component: CentralWarehouseWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_READ, { moduleKey: 'warehouse', menuKey: 'warehouse-center', warehouseTab: 'warehouse', warehouseSection: 'inventory', title: '仓库中心' }) },
   { path: 'warehouse/transfers', name: 'warehouse-transfers', component: CentralWarehouseWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_READ, { moduleKey: 'warehouse', menuKey: 'warehouse-center', warehouseTab: 'transfers', title: '仓间调拨' }) },
   { path: 'warehouse/items', name: 'warehouse-items', component: CentralWarehouseWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_READ, { moduleKey: 'warehouse', menuKey: 'warehouse-center', warehouseTab: 'warehouse', warehouseSection: 'catalog', warehouseCode: 'JZ-CENTRAL', title: '物料档案' }) },
   { path: 'warehouse/inventory', name: 'warehouse-inventory', component: CentralWarehouseWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_READ, { moduleKey: 'warehouse', menuKey: 'warehouse-center', warehouseTab: 'warehouse', warehouseSection: 'inventory', warehouseCode: 'JZ-CENTRAL', title: '库存物料' }) },

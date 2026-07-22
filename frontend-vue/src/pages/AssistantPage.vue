@@ -17,10 +17,12 @@ import ModalFooter from '../components/ui/ModalFooter.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import {
   askAssistant,
+  getOperatingSnapshot,
   getAssistantStatus,
   type AssistantAction,
   type AssistantChatResponse,
   type AssistantLocalMetric,
+  type OperatingSnapshot,
   type AssistantStatus,
 } from '../api/assistant'
 import { getProfitEntries, getProfitMonths, type ProfitEntry } from '../api/finance'
@@ -70,6 +72,8 @@ const entryRequestId = ref('')
 const dashboardSummary = ref<ProfitSummary | null>(null)
 const dataIntegrityWarning = ref('')
 let entryAbortController: AbortController | null = null
+let snapshotAbortController: AbortController | null = null
+let snapshotRequestVersion = 0
 const pageLoading = ref(true)
 const metricLoading = ref(false)
 const sending = ref(false)
@@ -77,7 +81,12 @@ const input = ref('')
 const assistantMode = ref<AssistantMode>('AUTO')
 const runs = ref<AssistantRun[]>([])
 const pageError = ref('')
+const operatingSnapshot = ref<OperatingSnapshot | null>(null)
+const snapshotLoading = ref(false)
+const snapshotError = ref('')
+const snapshotNotice = ref('')
 const assistantStatus = ref<AssistantStatus | null>(null)
+const clearConfirmation = ref(false)
 const todoConfirmation = ref<TodoConfirmation | null>(null)
 const todoSubmitting = ref(false)
 const todoError = ref('')
@@ -149,6 +158,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   pageDisposed = true
+  snapshotAbortController?.abort()
   document.removeEventListener('keydown', handlePageKeydown)
   window.removeEventListener('focus', refreshAssistantStatusOnFocus)
   clearAssistantStatusRetryTimer()
@@ -158,7 +168,7 @@ onBeforeUnmount(() => {
 
 watch([effectiveStoreId, selectedMonth], async ([storeId, month], [oldStoreId, oldMonth]) => {
   if (!initialized || (!storeId && !month)) return
-  await loadCurrentEntry()
+  await Promise.all([loadCurrentEntry(), loadOperatingSnapshot()])
   if (oldStoreId && oldMonth && (storeId !== oldStoreId || month !== oldMonth)) {
     runs.value = []
   }
@@ -177,13 +187,69 @@ async function loadPage() {
     stores.value = storeRows
     months.value = normalizeMonths(monthRows)
     applyDefaults()
-    await loadCurrentEntry()
-    await loadAssistantStatus()
+    // Let the selection watcher consume the initial values while initialization is still gated;
+    // otherwise it would issue a second identical snapshot request after this first load.
+    await nextTick()
+    await Promise.all([loadCurrentEntry(), loadAssistantStatus(), loadOperatingSnapshot()])
     initialized = true
   } catch (error) {
     pageError.value = normalizeError(error, '经营助手初始化失败，请刷新后重试。')
   } finally {
     pageLoading.value = false
+  }
+}
+
+/**
+ * The page owns one read-only server snapshot for its selected authorized scope. Every chat
+ * request must refer to this identifier; a late response for an older store/month is ignored.
+ */
+async function loadOperatingSnapshot(options: { announce?: boolean } = {}) {
+  const requestVersion = ++snapshotRequestVersion
+  const previousId = operatingSnapshot.value?.snapshotId || ''
+  snapshotAbortController?.abort()
+  const controller = new AbortController()
+  snapshotAbortController = controller
+  operatingSnapshot.value = null
+  snapshotError.value = ''
+  snapshotNotice.value = ''
+  snapshotLoading.value = true
+  try {
+    const snapshot = await getOperatingSnapshot({
+      storeId: businessScope.isBoss.value ? '' : effectiveStoreId.value,
+      month: selectedMonth.value,
+    }, { signal: controller.signal })
+    if (controller.signal.aborted || requestVersion !== snapshotRequestVersion || pageDisposed) return
+    operatingSnapshot.value = snapshot
+    if (options.announce) {
+      snapshotNotice.value = snapshot.snapshotId === previousId
+        ? '经营数据未变化，已重新确认当前快照。'
+        : '经营数据已更新，已切换至新的经营快照。'
+    }
+  } catch (error) {
+    if (controller.signal.aborted || requestVersion !== snapshotRequestVersion || pageDisposed) return
+    operatingSnapshot.value = null
+    snapshotError.value = error instanceof ApiError && error.code === 'OPERATING_SNAPSHOT_UNSUPPORTED'
+      ? error.message
+      : '经营快照服务暂不可用，可能是后端未更新或服务异常。请确认前端与后端已更新到同一版本，并重启后端后再试。'
+  } finally {
+    if (requestVersion === snapshotRequestVersion) snapshotLoading.value = false
+  }
+}
+
+function currentSnapshotId() {
+  return operatingSnapshot.value?.snapshotId || ''
+}
+
+function responseUsesCurrentSnapshot(response: AssistantChatResponse) {
+  const displayedId = currentSnapshotId()
+  return Boolean(displayedId)
+    && String(response.localData?.snapshotId || '').trim() === displayedId
+    && String(response.localData?.operatingSnapshot?.snapshotId || '').trim() === displayedId
+}
+
+function assertResponseUsesCurrentSnapshot(response: AssistantChatResponse) {
+  if (!responseUsesCurrentSnapshot(response)) {
+    throw new Error('服务器未返回与当前页面一致的经营快照，已阻止展示可能混用的数据。')
   }
 }
 
@@ -342,6 +408,10 @@ async function loadCurrentEntry() {
 async function submitQuestion(preset?: string) {
   const question = String(preset || input.value).trim()
   if (!question || sending.value) return
+  if (!currentSnapshotId()) {
+    pageError.value = snapshotError.value || '经营快照尚未就绪，请稍后重试。'
+    return
+  }
   if (!effectiveStoreId.value && !businessScope.isBoss.value) {
     pageError.value = businessScope.configurationError.value || '请先选择门店和月份。'
     return
@@ -371,10 +441,12 @@ async function submitQuestion(preset?: string) {
       mode: 'LOCAL',
       storeId: businessScope.isBoss.value ? '' : effectiveStoreId.value,
       month: selectedMonth.value,
+      snapshotId: currentSnapshotId(),
     })
+    assertResponseUsesCurrentSnapshot(localResponse)
     run.response = localResponse
 
-    if (requestMode !== 'LOCAL') {
+    if (requestMode !== 'LOCAL' && !localResponse.localData.insufficientData) {
       run.status = 'loading-ai'
       await nextTick(() => scrollToBottom())
       run.response = await askAssistant({
@@ -382,8 +454,9 @@ async function submitQuestion(preset?: string) {
         mode: requestMode,
         storeId: businessScope.isBoss.value ? '' : effectiveStoreId.value,
         month: selectedMonth.value,
-        snapshotId: localResponse.localData.snapshotId,
+        snapshotId: currentSnapshotId(),
       })
+      assertResponseUsesCurrentSnapshot(run.response)
     }
     run.status = 'success'
   } catch (error) {
@@ -399,6 +472,11 @@ async function submitQuestion(preset?: string) {
 
 async function requestAiAnalysis(run: AssistantRun) {
   if (sending.value) return
+  if (!currentSnapshotId() || !run.response || !responseUsesCurrentSnapshot(run.response)) {
+    run.status = 'partial-error'
+    run.error = snapshotError.value || '当前经营快照已失效，请重新拉取数据后再分析。'
+    return
+  }
   run.status = 'loading-ai'
   run.startedAt = Date.now()
   run.error = ''
@@ -410,8 +488,9 @@ async function requestAiAnalysis(run: AssistantRun) {
       mode: 'AI',
       storeId: businessScope.isBoss.value ? '' : effectiveStoreId.value,
       month: selectedMonth.value,
-      snapshotId: run.response?.localData.snapshotId,
+      snapshotId: currentSnapshotId(),
     })
+    assertResponseUsesCurrentSnapshot(run.response)
     run.mode = 'AI'
     run.status = 'success'
   } catch (error) {
@@ -438,13 +517,16 @@ async function retryRun(run: AssistantRun) {
   startProgressClock()
   const requestMode = assistantRequestMode(run.question, run.mode)
   try {
+    if (!currentSnapshotId()) throw new Error(snapshotError.value || '经营快照尚未就绪，请稍后重试。')
     run.response = await askAssistant({
       message: run.question,
       mode: 'LOCAL',
       storeId: businessScope.isBoss.value ? '' : effectiveStoreId.value,
       month: selectedMonth.value,
+      snapshotId: currentSnapshotId(),
     })
-    if (requestMode !== 'LOCAL') {
+    assertResponseUsesCurrentSnapshot(run.response)
+    if (requestMode !== 'LOCAL' && !run.response.localData.insufficientData) {
       run.status = 'loading-ai'
       await nextTick(() => scrollToBottom())
       run.response = await askAssistant({
@@ -452,8 +534,9 @@ async function retryRun(run: AssistantRun) {
         mode: requestMode,
         storeId: businessScope.isBoss.value ? '' : effectiveStoreId.value,
         month: selectedMonth.value,
-        snapshotId: run.response.localData.snapshotId,
+        snapshotId: currentSnapshotId(),
       })
+      assertResponseUsesCurrentSnapshot(run.response)
     }
     run.status = 'success'
   } catch (error) {
@@ -533,10 +616,16 @@ function refreshAssistantStatusAfterAnalysis(
   void loadAssistantStatus()
 }
 
+function requestClearConversation() {
+  if (!runs.value.length || sending.value) return
+  clearConfirmation.value = true
+}
+
 function clearConversation() {
   runs.value = []
   input.value = ''
   followLatest.value = true
+  clearConfirmation.value = false
 }
 
 function openTodoConfirmation(run: AssistantRun, action: AssistantAction, actionIndex: number) {
@@ -867,7 +956,7 @@ function servicePresentation(status: AssistantStatus): AssistantServicePresentat
   if (state === 'READY') return { text: '分析服务正常', tone: 'ready' }
   if (state === 'CONFIGURED') return { text: `${provider} 已配置`, tone: 'configured' }
   if (state === 'RESPONSE_REJECTED') {
-    return { text: analysisRejectionTitle(status.lastErrorCode || '') || '分析结果待复核', tone: 'warning' }
+    return { text: analysisRejectionTitle(status.lastErrorCode || '') || '模型格式异常', tone: 'warning' }
   }
   if (state === 'UPSTREAM_ERROR') return { text: 'AI服务暂不可用', tone: 'warning' }
   return { text: 'AI服务未配置', tone: 'warning' }
@@ -960,13 +1049,13 @@ function normalizeError(value: unknown, fallback: string) {
           : '数据库负责事实，AI负责解释和行动建议'"
       >
         <template #actions>
-          <button class="secondary-button" type="button" :disabled="!runs.length" @click="clearConversation">
+          <button class="secondary-button" type="button" :disabled="!runs.length || sending" @click="requestClearConversation">
             清空记录
           </button>
         </template>
       </PageHeader>
 
-      <div v-if="pageError" class="page-error" role="alert">{{ pageError }}</div>
+      <div v-if="pageError || snapshotError" class="page-error" role="alert">{{ pageError || snapshotError }}</div>
     </div>
 
     <section
@@ -990,7 +1079,7 @@ function normalizeError(value: unknown, fallback: string) {
         </select>
       </label>
       <label class="context-field month-field">
-        <span>月份</span>
+        <span>经营月份</span>
         <select v-model="selectedMonth" :disabled="pageLoading || !months.length">
           <option v-for="month in months" :key="month" :value="month">{{ month }}</option>
         </select>
@@ -1021,6 +1110,25 @@ function normalizeError(value: unknown, fallback: string) {
     </section>
 
     <section
+      class="snapshot-panel"
+      :class="{ unavailable: !operatingSnapshot }"
+      :data-snapshot-id="operatingSnapshot?.snapshotId || undefined"
+      aria-label="当前经营快照"
+    >
+      <template v-if="operatingSnapshot">
+        <strong>经营快照</strong>
+        <span>范围：{{ operatingSnapshot.storeScope.label }}</span>
+        <span>快照：{{ operatingSnapshot.snapshotId }}</span>
+        <span>确认时间：{{ formatUpdatedAt(operatingSnapshot.generatedAt) }}</span>
+        <span v-if="snapshotNotice" class="snapshot-notice" role="status">{{ snapshotNotice }}</span>
+      </template>
+      <template v-else>
+        <strong>经营快照</strong>
+        <span>{{ snapshotLoading ? '正在确认当前授权范围…' : '快照未就绪，暂不可提问。' }}</span>
+      </template>
+    </section>
+
+    <section
       ref="assistantWorkspace"
       class="assistant-workspace"
       :class="{ 'is-fullscreen': workspaceFullscreen }"
@@ -1045,6 +1153,7 @@ function normalizeError(value: unknown, fallback: string) {
           <div class="empty-icon"><Sparkles :size="22" /></div>
           <h2>先查清经营数据，再让AI解释原因</h2>
           <p>数字查询不会调用模型；趋势、异常和改善建议会进入AI分析。</p>
+          <p>AI 会基于全部授权门店的经营数据，解释原因并给出可以落地的行动建议。</p>
           <div class="empty-questions">
             <button v-for="question in quickQuestions" :key="question" type="button" @click="submitQuestion(question)">
               {{ question }}
@@ -1071,11 +1180,16 @@ function normalizeError(value: unknown, fallback: string) {
           </div>
 
           <div v-else-if="run.response" class="assistant-answer">
-            <section class="data-result" aria-label="经营数据">
+            <section
+              class="data-result run-facts"
+              aria-label="经营数据"
+              :data-snapshot-id="run.response.localData.snapshotId"
+            >
               <header class="result-heading">
                 <div>
                   <CheckCircle2 :size="18" />
-                  <h3>经营数据已就绪</h3>
+                  <h3>经营数据</h3>
+                  <span>经营数据已就绪</span>
                 </div>
                 <span>{{ run.response.localData.dataPeriod }} · {{ run.response.localData.dataScope }}</span>
               </header>
@@ -1093,6 +1207,7 @@ function normalizeError(value: unknown, fallback: string) {
                 <span><strong>来源</strong>{{ run.response.localData.source }}</span>
                 <span><strong>更新时间</strong>{{ formatUpdatedAt(run.response.localData.updatedAt) }}</span>
                 <span><strong>处理方式</strong>{{ run.response.selectedMode === 'AI' ? '数据库计算 + AI分析' : '仅数据库计算' }}</span>
+                <span>本回答仅使用与页面一致的经营快照。</span>
               </div>
             </section>
 
@@ -1118,6 +1233,27 @@ function normalizeError(value: unknown, fallback: string) {
               <button type="button" :disabled="sending" @click="requestAiAnalysis(run)">
                 <RefreshCcw :size="15" />重新分析
               </button>
+            </section>
+
+            <section v-else-if="run.response.localData.insufficientData" class="ai-result" aria-label="经营数据不足">
+              <section class="analysis-data-limited" role="status" data-testid="assistant-data-limited">
+                <div><AlertTriangle :size="18" /><strong>经营数据不足</strong></div>
+                <p>经营数据不足，暂不能判断原因，请先补全成本、费用或历史月份数据</p>
+              </section>
+              <section v-if="run.response.localData.insufficientData.verifiedFacts.length" class="analysis-block">
+                <h4>已确认事实</h4>
+                <ul><li v-for="item in run.response.localData.insufficientData.verifiedFacts" :key="item">{{ item }}</li></ul>
+              </section>
+              <section v-if="run.response.localData.insufficientData.nextSteps.length" class="analysis-block action-block">
+                <h4>请先补全以下经营数据</h4>
+                <ul><li v-for="item in run.response.localData.insufficientData.nextSteps" :key="item">{{ item }}</li></ul>
+              </section>
+              <footer class="data-meta">
+                <span>经营数据不足，未调用 AI。</span>
+                <button type="button" :disabled="snapshotLoading || sending" @click="loadOperatingSnapshot({ announce: true })">
+                  <RefreshCcw :size="15" />重新分析
+                </button>
+              </footer>
             </section>
 
             <section v-else-if="run.response.aiAnalysis.available" class="ai-result" aria-label="AI经营分析">
@@ -1195,6 +1331,7 @@ function normalizeError(value: unknown, fallback: string) {
                 <span>{{ run.response.aiAnalysis.limitations.join('；') }}</span>
               </section>
               <footer class="analysis-meta">
+                <span>本次已调用 AI 分析。</span>
                 <span>判断可信度：{{ confidenceText(run.response.aiAnalysis.confidence) }}</span>
                 <span>{{ run.response.aiAnalysis.provider }} · {{ run.response.aiAnalysis.model }} · {{ latencyText(run.response.aiAnalysis.latencyMs) }}</span>
                 <span v-if="maskedRequestId(run.response.aiAnalysis.requestId)">请求 {{ maskedRequestId(run.response.aiAnalysis.requestId) }}</span>
@@ -1249,10 +1386,10 @@ function normalizeError(value: unknown, fallback: string) {
             v-model.trim="input"
             type="text"
             :placeholder="`问${selectedStoreName}，例如：7月净利润为什么变化？`"
-            :disabled="sending || pageLoading"
+            :disabled="sending || pageLoading || snapshotLoading || !operatingSnapshot"
             autocomplete="off"
           />
-          <button type="submit" :disabled="sending || pageLoading || !input.trim()">
+          <button type="submit" :disabled="sending || pageLoading || snapshotLoading || !operatingSnapshot || !input.trim()">
             <Send :size="17" />{{ sending ? '处理中' : '发送' }}
           </button>
         </form>
@@ -1260,6 +1397,26 @@ function normalizeError(value: unknown, fallback: string) {
     </section>
 
     <Teleport to="body">
+      <div
+        v-if="clearConfirmation"
+        class="todo-dialog-backdrop"
+        role="presentation"
+        @click.self="clearConfirmation = false"
+      >
+        <section class="todo-dialog" role="alertdialog" aria-modal="true" aria-labelledby="clear-conversation-title">
+          <header>
+            <div>
+              <h2 id="clear-conversation-title">确认清空对话记录</h2>
+              <p>不会删除经营数据、已创建待办或操作日志。</p>
+            </div>
+          </header>
+          <ModalFooter>
+            <UiButton variant="secondary" type="button" @click="clearConfirmation = false">取消</UiButton>
+            <UiButton variant="primary" type="button" @click="clearConversation">确认清空</UiButton>
+          </ModalFooter>
+        </section>
+      </div>
+
       <div
         v-if="todoConfirmation"
         class="todo-dialog-backdrop"
@@ -1319,7 +1476,7 @@ function normalizeError(value: unknown, fallback: string) {
   display: grid;
   height: 100%;
   min-height: 0;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   gap: 10px;
   overflow: hidden !important;
   container-type: inline-size;
@@ -1394,6 +1551,24 @@ function normalizeError(value: unknown, fallback: string) {
 .boss-scope strong { font-size: 15px; color: var(--ds-ink); }
 .boss-store-count { margin-left: 8px; color: var(--ds-muted); font-size: 12px; }
 .integrity-warning { display: flex; align-items: center; gap: 6px; padding: 6px 14px; color: #b45309; background: #fffbeb; border-top: 1px solid var(--ds-line); font-size: 13px; }
+
+.snapshot-panel {
+  display: flex;
+  min-width: 0;
+  padding: 8px 12px;
+  align-items: center;
+  gap: 8px 16px;
+  border: 1px solid var(--ds-line);
+  border-radius: 6px;
+  background: var(--ds-surface-muted);
+  color: var(--ds-secondary);
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.snapshot-panel strong { color: var(--ds-ink); font-size: 13px; }
+.snapshot-panel span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.snapshot-panel .snapshot-notice { color: var(--ds-primary-hover); }
+.snapshot-panel.unavailable { color: var(--ds-muted); }
 
 .assistant-workspace {
   position: relative;
@@ -1512,6 +1687,18 @@ function normalizeError(value: unknown, fallback: string) {
 .local-metrics strong { display: block; margin: 5px 0 3px; font-size: 17px; font-variant-numeric: tabular-nums; }
 .data-result footer,
 .ai-result footer { margin-top: 12px; color: var(--ds-muted); font-size: 12px; }
+.data-meta button {
+  display: inline-flex;
+  min-height: 36px;
+  padding: 0 11px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--ds-primary-hover);
+  border-radius: 6px;
+  background: var(--ds-surface);
+  color: var(--ds-primary-hover);
+}
+.data-meta button:disabled { cursor: not-allowed; opacity: .65; }
 
 .ai-heading { padding-bottom: 14px; border-bottom: 1px solid var(--ds-line); color: var(--ds-primary-hover); }
 .analysis-type-tag { display: inline-flex; min-height: 22px; padding: 0 7px; align-items: center; border-radius: 999px; background: var(--ds-primary-soft); color: var(--ds-primary-hover); font-size: 11px; font-weight: 600; }
@@ -1648,7 +1835,7 @@ function normalizeError(value: unknown, fallback: string) {
   .store-assistant-page {
     height: auto;
     min-height: 100%;
-    grid-template-rows: auto auto minmax(560px, 1fr);
+    grid-template-rows: auto auto auto minmax(560px, 1fr);
     overflow-y: auto !important;
   }
   .assistant-workspace { min-height: 560px; }
@@ -1658,6 +1845,8 @@ function normalizeError(value: unknown, fallback: string) {
   .context-bar--conversation .integrity-warning { display: none; }
   .context-bar--conversation .boss-store-count { display: none; }
   .metric-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .snapshot-panel { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .snapshot-panel span { max-width: 100%; }
   .metric-item:nth-child(odd) { border-left: 0; }
   .result-stream { padding: 12px; }
   .workspace-toggle span { display: none; }

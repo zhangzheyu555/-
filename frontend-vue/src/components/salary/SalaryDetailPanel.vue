@@ -219,6 +219,11 @@ function detailPayload(): SalaryRecordPayload {
         <span><UserRound :size="15" />{{ record.position || '未设置岗位' }}</span>
       </div>
 
+      <section v-if="isPendingGeneration" class="pending-generation">
+        <b>尚未生成工资</b>
+        <span>先保存本月考勤和工时，再进入生成预览。</span>
+      </section>
+
       <section class="editor-section">
         <h3>考勤录入</h3>
         <div class="input-grid">
@@ -303,6 +308,7 @@ function detailPayload(): SalaryRecordPayload {
         <div><i /><span><b>工资记录生成</b><small>{{ record.month }}</small></span></div>
         <div v-if="record.reviewedAt"><i /><span><b>{{ record.reviewNote || '审核完成' }}</b><small>{{ record.reviewedAt }}</small></span></div>
         <div v-if="record.paidAt"><i /><span><b>工资已发放</b><small>{{ record.paidAt }}</small></span></div>
+        <div v-if="!record.reviewedAt && ['SUBMITTED', 'PENDING_REVIEW'].includes(record.status || '')"><i /><span><b>等待审核</b><small>工资已提交</small></span></div>
         <div v-if="!record.reviewedAt"><i /><span><b>休假记录</b><small>{{ vacationNoteInput || '暂无休息日期备注' }}</small></span></div>
       </section>
 
@@ -332,13 +338,6 @@ function detailPayload(): SalaryRecordPayload {
 .detail-kpis div { padding: 11px 8px; text-align: center; border-right: 1px solid #e4ecea; }.detail-kpis div:last-child { border-right: 0; }
 .detail-kpis span { display: block; color: #6f817f; font-size: 12px; }.detail-kpis b { display: block; margin-top: 5px; font-size: 17px; font-variant-numeric: tabular-nums; }
 .pending-generation { display: grid; gap: 6px; margin-top: 12px; padding: 14px; border: 1px solid #dce8e6; border-radius: 5px; background: #f7fbfa; }.pending-generation b { color: #276b65; font-size: 14px; }.pending-generation span { color: #627572; font-size: 12px; line-height: 1.55; }
-.attendance-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-top: 8px; }
-.attendance-form label { display: grid; gap: 5px; color: #526765; font-size: 12px; }
-.attendance-form input { min-width: 0; min-height: 36px; padding: 7px 9px; border: 1px solid #ccdcd9; border-radius: 5px; background: #fff; font-size: 14px; }
-.attendance-form > div { padding: 8px 9px; border: 1px solid #dce8e6; border-radius: 5px; background: #fff; }
-.attendance-form > div span,.attendance-form > div b { display: block; }.attendance-form > div b { margin-top: 3px; color: #182424; }
-.attendance-form button { grid-column: 1 / -1; min-height: 36px; border: 1px solid #276b65; border-radius: 5px; background: #276b65; color: #fff; font-weight: 600; cursor: pointer; }
-.attendance-form button:disabled { opacity: .55; cursor: not-allowed; }.attendance-error { grid-column: 1 / -1; color: #c34b40; }
 .amount-list { padding: 9px 0; border-bottom: 1px solid #dfe8e6; }
 .amount-list > div { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 7px 2px; }
 .amount-list span { font-size: 14px; }.amount-list small { display: block; margin-top: 2px; color: #6f817f; font-size: 11px; }.amount-list b { font-variant-numeric: tabular-nums; }
@@ -355,10 +354,13 @@ function detailPayload(): SalaryRecordPayload {
 .editor-section { padding: 15px 0; border-bottom: 1px solid #e4ecea; }.editor-section h3,.result-section h3 { margin: 0 0 12px; font-size: 14px; color: #263a38; }
 .input-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }.input-grid label { display: grid; gap: 5px; color: #526765; font-size: 12px; }.input-grid .wide-field { grid-column: 1/-1; }
 .input-grid input,.input-grid select,.input-grid textarea { width: 100%; min-width: 0; min-height: 36px; box-sizing: border-box; padding: 7px 9px; border: 1px solid #ccdcd9; border-radius: 5px; background: #fff; color: #182424; font: inherit; }.input-grid textarea { resize: vertical; }.input-grid :disabled { background: #f3f6f5; color: #73827f; }
+.hour-summary { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); margin-top: 11px; border: 1px solid #dce8e6; border-radius: 5px; background: #f7fbfa; }.hour-summary div { padding: 9px 6px; text-align: center; border-right: 1px solid #dce8e6; }.hour-summary div:last-child { border-right: 0; }.hour-summary span { display: block; color: #6f817f; font-size: 11px; }.hour-summary b { display: block; margin-top: 4px; color: #244c48; font-size: 13px; }
+.attendance-error { display: block; margin-top: 7px; color: #c34b40; font-size: 12px; }
 .formula-note { margin: 8px 0 0; color: #748481; font-size: 11px; line-height: 1.5; }.adjustment-help { margin: 9px 0 0; color: #748481; font-size: 11px; line-height: 1.6; }.adjustment-help span { display: block; margin-top: 3px; }.result-section { padding-top: 15px; }
 .night-overtime-preview { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 9px; padding: 9px 10px; border: 1px solid #dce8e6; border-radius: 5px; background: #f7fbfa; color: #526765; font-size: 12px; }.night-overtime-preview b { margin-left: auto; color: #176c64; font-size: 14px; font-variant-numeric: tabular-nums; }
 .overtime-kind { display: flex; align-items: center; justify-content: space-between; min-height: 36px; padding: 0 10px; border: 1px solid #dce8e6; border-radius: 5px; background: #f7fbfa; color: #526765; font-size: 12px; }.overtime-kind b { color: #244c48; font-size: 13px; }
 .calculation-details { margin-top: 10px; border: 1px solid #dce8e6; border-radius: 5px; background: #f9fbfb; }.calculation-details summary { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; color: #276b65; font-size: 13px; font-weight: 600; cursor: pointer; list-style: none; }.calculation-details summary::-webkit-details-marker { display: none; }.calculation-details[open] summary svg { transform: rotate(180deg); }.calculation-details div { padding: 10px 12px; border-top: 1px solid #e1eae8; color: #617370; font-size: 12px; line-height: 1.6; }.calculation-details p { margin: 0; }.calculation-details p + p { margin-top: 7px; }
 .vacation-note-meta { display: flex; justify-content: space-between; gap: 12px; margin-top: 7px; color: #748481; font-size: 11px; }
 .detail-actions { flex-wrap: wrap; }.history-action { border: 0; background: transparent; color: #5c706d; font-weight: 500 !important; }
+@media (max-width: 600px) { .input-grid { grid-template-columns: 1fr; }.hour-summary { grid-template-columns: 1fr; }.hour-summary div { border-right: 0; border-bottom: 1px solid #dce8e6; }.hour-summary div:last-child { border-bottom: 0; } }
 </style>
