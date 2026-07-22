@@ -83,7 +83,8 @@ class EmployeeWorkbenchControllerTest {
         new EmployeeProfileResponse.Archive(true, "rg1_emp_01", "RG1员工一", "店员",
             "全职", "在职", "2026-07-01", BigDecimal.valueOf(3500), "已关联员工档案"),
         new EmployeeProfileResponse.Salary(false, null, null, "MISSING", "未生成",
-            "rg1_emp_01", "RG1员工一", "店员", null, BigDecimal.valueOf(3500), null,
+            "rg1_emp_01", "RG1员工一", "店员", "全职", null, null, null,
+            null, BigDecimal.valueOf(3500), null,
             null, null, null, null, null, null, null, null, null, null, "还没有生成工资记录"),
         List.of(new EmployeeProfileResponse.ChecklistItem(
             "salary", "工资记录未生成", "请财务生成本月工资或录入历史工资。", "待处理", "HIGH"))

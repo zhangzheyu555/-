@@ -217,7 +217,7 @@ public class ExportController {
   }
 
   private String toSalaryCsv(List<SalaryRecordResponse> rows) {
-    StringBuilder csv = new StringBuilder("月份,门店,品牌,员工编号,员工姓名,岗位,基础工资,提成奖金,扣款,实发工资,审核状态,审核时间\n");
+    StringBuilder csv = new StringBuilder("月份,门店,品牌,员工编号,员工姓名,岗位,基础工资,提成奖金,员工福利（生日）,扣款,实发工资,审核状态,审核时间\n");
     for (SalaryRecordResponse row : rows) {
       java.math.BigDecimal bonus = row.fullAttendance().add(row.commission()).add(row.overtime())
           .add(row.seniority()).add(row.lateNight()).add(row.subsidy()).add(row.performance());
@@ -230,6 +230,7 @@ public class ExportController {
           .append(escape(row.position())).append(',')
           .append(row.base()).append(',')
           .append(bonus).append(',')
+          .append(row.birthdayBenefit()).append(',')
           .append(deduction).append(',')
           .append(row.gross()).append(',')
           .append(escape(salaryStatusLabel(row.status()))).append(',')

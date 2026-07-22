@@ -17,7 +17,8 @@ export const WAGE_FIELDS: Array<{ key: keyof SalaryRecordPayload; label: string;
   { key: 'commission', label: '提成', kind: 'add' },
   { key: 'overtime', label: '加班工资', kind: 'add' },
   { key: 'seniority', label: '工龄工资', kind: 'add' },
-  { key: 'lateNight', label: '深夜班', kind: 'add' },
+  { key: 'birthdayBenefit', label: '员工福利（生日）', kind: 'add' },
+  { key: 'lateNight', label: '深夜加班（元）', kind: 'add' },
   { key: 'subsidy', label: '补贴', kind: 'add' },
   { key: 'performance', label: '绩效', kind: 'add' },
   { key: 'deductUniform', label: '扣工服费', kind: 'minus' },
@@ -41,7 +42,7 @@ export function emptyForm(): SalaryRecordPayload {
     position: '', attendance: '', gross: 0, normalHours: 0, otHours: 0,
     workHours: 0, vacationLeft: 0, vacationNote: '', base: 0, social: 0,
     post: 0, meal: 0, fullAttendance: 0, commission: 0, overtime: 0,
-    seniority: 0, lateNight: 0, subsidy: 0, performance: 0,
+    seniority: 0, birthdayBenefit: 0, lateNight: 0, subsidy: 0, performance: 0,
     deductUniform: 0, returnUniform: 0,
   }
 }
@@ -64,6 +65,7 @@ export function useSalaryWorkflow(opts: {
   pageError: Ref<string>,
   successMessage: Ref<string>,
   loadPage: () => Promise<void>,
+  onDeleted?: (record: SalaryRecord) => void,
 }) {
   const generating = ref(false)
   const saving = ref(false)
@@ -95,6 +97,7 @@ export function useSalaryWorkflow(opts: {
       post: Number(record.post || 0), meal: Number(record.meal || 0),
       fullAttendance: Number(record.fullAttendance || 0), commission: Number(record.commission || 0),
       overtime: Number(record.overtime || 0), seniority: Number(record.seniority || 0),
+      birthdayBenefit: Number(record.birthdayBenefit || 0),
       lateNight: Number(record.lateNight || 0), subsidy: Number(record.subsidy || 0),
       performance: Number(record.performance || 0), deductUniform: Number(record.deductUniform || 0),
       returnUniform: Number(record.returnUniform || 0),
@@ -211,14 +214,17 @@ export function useSalaryWorkflow(opts: {
   }
 
   function doDelete(r: SalaryRecord) {
-    if (!opts.canEdit.value || !isEditable(r.status)) return
+    if (!opts.canEdit.value || !r.id || !['DRAFT', 'REJECTED'].includes(r.status || '')) return
+    const assignedEmployee = /^SALADD-/i.test(r.id)
     actionNote.value = ''
     actionConfirmation.value = {
       kind: 'delete',
       record: r,
-      title: '删除工资记录',
-      message: `确定删除 ${r.employeeName} ${r.month} 的工资记录？`,
-      confirmLabel: '确认删除',
+      title: assignedEmployee ? '移出本月工资表' : '删除本月工资记录',
+      message: assignedEmployee
+        ? `将 ${r.employeeName} 从 ${r.month} 员工工资表移出。此操作只删除本月工资记录，不会删除员工档案，也不会修改员工所属门店和岗位。`
+        : `将删除 ${r.employeeName} ${r.month} 的工资记录。不会删除员工档案，也不会修改所属门店和岗位；该员工仍属于当前门店，删除后会回到“待生成”状态。`,
+      confirmLabel: assignedEmployee ? '确认移出' : '确认删除',
       confirmVariant: 'danger',
     }
   }
@@ -268,7 +274,11 @@ export function useSalaryWorkflow(opts: {
         opts.successMessage.value = '已驳回'
       } else if (confirmation.kind === 'delete') {
         await deleteSalaryRecord(confirmation.record.id)
-        opts.successMessage.value = '工资记录已删除'
+        const assignedEmployee = /^SALADD-/i.test(confirmation.record.id)
+        opts.onDeleted?.(confirmation.record)
+        opts.successMessage.value = assignedEmployee
+          ? `已将 ${confirmation.record.employeeName} 从 ${confirmation.record.month} 工资表移出；员工档案、所属门店和岗位均未变更`
+          : `已删除 ${confirmation.record.employeeName} ${confirmation.record.month} 的工资记录，员工已回到待生成状态`
       } else if (confirmation.kind === 'mark-paid') {
         await markSalaryPaid(confirmation.record.id)
         opts.successMessage.value = '已标记发放'

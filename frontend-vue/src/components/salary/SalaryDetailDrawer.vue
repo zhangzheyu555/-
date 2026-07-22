@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { X } from 'lucide-vue-next'
 import type { SalaryRecord, SalaryRecordPayload } from '../../api/finance'
 import type { StoreInfo } from '../../api/operations'
-import { money, isEditable } from '../../composables/useSalaryPage'
+import { money, isEditable, wholeNumber } from '../../composables/useSalaryPage'
 import { WAGE_FIELDS } from '../../composables/useSalaryWorkflow'
 import ModalFooter from '../ui/ModalFooter.vue'
 import UiButton from '../ui/UiButton.vue'
@@ -111,7 +111,7 @@ function onFieldInput() {
       <div class="detail-reference-grid">
         <div><span>当月营业额</span><b>{{ revenue ? money(revenue) : '-' }}</b></div>
         <div><span>工资人效比</span><b>{{ revenue && record?.gross !== undefined ? `${(Number(record.gross || 0) / revenue * 100).toFixed(1)}%` : '-' }}</b></div>
-        <div><span>总工时</span><b>{{ Number(record?.workHours || 0).toFixed(1) }}</b></div>
+        <div><span>总工时</span><b>{{ wholeNumber(record?.workHours) }}</b></div>
         <div><span>提成测算</span><b>{{ money(record?.commission) }}</b></div>
         <div><span>补贴</span><b>{{ money(Number(record?.social || 0) + Number(record?.post || 0) + Number(record?.meal || 0) + Number(record?.subsidy || 0)) }}</b></div>
         <div><span>扣款</span><b>{{ money(Number(record?.deductUniform || 0) + Number(record?.returnUniform || 0)) }}</b></div>

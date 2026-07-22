@@ -13,6 +13,7 @@ public record SalaryRecordResponse(
     String employeeId,
     String employeeName,
     String position,
+    String employmentType,
     String attendance,
     BigDecimal gross,
     BigDecimal netPay,
@@ -29,6 +30,7 @@ public record SalaryRecordResponse(
     BigDecimal commission,
     BigDecimal overtime,
     BigDecimal seniority,
+    BigDecimal birthdayBenefit,
     BigDecimal lateNight,
     BigDecimal subsidy,
     BigDecimal performance,
@@ -50,7 +52,7 @@ public record SalaryRecordResponse(
   public SalaryRecordResponse masked() {
     return new SalaryRecordResponse(
         id, storeId, storeCode, storeName, brandId, brandName, month,
-        employeeId, employeeName, position, attendance,
+        employeeId, employeeName, position, employmentType, attendance,
         null, // gross
         null, // netPay
         normalHours, otHours, workHours, vacationLeft, vacationNote,
@@ -62,6 +64,7 @@ public record SalaryRecordResponse(
         null, // commission
         null, // overtime
         null, // seniority
+        null, // birthdayBenefit
         null, // lateNight
         null, // subsidy
         null, // performance

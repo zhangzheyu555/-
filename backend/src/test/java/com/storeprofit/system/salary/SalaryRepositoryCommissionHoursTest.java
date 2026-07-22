@@ -11,7 +11,19 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 class SalaryRepositoryCommissionHoursTest {
 
   @Test
-  void commissionProductivityUsesNormalHoursAndExcludesOvertimeHours() {
+  void employeePageUsesSalaryOvertimeWhenNormalHoursAreZero() throws Exception {
+    var field = SalaryRepository.class.getDeclaredField("EMPLOYEE_RECORD_COLUMNS");
+    field.setAccessible(true);
+    String sql = (String) field.get(null);
+
+    assertThat(sql).contains(
+        "when ema.employee_id is not null then coalesce(ema.overtime_hours, 0)",
+        "when coalesce(sr.ot_hours, 0) <> 0 then coalesce(sr.ot_hours, 0)"
+    );
+  }
+
+  @Test
+  void commissionProductivityUsesNormalPlusOvertimeHours() {
     DriverManagerDataSource dataSource = new DriverManagerDataSource(
         "jdbc:h2:mem:" + UUID.randomUUID() + ";MODE=MySQL;NON_KEYWORDS=MONTH;DB_CLOSE_DELAY=-1",
         "sa",
@@ -42,7 +54,8 @@ class SalaryRepositoryCommissionHoursTest {
     jdbc.update("""
         insert into employee(id, tenant_id, position, employment_type) values
           ('formal', 1, '营业员', '全职'),
-          ('intern', 1, '实习', '兼职')
+          ('intern', 1, '营业员', 'INTERN'),
+          ('auntie', 1, '保洁阿姨', null)
         """);
     jdbc.update("""
         insert into employee_month_attendance(
@@ -50,14 +63,17 @@ class SalaryRepositoryCommissionHoursTest {
           normal_hours, overtime_hours, total_hours, status
         ) values
           (1, 's1', 'formal', '2026-06', 26, 208, 40, 248, 'CONFIRMED'),
-          (1, 's1', 'intern', '2026-06', 20, 160, 20, 180, 'CONFIRMED')
+          (1, 's1', 'intern', '2026-06', 20, 160, 20, 180, 'CONFIRMED'),
+          (1, 's1', 'auntie', '2026-06', 10, 80, 10, 90, 'CONFIRMED')
         """);
 
     SalaryRepository repository = new SalaryRepository(jdbc, new NamedParameterJdbcTemplate(dataSource));
 
     SalaryRepository.StoreAttendanceStats stats = repository.storeAttendanceStats(1, "s1", "2026-06");
 
-    assertThat(stats.effectiveHours()).isEqualByComparingTo("288.00");
+    // 全职：208 + 40；通用岗位实习：(160 + 20) / 2；阿姨：(80 + 10) / 2。
+    assertThat(stats.effectiveHours()).isEqualByComparingTo("383.00");
+    // 即使用“营业员”通用岗位，实习员工也不能计入正式员工出勤天数。
     assertThat(stats.formalDays()).isEqualByComparingTo("26.00");
   }
 }

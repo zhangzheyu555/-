@@ -28,7 +28,7 @@ public class SalaryExportService {
     }
     List<SalaryRecordResponse> rows = salaryQueryService.records(user, month, brandId, storeId);
     StringBuilder csv = new StringBuilder();
-    csv.append("工号,姓名,门店,品牌,岗位,月份,基本工资,社保补助,岗位工资,餐补,全勤,提成,加班工资,工龄工资,深夜班,补贴,绩效,扣工服费,返工服费,应发工资,状态\n");
+    csv.append("工号,姓名,门店,品牌,岗位,月份,基本工资,社保补助,岗位工资,餐补,全勤,提成,加班工资,工龄工资,员工福利（生日）,深夜加班（元）,补贴,绩效,扣工服费,返工服费,应发工资,状态\n");
     for (SalaryRecordResponse row : rows) {
       csv.append(escapeCsvValue(row.employeeId())).append(",");
       csv.append(escapeCsvValue(row.employeeName())).append(",");
@@ -44,6 +44,7 @@ public class SalaryExportService {
       csv.append(row.commission()).append(",");
       csv.append(row.overtime()).append(",");
       csv.append(row.seniority()).append(",");
+      csv.append(row.birthdayBenefit()).append(",");
       csv.append(row.lateNight()).append(",");
       csv.append(row.subsidy()).append(",");
       csv.append(row.performance()).append(",");

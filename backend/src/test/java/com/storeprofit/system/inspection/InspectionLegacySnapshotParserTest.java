@@ -30,7 +30,7 @@ class InspectionLegacySnapshotParserTest {
 
   private InspectionRecordRequest request(String deductionsJson, String redlinesJson) {
     return new InspectionRecordRequest(
-        "store-1", "2026-07-15", "督导", "茹果", new BigDecimal("200.00"),
+        "store-1", "2026-07-15", "督导", "茹菓", new BigDecimal("200.00"),
         new BigDecimal("200.00"), true, deductionsJson, redlinesJson, "[]", "测试");
   }
 }

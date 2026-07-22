@@ -5,11 +5,17 @@ import com.storeprofit.system.employee.EmployeeRepository;
 import com.storeprofit.system.employee.EmployeeResponse;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
+import com.storeprofit.system.platform.authorization.DataScope;
+import com.storeprofit.system.platform.authorization.DataScopeDomains;
 import com.storeprofit.system.todo.BusinessTodoService;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
 import java.util.UUID;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -52,22 +58,43 @@ public class SalaryWorkflowService {
       throw new BusinessException("STORE_NOT_FOUND", "门店不存在或不属于当前企业", HttpStatus.BAD_REQUEST);
     }
     String targetId = normalizeId(id);
-    salaryRepository.record(user.tenantId(), targetId).ifPresent(existing -> {
+    Optional<SalaryRecordResponse> existingRecord = salaryRepository.record(user.tenantId(), targetId);
+    existingRecord.ifPresent(existing -> {
       salaryQueryService.requireStoreScope(user, existing.storeId());
       requireEditableStatus(existing);
     });
-    salaryRepository.upsert(user.tenantId(), targetId, normalized);
+    salaryRepository.recordForEmployeeMonth(user.tenantId(), normalized.employeeId(), normalized.month())
+        .filter(existing -> !targetId.equals(existing.id()))
+        .ifPresent(existing -> {
+          throw new BusinessException(
+              "SALARY_ALREADY_EXISTS",
+              "该员工本月已在其他工资名单，不能重复添加",
+              HttpStatus.CONFLICT
+          );
+        });
+    SalaryRecordRequest persisted = existingRecord
+        .map(existing -> preserveUnallocatedGrossDifference(existing, normalized))
+        .orElse(normalized);
+    try {
+      salaryRepository.upsert(user.tenantId(), targetId, persisted);
+    } catch (DuplicateKeyException ex) {
+      throw new BusinessException(
+          "SALARY_ALREADY_EXISTS",
+          "该员工本月已有工资记录，请刷新后查看",
+          HttpStatus.CONFLICT
+      );
+    }
     salaryRepository.logAction(
         user.tenantId(),
         user.id(),
         user.displayName(),
         "salary_save",
         targetId,
-        normalized.storeId(),
-        normalized.month(),
+        persisted.storeId(),
+        persisted.month(),
         "工资记录已保存"
     );
-    reconcileTodos(user, normalized.month());
+    reconcileTodos(user, persisted.month());
     return salaryRepository.record(user.tenantId(), targetId)
         .orElseThrow(() -> new BusinessException("SAVE_FAILED", "工资记录保存失败", HttpStatus.INTERNAL_SERVER_ERROR));
   }
@@ -131,21 +158,21 @@ public class SalaryWorkflowService {
     }
     salaryQueryService.requireStoreScope(user, storeId);
     String employeeId = SalaryQueryService.requireText(request.employeeId(), "EMPLOYEE_REQUIRED", "请选择员工");
-    EmployeeResponse employee = resolveEmployee(user, storeId, employeeId, null, false);
     String month = SalaryQueryService.normalizeMonth(request.month());
+    boolean assignedToTargetStore = salaryRepository.recordExistsForEmployeeId(
+        user.tenantId(), storeId, month, employeeId);
+    EmployeeResponse employee = resolveEmployee(
+        user, storeId, employeeId, null, false, assignedToTargetStore);
+    boolean hourlyEmployee = SalaryGenerationService.isHourlyEmployee(
+        employee.employmentType(), employee.position());
     BigDecimal days = request.attendanceDays().setScale(2, RoundingMode.HALF_UP);
     BigDecimal overtimeHours = request.overtimeHours().setScale(2, RoundingMode.HALF_UP);
-    if (days.compareTo(new BigDecimal("31")) > 0) {
+    if (!hourlyEmployee && days.compareTo(new BigDecimal("31")) > 0) {
       throw new BusinessException("ATTENDANCE_DAYS_INVALID", "出勤天数不能超过31天", HttpStatus.BAD_REQUEST);
     }
     if (overtimeHours.compareTo(new BigDecimal("300")) > 0) {
       throw new BusinessException("OVERTIME_HOURS_INVALID", "加班小时不能超过300小时", HttpStatus.BAD_REQUEST);
     }
-    boolean hourlyEmployee = "兼职".equals(employee.employmentType())
-        || "长期兼职".equals(employee.employmentType())
-        || "实习".equals(employee.employmentType())
-        || (employee.position() != null
-            && (employee.position().contains("实习") || employee.position().contains("水果")));
     BigDecimal normalHours = hourlyEmployee && request.normalHours() != null
         ? request.normalHours().setScale(2, RoundingMode.HALF_UP)
         : days.multiply(new BigDecimal("8")).setScale(2, RoundingMode.HALF_UP);
@@ -167,6 +194,103 @@ public class SalaryWorkflowService {
         .orElseThrow(() -> new BusinessException("SAVE_FAILED", "考勤保存失败", HttpStatus.INTERNAL_SERVER_ERROR));
   }
 
+  public List<SalaryAssignmentCandidate> assignmentCandidates(AuthUser user, String requestedStoreId, String requestedMonth) {
+    requireEditRole(user);
+    String storeId = salaryQueryService.resolveStoreForWrite(user, requestedStoreId, "查看工资添加人员");
+    salaryQueryService.requireStoreScope(user, storeId);
+    String month = SalaryQueryService.normalizeMonth(requestedMonth);
+    DataScope salaryScope = accessControl == null
+        ? null
+        : accessControl.dataScope(user, DataScopeDomains.SALARY);
+
+    return employeeRepository.records(user.tenantId(), null, null, null).stream()
+        .filter(employee -> !storeId.equals(employee.storeId()))
+        .filter(employee -> !isInactiveEmployee(employee))
+        .filter(employee -> salaryScope == null || salaryScope.allowsStore(employee.storeId()))
+        .filter(employee -> salaryRepository.recordForEmployeeMonth(user.tenantId(), employee.id(), month).isEmpty())
+        .map(employee -> new SalaryAssignmentCandidate(
+            employee.id(),
+            employee.name(),
+            employee.position(),
+            employee.storeId(),
+            employee.storeName() == null || employee.storeName().isBlank()
+                ? employee.storeId()
+                : employee.storeName()
+        ))
+        .sorted(Comparator
+            .comparing(SalaryAssignmentCandidate::sourceStoreName, Comparator.nullsLast(String::compareTo))
+            .thenComparing(SalaryAssignmentCandidate::position, Comparator.nullsLast(String::compareTo))
+            .thenComparing(SalaryAssignmentCandidate::employeeName))
+        .toList();
+  }
+
+  @Transactional
+  public SalaryRecordResponse assignEmployee(AuthUser user, SalaryAssignmentRequest request) {
+    requireEditRole(user);
+    if (request == null) {
+      throw new BusinessException("BAD_REQUEST", "添加人员信息不能为空", HttpStatus.BAD_REQUEST);
+    }
+    String storeId = salaryQueryService.resolveStoreForWrite(user, request.storeId(), "添加员工到工资名单");
+    salaryQueryService.requireStoreScope(user, storeId);
+    String month = SalaryQueryService.normalizeMonth(request.month());
+    if (!salaryRepository.storeExists(user.tenantId(), storeId)) {
+      throw new BusinessException("STORE_NOT_FOUND", "门店不存在或不属于当前企业", HttpStatus.BAD_REQUEST);
+    }
+
+    String employeeId = SalaryQueryService.requireText(request.employeeId(), "EMPLOYEE_REQUIRED", "请选择员工");
+    EmployeeResponse employee = employeeRepository.record(user.tenantId(), employeeId)
+        .orElseThrow(() -> new BusinessException(
+            "EMPLOYEE_NOT_FOUND", "员工不存在或不属于当前企业", HttpStatus.BAD_REQUEST));
+    if (isInactiveEmployee(employee)) {
+      throw new BusinessException("EMPLOYEE_INACTIVE", "离职或停用员工不能加入工资名单", HttpStatus.BAD_REQUEST);
+    }
+    if (storeId.equals(employee.storeId())) {
+      throw new BusinessException("EMPLOYEE_ALREADY_IN_STORE", "该员工已在当前门店工资名单中", HttpStatus.CONFLICT);
+    }
+    salaryQueryService.requireStoreScope(user, employee.storeId());
+    salaryRepository.recordForEmployeeMonth(user.tenantId(), employee.id(), month).ifPresent(existing -> {
+      throw new BusinessException(
+          "SALARY_ALREADY_EXISTS",
+          "该员工本月已有工资记录，不能重复添加",
+          HttpStatus.CONFLICT
+      );
+    });
+
+    BigDecimal baseSalary = salaryRepository.salaryProfile(user.tenantId(), employee.id(), month)
+        .map(SalaryRepository.SalaryProfileRow::baseSalary)
+        .orElse(employee.baseSalary());
+    baseSalary = baseSalary == null ? ZERO : baseSalary.setScale(2, RoundingMode.HALF_UP);
+    BigDecimal seniority = SalaryGenerationService.eligibleForSalaryBenefits(employee)
+        ? SalaryGenerationService.seniorityPay(employee, month)
+        : ZERO;
+    BigDecimal birthdayBenefit = SalaryGenerationService.birthdayBenefit(employee, month);
+    BigDecimal gross = baseSalary.add(seniority).add(birthdayBenefit).setScale(2, RoundingMode.HALF_UP);
+    SalaryRecordRequest salary = new SalaryRecordRequest(
+        storeId, month, employee.id(), employee.name(), employee.position(), null,
+        gross, ZERO, ZERO, ZERO, ZERO, null,
+        baseSalary, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, seniority, birthdayBenefit,
+        ZERO, ZERO, ZERO, ZERO, ZERO
+    );
+    String salaryId = "SALADD-" + month.replace("-", "") + "-" + UUID.randomUUID().toString().substring(0, 12);
+    try {
+      salaryRepository.upsert(user.tenantId(), salaryId, salary);
+    } catch (DuplicateKeyException ex) {
+      throw new BusinessException(
+          "SALARY_ALREADY_EXISTS",
+          "该员工本月已有工资记录，请刷新后查看",
+          HttpStatus.CONFLICT
+      );
+    }
+    salaryRepository.logAction(
+        user.tenantId(), user.id(), user.displayName(), "salary_employee_assign", salaryId,
+        storeId, month,
+        "从" + displayStore(employee) + "添加员工" + employee.name()
+            + "到当月工资名单，岗位保持为" + displayPosition(employee.position())
+    );
+    reconcileTodos(user, month);
+    return salaryQueryService.requireRecord(user, salaryId);
+  }
+
   @Transactional
   public void delete(AuthUser user, String id) {
     requireEditRole(user);
@@ -175,9 +299,16 @@ public class SalaryWorkflowService {
         .orElseThrow(() -> new BusinessException("NOT_FOUND", "Salary record not found", HttpStatus.NOT_FOUND));
     salaryQueryService.requireStoreScope(user, existing.storeId());
     requireEditableStatus(existing);
-    int deleted = salaryRepository.delete(user.tenantId(), targetId);
+    // salary_record_item 对主表存在外键，必须在同一事务中先删除。
+    // 若主记录状态或版本已并发改变，下方异常会使分项删除一并回滚。
+    salaryRepository.deleteItems(user.tenantId(), targetId);
+    int deleted = salaryRepository.deleteEditable(user.tenantId(), targetId, existing.version());
     if (deleted == 0) {
-      throw new BusinessException("NOT_FOUND", "Salary record not found", HttpStatus.NOT_FOUND);
+      throw new BusinessException(
+          "VERSION_CONFLICT",
+          "工资记录状态或版本已变化，请刷新后重试",
+          HttpStatus.CONFLICT
+      );
     }
     salaryRepository.logAction(
         user.tenantId(),
@@ -281,6 +412,67 @@ public class SalaryWorkflowService {
 
   // === helpers ===
 
+  /**
+   * 保底补足与历史差额只存在 gross 中，没有独立明细列。
+   * 编辑工龄、深夜加班等分项时，以原 gross 加分项变化量计算，
+   * 避免把已生成的保底补足折损或重复叠加。
+   */
+  private SalaryRecordRequest preserveUnallocatedGrossDifference(
+      SalaryRecordResponse existing,
+      SalaryRecordRequest request
+  ) {
+    BigDecimal componentDelta = componentTotal(request).subtract(componentTotal(existing));
+    BigDecimal gross = amount(existing.gross()).add(componentDelta).setScale(2, RoundingMode.HALF_UP);
+    return new SalaryRecordRequest(
+        request.storeId(),
+        request.month(),
+        request.employeeId(),
+        request.employeeName(),
+        request.position(),
+        request.attendance(),
+        gross,
+        request.normalHours(),
+        request.otHours(),
+        request.workHours(),
+        request.vacationLeft(),
+        request.vacationNote(),
+        request.base(),
+        request.social(),
+        request.post(),
+        request.meal(),
+        request.fullAttendance(),
+        request.commission(),
+        request.overtime(),
+        request.seniority(),
+        request.birthdayBenefit(),
+        request.lateNight(),
+        request.subsidy(),
+        request.performance(),
+        request.deductUniform(),
+        request.returnUniform()
+    );
+  }
+
+  private BigDecimal componentTotal(SalaryRecordRequest row) {
+    return amount(row.base()).add(amount(row.social())).add(amount(row.post())).add(amount(row.meal()))
+        .add(amount(row.fullAttendance())).add(amount(row.commission())).add(amount(row.overtime()))
+        .add(amount(row.seniority())).add(amount(row.birthdayBenefit())).add(amount(row.lateNight()))
+        .add(amount(row.subsidy())).add(amount(row.performance()))
+        .subtract(amount(row.deductUniform())).subtract(amount(row.returnUniform()));
+  }
+
+  private BigDecimal componentTotal(SalaryRecordResponse row) {
+    return amount(row.base()).add(amount(row.social())).add(amount(row.post())).add(amount(row.meal()))
+        .add(amount(row.fullAttendance())).add(amount(row.commission())).add(amount(row.overtime()))
+        .add(amount(row.seniority())).add(amount(row.birthdayBenefit())).add(amount(row.lateNight()))
+        .add(amount(row.subsidy())).add(amount(row.performance()))
+        .subtract(amount(row.deductUniform())).subtract(amount(row.returnUniform()));
+  }
+
+  private BigDecimal amount(BigDecimal value) {
+    return value == null ? ZERO : value.setScale(2, RoundingMode.HALF_UP);
+  }
+
   private SalaryRecordRequest normalizeRequest(AuthUser user, SalaryRecordRequest request, boolean allowInactiveEmployee) {
     if (request == null) {
       throw new BusinessException("BAD_REQUEST", "工资记录不能为空", HttpStatus.BAD_REQUEST);
@@ -291,15 +483,23 @@ public class SalaryWorkflowService {
       // scope through BusinessScopeResolver before this fallback.
       storeId = SalaryQueryService.requireText(request.storeId(), "STORE_REQUIRED", "请选择门店");
     }
+    String month = SalaryQueryService.normalizeMonth(request.month());
+    boolean assignedToTargetStore = SalaryQueryService.blankToNull(request.employeeId()) != null
+        && salaryRepository.recordExistsForEmployeeId(
+            user.tenantId(), storeId, month, request.employeeId().trim());
     EmployeeResponse employee = resolveEmployee(
-        user, storeId, request.employeeId(), request.employeeName(), allowInactiveEmployee
+        user, storeId, request.employeeId(), request.employeeName(), allowInactiveEmployee, assignedToTargetStore
     );
     return new SalaryRecordRequest(
         storeId,
-        SalaryQueryService.normalizeMonth(request.month()),
+        month,
         employee == null ? SalaryQueryService.blankToNull(request.employeeId()) : employee.id(),
         employee == null ? SalaryQueryService.requireText(request.employeeName(), "EMPLOYEE_REQUIRED", "请选择员工") : employee.name(),
-        employee == null ? request.position() : SalaryQueryService.blankToNull(request.position()) == null ? employee.position() : request.position(),
+        employee == null
+            ? request.position()
+            : !storeId.equals(employee.storeId())
+                ? employee.position()
+                : SalaryQueryService.blankToNull(request.position()) == null ? employee.position() : request.position(),
         request.attendance(),
         request.gross(),
         request.normalHours(),
@@ -315,6 +515,7 @@ public class SalaryWorkflowService {
         request.commission(),
         request.overtime(),
         request.seniority(),
+        request.birthdayBenefit(),
         request.lateNight(),
         request.subsidy(),
         request.performance(),
@@ -324,7 +525,12 @@ public class SalaryWorkflowService {
   }
 
   private EmployeeResponse resolveEmployee(
-      AuthUser user, String storeId, String employeeId, String employeeName, boolean allowInactiveEmployee
+      AuthUser user,
+      String storeId,
+      String employeeId,
+      String employeeName,
+      boolean allowInactiveEmployee,
+      boolean allowAssignedStore
   ) {
     if (employeeRepository == null) {
       return null;
@@ -345,12 +551,32 @@ public class SalaryWorkflowService {
       employee = matches.getFirst();
     }
     if (!storeId.equals(employee.storeId())) {
-      throw new BusinessException("EMPLOYEE_STORE_MISMATCH", "员工不属于当前门店", HttpStatus.BAD_REQUEST);
+      if (!allowAssignedStore) {
+        throw new BusinessException("EMPLOYEE_STORE_MISMATCH", "员工尚未加入当前门店当月工资名单", HttpStatus.BAD_REQUEST);
+      }
+      salaryQueryService.requireStoreScope(user, employee.storeId());
     }
-    if (!allowInactiveEmployee && "离职".equals(employee.status())) {
+    if (!allowInactiveEmployee && isInactiveEmployee(employee)) {
       throw new BusinessException("EMPLOYEE_INACTIVE", "离职员工不能新增工资记录", HttpStatus.BAD_REQUEST);
     }
     return employee;
+  }
+
+  private boolean isInactiveEmployee(EmployeeResponse employee) {
+    String status = employee == null || employee.status() == null
+        ? ""
+        : employee.status().trim().toUpperCase(Locale.ROOT);
+    return List.of("离职", "停用", "删除", "INACTIVE", "DELETED").contains(status);
+  }
+
+  private String displayStore(EmployeeResponse employee) {
+    return employee.storeName() == null || employee.storeName().isBlank()
+        ? employee.storeId()
+        : employee.storeName();
+  }
+
+  private String displayPosition(String position) {
+    return position == null || position.isBlank() ? "未设置岗位" : position.trim();
   }
 
   private void requireEditableStatus(SalaryRecordResponse record) {

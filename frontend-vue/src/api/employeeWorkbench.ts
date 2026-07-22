@@ -67,6 +67,10 @@ export interface EmployeeProfileSalary {
   employeeId?: string
   employeeName?: string
   position?: string
+  employmentType?: string
+  normalHours?: number
+  otHours?: number
+  workHours?: number
   attendance?: string
   base?: number
   gross?: number

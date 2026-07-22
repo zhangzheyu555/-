@@ -171,7 +171,7 @@ public class SalaryService {
           // skip date parsing issues
         }
       }
-      if (salaryRepository.recordExistsForEmployeeId(user.tenantId(), storeId, month, employee.id())
+      if (salaryRepository.recordForEmployeeMonth(user.tenantId(), employee.id(), month).isPresent()
           || salaryRepository.recordExistsForEmployee(user.tenantId(), storeId, month, employee.name())) {
         skipped++;
         skipDetails.add(new SalaryGenerateReport.SalarySkipDetail(employee.id(), employee.name(), "工资记录已存在"));
@@ -232,7 +232,7 @@ public class SalaryService {
           }
         } catch (Exception ignored) {}
       }
-      if (salaryRepository.recordExistsForEmployeeId(user.tenantId(), storeId, effectiveMonth, employee.id())
+      if (salaryRepository.recordForEmployeeMonth(user.tenantId(), employee.id(), effectiveMonth).isPresent()
           || salaryRepository.recordExistsForEmployee(user.tenantId(), storeId, effectiveMonth, employee.name())) {
         skipped++;
         skipDetails.add(new SalaryGenerateReport.SalarySkipDetail(employee.id(), employee.name(), "工资记录已存在"));
@@ -322,7 +322,7 @@ public class SalaryService {
     requireReadRole(user);
     List<SalaryRecordResponse> rows = records(user, month, brandId, storeId);
     StringBuilder csv = new StringBuilder();
-    csv.append("工号,姓名,门店,品牌,岗位,月份,基本工资,社保补助,岗位工资,餐补,全勤,提成,加班工资,工龄工资,深夜班,补贴,绩效,扣工服费,返工服费,应发工资,状态\n");
+    csv.append("工号,姓名,门店,品牌,岗位,月份,基本工资,社保补助,岗位工资,餐补,全勤,提成,加班工资,工龄工资,员工福利（生日）,深夜加班（元）,补贴,绩效,扣工服费,返工服费,应发工资,状态\n");
     for (SalaryRecordResponse row : rows) {
       csv.append(escapeCsv(row.employeeId())).append(",");
       csv.append(escapeCsv(row.employeeName())).append(",");
@@ -338,6 +338,7 @@ public class SalaryService {
       csv.append(row.commission()).append(",");
       csv.append(row.overtime()).append(",");
       csv.append(row.seniority()).append(",");
+      csv.append(row.birthdayBenefit()).append(",");
       csv.append(row.lateNight()).append(",");
       csv.append(row.subsidy()).append(",");
       csv.append(row.performance()).append(",");
@@ -382,9 +383,14 @@ public class SalaryService {
         .orElseThrow(() -> new BusinessException("NOT_FOUND", "Salary record not found", HttpStatus.NOT_FOUND));
     requireStoreScope(user, existing.storeId());
     requireEditableStatus(existing);
-    int deleted = salaryRepository.delete(user.tenantId(), targetId);
+    salaryRepository.deleteItems(user.tenantId(), targetId);
+    int deleted = salaryRepository.deleteEditable(user.tenantId(), targetId, existing.version());
     if (deleted == 0) {
-      throw new BusinessException("NOT_FOUND", "Salary record not found", HttpStatus.NOT_FOUND);
+      throw new BusinessException(
+          "VERSION_CONFLICT",
+          "工资记录状态或版本已变化，请刷新后重试",
+          HttpStatus.CONFLICT
+      );
     }
     salaryRepository.logAction(
         user.tenantId(),
@@ -474,6 +480,7 @@ public class SalaryService {
         request.commission(),
         request.overtime(),
         request.seniority(),
+        request.birthdayBenefit(),
         request.lateNight(),
         request.subsidy(),
         request.performance(),
@@ -498,6 +505,7 @@ public class SalaryService {
         ZERO,
         null,
         baseSalary,
+        ZERO,
         ZERO,
         ZERO,
         ZERO,

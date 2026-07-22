@@ -52,7 +52,7 @@ public class OrganizationSeedService {
   }
 
   private void seedBrands() {
-    repository.ensureBrand(TenantDefaults.DEFAULT_TENANT_ID, "RG", "茹果", "#EF7E3D", 10);
+    repository.ensureBrand(TenantDefaults.DEFAULT_TENANT_ID, "RG", "茹菓", "#EF7E3D", 10);
     repository.ensureBrand(TenantDefaults.DEFAULT_TENANT_ID, "BW", "霸王茶姬", "#9A3340", 20);
     repository.ensureBrand(TenantDefaults.DEFAULT_TENANT_ID, "RX", "瑞幸咖啡", "#2E6BD6", 30);
   }
@@ -89,10 +89,9 @@ public class OrganizationSeedService {
   }
 
   private void seedFallbackStores() {
-    long rg = brandId("茹果");
+    long rg = brandId("茹菓");
     long bw = brandId("霸王茶姬");
     long rx = brandId("瑞幸咖啡");
-    repository.upsertStore(TenantDefaults.DEFAULT_TENANT_ID, new StoreUpsertRequest("rg1", "RG001", "保利店", rg, "荆州", "李瑞", "", "营业中", "默认种子门店"));
     repository.upsertStore(TenantDefaults.DEFAULT_TENANT_ID, new StoreUpsertRequest("rg4", "RG004", "荆州之星店", rg, "荆州", "孔繁中", "", "营业中", "默认种子门店"));
     repository.upsertStore(TenantDefaults.DEFAULT_TENANT_ID, new StoreUpsertRequest("rg8", "RG008", "长大店", rg, "荆州", "", "", "营业中", "默认种子门店"));
     repository.upsertStore(TenantDefaults.DEFAULT_TENANT_ID, new StoreUpsertRequest("bw2", "BW002", "万达店", bw, "汕头", "", "", "营业中", "默认种子门店"));
@@ -104,7 +103,7 @@ public class OrganizationSeedService {
     return switch (brandName) {
       case "霸王茶姬" -> repository.ensureBrand(TenantDefaults.DEFAULT_TENANT_ID, "BW", "霸王茶姬", "#9A3340", 20);
       case "瑞幸咖啡" -> repository.ensureBrand(TenantDefaults.DEFAULT_TENANT_ID, "RX", "瑞幸咖啡", "#2E6BD6", 30);
-      default -> repository.ensureBrand(TenantDefaults.DEFAULT_TENANT_ID, "RG", "茹果", "#EF7E3D", 10);
+      default -> repository.ensureBrand(TenantDefaults.DEFAULT_TENANT_ID, "RG", "茹菓", "#EF7E3D", 10);
     };
   }
 

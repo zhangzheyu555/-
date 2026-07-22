@@ -436,7 +436,7 @@ public class MigrationStatusService {
   private StoreUpsertRequest storeUpsertRequest(AuthUser user, JsonNode store) {
     String id = requiredText(store, "id");
     String name = requiredText(store, "name");
-    String brandName = textOrDefault(store, "brand", "未分类品牌");
+    String brandName = canonicalBrandName(textOrDefault(store, "brand", "未分类品牌"));
     long brandId = organizationRepository.ensureBrand(
         user.tenantId(),
         legacyBrandCode(brandName),
@@ -587,9 +587,9 @@ public class MigrationStatusService {
           id, tenant_id, store_id, month, employee_name, position, attendance, gross,
           normal_hours, ot_hours, work_hours, vacation_left, vacation_note,
           base, social, post, meal, full_attendance, commission, overtime, seniority,
-          late_night, subsidy, performance, deduct_uniform, return_uniform, updated_at
+          birthday_benefit, late_night, subsidy, performance, deduct_uniform, return_uniform, updated_at
         )
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
         on duplicate key update
           tenant_id = values(tenant_id),
           store_id = values(store_id),
@@ -611,6 +611,7 @@ public class MigrationStatusService {
           commission = values(commission),
           overtime = values(overtime),
           seniority = values(seniority),
+          birthday_benefit = values(birthday_benefit),
           late_night = values(late_night),
           subsidy = values(subsidy),
           performance = values(performance),
@@ -639,6 +640,7 @@ public class MigrationStatusService {
         amount(salary, "commission"),
         amount(salary, "overtime"),
         amount(salary, "seniority"),
+        amount(salary, "birthdayBenefit", "birthday_benefit"),
         amount(salary, "lateNight", "late_night", "latenight"),
         amount(salary, "subsidy"),
         amount(salary, "performance"),
@@ -686,7 +688,7 @@ public class MigrationStatusService {
         storeId,
         inspectionDate,
         textOrNull(inspection, "inspector"),
-        textOrNull(inspection, "brand"),
+        canonicalBrandName(textOrNull(inspection, "brand")),
         fullScore,
         score,
         InspectionScoringRules.passed(score, redLineHit) ? 1 : 0,
@@ -1096,6 +1098,10 @@ public class MigrationStatusService {
       return "legacy-default";
     }
     return "legacy-" + Integer.toUnsignedString(brandName.hashCode(), 36);
+  }
+
+  private String canonicalBrandName(String brandName) {
+    return brandName == null ? null : brandName.replace("茹果", "茹菓");
   }
 
   private void logStructuredMigration(AuthUser user, String key, String targetTable, int migratedRecordCount) {

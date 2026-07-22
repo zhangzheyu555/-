@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { CalendarDays, Clock3, Users, WalletCards } from 'lucide-vue-next'
-import { money } from '../../composables/useSalaryPage'
+import { money, wholeNumber } from '../../composables/useSalaryPage'
 
 defineProps<{
   employeeCount: number
@@ -15,7 +15,7 @@ defineProps<{
   <section class="salary-summary-strip" aria-label="工资汇总">
     <div><Users :size="20" /><span>员工</span><b>{{ employeesLoading ? '--' : employeeCount }}</b><small>人</small></div>
     <div><WalletCards :size="20" /><span>应发合计</span><b>{{ employeesLoading ? '--' : money(grossTotal) }}</b></div>
-    <div><Clock3 :size="20" /><span>总工时</span><b>{{ employeesLoading ? '--' : workHoursTotal.toFixed(2) }}</b><small>小时</small></div>
+    <div><Clock3 :size="20" /><span>总工时</span><b>{{ employeesLoading ? '--' : wholeNumber(workHoursTotal) }}</b><small>小时</small></div>
     <div><CalendarDays :size="20" /><span>假期余额合计</span><b>{{ employeesLoading ? '--' : vacationBalanceTotal.toFixed(1) }}</b><small>天</small></div>
   </section>
 </template>

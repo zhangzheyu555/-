@@ -119,6 +119,7 @@ class MigrationStatusServiceTest {
           commission decimal(14,2) not null default 0,
           overtime decimal(14,2) not null default 0,
           seniority decimal(14,2) not null default 0,
+          birthday_benefit decimal(14,2) not null default 0,
           late_night decimal(14,2) not null default 0,
           subsidy decimal(14,2) not null default 0,
           performance decimal(14,2) not null default 0,
@@ -460,7 +461,7 @@ class MigrationStatusServiceTest {
   @Test
   void runsLegacyKvSalaryMigrationIntoStructuredSalaryTable() {
     AuthUser boss = user("BOSS");
-    jdbcTemplate.update("insert into brand(id, tenant_id, name) values (?, ?, ?)", 99L, boss.tenantId(), "茹果奶茶");
+    jdbcTemplate.update("insert into brand(id, tenant_id, name) values (?, ?, ?)", 99L, boss.tenantId(), "茹菓奶茶");
     jdbcTemplate.update(
         "insert into store_branch(id, tenant_id, brand_id, name) values (?, ?, ?, ?)",
         "rg1",
@@ -494,6 +495,7 @@ class MigrationStatusServiceTest {
             "commission":758,
             "overtime":55,
             "seniority":400,
+            "birthdayBenefit":200,
             "latenight":30,
             "subsidy":0,
             "performance":100,
@@ -539,6 +541,7 @@ class MigrationStatusServiceTest {
     assertThat(row.get("VACATION_LEFT")).isEqualTo(new BigDecimal("1.00"));
     assertThat(row.get("VACATION_NOTE")).isEqualTo("余假1天");
     assertThat(row.get("FULL_ATTENDANCE")).isEqualTo(new BigDecimal("200.00"));
+    assertThat(row.get("BIRTHDAY_BENEFIT")).isEqualTo(new BigDecimal("200.00"));
     assertThat(row.get("LATE_NIGHT")).isEqualTo(new BigDecimal("30.00"));
     assertThat(row.get("DEDUCT_UNIFORM")).isEqualTo(new BigDecimal("20.00"));
     assertThat(row.get("RETURN_UNIFORM")).isEqualTo(new BigDecimal("10.00"));
@@ -550,7 +553,7 @@ class MigrationStatusServiceTest {
     assertThat(employee.get("TENANT_ID")).isEqualTo(1L);
     assertThat(employee.get("STORE_ID")).isEqualTo("rg1");
     assertThat(employee.get("STORE_NAME")).isEqualTo("荆州之星店");
-    assertThat(employee.get("BRAND_NAME")).isEqualTo("茹果奶茶");
+    assertThat(employee.get("BRAND_NAME")).isEqualTo("茹菓奶茶");
     assertThat(employee.get("NAME")).isEqualTo("李瑜");
     assertThat(employee.get("POSITION")).isEqualTo("店长");
     assertThat(employee.get("BASE_SALARY")).isEqualTo(new BigDecimal("1900.00"));
@@ -685,7 +688,7 @@ class MigrationStatusServiceTest {
     assertThat(row.get("STORE_ID")).isEqualTo("rg1");
     assertThat(row.get("INSPECTION_DATE").toString()).isEqualTo("2026-05-21");
     assertThat(row.get("INSPECTOR")).isEqualTo("督导A");
-    assertThat(row.get("BRAND")).isEqualTo("茹果奶茶");
+    assertThat(row.get("BRAND")).isEqualTo("茹菓奶茶");
     assertThat(row.get("FULL_SCORE")).isEqualTo(new BigDecimal("200.00"));
     assertThat(row.get("SCORE")).isEqualTo(new BigDecimal("184.00"));
     assertThat(((Number) row.get("PASSED")).intValue()).isZero();

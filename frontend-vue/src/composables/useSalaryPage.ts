@@ -4,7 +4,7 @@ import { useAuthStore } from '../stores/auth'
 import { PERMISSIONS } from '../permissions/permissions'
 import { getStores, type StoreInfo } from '../api/operations'
 import { ApiError } from '../api/http'
-import { getSalaryEmployeePage, type SalaryPageResponse } from '../api/finance'
+import { getSalaryEmployeePage, type SalaryPageResponse, type SalaryRecord } from '../api/finance'
 import { useBusinessScope } from './useBusinessScope'
 
 const PAGE_SIZE = 20
@@ -20,7 +20,26 @@ export function currentMonth() {
 }
 
 export function money(v?: number) {
-  return `¥${Number(v || 0).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}`
+  const number = Number(v || 0)
+  const integer = Number.isFinite(number) ? Math.trunc(number) : 0
+  return `¥${integer.toLocaleString('zh-CN', { maximumFractionDigits: 0 })}`
+}
+
+export function wholeNumber(v?: number) {
+  const number = Number(v || 0)
+  return String(Number.isFinite(number) ? Math.trunc(number) : 0)
+}
+
+export function isHourlyEmployee(employmentTypeValue?: string, positionValue?: string, attendanceValue?: string) {
+  const employmentType = String(employmentTypeValue || '').trim().toUpperCase()
+  if (['兼职', '长期兼职', '实习', 'PART_TIME', 'LONG_TERM_PART_TIME', 'INTERN'].includes(employmentType)) return true
+  const position = String(positionValue || '')
+  if (['兼职', '实习', '水果', '阿姨'].some((keyword) => position.includes(keyword))) return true
+  return /(?:按小时|小时)/.test(String(attendanceValue || ''))
+}
+
+export function isHourlySalaryRecord(record?: SalaryRecord | null) {
+  return Boolean(record && isHourlyEmployee(record.employmentType, record.position, record.attendance))
 }
 
 export function statusLabel(s?: string) {
@@ -107,17 +126,27 @@ export function useSalaryPage() {
     const value = businessScope.scopedBrandId(selectedBrandId.value)
     return value ? Number(value) : undefined
   })
+  const selectableStores = computed(() => stores.value.filter((store) => {
+    const status = String(store.status || '').trim().toUpperCase()
+    return !status || status === '营业中' || status === '正常' || status === 'ACTIVE'
+  }))
+  const isEffectiveStoreActive = computed(() => {
+    const storeId = effectiveStoreId.value
+    if (!storeId) return false
+    if (storeId === 'all') return true
+    return selectableStores.value.some((store) => store.id === storeId)
+  })
   const accessibleStores = computed(() => {
     if (isStoreManager.value) {
-      return stores.value.filter((store) => store.id === businessScope.boundStoreId.value)
+      return selectableStores.value.filter((store) => store.id === businessScope.boundStoreId.value)
     }
-    if (salaryScope.value?.mode === 'ALL') return stores.value
+    if (salaryScope.value?.mode === 'ALL') return selectableStores.value
     const allowedStoreIds = salaryScope.value?.storeIds || []
     if (!allowedStoreIds.length) return []
-    return stores.value.filter((store) => allowedStoreIds.includes(store.id))
+    return selectableStores.value.filter((store) => allowedStoreIds.includes(store.id))
   })
   const brandOptions = computed(() => Array.from(new Map(
-    stores.value.filter((store) => store.brandId !== undefined).map((store) => [store.brandId, { id: store.brandId as number, name: store.brandName || `品牌${store.brandId}` }]),
+    selectableStores.value.filter((store) => store.brandId !== undefined).map((store) => [store.brandId, { id: store.brandId as number, name: store.brandName || `品牌${store.brandId}` }]),
   ).values()))
   const filteredAccessibleStores = computed(() => selectedBrandId.value === undefined
     ? accessibleStores.value
@@ -150,6 +179,7 @@ export function useSalaryPage() {
     canEdit.value
       && Boolean(effectiveStoreId.value)
       && effectiveStoreId.value !== 'all'
+      && isEffectiveStoreActive.value
       && hasValidMonth.value
       && employeeCount.value > 0
       && !loading.value,
@@ -186,6 +216,11 @@ export function useSalaryPage() {
     }
     if (!hasValidMonth.value) {
       error.value = '请选择有效月份。'
+      return
+    }
+    if (!isEffectiveStoreActive.value) {
+      pageData.value = null
+      error.value = '该门店已停用，不能继续查看、添加人员或生成工资。'
       return
     }
     pageRequestController?.abort()
@@ -240,6 +275,7 @@ export function useSalaryPage() {
       if (qBrandId && brandOptions.value.some((brand) => brand.id === qBrandId)) selectedBrandId.value = qBrandId
       const ids = new Set(accessibleStores.value.map((s) => s.id))
       if (qStoreId && ids.has(qStoreId)) selectedStoreId.value = qStoreId
+      else if (qStoreId && storeMap.value.has(qStoreId)) selectedStoreId.value = qStoreId
       else if (isOwnStoreScope.value && accessibleStores.value.length)
         selectedStoreId.value = accessibleStores.value[0].id
     }
@@ -264,6 +300,14 @@ export function useSalaryPage() {
       return
     }
     if (selectedStoreId.value !== 'all' && !filteredAccessibleStores.value.some((store) => store.id === selectedStoreId.value)) {
+      const selectedStoreExists = storeMap.value.has(selectedStoreId.value)
+      const selectedStoreIsInactive = selectedStoreExists
+        && !selectableStores.value.some((store) => store.id === selectedStoreId.value)
+      if (selectedStoreIsInactive) {
+        page.value = 1
+        void loadPage(1)
+        return
+      }
       selectedStoreId.value = isOwnStoreScope.value && filteredAccessibleStores.value.length
         ? filteredAccessibleStores.value[0].id
         : 'all'
@@ -297,6 +341,7 @@ export function useSalaryPage() {
     canEdit, canReview, canPay, canExport, isStoreManager, isOwnStoreScope,
     managerScopeLabel, scopeConfigurationError, effectiveStoreId, effectiveBrandId,
     accessibleStores, brandOptions, filteredAccessibleStores, storeMap, selectedStoreName,
+    isEffectiveStoreActive,
     rows, total, totalPages, summary, employeeCount, hasValidMonth,
     isEmployeeEmpty, isEmpty, showTable, canGenerate,
     statusCounts, filteredRows,

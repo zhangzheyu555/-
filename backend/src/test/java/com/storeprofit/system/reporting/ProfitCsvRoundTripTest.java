@@ -17,7 +17,7 @@ class ProfitCsvRoundTripTest {
   @Test
   void exportedProfitCsvCanBeRecognizedWithoutEditing() throws Exception {
     ProfitEntryResponse entry = new ProfitEntryResponse(
-        1L, "rg1", "RG001", "保利店", 1L, "茹果奶茶", "荆州", "张三", "2026-07",
+        1L, "rg1", "RG001", "保利店", 1L, "茹菓奶茶", "荆州", "张三", "2026-07",
         amount("538252.94"), amount("100.00"), amount("50.00"), amount("538102.94"),
         amount("178747.23"), amount("1200.00"), amount("300.00"), amount("400.00"),
         amount("180647.23"), amount("0.34"), amount("357455.71"), amount("0.66"),
@@ -28,7 +28,7 @@ class ProfitCsvRoundTripTest {
     MockMultipartFile file = new MockMultipartFile(
         "file", "门店利润_2026-07.csv", "text/csv", csv.getBytes(StandardCharsets.UTF_8));
     List<StoreResponse> stores = List.of(
-        new StoreResponse("rg1", "RG001", "保利店", 1L, "茹果奶茶", "荆州", "张三", null, "营业中", null));
+        new StoreResponse("rg1", "RG001", "保利店", 1L, "茹菓奶茶", "荆州", "张三", null, "营业中", null));
 
     List<ProfitImportRow> rows = new SpreadsheetProfitParser().parse(
         file, ProfitImportSourceType.CSV, stores, "", "");

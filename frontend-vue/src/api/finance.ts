@@ -149,6 +149,7 @@ export interface SalaryRecord {
   employeeId?: string
   employeeName: string
   position?: string
+  employmentType?: string
   attendance?: string
   gross?: number
   netPay?: number
@@ -165,6 +166,7 @@ export interface SalaryRecord {
   fullAttendance?: number
   commission?: number
   seniority?: number
+  birthdayBenefit?: number
   lateNight?: number
   subsidy?: number
   performance?: number
@@ -216,6 +218,30 @@ export interface SalarySummary {
   overtimeTotal: number
 }
 
+export interface SalaryBusinessMetrics {
+  revenue: number | null
+  effectiveHours: number | null
+  hourlyRevenue: number | null
+  perCapitaOutput: number | null
+  commissionPool: number | null
+  commissionTotal: number | null
+  storeFund: number | null
+}
+
+export interface SalaryBusinessMetricsQuery {
+  month: string
+  storeId?: string
+  brandId?: number
+}
+
+export interface SalaryAssignmentCandidate {
+  employeeId: string
+  employeeName: string
+  position?: string
+  sourceStoreId: string
+  sourceStoreName: string
+}
+
 export interface SalaryPageQuery {
   month?: string
   brandId?: number
@@ -252,6 +278,7 @@ export interface SalaryRecordPayload {
   commission?: number
   overtime?: number
   seniority?: number
+  birthdayBenefit?: number
   lateNight?: number
   subsidy?: number
   performance?: number
@@ -457,8 +484,27 @@ export function getSalaryEmployeePage(params: SalaryPageQuery & { status?: strin
   return apiGet<SalaryPageResponse>(`/api/salaries/employee-page?${query.toString()}`, { signal })
 }
 
+export function getSalaryBusinessMetrics(params: SalaryBusinessMetricsQuery, signal?: AbortSignal) {
+  const query = new URLSearchParams({ month: params.month })
+  if (params.storeId) query.set('storeId', params.storeId)
+  if (params.brandId !== undefined) query.set('brandId', String(params.brandId))
+  return apiGet<SalaryBusinessMetrics>(`/api/salaries/business-metrics?${query.toString()}`, { signal })
+}
+
 export function getSalaryRecord(id: string) {
   return apiGet<SalaryRecord>(`/api/salaries/${encodeURIComponent(id)}`)
+}
+
+export function getSalaryAssignmentCandidates(storeId: string, month: string) {
+  const query = new URLSearchParams({ storeId, month })
+  return apiGet<SalaryAssignmentCandidate[]>(`/api/salaries/assignment-candidates?${query.toString()}`)
+}
+
+export function assignSalaryEmployee(payload: { storeId: string; month: string; employeeId: string }) {
+  return apiPost<SalaryRecord, { storeId: string; month: string; employeeId: string }>(
+    '/api/salaries/assign-employee',
+    payload,
+  )
 }
 
 export function previewSalaryGeneration(storeId: string, month: string) {

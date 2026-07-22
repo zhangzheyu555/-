@@ -29,10 +29,15 @@ public class SalaryRepository {
   private static final String RECORD_COLUMNS = """
       sr.id, sr.store_id, s.code as store_code, s.name as store_name,
       s.brand_id, b.name as brand_name, sr.month, sr.employee_id, sr.employee_name,
-      sr.position, sr.attendance, sr.gross, sr.net_pay, sr.normal_hours, sr.ot_hours,
-      sr.work_hours, sr.vacation_left, sr.vacation_note, sr.base, sr.social,
+      sr.position, e.employment_type as employment_type, sr.attendance,
+      sr.gross, sr.net_pay, sr.normal_hours, sr.ot_hours,
+      case when coalesce(sr.normal_hours, 0) <> 0 or coalesce(sr.ot_hours, 0) <> 0
+           then coalesce(sr.normal_hours, 0) + coalesce(sr.ot_hours, 0)
+           else sr.work_hours
+       end as work_hours,
+      sr.vacation_left, sr.vacation_note, sr.base, sr.social,
       sr.post, sr.meal, sr.full_attendance, sr.commission, sr.overtime,
-      sr.seniority, sr.late_night, sr.subsidy, sr.performance,
+      sr.seniority, sr.birthday_benefit, sr.late_night, sr.subsidy, sr.performance,
       sr.deduct_uniform, sr.return_uniform, sr.status, sr.submitted_by, sr.reviewed_by, sr.reviewed_at,
       sr.review_note, sr.paid_at, sr.version
       """;
@@ -41,36 +46,53 @@ public class SalaryRepository {
       from salary_record sr
       join store_branch s on s.id = sr.store_id and s.tenant_id = sr.tenant_id
       left join brand b on b.id = s.brand_id and b.tenant_id = s.tenant_id
+      left join employee e on e.id = sr.employee_id and e.tenant_id = sr.tenant_id
       where sr.tenant_id = :tenantId
       """;
 
   private static final String EMPLOYEE_RECORD_COLUMNS = """
-      coalesce(sr.id, '') as id, e.store_id, s.code as store_code, s.name as store_name,
+      coalesce(sr.id, '') as id, coalesce(sr.store_id, ema.store_id, e.store_id) as store_id,
+      s.code as store_code, s.name as store_name,
       s.brand_id, b.name as brand_name, :month as month, e.id as employee_id, e.name as employee_name,
-      coalesce(e.position, e.role) as position,
+      coalesce(sr.position, e.position, e.role) as position,
+      e.employment_type as employment_type,
       coalesce(sr.attendance, concat(cast(ema.attendance_days as char), '天')) as attendance,
-      sr.gross, sr.net_pay, coalesce(sr.normal_hours, ema.normal_hours) as normal_hours,
-      coalesce(sr.ot_hours, ema.overtime_hours) as ot_hours,
-      coalesce(sr.work_hours, ema.total_hours) as work_hours,
+      sr.gross, sr.net_pay,
+      coalesce(nullif(sr.normal_hours, 0), ema.normal_hours, sr.normal_hours, 0) as normal_hours,
+      case when coalesce(sr.normal_hours, 0) <> 0
+           then coalesce(sr.ot_hours, 0)
+           when ema.employee_id is not null then coalesce(ema.overtime_hours, 0)
+           else coalesce(sr.ot_hours, 0)
+       end as ot_hours,
+      case when coalesce(sr.normal_hours, 0) <> 0
+           then coalesce(sr.normal_hours, 0) + coalesce(sr.ot_hours, 0)
+           when ema.employee_id is not null then coalesce(ema.total_hours, 0)
+           when coalesce(sr.ot_hours, 0) <> 0 then coalesce(sr.ot_hours, 0)
+           else coalesce(sr.work_hours, 0)
+       end as work_hours,
       coalesce(sr.vacation_left, ema.vacation_balance) as vacation_left, sr.vacation_note, sr.base,
       sr.social, sr.post, sr.meal, sr.full_attendance, sr.commission, sr.overtime,
-      sr.seniority, sr.late_night, sr.subsidy, sr.performance, sr.deduct_uniform, sr.return_uniform,
+      sr.seniority, sr.birthday_benefit, sr.late_night, sr.subsidy, sr.performance,
+      sr.deduct_uniform, sr.return_uniform,
       coalesce(sr.status, 'PENDING_GENERATION') as status, sr.submitted_by, sr.reviewed_by,
       sr.reviewed_at, sr.review_note, sr.paid_at, coalesce(sr.version, 0) as version
       """;
 
   private static final String EMPLOYEE_RECORD_FROM = """
       from employee e
-      join store_branch s on s.id = e.store_id and s.tenant_id = e.tenant_id
-      left join brand b on b.id = s.brand_id and b.tenant_id = s.tenant_id
-      left join salary_record sr on sr.tenant_id = e.tenant_id and sr.store_id = e.store_id
+      left join salary_record sr on sr.tenant_id = e.tenant_id
         and sr.employee_id = e.id and sr.month = :month
       left join employee_month_attendance ema on ema.tenant_id = e.tenant_id
-        and ema.store_id = e.store_id and ema.employee_id = e.id and ema.month = :month
+        and ema.employee_id = e.id and ema.month = :month
         and ema.status = 'CONFIRMED'
+        and (sr.id is null or ema.store_id = sr.store_id)
+      join store_branch s on s.id = coalesce(sr.store_id, ema.store_id, e.store_id)
+        and s.tenant_id = e.tenant_id
+      left join brand b on b.id = s.brand_id and b.tenant_id = s.tenant_id
       where e.tenant_id = :tenantId
         and (
           sr.id is not null
+          or ema.employee_id is not null
           or upper(coalesce(e.status, '')) not in ('离职', '停用', '删除', 'INACTIVE', 'DELETED')
         )
       """;
@@ -213,7 +235,7 @@ public class SalaryRepository {
       params.addValue("brandId", brandId);
     }
     if (storeId != null && !storeId.isBlank()) {
-      sql.append(" and e.store_id = :storeId");
+      sql.append(" and s.id = :storeId");
       params.addValue("storeId", storeId.trim());
     }
     if (status != null && !status.isBlank()) {
@@ -223,10 +245,10 @@ public class SalaryRepository {
     if (keyword != null && !keyword.isBlank()) {
       sql.append(" and (lower(e.name) like :keyword")
           .append(" or lower(e.id) like :keyword")
-          .append(" or lower(coalesce(e.position, e.role, '')) like :keyword)");
+          .append(" or lower(coalesce(sr.position, e.position, e.role, '')) like :keyword)");
       params.addValue("keyword", "%" + keyword.trim().toLowerCase(java.util.Locale.ROOT) + "%");
     }
-    appendStoreScope(sql, params, "e.store_id", dataScope);
+    appendStoreScope(sql, params, "s.id", dataScope);
   }
 
   private void appendStoreScope(
@@ -295,6 +317,33 @@ public class SalaryRepository {
         this::mapRecord
     );
     return rows.stream().findFirst();
+  }
+
+  public Optional<SalaryRecordResponse> recordForEmployeeMonth(long tenantId, String employeeId, String month) {
+    String sql = "select " + RECORD_COLUMNS + RECORD_FROM
+        + " and sr.employee_id = :employeeId and sr.month = :month order by sr.id limit 1";
+    List<SalaryRecordResponse> rows = namedJdbcTemplate.query(
+        sql,
+        new MapSqlParameterSource()
+            .addValue("tenantId", tenantId)
+            .addValue("employeeId", employeeId)
+            .addValue("month", month),
+        this::mapRecord
+    );
+    return rows.stream().findFirst();
+  }
+
+  public List<String> assignedEmployeeIds(long tenantId, String storeId, String month) {
+    return jdbcTemplate.queryForList("""
+        select distinct employee_id
+          from salary_record
+         where tenant_id = ?
+           and store_id = ?
+           and month = ?
+           and id like 'SALADD-%'
+           and employee_id is not null
+           and status in ('DRAFT', 'REJECTED')
+        """, String.class, tenantId, storeId, month);
   }
 
   public Optional<SalaryRecordResponse> latestEmployeeRecord(
@@ -413,8 +462,28 @@ public class SalaryRepository {
     insert(tenantId, id, request);
   }
 
-  public int delete(long tenantId, String id) {
-    return jdbcTemplate.update("delete from salary_record where tenant_id = ? and id = ?", tenantId, id);
+  public int deleteItems(long tenantId, String salaryRecordId) {
+    return jdbcTemplate.update(
+        "delete from salary_record_item where tenant_id = ? and salary_record_id = ?",
+        tenantId,
+        salaryRecordId
+    );
+  }
+
+  /**
+   * 只删除仍处于可编辑状态且版本未变化的工资记录。
+   *
+   * <p>调用方必须在同一事务中先删除 {@code salary_record_item}。如果此处返回 0，
+   * 调用方应抛出异常使事务回滚，从而恢复已删除的分项。</p>
+   */
+  public int deleteEditable(long tenantId, String id, int expectedVersion) {
+    return jdbcTemplate.update("""
+        delete from salary_record
+        where tenant_id = ?
+          and id = ?
+          and status in ('DRAFT', 'REJECTED')
+          and version = ?
+        """, tenantId, id, expectedVersion);
   }
 
   public int updateStatus(long tenantId, String id, String status, Long submittedBy, Long reviewedBy, int expectedVersion) {
@@ -462,6 +531,7 @@ public class SalaryRepository {
     return jdbcTemplate.update("""
         update salary_record
         set status = 'PAID',
+            net_pay = gross,
             paid_at = current_timestamp,
             version = version + 1,
             updated_at = current_timestamp
@@ -489,12 +559,165 @@ public class SalaryRepository {
 
   public boolean storeExists(long tenantId, String storeId) {
     Integer count = jdbcTemplate.queryForObject(
-        "select count(*) from store_branch where tenant_id = ? and id = ?",
+        """
+        select count(*)
+          from store_branch
+         where tenant_id = ? and id = ?
+           and upper(trim(coalesce(status, ''))) in ('', '营业中', '正常', 'ACTIVE')
+        """,
         Integer.class,
         tenantId,
         storeId
     );
     return count != null && count > 0;
+  }
+
+  /**
+   * 按工资数据范围返回每家门店的原始营业额和当前实发提成。
+   *
+   * <p>营业额严格使用 {@code profit_entry.sales}，不使用扣除退款、折扣后的 income。
+   */
+  public List<SalaryBusinessMetricStoreRow> businessMetricStores(
+      long tenantId,
+      String month,
+      Long brandId,
+      String storeId,
+      DataScope dataScope
+  ) {
+    StringBuilder sql = new StringBuilder("""
+        select s.id as store_id,
+               (select p.sales
+                  from profit_entry p
+                 where p.tenant_id = s.tenant_id and p.store_id = s.id and p.month = :month
+                 limit 1) as revenue,
+               coalesce((select sum(sr.commission)
+                           from salary_record sr
+                          where sr.tenant_id = s.tenant_id and sr.store_id = s.id and sr.month = :month), 0)
+                 as commission_total
+         from store_branch s
+         where s.tenant_id = :tenantId
+           and (
+             exists (select 1 from profit_entry p
+                      where p.tenant_id = s.tenant_id and p.store_id = s.id and p.month = :month)
+             or exists (select 1 from salary_record sr
+                        where sr.tenant_id = s.tenant_id and sr.store_id = s.id and sr.month = :month)
+             or exists (select 1 from employee_month_attendance ema
+                        where ema.tenant_id = s.tenant_id and ema.store_id = s.id
+                          and ema.month = :month and ema.status = 'CONFIRMED')
+           )
+        """);
+    MapSqlParameterSource params = new MapSqlParameterSource()
+        .addValue("tenantId", tenantId)
+        .addValue("month", month);
+    if (brandId != null) {
+      sql.append(" and s.brand_id = :brandId");
+      params.addValue("brandId", brandId);
+    }
+    if (storeId != null && !storeId.isBlank()) {
+      sql.append(" and s.id = :storeId");
+      params.addValue("storeId", storeId.trim());
+    }
+    appendStoreScope(sql, params, "s.id", dataScope);
+    sql.append(" order by s.code, s.id");
+    return namedJdbcTemplate.query(sql.toString(), params, (rs, rowNum) ->
+        new SalaryBusinessMetricStoreRow(
+            rs.getString("store_id"),
+            nullableAmount(rs.getBigDecimal("revenue")),
+            amount(rs.getBigDecimal("commission_total"))));
+  }
+
+  /**
+   * 工资经营指标的人员工时输入。已有工资行时优先用工资行的正常与加班工时，
+   * 工资行没有分项工时时先回退到已确认考勤，再回退到历史总工时；没有工资行的人员直接使用已确认考勤。
+   */
+  public List<SalaryBusinessMetricLaborRow> businessMetricLaborRows(
+      long tenantId,
+      String month,
+      Long brandId,
+      String storeId,
+      DataScope dataScope
+  ) {
+    StringBuilder sql = new StringBuilder("""
+        select metric_row.store_id, metric_row.employment_type, metric_row.position,
+               metric_row.normal_hours, metric_row.overtime_hours, metric_row.attendance,
+               metric_row.confirmed_attendance_days, metric_row.has_salary_record
+          from (
+                select sr.store_id,
+                       e.employment_type,
+                       coalesce(sr.position, e.position, e.role) as position,
+                       case when coalesce(sr.normal_hours, 0) <> 0
+                            then coalesce(sr.normal_hours, 0)
+                            when ema.employee_id is not null then coalesce(ema.normal_hours, 0)
+                            when coalesce(sr.ot_hours, 0) <> 0 then 0
+                            else coalesce(nullif(sr.work_hours, 0), 0)
+                        end as normal_hours,
+                       case when coalesce(sr.normal_hours, 0) <> 0
+                            then coalesce(sr.ot_hours, 0)
+                            when ema.employee_id is not null then coalesce(ema.overtime_hours, 0)
+                            else coalesce(sr.ot_hours, 0)
+                        end as overtime_hours,
+                       sr.attendance,
+                       ema.attendance_days as confirmed_attendance_days,
+                       true as has_salary_record
+                  from salary_record sr
+                  left join employee e
+                    on e.tenant_id = sr.tenant_id and e.id = sr.employee_id
+                  left join employee_month_attendance ema
+                    on ema.tenant_id = sr.tenant_id and ema.store_id = sr.store_id
+                   and ema.employee_id = sr.employee_id and ema.month = sr.month
+                   and ema.status = 'CONFIRMED'
+                 where sr.tenant_id = :tenantId and sr.month = :month
+
+                union all
+
+                select ema.store_id,
+                       e.employment_type,
+                       coalesce(e.position, e.role) as position,
+                       ema.normal_hours,
+                       ema.overtime_hours,
+                       null as attendance,
+                       ema.attendance_days as confirmed_attendance_days,
+                       false as has_salary_record
+                  from employee_month_attendance ema
+                  join employee e
+                    on e.tenant_id = ema.tenant_id and e.id = ema.employee_id
+                 where ema.tenant_id = :tenantId and ema.month = :month
+                   and ema.status = 'CONFIRMED'
+                   and not exists (
+                         select 1
+                           from salary_record existing_salary
+                          where existing_salary.tenant_id = ema.tenant_id
+                            and existing_salary.employee_id = ema.employee_id
+                            and existing_salary.month = ema.month
+                       )
+               ) metric_row
+          join store_branch s
+            on s.tenant_id = :tenantId and s.id = metric_row.store_id
+         where 1 = 1
+        """);
+    MapSqlParameterSource params = new MapSqlParameterSource()
+        .addValue("tenantId", tenantId)
+        .addValue("month", month);
+    if (brandId != null) {
+      sql.append(" and s.brand_id = :brandId");
+      params.addValue("brandId", brandId);
+    }
+    if (storeId != null && !storeId.isBlank()) {
+      sql.append(" and metric_row.store_id = :storeId");
+      params.addValue("storeId", storeId.trim());
+    }
+    appendStoreScope(sql, params, "metric_row.store_id", dataScope);
+    sql.append(" order by s.code, metric_row.store_id");
+    return namedJdbcTemplate.query(sql.toString(), params, (rs, rowNum) ->
+        new SalaryBusinessMetricLaborRow(
+            rs.getString("store_id"),
+            rs.getString("employment_type"),
+            rs.getString("position"),
+            amount(rs.getBigDecimal("normal_hours")),
+            amount(rs.getBigDecimal("overtime_hours")),
+            rs.getString("attendance"),
+            nullableAmount(rs.getBigDecimal("confirmed_attendance_days")),
+            rs.getBoolean("has_salary_record")));
   }
 
   /** 门店当月营业额（profit_entry.sales），用于提成档位/额度计算。 */
@@ -510,13 +733,22 @@ public class SalaryRepository {
 
   public record StoreAttendanceStats(BigDecimal effectiveHours, BigDecimal formalDays) {}
 
-  /** 门店当月考勤汇总：正常工时（实习/兼职按半工时）与四个标准岗位的出勤天数合计，用于提成计算。加班不稀释产值。 */
+  /** 门店当月考勤汇总：正常+加班总工时（实习/兼职按半工时）与四个标准岗位的出勤天数合计，用于提成计算。 */
   public StoreAttendanceStats storeAttendanceStats(long tenantId, String storeId, String month) {
     return jdbcTemplate.queryForObject("""
-        select coalesce(sum(case when e.employment_type in ('兼职', '长期兼职', '实习')
-                                      or e.position like '%实习%' or e.position like '%水果%'
-                                 then a.normal_hours / 2 else a.normal_hours end), 0) as eff_hours,
+        select coalesce(sum(case when upper(coalesce(e.employment_type, ''))
+                                           in ('兼职', '长期兼职', '实习', 'PART_TIME', 'LONG_TERM_PART_TIME', 'INTERN')
+                                      or e.position like '%兼职%' or e.position like '%实习%'
+                                      or e.position like '%水果%' or e.position like '%阿姨%'
+                                 then (a.normal_hours + a.overtime_hours) / 2
+                                 else a.normal_hours + a.overtime_hours end), 0) as eff_hours,
                coalesce(sum(case when e.position in ('店长', '领班', '训练员', '营业员')
+                                      and not (
+                                        upper(coalesce(e.employment_type, ''))
+                                          in ('兼职', '长期兼职', '实习', 'PART_TIME', 'LONG_TERM_PART_TIME', 'INTERN')
+                                        or e.position like '%兼职%' or e.position like '%实习%'
+                                        or e.position like '%水果%' or e.position like '%阿姨%'
+                                      )
                                  then a.attendance_days else 0 end), 0) as formal_days
         from employee_month_attendance a
         join employee e on e.id = a.employee_id and e.tenant_id = a.tenant_id
@@ -608,7 +840,8 @@ public class SalaryRepository {
 
   public void saveCalculationSnapshot(
       long tenantId, String salaryId, SalaryPolicyRow policy, String policySnapshot,
-      String calculationSnapshot, BigDecimal baseAmount, BigDecimal overtimeAmount, BigDecimal netPay
+      String calculationSnapshot, BigDecimal baseAmount, BigDecimal overtimeAmount,
+      BigDecimal seniorityAmount, BigDecimal birthdayBenefitAmount, BigDecimal netPay
   ) {
     jdbcTemplate.update("""
         update salary_record
@@ -619,6 +852,14 @@ public class SalaryRepository {
     insertSalaryItem(tenantId, salaryId, "BASE", "基础工资", "EARNING", baseAmount, "PROFILE", 10);
     if (overtimeAmount != null && overtimeAmount.compareTo(BigDecimal.ZERO) > 0) {
       insertSalaryItem(tenantId, salaryId, "OVERTIME", "加班工资", "EARNING", overtimeAmount, "CALCULATED", 20);
+    }
+    if (seniorityAmount != null && seniorityAmount.compareTo(BigDecimal.ZERO) > 0) {
+      insertSalaryItem(tenantId, salaryId, "SENIORITY", "工龄工资", "EARNING", seniorityAmount, "CALCULATED", 30);
+    }
+    if (birthdayBenefitAmount != null && birthdayBenefitAmount.compareTo(BigDecimal.ZERO) > 0) {
+      insertSalaryItem(
+          tenantId, salaryId, "BIRTHDAY_BENEFIT", "员工福利（生日）", "EARNING",
+          birthdayBenefitAmount, "CALCULATED", 40);
     }
   }
 
@@ -697,12 +938,12 @@ public class SalaryRepository {
     jdbcTemplate.update("""
         insert into salary_record(
           id, tenant_id, store_id, month, employee_id, employee_name, position, attendance,
-          gross, normal_hours, ot_hours, work_hours, vacation_left, vacation_note,
+          gross, net_pay, normal_hours, ot_hours, work_hours, vacation_left, vacation_note,
           base, social, post, meal, full_attendance, commission, overtime,
-          seniority, late_night, subsidy, performance, deduct_uniform,
+          seniority, birthday_benefit, late_night, subsidy, performance, deduct_uniform,
           return_uniform, status, version, created_at
         )
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', 1, current_timestamp)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', 1, current_timestamp)
         """,
         id,
         tenantId,
@@ -712,6 +953,7 @@ public class SalaryRepository {
         request.employeeName().trim(),
         blankToNull(request.position()),
         blankToNull(request.attendance()),
+        amount(request.gross()),
         amount(request.gross()),
         amount(request.normalHours()),
         amount(request.otHours()),
@@ -726,6 +968,7 @@ public class SalaryRepository {
         amount(request.commission()),
         amount(request.overtime()),
         amount(request.seniority()),
+        amount(request.birthdayBenefit()),
         amount(request.lateNight()),
         amount(request.subsidy()),
         amount(request.performance()),
@@ -744,6 +987,7 @@ public class SalaryRepository {
           position = ?,
           attendance = ?,
           gross = ?,
+          net_pay = ?,
           normal_hours = ?,
           ot_hours = ?,
           work_hours = ?,
@@ -757,6 +1001,7 @@ public class SalaryRepository {
           commission = ?,
           overtime = ?,
           seniority = ?,
+          birthday_benefit = ?,
           late_night = ?,
           subsidy = ?,
           performance = ?,
@@ -773,6 +1018,7 @@ public class SalaryRepository {
         blankToNull(request.position()),
         blankToNull(request.attendance()),
         amount(request.gross()),
+        amount(request.gross()),
         amount(request.normalHours()),
         amount(request.otHours()),
         amount(request.workHours()),
@@ -786,6 +1032,7 @@ public class SalaryRepository {
         amount(request.commission()),
         amount(request.overtime()),
         amount(request.seniority()),
+        amount(request.birthdayBenefit()),
         amount(request.lateNight()),
         amount(request.subsidy()),
         amount(request.performance()),
@@ -806,6 +1053,7 @@ public class SalaryRepository {
           position = ?,
           attendance = ?,
           gross = ?,
+          net_pay = ?,
           normal_hours = ?,
           ot_hours = ?,
           work_hours = ?,
@@ -819,6 +1067,7 @@ public class SalaryRepository {
           commission = ?,
           overtime = ?,
           seniority = ?,
+          birthday_benefit = ?,
           late_night = ?,
           subsidy = ?,
           performance = ?,
@@ -835,6 +1084,7 @@ public class SalaryRepository {
         blankToNull(request.position()),
         blankToNull(request.attendance()),
         amount(request.gross()),
+        amount(request.gross()),
         amount(request.normalHours()),
         amount(request.otHours()),
         amount(request.workHours()),
@@ -848,6 +1098,7 @@ public class SalaryRepository {
         amount(request.commission()),
         amount(request.overtime()),
         amount(request.seniority()),
+        amount(request.birthdayBenefit()),
         amount(request.lateNight()),
         amount(request.subsidy()),
         amount(request.performance()),
@@ -871,6 +1122,7 @@ public class SalaryRepository {
         rs.getString("employee_id"),
         rs.getString("employee_name"),
         rs.getString("position"),
+        rs.getString("employment_type"),
         rs.getString("attendance"),
         amount(rs.getBigDecimal("gross")),
         nullableAmount(rs.getBigDecimal("net_pay")),
@@ -887,6 +1139,7 @@ public class SalaryRepository {
         amount(rs.getBigDecimal("commission")),
         amount(rs.getBigDecimal("overtime")),
         amount(rs.getBigDecimal("seniority")),
+        amount(rs.getBigDecimal("birthday_benefit")),
         amount(rs.getBigDecimal("late_night")),
         amount(rs.getBigDecimal("subsidy")),
         amount(rs.getBigDecimal("performance")),
@@ -928,4 +1181,21 @@ public class SalaryRepository {
 
   public record AttendanceRow(BigDecimal attendanceDays, BigDecimal normalHours, BigDecimal overtimeHours,
                               BigDecimal totalHours, BigDecimal vacationBalance, String source, String status) {}
+
+  public record SalaryBusinessMetricStoreRow(
+      String storeId,
+      BigDecimal revenue,
+      BigDecimal commissionTotal
+  ) {}
+
+  public record SalaryBusinessMetricLaborRow(
+      String storeId,
+      String employmentType,
+      String position,
+      BigDecimal normalHours,
+      BigDecimal overtimeHours,
+      String attendance,
+      BigDecimal confirmedAttendanceDays,
+      boolean hasSalaryRecord
+  ) {}
 }

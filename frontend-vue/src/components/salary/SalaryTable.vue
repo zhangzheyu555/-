@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ChevronLeft, ChevronRight, Eye, Loader2 } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, Eye, Loader2, Trash2 } from 'lucide-vue-next'
 import type { SalaryRecord } from '../../api/finance'
-import { money, statusClass, statusLabel } from '../../composables/useSalaryPage'
+import { isHourlySalaryRecord, money, statusClass, statusLabel, wholeNumber } from '../../composables/useSalaryPage'
 
 const props = defineProps<{
   rows: SalaryRecord[]
@@ -11,18 +11,29 @@ const props = defineProps<{
   loading: boolean
   selectedRowKey: string
   checkedIds: Set<string>
+  canEdit: boolean
+  deletingId: string
 }>()
 
 const emit = defineEmits<{
   'page-change': [page: number]
   select: [record: SalaryRecord]
+  delete: [record: SalaryRecord]
   'toggle-row': [record: SalaryRecord, checked: boolean]
   'toggle-all': [checked: boolean]
 }>()
 
-function attendanceDays(value?: string) {
-  const match = String(value || '').match(/[\d.]+/)
-  return match ? match[0] : '--'
+function attendanceDisplay(record: SalaryRecord) {
+  if (isHourlySalaryRecord(record)) {
+    const attendanceHours = Number(String(record.attendance || '').match(/[\d.]+/)?.[0] || 0)
+    const normalHours = record.normalHours
+      ?? (record.workHours !== undefined
+        ? Math.max(0, Number(record.workHours) - Number(record.otHours || 0))
+        : attendanceHours)
+    return `${wholeNumber(normalHours)}小时`
+  }
+  const match = String(record.attendance || '').match(/[\d.]+/)
+  return match ? `${match[0]}天` : '--'
 }
 
 function allChecked() {
@@ -31,6 +42,20 @@ function allChecked() {
 
 function rowKey(row: SalaryRecord) {
   return row.id || `employee:${row.employeeId || `${row.storeId}:${row.employeeName}`}`
+}
+
+function canDelete(row: SalaryRecord) {
+  return props.canEdit && Boolean(row.id) && ['DRAFT', 'REJECTED'].includes(row.status || '')
+}
+
+function isAssignedEmployee(row: SalaryRecord) {
+  return /^SALADD-/i.test(row.id || '')
+}
+
+function deleteLabel(row: SalaryRecord) {
+  return isAssignedEmployee(row)
+    ? `将${row.employeeName}移出本月工资表`
+    : `删除${row.employeeName}本月工资记录`
 }
 </script>
 
@@ -42,7 +67,7 @@ function rowKey(row: SalaryRecord) {
       <table>
         <thead><tr>
           <th class="check"><input type="checkbox" :checked="allChecked()" aria-label="选择当前页" @change="emit('toggle-all', ($event.target as HTMLInputElement).checked)" /></th>
-          <th>姓名</th><th>工号</th><th>岗位</th><th class="num">出勤天数</th><th class="num">应发工资</th><th class="num">提成</th><th class="num">总工时</th><th class="num">假期余额</th><th>状态</th><th class="action">操作</th>
+          <th>姓名</th><th>工号</th><th>岗位</th><th class="num">出勤 / 实际工时</th><th class="num">应发工资</th><th class="num">提成</th><th class="num">总工时</th><th class="num">假期余额</th><th>状态</th><th class="action">操作</th>
         </tr></thead>
         <tbody>
           <tr v-for="row in rows" :key="rowKey(row)" :class="{ selected: rowKey(row) === selectedRowKey }" @click="emit('select', row)">
@@ -50,13 +75,24 @@ function rowKey(row: SalaryRecord) {
             <td><b>{{ row.employeeName }}</b></td>
             <td class="muted">{{ row.employeeId || '--' }}</td>
             <td>{{ row.position || '--' }}</td>
-            <td class="num">{{ attendanceDays(row.attendance) }}</td>
+            <td class="num">{{ attendanceDisplay(row) }}</td>
             <td class="num strong">{{ row.status === 'PENDING_GENERATION' ? '--' : money(row.gross) }}</td>
             <td class="num commission">{{ row.status === 'PENDING_GENERATION' ? '--' : money(row.commission) }}</td>
-            <td class="num">{{ Number(row.workHours || 0).toFixed(2) }}</td>
+            <td class="num">{{ wholeNumber(row.workHours) }}</td>
             <td class="num">{{ Number(row.vacationLeft || 0).toFixed(1) }}</td>
             <td><span class="status-pill" :class="statusClass(row.status)">{{ statusLabel(row.status) }}</span></td>
-            <td class="action"><button type="button" title="查看工资明细" @click.stop="emit('select', row)"><Eye :size="15" /></button></td>
+            <td class="action">
+              <button type="button" title="查看工资明细" :aria-label="`查看${row.employeeName}工资明细`" @click.stop="emit('select', row)"><Eye :size="15" /></button>
+              <button
+                v-if="canDelete(row)"
+                type="button"
+                class="delete-button"
+                :title="`${deleteLabel(row)}（不删除员工档案）`"
+                :aria-label="deleteLabel(row)"
+                :disabled="deletingId === row.id"
+                @click.stop="emit('delete', row)"
+              ><Loader2 v-if="deletingId === row.id" :size="15" class="spin" /><Trash2 v-else :size="15" /></button>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -82,9 +118,9 @@ th { height: 40px; background: #f7faf9; color: #526765; font-size: 13px; font-we
 tbody tr { cursor: pointer; transition: background-color .12s ease; }tbody tr:hover { background: #f4faf8; }tbody tr.selected { background: #eef7f5; box-shadow: inset 3px 0 #276b65; }
 td b { color: #182424; font-weight: 600; }.muted { color: #6f817f; }.strong { color: #182424; font-weight: 700; }.commission { color: #15756b; font-weight: 600; }
 td { overflow: hidden; text-overflow: ellipsis; }
-.num { text-align: right; font-variant-numeric: tabular-nums; }.check { width: 36px; text-align: center; }.action { width: 46px; text-align: center; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }.check { width: 36px; text-align: center; }.action { width: 76px; text-align: center; }
 input[type='checkbox'] { width: 15px; height: 15px; accent-color: #276b65; cursor: pointer; }
-.action button { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid #d5e2df; border-radius: 4px; background: #fff; color: #526765; cursor: pointer; }.action button:hover { border-color: #6baaa4; color: #276b65; }
+.action { overflow: visible; white-space: nowrap; }.action button { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; margin: 0 2px; border: 1px solid #d5e2df; border-radius: 4px; background: #fff; color: #526765; cursor: pointer; }.action button:hover { border-color: #6baaa4; color: #276b65; }.action .delete-button { border-color: #efd7d4; color: #b84a3e; }.action .delete-button:hover { border-color: #d98277; background: #fff6f4; color: #a83e33; }.action button:disabled { cursor: wait; opacity: .6; }
 .status-pill { display: inline-flex; padding: 4px 7px; border-radius: 4px; background: #e7f5ef; color: #28795f; font-size: 12px; font-weight: 600; }.status-pill.warn,.status-pill.pending { background: #fff2e2; color: #d46a16; }.status-pill.rejected { background: #fdeceb; color: #c34b40; }.status-pill.muted { background: #edf1f0; color: #637572; }
 .table-footer { display: flex; align-items: center; justify-content: space-between; min-height: 48px; padding: 8px 12px; color: #526765; font-size: 13px; }.pager { display: flex; align-items: center; gap: 8px; }.pager button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: 1px solid #d9e5e3; border-radius: 4px; background: #fff; color: #276b65; cursor: pointer; }.pager button:disabled { color: #aab7b5; cursor: default; }.pager b { min-width: 25px; padding: 5px 8px; border-radius: 4px; background: #276b65; color: #fff; text-align: center; }
 .table-loading,.table-empty { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 96px; color: #6f817f; font-size: 14px; }.spin { animation: spin 1s linear infinite; }@keyframes spin { to { transform: rotate(360deg); } }

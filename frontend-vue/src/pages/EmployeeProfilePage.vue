@@ -15,6 +15,7 @@ import {
 } from 'lucide-vue-next'
 import { ApiError } from '../api/http'
 import { getEmployeeProfile, type EmployeeProfile, type EmployeeProfileChecklistItem } from '../api/employeeWorkbench'
+import { isHourlyEmployee, money, wholeNumber } from '../composables/useSalaryPage'
 
 const router = useRouter()
 const loading = ref(false)
@@ -47,12 +48,26 @@ async function loadProfile() {
 
 function formatMoney(value?: number | null) {
   if (value === null || value === undefined) return '未生成'
-  return `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return money(value)
 }
 
 function display(value?: string | number | null, fallback = '未填写') {
   if (value === null || value === undefined || String(value).trim() === '') return fallback
   return String(value)
+}
+
+function attendanceDisplay() {
+  const salary = profile.value?.salary
+  if (!salary) return '待录入'
+  const attendance = String(salary.attendance || '')
+  const employmentType = salary.employmentType || profile.value?.archive.employmentType
+  const position = salary.position || profile.value?.archive.position
+  if (isHourlyEmployee(employmentType, position, attendance)) {
+    const hours = salary.normalHours ?? Math.max(0, Number(salary.workHours || 0) - Number(salary.otHours || 0))
+    return `${wholeNumber(hours)}小时`
+  }
+  const match = attendance.match(/[\d.]+/)
+  return match ? `${match[0]}天` : '待录入'
 }
 
 function checklistClass(item: EmployeeProfileChecklistItem) {
@@ -137,7 +152,7 @@ onMounted(() => {
 
         <div class="salary-total">
           <span>{{ profile.salary.available ? '最近一笔工资' : '工资状态' }}</span>
-          <strong>{{ profile.salary.available ? formatMoney(profile.salary.netPay || profile.salary.gross) : '未生成' }}</strong>
+          <strong>{{ profile.salary.available ? formatMoney(profile.salary.netPay ?? profile.salary.gross) : '未生成' }}</strong>
           <p>{{ profile.salary.message }}</p>
         </div>
 
@@ -149,7 +164,7 @@ onMounted(() => {
         </div>
 
         <div class="salary-details">
-          <div><span>出勤</span><strong>{{ display(profile.salary.attendance, '待录入') }}</strong></div>
+          <div><span>出勤 / 实际工时</span><strong>{{ attendanceDisplay() }}</strong></div>
           <div><span>加班工资</span><strong>{{ formatMoney(profile.salary.overtime) }}</strong></div>
           <div><span>工服扣/返</span><strong>{{ formatMoney(profile.salary.deductUniform) }} / {{ formatMoney(profile.salary.returnUniform) }}</strong></div>
           <div><span>剩余休假</span><strong>{{ profile.salary.vacationLeft ?? '未生成' }}</strong></div>

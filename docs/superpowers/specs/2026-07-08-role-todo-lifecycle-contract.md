@@ -56,7 +56,7 @@
       "summary": "2026-07 净利率低于目标线，需要查看费用和收入明细。",
       "status": "RISK",
       "priority": 10,
-      "brandName": "茹果奶茶",
+      "brandName": "茹菓奶茶",
       "storeId": "rg1",
       "storeName": "荆州之星店",
       "month": "2026-07",

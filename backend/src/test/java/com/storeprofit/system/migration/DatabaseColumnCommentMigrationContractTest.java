@@ -78,7 +78,7 @@ class DatabaseColumnCommentMigrationContractTest {
 
     assertThat(columns)
         .as("The migrated schema must contain business columns")
-        .hasSize(1162)
+        .hasSize(1163)
         .allSatisfy(column -> {
           assertThat(column.remarks())
               .as("%s.%s must have a non-empty REMARKS value", column.tableName(), column.columnName())
@@ -93,6 +93,7 @@ class DatabaseColumnCommentMigrationContractTest {
         .hasSize(90);
     assertRemark(jdbc, "store_branch", "area", "所属区域");
     assertRemark(jdbc, "salary_record", "full_attendance", "全勤奖金额");
+    assertRemark(jdbc, "salary_record", "birthday_benefit", "员工福利（生日）金额");
     assertRemark(jdbc, "training_material", "content", "培训资料正文");
     assertRemark(jdbc, "todo_action_attachment", "content", "附件二进制内容");
     assertRemark(jdbc, "tenant", "scale", "企业规模");

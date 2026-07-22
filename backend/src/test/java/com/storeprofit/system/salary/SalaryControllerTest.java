@@ -130,6 +130,28 @@ class SalaryControllerTest {
     verify(salaryQueryService).summary(boss, "2026-05", 1L, "s1");
   }
 
+  @Test
+  void businessMetricsUsesAuthenticatedUserAndSalaryScopeParameters() {
+    SalaryBusinessMetricsResponse metrics = new SalaryBusinessMetricsResponse(
+        new BigDecimal("100000.99"),
+        new BigDecimal("500.00"),
+        new BigDecimal("200.00"),
+        new BigDecimal("41600.00"),
+        new BigDecimal("3000.00"),
+        new BigDecimal("2750.00"),
+        new BigDecimal("250.00")
+    );
+    when(authService.requireUser("Bearer token")).thenReturn(boss);
+    when(salaryQueryService.businessMetrics(boss, "2026-05", 1L, "s1")).thenReturn(metrics);
+
+    ApiResponse<SalaryBusinessMetricsResponse> result = controller.businessMetrics(
+        "Bearer token", "2026-05", 1L, "s1");
+
+    assertThat(result.data()).isSameAs(metrics);
+    verify(authService).requireUser("Bearer token");
+    verify(salaryQueryService).businessMetrics(boss, "2026-05", 1L, "s1");
+  }
+
   private SalaryRecordRequest request() {
     return new SalaryRecordRequest(
         "s1",
@@ -152,6 +174,7 @@ class SalaryControllerTest {
         new BigDecimal("80"),
         new BigDecimal("70"),
         new BigDecimal("20"),
+        new BigDecimal("25"),
         new BigDecimal("10"),
         new BigDecimal("5"),
         new BigDecimal("60"),
@@ -172,6 +195,7 @@ class SalaryControllerTest {
         "emp-1",
         "Alice",
         "Barista",
+        "实习",
         "26",
         new BigDecimal("1000.00"),
         new BigDecimal("950.00"),
@@ -188,6 +212,7 @@ class SalaryControllerTest {
         new BigDecimal("80.00"),
         new BigDecimal("70.00"),
         new BigDecimal("20.00"),
+        new BigDecimal("25.00"),
         new BigDecimal("10.00"),
         new BigDecimal("5.00"),
         new BigDecimal("60.00"),

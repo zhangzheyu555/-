@@ -21,8 +21,8 @@ import org.springframework.mock.web.MockMultipartFile;
 class SpreadsheetProfitParserTest {
   private final SpreadsheetProfitParser parser = new SpreadsheetProfitParser();
   private final List<StoreResponse> stores = List.of(
-      new StoreResponse("rg1", "RG001", "保利店", 1L, "茹果奶茶", "荆州", "张三", null, "营业中", null),
-      new StoreResponse("rg2", "RG002", "荆州之星店", 1L, "茹果奶茶", "荆州", "李四", null, "营业中", null)
+      new StoreResponse("rg1", "RG001", "保利店", 1L, "茹菓奶茶", "荆州", "张三", null, "营业中", null),
+      new StoreResponse("rg2", "RG002", "荆州之星店", 1L, "茹菓奶茶", "荆州", "李四", null, "营业中", null)
   );
 
   @Test

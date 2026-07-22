@@ -94,6 +94,27 @@ public class SalaryController {
     return ApiResponse.ok(salaryQueryService.summary(authService.requireUser(authorization), month, brandId, storeId));
   }
 
+  @GetMapping("/business-metrics")
+  public ApiResponse<SalaryBusinessMetricsResponse> businessMetrics(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @RequestParam(required = false) String month,
+      @RequestParam(required = false) Long brandId,
+      @RequestParam(required = false) String storeId
+  ) {
+    return ApiResponse.ok(salaryQueryService.businessMetrics(
+        authService.requireUser(authorization), month, brandId, storeId));
+  }
+
+  @GetMapping("/assignment-candidates")
+  public ApiResponse<List<SalaryAssignmentCandidate>> assignmentCandidates(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @RequestParam String storeId,
+      @RequestParam String month
+  ) {
+    return ApiResponse.ok(salaryWorkflowService.assignmentCandidates(
+        authService.requireUser(authorization), storeId, month));
+  }
+
   @GetMapping("/preview")
   public ApiResponse<SalaryGenerateReport> previewGeneration(
       @RequestHeader(value = "Authorization", required = false) String authorization,
@@ -132,6 +153,15 @@ public class SalaryController {
       @Valid @RequestBody SalaryRecordRequest request
   ) {
     return ApiResponse.ok(salaryWorkflowService.save(authService.requireUser(authorization), null, request));
+  }
+
+  @PostMapping("/assign-employee")
+  public ApiResponse<SalaryRecordResponse> assignEmployee(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @Valid @RequestBody SalaryAssignmentRequest request
+  ) {
+    return ApiResponse.ok(salaryWorkflowService.assignEmployee(
+        authService.requireUser(authorization), request));
   }
 
   @PostMapping("/generate")
