@@ -239,6 +239,12 @@ export const useAuthStore = defineStore('auth', {
       this.loading = true
       try {
         const data = await withLoginTimeout(loginApi(username, password))
+        if (data.status === 'PASSWORD_CHANGE_REQUIRED') {
+          const credential = String(data.passwordChangeCredential || '').trim()
+          if (!credential) throw new Error('首次改密凭据缺失，请重新登录')
+          this.invalidateSession()
+          return { passwordChangeRequired: true as const, credential }
+        }
         const token = String(data.token || '').trim()
         if (!token) throw new Error('登录返回的会话凭据不完整，请重新登录')
 
@@ -253,6 +259,7 @@ export const useAuthStore = defineStore('auth', {
         this.user = normalizedUser
         this.sessionValidated = true
         localStorage.setItem(USER_KEY, JSON.stringify(normalizedUser))
+        return { passwordChangeRequired: false as const, credential: '' }
       } catch (error) {
         this.invalidateSession()
         throw error

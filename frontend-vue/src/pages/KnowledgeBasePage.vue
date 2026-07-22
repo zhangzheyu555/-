@@ -224,7 +224,6 @@ onMounted(() => void loadRecords())
       <div>
         <p class="eyebrow">内部资料检索</p>
         <h1>知识库</h1>
-        <p>检索已发布且符合本人角色、门店范围的资料；原始 Word、Excel 文件不会发送到外部模型。</p>
       </div>
     </header>
 
@@ -296,8 +295,7 @@ onMounted(() => void loadRecords())
 .page-head { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; }
 .eyebrow { margin: 0 0 5px; color: var(--ds-primary, #126c68); font-size: 13px; font-weight: 800; letter-spacing: .06em; }
 .page-head h1, .section-title h2 { margin: 0; color: var(--ds-text, #183434); }
-.page-head p:not(.eyebrow), .section-title p, .document-main p, .document-main small, .empty-copy, .scope-help { color: var(--ds-muted, #607576); }
-.page-head p:not(.eyebrow) { margin: 7px 0 0; max-width: 760px; }
+.section-title p, .document-main p, .document-main small, .empty-copy, .scope-help { color: var(--ds-muted, #607576); }
 .content-card { border: 1px solid var(--ds-line, #dbe8e6); border-radius: 12px; background: #fff; padding: 20px; box-shadow: 0 8px 24px rgba(20, 71, 68, .035); }
 .section-title { display: flex; align-items: flex-start; gap: 10px; color: var(--ds-primary, #126c68); }
 .section-title h2 { font-size: 18px; }

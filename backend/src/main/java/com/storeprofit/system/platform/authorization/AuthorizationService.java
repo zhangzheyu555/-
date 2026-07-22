@@ -23,6 +23,8 @@ public class AuthorizationService {
   private static final Set<String> SUPERVISOR_PERMISSION_CEILING = Set.of(
       PermissionCodes.SYSTEM_USER_MANAGE,
       PermissionCodes.STORE_MANAGE,
+      PermissionCodes.EMPLOYEE_READ,
+      PermissionCodes.EMPLOYEE_MANAGE,
       PermissionCodes.FINANCE_PROFIT_WRITE,
       PermissionCodes.FINANCE_PROFIT_IMPORT,
       PermissionCodes.FINANCE_PROFIT_DELETE,
@@ -33,15 +35,24 @@ public class AuthorizationService {
       PermissionCodes.SALARY_EDIT,
       PermissionCodes.SALARY_REVIEW,
       PermissionCodes.SALARY_PAY,
+      PermissionCodes.WAREHOUSE_READ,
       PermissionCodes.WAREHOUSE_CENTRAL_READ,
       PermissionCodes.WAREHOUSE_CENTRAL_MANAGE,
+      PermissionCodes.WAREHOUSE_STORE_READ,
+      PermissionCodes.WAREHOUSE_REQUISITION_CREATE,
+      PermissionCodes.WAREHOUSE_REQUISITION_REVIEW,
+      PermissionCodes.WAREHOUSE_REQUISITION_RECEIVE,
       PermissionCodes.WAREHOUSE_PURCHASE,
       PermissionCodes.WAREHOUSE_TRANSFER_REQUEST,
       PermissionCodes.WAREHOUSE_TRANSFER_APPROVE,
       PermissionCodes.WAREHOUSE_TRANSFER_SHIP,
       PermissionCodes.WAREHOUSE_TRANSFER_RECEIVE,
       PermissionCodes.WAREHOUSE_REQUISITION_PROCESS,
-      PermissionCodes.WAREHOUSE_CONFIGURE
+      PermissionCodes.WAREHOUSE_CONFIGURE,
+      PermissionCodes.ASSISTANT_USE,
+      PermissionCodes.EMPLOYEE_ASSISTANT_USE,
+      PermissionCodes.EMPLOYEE_ASSISTANT_KNOWLEDGE_MANAGE,
+      PermissionCodes.EMPLOYEE_ASSISTANT_HANDOFF_MANAGE
   );
   private final AuthorizationRepository repository;
 
@@ -156,9 +167,6 @@ public class AuthorizationService {
           PermissionCodes.FINANCE_PROFIT_WRITE,
           PermissionCodes.FINANCE_PROFIT_IMPORT,
           PermissionCodes.FINANCE_EXPORT,
-          PermissionCodes.DAILY_LOSS_READ,
-          PermissionCodes.DAILY_LOSS_REVIEW,
-          PermissionCodes.DAILY_LOSS_EXPORT,
           PermissionCodes.EXPENSE_CREATE,
           PermissionCodes.EXPENSE_READ,
           PermissionCodes.EXPENSE_REVIEW,
@@ -166,6 +174,7 @@ public class AuthorizationService {
           PermissionCodes.SALARY_EDIT,
           PermissionCodes.SALARY_REVIEW,
           PermissionCodes.SALARY_PAY,
+          PermissionCodes.WAREHOUSE_READ,
           PermissionCodes.INVENTORY_READ,
           PermissionCodes.ATTACHMENT_READ,
           PermissionCodes.ATTACHMENT_WRITE,
@@ -202,6 +211,7 @@ public class AuthorizationService {
           PermissionCodes.EMPLOYEE_MANAGE,
           PermissionCodes.FINANCE_PROFIT_READ,
           PermissionCodes.FINANCE_PROFIT_WRITE,
+          PermissionCodes.DAILY_LOSS_READ,
           PermissionCodes.DAILY_LOSS_CREATE,
           PermissionCodes.EXPENSE_CREATE,
           PermissionCodes.EXPENSE_READ,
@@ -224,12 +234,12 @@ public class AuthorizationService {
       case "SUPERVISOR" -> Set.of(
           PermissionCodes.OPERATIONS_DASHBOARD_READ,
           PermissionCodes.STORE_READ,
-          PermissionCodes.EMPLOYEE_READ,
-          PermissionCodes.WAREHOUSE_STORE_READ,
           PermissionCodes.INVENTORY_READ,
           PermissionCodes.INVENTORY_MANAGE,
           PermissionCodes.INVENTORY_REVIEW,
+          PermissionCodes.DAILY_LOSS_READ,
           PermissionCodes.DAILY_LOSS_REVIEW,
+          PermissionCodes.DAILY_LOSS_EXPORT,
           PermissionCodes.INSPECTION_READ,
           PermissionCodes.INSPECTION_MANAGE,
           PermissionCodes.EXAM_LEARN,
@@ -240,10 +250,7 @@ public class AuthorizationService {
           PermissionCodes.ATTACHMENT_READ,
           PermissionCodes.ATTACHMENT_WRITE,
           PermissionCodes.TODO_READ,
-          PermissionCodes.TODO_TRANSITION,
-          PermissionCodes.ASSISTANT_USE,
-          PermissionCodes.EMPLOYEE_ASSISTANT_USE,
-          PermissionCodes.EMPLOYEE_ASSISTANT_HANDOFF_MANAGE
+          PermissionCodes.TODO_TRANSITION
       );
       case "EMPLOYEE" -> EMPLOYEE_PERMISSION_CEILING;
       default -> Set.of();

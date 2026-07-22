@@ -334,20 +334,20 @@ public class ExamCenterRepository {
     List<Object> args = new ArrayList<>();
     List<String> normalizedStoreIds = normalizedStoreIds(allowedStoreIds);
     if (userId != null) {
-      assignmentJoin = " and a.user_id = ?";
+      assignmentJoin = " and a.user_id = ? ";
       args.add(userId);
-      scopeFilter = " and exists (select 1 from training_exam_assignment own where own.tenant_id = c.tenant_id and own.campaign_id = c.id and own.user_id = ?)";
+      scopeFilter = " and exists (select 1 from training_exam_assignment own where own.tenant_id = c.tenant_id and own.campaign_id = c.id and own.user_id = ?) ";
     } else if (allowedStoreIds != null) {
       if (normalizedStoreIds.isEmpty()) {
-        assignmentJoin = " and 1 = 0";
-        scopeFilter = " and 1 = 0";
+        assignmentJoin = " and 1 = 0 ";
+        scopeFilter = " and 1 = 0 ";
       } else {
         String placeholders = placeholders(normalizedStoreIds.size());
-        assignmentJoin = " and a.store_id in (" + placeholders + ")";
+        assignmentJoin = " and a.store_id in (" + placeholders + ") ";
         args.addAll(normalizedStoreIds);
         scopeFilter = " and exists (select 1 from training_exam_assignment scoped"
             + " where scoped.tenant_id = c.tenant_id and scoped.campaign_id = c.id"
-            + " and scoped.store_id in (" + placeholders + "))";
+            + " and scoped.store_id in (" + placeholders + ")) ";
       }
     }
     args.add(tenantId);

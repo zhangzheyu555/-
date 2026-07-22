@@ -14,6 +14,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.storeprofit.system.common.GlobalExceptionHandler;
+import com.storeprofit.system.common.BusinessException;
 import com.storeprofit.system.common.RequestIdFilter;
 import com.storeprofit.system.platform.auth.AuthService;
 import com.storeprofit.system.platform.auth.AuthUser;
@@ -21,6 +22,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.http.HttpStatus;
 
 class StoreControllerHttpAuthorizationTest {
   private static final String STORE_JSON = """
@@ -114,6 +116,21 @@ class StoreControllerHttpAuthorizationTest {
 
     verify(repository).storeHasLinkedData(1L, "rg1");
     verify(repository).deleteStore(1L, "rg1");
+  }
+
+  @Test
+  void anonymousStoreWriteIsMappedToHttp401BeforeAnyRepositoryAccess() throws Exception {
+    when(authService.requireUser(null)).thenThrow(new BusinessException("UNAUTHORIZED", "请先登录", HttpStatus.UNAUTHORIZED));
+
+    mockMvc.perform(post("/api/stores")
+            .contentType(APPLICATION_JSON)
+            .content(STORE_JSON))
+        .andExpect(status().isUnauthorized())
+        .andExpect(header().exists("X-Request-Id"))
+        .andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
+
+    verify(authService).requireUser(null);
+    verifyNoInteractions(repository);
   }
 
   private AuthUser user(String role, String storeId) {

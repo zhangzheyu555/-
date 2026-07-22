@@ -95,6 +95,22 @@ class EmployeeAssistantServiceTest {
   }
 
   @Test
+  void qaBlocksRemoteProviderBeforeAnyExternalHealthOrChatRequest() {
+    AuditRepository auditRepository = mock(AuditRepository.class);
+    EmployeeAssistantService service = new EmployeeAssistantService(
+        "REMOTE", "https://assistant.example.test", "test-only-token", "", "", "",
+        Duration.ofSeconds(1), Duration.ofSeconds(2), new ObjectMapper(), auditRepository,
+        HttpClient.newHttpClient(), null, true, "QA", "MOCK");
+
+    assertThat(service.health(user()).state()).isEqualTo(EmployeeAssistantState.UNAVAILABLE);
+    BusinessException error = catchThrowableOfType(
+        () -> service.chat(user(), new EmployeeAssistantChatRequest(null, "怎么处理漏发吸管？")), BusinessException.class);
+
+    assertThat(error.getCode()).isEqualTo("EMPLOYEE_ASSISTANT_OUTBOUND_BLOCKED");
+    assertThat(error.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+  }
+
+  @Test
   void localProviderNeedsNoUrlOrApiKeyAndAnswersCommonServiceQuestions() {
     AuditRepository auditRepository = mock(AuditRepository.class);
     EmployeeAssistantService service = new EmployeeAssistantService(

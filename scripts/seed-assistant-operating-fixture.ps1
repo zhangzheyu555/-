@@ -60,8 +60,23 @@ function Invoke-FixtureApi {
   return $response.data
 }
 
+function Assert-LocalFixtureEndpoint {
+  try {
+    $target = [Uri]$BackendBaseUrl
+  } catch {
+    throw 'BackendBaseUrl must be an absolute loopback HTTP(S) URL.'
+  }
+  if ($target.Scheme -notin @('http', 'https') -or $target.Host -notin @('127.0.0.1', 'localhost', '::1')) {
+    throw 'Fixture seeding is restricted to a loopback backend URL.'
+  }
+}
+
 function Assert-LocalFixtureTarget {
-  $health = Invoke-FixtureApi -Method GET -Path '/api/health' -Token ''
+  $liveness = Invoke-FixtureApi -Method GET -Path '/api/health' -Token ''
+  if ([string]$liveness.status -ne 'UP') {
+    throw 'The local backend liveness probe is not UP.'
+  }
+  $health = Invoke-FixtureApi -Method GET -Path '/api/health/diagnostics' -Token $AuthorizationToken
   $environment = ([string]$health.environment).Trim().ToUpperInvariant()
   if ($environment -eq 'PRODUCTION') {
     throw 'Refuse to seed fixture operating data in PRODUCTION.'
@@ -152,8 +167,9 @@ if (-not $Apply) {
   throw 'This script writes MySQL operating fixture data. Add -Apply after confirming this is a local verification target.'
 }
 
-$healthInfo = Assert-LocalFixtureTarget
+Assert-LocalFixtureEndpoint
 $AuthorizationToken = Resolve-AuthorizationToken
+$healthInfo = Assert-LocalFixtureTarget
 $stores = @(Invoke-FixtureApi -Method GET -Path '/api/stores')
 $disabledStatusValues = @(
   (-join ([char[]](20572,29992))),

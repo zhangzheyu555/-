@@ -1,7 +1,7 @@
 services:
   mysql-qa:
     image: mysql:8.0
-    container_name: ai-profit-os-qa-mysql
+    container_name: ${QA_MYSQL_CONTAINER_NAME:-ai-profit-os-qa-g4-mysql}
     restart: unless-stopped
     env_file:
       - ../.env.qa
@@ -17,9 +17,9 @@ services:
       - --collation-server=utf8mb4_unicode_ci
       - --default-time-zone=+08:00
     ports:
-      - "127.0.0.1:13306:3306"
+      - "127.0.0.1:${QA_MYSQL_HOST_PORT:-13307}:3306"
     volumes:
-      - ai-profit-os-qa-mysql-data:/var/lib/mysql
+      - ai-profit-os-qa-g4-mysql-data:/var/lib/mysql
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
       interval: 5s
@@ -28,5 +28,5 @@ services:
       start_period: 30s
 
 volumes:
-  ai-profit-os-qa-mysql-data:
-    name: ai-profit-os-qa-mysql-data
+  ai-profit-os-qa-g4-mysql-data:
+    name: ${QA_MYSQL_VOLUME_NAME:-ai-profit-os-qa-g4-mysql-data}

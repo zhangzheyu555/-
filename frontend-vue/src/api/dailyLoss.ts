@@ -1,4 +1,5 @@
 import { apiGet, apiPost, apiPostForm, http } from './http'
+import { decodeFilename, downloadBlob } from './reports'
 
 export interface DailyLossItem {
   id: number
@@ -247,21 +248,8 @@ export async function downloadMonthlyDailyLossExcel(month: string, storeId?: str
       params: { month, storeId: storeId || undefined },
     },
   )
-  const blob = response.data
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = downloadFileName(String(response.headers['content-disposition'] || ''))
-    || `每日报损-${month}.xlsx`
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  window.setTimeout(() => URL.revokeObjectURL(url), 0)
-}
-
-function downloadFileName(disposition: string) {
-  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
-  if (encoded) return decodeURIComponent(encoded)
-  const plain = disposition.match(/filename="?([^";]+)"?/i)?.[1]
-  return plain ? decodeURIComponent(plain) : ''
+  downloadBlob(
+    response.data,
+    decodeFilename(String(response.headers['content-disposition'] || '')) || `每日报损-${month}.xlsx`,
+  )
 }

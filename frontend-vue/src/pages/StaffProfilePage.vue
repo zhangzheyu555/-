@@ -273,6 +273,10 @@ function copyAccounts() {
   const text = accountResults.value.map((r) => `${r.employeeName}\t${r.username}\t${r.initialPassword}`).join('\n')
   navigator.clipboard?.writeText(`姓名\t账号\t初始密码\n${text}`)
 }
+function closeAccountDialog() {
+  accountDialogOpen.value = false
+  accountResults.value = []
+}
 
 /* ---------- 导入 / 导出 ---------- */
 const fileInput = ref<HTMLInputElement>()
@@ -470,11 +474,11 @@ function exportCsv() {
     </div>
 
     <!-- 开号结果弹窗 -->
-    <div v-if="accountDialogOpen" class="modal-mask" @click.self="accountDialogOpen = false">
+    <div v-if="accountDialogOpen" class="modal-mask" @click.self="closeAccountDialog">
       <div class="modal-box">
         <header class="modal-head">
           <h3>账号已创建（初始密码只显示这一次）</h3>
-          <button class="icon-btn" @click="accountDialogOpen = false">✕</button>
+          <button class="icon-btn" @click="closeAccountDialog">✕</button>
         </header>
         <div class="modal-body">
           <table class="staff-table">
@@ -485,11 +489,11 @@ function exportCsv() {
               </tr>
             </tbody>
           </table>
-          <p class="msg muted">请复制后转交店长发给员工，首次登录后应尽快修改密码。</p>
+          <p class="msg muted">请复制后转交店长发给员工，首次登录必须修改密码。</p>
         </div>
         <footer class="modal-foot">
           <button class="btn ghost" @click="copyAccounts">复制全部</button>
-          <button class="btn primary" @click="accountDialogOpen = false">关闭</button>
+          <button class="btn primary" @click="closeAccountDialog">关闭</button>
         </footer>
       </div>
     </div>

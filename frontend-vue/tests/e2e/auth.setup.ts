@@ -3,7 +3,7 @@ import { expect, type APIRequestContext, type Page } from '@playwright/test'
 export const APP_BASE_URL = process.env.E2E_BASE_URL || 'http://127.0.0.1:5173'
 export const API_BASE_URL = process.env.E2E_API_URL || 'http://127.0.0.1:8080'
 
-export type RoleKey = 'boss' | 'finance' | 'warehouse' | 'store' | 'operations' | 'learner'
+export type RoleKey = 'boss' | 'finance' | 'warehouse' | 'store' | 'supervisor' | 'learner'
 
 export interface RoleConfig {
   key: RoleKey
@@ -64,17 +64,17 @@ export const roles: RoleConfig[] = [
     username: env.E2E_STORE_USERNAME || '',
     password: env.E2E_STORE_PASSWORD || '',
     expectedPath: '/store',
-    expectedMenus: ['门店工作台', '仓库中心', '本店工资核对', '门店详情', '巡检记录', '培训考试', '门店经营助手'],
+    expectedMenus: ['仓库中心', '本店工资核对', '门店详情', '巡检记录', '培训考试', '门店经营助手'],
     forbiddenMenus: ['老板工作台', '财务工作台', '仓库工作台', '总仓库存', '物料档案', '采购入库', '账号权限', '导入月度汇总'],
     layout: 'app',
   },
   {
-    key: 'operations',
-    username: env.E2E_OPERATIONS_USERNAME || '',
-    password: env.E2E_OPERATIONS_PASSWORD || '',
+    key: 'supervisor',
+    username: env.E2E_SUPERVISOR_USERNAME || '',
+    password: env.E2E_SUPERVISOR_PASSWORD || '',
     expectedPath: '/operations',
-    expectedMenus: ['运营工作台', '仓库中心', '督导巡店', '培训考试', '平台配置', '门店经营助手'],
-    forbiddenMenus: ['决策支持', '今日待办', '财务工作台', '员工工资', '账号权限', '导入月度汇总'],
+    expectedMenus: ['督导工作台', '每日报损', '督导巡店', '培训考试', '平台配置'],
+    forbiddenMenus: ['运营工作台', '运营中心', '决策支持', '今日待办', '财务工作台', '员工工资', '仓库中心', '门店详情', '门店经营助手', '账号权限', '导入月度汇总'],
     layout: 'app',
   },
   {
@@ -186,7 +186,13 @@ export async function apiFetchAs(
 
 export async function expectDefaultRoute(page: Page, expectedPath: string) {
   await page.waitForLoadState('networkidle')
-  await expect.poll(() => new URL(page.url()).pathname).toBe(expectedPath)
+  // QA and production mount the desktop SPA under /admin.  Assert the application's logical
+  // route so the same role contract also works with a local Vite root mount.
+  await expect.poll(() => {
+    const pathname = new URL(page.url()).pathname
+    if (pathname === '/admin') return '/'
+    return pathname.startsWith('/admin/') ? pathname.slice('/admin'.length) : pathname
+  }).toBe(expectedPath)
 }
 
 export async function expectNoWholePageOverflow(page: Page, context: string) {

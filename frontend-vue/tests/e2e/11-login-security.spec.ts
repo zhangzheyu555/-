@@ -369,3 +369,78 @@ test('submitting twice sends only one login request', async ({ page }) => {
   await expect(page.getByText('账号或密码错误')).toBeVisible()
   expect(requests).toBe(1)
 })
+
+test('initial employee password is changed before a business session is issued', async ({ page }) => {
+  // Test-only synthetic values; neither value is a runtime default or real credential.
+  const initialPassword = `TestOnly!Initial${Date.now().toString(36)}`
+  const changedPassword = `TestOnly!Changed${Date.now().toString(36)}`
+  const restrictedCredential = 'TEST-ONLY-RESTRICTED-PASSWORD-CHANGE-GRANT'
+  let loginRequests = 0
+  let changeRequests = 0
+  await page.route('**/api/auth/login', async (route) => {
+    loginRequests += 1
+    if (loginRequests === 1) {
+      return route.fulfill(ok({
+        token: null,
+        user: null,
+        status: 'PASSWORD_CHANGE_REQUIRED',
+        passwordChangeCredential: restrictedCredential,
+      }))
+    }
+    return route.fulfill(ok({
+      token: 'TEST-ONLY-EMPLOYEE-SESSION',
+      user: null,
+      status: 'AUTHENTICATED',
+      passwordChangeCredential: null,
+    }))
+  })
+  await page.route('**/api/auth/initial-password', async (route) => {
+    changeRequests += 1
+    const body = route.request().postDataJSON() as Record<string, unknown>
+    expect(body).toEqual({
+      credential: restrictedCredential,
+      newPassword: changedPassword,
+      confirmPassword: changedPassword,
+    })
+    expect(body).not.toHaveProperty('userId')
+    await route.fulfill(ok(null))
+  })
+  await page.route('**/api/auth/me', (route) => route.fulfill(ok({
+    ...bossSession,
+    id: 42,
+    displayName: '合成员工',
+    role: 'EMPLOYEE',
+    roleLabel: '员工',
+    permissions: ['exam.learn'],
+    defaultWorkspace: '/employee',
+  })))
+  await page.route('**/api/employee/workbench', (route) => route.fulfill(ok({
+    profile: { userId: 42, displayName: '合成员工', role: 'EMPLOYEE' },
+    store: null,
+    workSummary: { total: 0, pending: 0, overdue: 0, completed: 0, retakePending: 0 },
+    workItems: [],
+    assistant: { enabled: false, state: 'UNCONFIGURED', message: '测试未配置', route: '' },
+  })))
+
+  await page.getByLabel('账号', { exact: true }).fill('test-only-employee')
+  await page.getByLabel('密码', { exact: true }).fill(initialPassword)
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await expect(page.getByText('首次登录必须修改密码')).toBeVisible()
+  const storageAfterInitialLogin = await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))
+  expect(storageAfterInitialLogin).not.toContain(initialPassword)
+  expect(storageAfterInitialLogin).not.toContain(restrictedCredential)
+
+  await page.getByLabel('新密码', { exact: true }).fill(changedPassword)
+  await page.getByLabel('确认新密码', { exact: true }).fill(changedPassword)
+  await page.getByRole('button', { name: '修改密码', exact: true }).click()
+  await expect(page.getByText('密码修改成功，请使用新密码重新登录')).toBeVisible()
+  expect(changeRequests).toBe(1)
+  const storageAfterChange = await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))
+  expect(storageAfterChange).not.toContain(changedPassword)
+  expect(storageAfterChange).not.toContain(restrictedCredential)
+
+  await page.getByLabel('密码', { exact: true }).fill(changedPassword)
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await expect(page).toHaveURL(/\/employee$/)
+  expect(loginRequests).toBe(2)
+})

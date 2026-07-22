@@ -594,9 +594,9 @@ public class WarehouseRepository {
     jdbcTemplate.update("""
         insert into warehouse_stock_batch(
           tenant_id, warehouse_id, item_id, batch_no, received_date, expiry_date, quantity,
-          reserved_quantity, unit_cost, note, created_at
+          reserved_quantity, version, unit_cost, note, created_at
         )
-        values (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, current_timestamp)
+        values (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, current_timestamp)
         on duplicate key update
           received_date = least(received_date, values(received_date)),
           expiry_date = coalesce(values(expiry_date), expiry_date),
@@ -1531,9 +1531,9 @@ public class WarehouseRepository {
       jdbcTemplate.update("""
         insert into warehouse_purchase_order(
           id, tenant_id, warehouse_id, idempotency_key, supplier_id, status,
-          total_amount, note, created_by, created_at
+          version, total_amount, note, created_by, created_at
         )
-        values (?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, current_timestamp)
+        values (?, ?, ?, ?, ?, 'DRAFT', 0, ?, ?, ?, current_timestamp)
         """, id, tenantId, warehouseId, blankToNull(idempotencyKey), supplierId,
           amount(totalAmount), blankToNull(note), createdBy);
       return true;
@@ -1557,10 +1557,11 @@ public class WarehouseRepository {
     BigDecimal cost = amount(unitCost);
     jdbcTemplate.update("""
         insert into warehouse_purchase_order_line(
-          tenant_id, purchase_order_id, item_id, ordered_quantity, unit_cost, amount, note
+          tenant_id, purchase_order_id, item_id, ordered_quantity, received_quantity, unit_cost, amount, note
         )
-        values (?, ?, ?, ?, ?, ?, ?)
-        """, tenantId, purchaseOrderId, itemId, quantity, cost, quantity.multiply(cost).setScale(2, RoundingMode.HALF_UP), blankToNull(note));
+        values (?, ?, ?, ?, 0, ?, ?, ?)
+        """, tenantId, purchaseOrderId, itemId, quantity, cost,
+        quantity.multiply(cost).setScale(2, RoundingMode.HALF_UP), blankToNull(note));
   }
 
   public List<WarehousePurchaseOrderResponse> purchaseOrders(long tenantId) {
@@ -1690,9 +1691,9 @@ public class WarehouseRepository {
     BigDecimal price = amount(unitPrice);
     jdbcTemplate.update("""
         insert into warehouse_delivery_order_line(
-          tenant_id, delivery_id, requisition_line_id, item_id, shipped_quantity, unit_price, amount
+          tenant_id, delivery_id, requisition_line_id, item_id, shipped_quantity, received_quantity, unit_price, amount
         )
-        values (?, ?, ?, ?, ?, ?, ?)
+        values (?, ?, ?, ?, ?, 0, ?, ?)
         """, tenantId, deliveryId, requisitionLineId, itemId, quantity, price, quantity.multiply(price).setScale(2, RoundingMode.HALF_UP));
   }
 

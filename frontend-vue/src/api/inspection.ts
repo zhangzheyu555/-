@@ -1,5 +1,5 @@
 import { apiGet, apiPost, apiPostForm, http, type ApiResponse } from './http'
-import { downloadBlob } from './reports'
+import { decodeFilename, downloadBlob } from './reports'
 import type { RoleTodoItem } from './todos'
 
 export interface InspectionRecord {
@@ -431,9 +431,10 @@ export async function uploadAndLinkInspectionEvidence(
   )
 }
 
-export async function detectInspectionPhoto(file: File) {
+export async function detectInspectionPhoto(file: File, storeId: string) {
   const form = new FormData()
   form.append('file', file)
+  form.append('storeId', storeId)
   const response = await http.post<ApiResponse<InspectionDetectionResult>>('/api/inspections/detect', form)
   if (!response.data || response.data.success === false || !response.data.data) {
     throw new Error(response.data?.message || '图片识别失败')
@@ -503,11 +504,4 @@ export function escalateSupervisorTodo(todoId: string, reason: string, severity 
     `/api/supervisor/todos/${encodeURIComponent(todoId)}/escalate`,
     { reason, severity },
   )
-}
-
-function decodeFilename(disposition: string) {
-  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
-  if (encoded) return decodeURIComponent(encoded)
-  const plain = disposition.match(/filename="?([^";]+)"?/i)?.[1]
-  return plain ? decodeURIComponent(plain) : ''
 }

@@ -231,7 +231,6 @@ values
  (@tenant_id, 'qa45_finance', '__PASSWORD_HASH__', 'QA45 FINANCE', 'FINANCE', null, 1, 1, current_timestamp),
  (@tenant_id, 'qa45_supervisor', '__PASSWORD_HASH__', 'QA45 SUPERVISOR', 'SUPERVISOR', null, 1, 1, current_timestamp),
  (@tenant_id, 'qa45_warehouse', '__PASSWORD_HASH__', 'QA45 WAREHOUSE', 'WAREHOUSE', null, 1, 1, current_timestamp),
- (@tenant_id, 'qa45_operations', '__PASSWORD_HASH__', 'QA45 OPERATIONS', 'OPERATIONS', null, 1, 1, current_timestamp),
  (@tenant_id, 'qa45_employee', '__PASSWORD_HASH__', 'QA45 EMPLOYEE', 'EMPLOYEE', 'QA-S01', 1, 1, current_timestamp),
  (@tenant_id, 'qa45_manager_s01', '__PASSWORD_HASH__', 'QA45 STORE_MANAGER S01', 'STORE_MANAGER', 'QA-S01', 1, 1, current_timestamp),
  (@tenant_id, 'qa45_manager_s02', '__PASSWORD_HASH__', 'QA45 STORE_MANAGER S02', 'STORE_MANAGER', 'QA-S02', 1, 1, current_timestamp)
@@ -239,7 +238,7 @@ on duplicate key update password_hash=values(password_hash), display_name=values
 
 insert ignore into user_store_scope(tenant_id, user_id, store_id)
 select @tenant_id, u.id, s.id from auth_user u join store_branch s on s.tenant_id=@tenant_id
-where u.tenant_id=@tenant_id and u.username in ('qa45_boss','qa45_finance','qa45_supervisor','qa45_warehouse','qa45_operations') and s.id in ('QA-S01','QA-S02','QA-S03');
+where u.tenant_id=@tenant_id and u.username in ('qa45_boss','qa45_finance','qa45_supervisor','qa45_warehouse') and s.id in ('QA-S01','QA-S02','QA-S03');
 insert ignore into user_store_scope(tenant_id, user_id, store_id)
 select @tenant_id, u.id, u.store_id from auth_user u where u.tenant_id=@tenant_id and u.username in ('qa45_employee','qa45_manager_s01','qa45_manager_s02');
 
@@ -253,7 +252,7 @@ where u.tenant_id=@tenant_id and u.username in ('qa45_manager_s01','qa45_manager
 on duplicate key update scope_type=values(scope_type), scope_value_json=null, updated_at=current_timestamp;
 insert into user_data_scope(tenant_id, user_id, domain_code, scope_type, scope_value_json, created_at)
 select @tenant_id, u.id, d.domain_code, 'STORE_LIST', json_array('QA-S01','QA-S02','QA-S03'), current_timestamp
-from auth_user u join (select 'STORE' as domain_code union all select 'INSPECTION') d
+from auth_user u join (select 'STORE' as domain_code union all select 'WAREHOUSE' union all select 'INSPECTION' union all select 'EXAM' union all select 'PLATFORM') d
 where u.tenant_id=@tenant_id and u.username='qa45_supervisor'
 on duplicate key update scope_type=values(scope_type), scope_value_json=values(scope_value_json), updated_at=current_timestamp;
 insert into user_data_scope(tenant_id, user_id, domain_code, scope_type, scope_value_json, created_at)
@@ -264,11 +263,6 @@ on duplicate key update scope_type=values(scope_type), scope_value_json=values(s
 insert into user_data_scope(tenant_id, user_id, domain_code, scope_type, scope_value_json, created_at)
 select @tenant_id, u.id, 'WAREHOUSE', 'WAREHOUSE_LIST', json_array(cast(@central_warehouse_id as char)), current_timestamp
 from auth_user u where u.tenant_id=@tenant_id and u.username='qa45_warehouse'
-on duplicate key update scope_type=values(scope_type), scope_value_json=values(scope_value_json), updated_at=current_timestamp;
-insert into user_data_scope(tenant_id, user_id, domain_code, scope_type, scope_value_json, created_at)
-select @tenant_id, u.id, d.domain_code, 'STORE_LIST', json_array('QA-S01','QA-S02','QA-S03'), current_timestamp
-from auth_user u join (select 'STORE' as domain_code union all select 'WAREHOUSE' union all select 'INSPECTION' union all select 'EXAM' union all select 'PLATFORM') d
-where u.tenant_id=@tenant_id and u.username='qa45_operations'
 on duplicate key update scope_type=values(scope_type), scope_value_json=values(scope_value_json), updated_at=current_timestamp;
 insert into user_data_scope(tenant_id, user_id, domain_code, scope_type, scope_value_json, created_at)
 select @tenant_id, u.id, 'EXAM', 'SELF', null, current_timestamp

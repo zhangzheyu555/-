@@ -129,12 +129,22 @@ async function prepareAssistantPage(page: Page) {
   ])))
   await page.route('**/api/finance/months', (route) => route.fulfill(ok(['2026-07'])))
   await page.route('**/api/finance/entries**', (route) => route.fulfill(ok([])))
+  await page.route('**/api/finance/dashboard**', (route) => route.fulfill(ok({
+    months: ['2026-07'],
+    brands: [],
+    summary: {
+      month: '2026-07', storeCount: 1, entryCount: 1, sales: 100, income: 100,
+      costSum: 30, expenseSum: 42, net: 28, margin: 0.28, riskStoreCount: 0,
+    },
+    entries: [],
+    trend: [],
+  })))
   await page.route('**/api/assistant/operating-snapshot**', (route) => route.fulfill(ok(snapshot)))
   await seedAuth(page, { token: 'e2e-assistant-quality-token', user: assistantUser })
 }
 
 test.describe('store assistant quality state presentation', () => {
-  test('presents DATA_LIMITED as actionable data completion instead of a failed analysis', async ({ page }) => {
+  test('[mobile] presents DATA_LIMITED as actionable data completion instead of a failed analysis', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })
     await prepareAssistantPage(page)
     await page.route('**/api/assistant/status', (route) => route.fulfill(ok(assistantStatus('READY'))))
@@ -187,7 +197,7 @@ test.describe('store assistant quality state presentation', () => {
     {
       code: 'DATA_LIMITED_REQUIRED',
       message: '经营数据不足，暂不能判断原因，请先补全成本、费用或历史月份数据。',
-      status: 'DeepSeek 已配置',
+      status: '经营数据待补全',
     },
     {
       code: 'ANALYSIS_UNKNOWN_NUMERIC',

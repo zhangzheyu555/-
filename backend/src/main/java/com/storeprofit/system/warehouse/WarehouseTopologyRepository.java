@@ -231,8 +231,10 @@ public class WarehouseTopologyRepository {
   ) {
     jdbcTemplate.update("""
         insert into warehouse_transfer_line(
-          tenant_id, transfer_order_id, item_id, requested_quantity, note, created_at
-        ) values (?, ?, ?, ?, ?, current_timestamp)
+          tenant_id, transfer_order_id, item_id, requested_quantity, approved_quantity,
+          reserved_quantity, shipped_quantity, received_quantity, in_transit_quantity,
+          unit_cost, amount, version, note, created_at
+        ) values (?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0, 0, ?, current_timestamp)
         """, tenantId, transferId, itemId, amount(requestedQuantity), blankToNull(note));
   }
 

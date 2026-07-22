@@ -211,7 +211,7 @@ function unavailableMessage(reason: unknown, fallback: string) {
 
 <template>
   <section class="page-panel rectification-page">
-    <PageHeader title="巡检整改" subtitle="上传本店现场证据并提交整改说明，运营复核前不会改写历史巡检得分。">
+    <PageHeader title="巡检整改">
       <template #actions>
         <UiButton variant="secondary" :loading="loading" @click="loadTasks">
           <template #icon><RefreshCw :size="16" /></template>

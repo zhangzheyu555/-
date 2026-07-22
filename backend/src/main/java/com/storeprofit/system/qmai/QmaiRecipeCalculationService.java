@@ -13,6 +13,8 @@ import org.springframework.stereotype.Service;
 @Service
 public class QmaiRecipeCalculationService {
   private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(3);
+  private static final BigDecimal MAX_VALUE = new BigDecimal("1000000");
+  private static final BigDecimal GRAMS_PER_JIN = new BigDecimal("500");
 
   public CalculationSnapshot calculate(CalculationRequest request) {
     if (request == null || request.products() == null || request.products().isEmpty()) {
@@ -47,13 +49,13 @@ public class QmaiRecipeCalculationService {
     }
     List<FruitUsage> fruits = totals.entrySet().stream().map(entry -> new FruitUsage(
         entry.getKey(), scale(entry.getValue().netGrams), scale(entry.getValue().rawGrams),
-        scale(entry.getValue().rawGrams.divide(new BigDecimal("500"), 6, RoundingMode.HALF_UP)),
+        scale(entry.getValue().rawGrams.divide(GRAMS_PER_JIN, 6, RoundingMode.HALF_UP)),
         entry.getValue().approximate)).toList();
     return new CalculationSnapshot(scale(cups), fruits);
   }
 
   private BigDecimal positive(BigDecimal value, String field) {
-    if (value == null || value.signum() < 0 || value.compareTo(new BigDecimal("1000000")) > 0) {
+    if (value == null || value.signum() < 0 || value.compareTo(MAX_VALUE) > 0) {
       throw new BusinessException("QMAI_RECIPE_VALUE_INVALID", field + "必须在 0 至 1000000 之间", HttpStatus.BAD_REQUEST);
     }
     return value;

@@ -238,11 +238,12 @@ public class InspectionController {
   @PostMapping("/detect")
   public ApiResponse<Map<String, Object>> detect(
       @RequestHeader(value = "Authorization", required = false) String authorization,
+      @RequestParam("storeId") String storeId,
       @RequestParam("file") MultipartFile file
   ) {
     AuthUser user = accessControl.requireUser(authorization);
     accessControl.requireInspectionManage(user);
-    return ApiResponse.ok(inspectionService.detect(user, file));
+    return ApiResponse.ok(inspectionService.detect(user, storeId, file));
   }
 
   /** Read-only clause matching for draft inspections; this endpoint never persists a score. */

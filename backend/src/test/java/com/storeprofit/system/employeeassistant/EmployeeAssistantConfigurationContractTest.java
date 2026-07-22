@@ -20,7 +20,7 @@ class EmployeeAssistantConfigurationContractTest {
   @Test
   void springMustUseTheConfigurationAwareConstructor() {
     Constructor<?> constructor = Arrays.stream(EmployeeAssistantService.class.getConstructors())
-        .filter(candidate -> candidate.getParameterCount() == 12)
+        .filter(candidate -> candidate.getParameterCount() == 14)
         .findFirst()
         .orElseThrow();
 
@@ -38,6 +38,7 @@ class EmployeeAssistantConfigurationContractTest {
         .containsEntry("app.employee-assistant.connect-timeout", "${EMPLOYEE_ASSISTANT_CONNECT_TIMEOUT:3s}")
         .containsEntry("app.employee-assistant.timeout", "${EMPLOYEE_ASSISTANT_TIMEOUT:10s}")
         .containsEntry("app.employee-assistant.runtime-secured", "${ASSISTANT_RUNTIME_SECURED:false}")
+        .containsEntry("app.employee-assistant.outbound-mode", "${EMPLOYEE_ASSISTANT_OUTBOUND_MODE:LIVE}")
         .containsKeys(
             "app.employee-assistant.upstream-url",
             "app.employee-assistant.api-token",

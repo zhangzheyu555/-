@@ -521,6 +521,21 @@ class SalaryServiceTest {
     assertThat(approved.reviewedBy()).isEqualTo(boss().id());
   }
 
+  @Test
+  void approvalAfterRejectionClearsTheStaleRejectionNote() {
+    service.save(finance(), "pay-rework", request("s1", "2026-05", "Alice", "1200", "800"));
+    service.submit(finance(), "pay-rework");
+    SalaryRecordResponse rejected = service.reject(boss(), "pay-rework", "请核对工资明细");
+    SalaryRecordResponse resubmitted = service.submit(finance(), "pay-rework");
+    SalaryRecordResponse approved = service.approve(boss(), "pay-rework");
+
+    assertThat(rejected.status()).isEqualTo("REJECTED");
+    assertThat(rejected.reviewNote()).isEqualTo("请核对工资明细");
+    assertThat(resubmitted.status()).isEqualTo("SUBMITTED");
+    assertThat(approved.status()).isEqualTo("APPROVED");
+    assertThat(approved.reviewNote()).isNull();
+  }
+
   private SalaryRecordRequest request(String storeId, String month, String employeeName, String gross, String base) {
     return new SalaryRecordRequest(
         storeId,

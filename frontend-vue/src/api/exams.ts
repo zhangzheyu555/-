@@ -1,4 +1,5 @@
 import { apiDelete, apiGet, apiPost, apiPostForm, http } from './http'
+import { downloadBlob } from './reports'
 
 export interface ExamPaperSummary {
   id: number
@@ -518,14 +519,7 @@ export function getExamEncodingCheck() {
 
 export async function downloadExamResults(campaignId: number, title: string) {
   const response = await http.get<Blob>(`/api/exam-center/campaigns/${campaignId}/results.csv`, { responseType: 'blob' })
-  const url = URL.createObjectURL(response.data)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = `${safeFilename(title || '考试成绩')}.csv`
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  URL.revokeObjectURL(url)
+  downloadBlob(response.data, `${safeFilename(title || '考试成绩')}.csv`)
 }
 
 function safeFilename(value: string) {

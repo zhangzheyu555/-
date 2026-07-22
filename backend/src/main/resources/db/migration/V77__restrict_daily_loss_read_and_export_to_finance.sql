@@ -1,4 +1,4 @@
--- STORE-01：日报损查询和月度 Excel 导出仅限 FINANCE；BOSS 由最高角色边界获得权限。
+-- V77 / STORE-01：日报损查询和月度 Excel 导出仅限 FINANCE；BOSS 由最高角色边界获得权限。
 -- 店长仍可提交、督导仍可复核，但两者不再拥有列表查询或导出模板权限。
 
 delete from role_permission

@@ -89,6 +89,31 @@ class AssistantSnapshotServiceTest {
     verifyNoInteractions(client);
   }
 
+  @Test
+  void snapshotFromAnotherTenantIsRejectedWithoutReadingOrSendingItsFacts() {
+    DeepSeekProperties properties = new DeepSeekProperties();
+    AssistantDataEngine dataEngine = mock(AssistantDataEngine.class);
+    DeepSeekClient client = mock(DeepSeekClient.class);
+    OperatingSnapshot snapshot = snapshot(true);
+    when(dataEngine.build(any(), any(), any())).thenReturn(dataResult(snapshot));
+    AssistantService service = new AssistantService(properties, dataEngine, client, new ObjectMapper());
+    AuthUser anotherTenantBoss = new AuthUser(
+        2L, 2L, "另一测试租户", "other-boss", "hash", "另一位老板", "BOSS", null, true
+    );
+
+    service.operatingSnapshot(boss, "s1", "2026-07");
+    AssistantChatResponse response = service.chat(
+        anotherTenantBoss,
+        new AssistantChatRequest("7月营业额是多少", List.of(), "", "LOCAL", "s1", "2026-07", snapshot.snapshotId())
+    );
+
+    assertThat(response.error()).isNotNull();
+    assertThat(response.error().code()).isEqualTo("SNAPSHOT_EXPIRED");
+    assertThat(response.localData().snapshotId()).isBlank();
+    assertThat(response.localData().operatingSnapshot()).isNull();
+    verifyNoInteractions(client);
+  }
+
   private AssistantDataEngine.Result dataResult(OperatingSnapshot snapshot) {
     AssistantChatResponse.LocalData localData = new AssistantChatResponse.LocalData(
         "测试门店 2026-07：实收收入¥100.00，经营利润¥28.00，经营利润率28.0%。",

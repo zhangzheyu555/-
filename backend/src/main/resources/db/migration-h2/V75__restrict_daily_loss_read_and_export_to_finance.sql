@@ -1,4 +1,4 @@
--- H2 verification equivalent of MySQL V76.
+-- H2 verification equivalent of MySQL V77. H2 has its own compatibility chain.
 -- BOSS uses the highest-role boundary; FINANCE is the sole role template for query/export.
 
 insert into permission_catalog(

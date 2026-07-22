@@ -60,6 +60,7 @@ class InspectionRecordServiceTest {
           inspector varchar(120) null,
           brand varchar(120) null,
           full_score decimal(8,2) not null default 200,
+          pass_score decimal(8,2) not null default 180,
           score decimal(8,2) not null default 200,
           passed tinyint(1) not null default 1,
           deductions_json longtext null,
@@ -162,6 +163,20 @@ class InspectionRecordServiceTest {
         first.id()
     );
     assertThat(snapshotCount).isEqualTo(2);
+  }
+
+  @Test
+  void newInspectionExplicitlyPersistsPassScoreWhenDatabaseHasNoDefault() {
+    jdbcTemplate.execute("alter table inspection_record alter column pass_score drop default");
+
+    InspectionRecordResponse created = service.save(
+        supervisor(), null, request("s1", "2026-05-21", "92.00", false));
+
+    assertThat(jdbcTemplate.queryForObject(
+        "select pass_score from inspection_record where tenant_id = 1 and id = ?",
+        BigDecimal.class,
+        created.id()
+    )).isEqualByComparingTo("180.00");
   }
 
   @Test

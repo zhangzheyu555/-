@@ -1,6 +1,7 @@
 -- 文档型向量知识库。MySQL 是原始资料、权限元数据和派生向量索引的唯一持久化来源；
 -- 不调用外部模型，也不将 Word/Excel 正文发送给第三方服务。
 
+-- V76 adds the scoped internal knowledge-base schema after the released V75 WeChat binding.
 create table knowledge_base_document (
   id bigint not null auto_increment,
   tenant_id bigint not null,

@@ -15,7 +15,37 @@ public class PasswordService {
   private static final String ALGORITHM = "PBKDF2WithHmacSHA256";
   private static final int ITERATIONS = 120_000;
   private static final int KEY_LENGTH = 256;
+  private static final int ONE_TIME_PASSWORD_LENGTH = 20;
+  private static final char[] UPPERCASE = "ABCDEFGHJKLMNPQRSTUVWXYZ".toCharArray();
+  private static final char[] LOWERCASE = "abcdefghijkmnopqrstuvwxyz".toCharArray();
+  private static final char[] DIGITS = "23456789".toCharArray();
+  private static final char[] SYMBOLS = "!@#$%_-".toCharArray();
+  private static final char[] ONE_TIME_PASSWORD_ALPHABET =
+      "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%_-".toCharArray();
   private final SecureRandom random = new SecureRandom();
+
+  /** Generates a per-account password that is returned once and must never be persisted in clear. */
+  public String generateOneTimePassword() {
+    char[] value = new char[ONE_TIME_PASSWORD_LENGTH];
+    try {
+      value[0] = randomCharacter(UPPERCASE);
+      value[1] = randomCharacter(LOWERCASE);
+      value[2] = randomCharacter(DIGITS);
+      value[3] = randomCharacter(SYMBOLS);
+      for (int index = 4; index < value.length; index++) {
+        value[index] = randomCharacter(ONE_TIME_PASSWORD_ALPHABET);
+      }
+      for (int index = value.length - 1; index > 0; index--) {
+        int swapIndex = random.nextInt(index + 1);
+        char current = value[index];
+        value[index] = value[swapIndex];
+        value[swapIndex] = current;
+      }
+      return new String(value);
+    } finally {
+      Arrays.fill(value, '\0');
+    }
+  }
 
   public String hash(String rawPassword) {
     Objects.requireNonNull(rawPassword, "rawPassword");
@@ -88,6 +118,10 @@ public class PasswordService {
     } finally {
       spec.clearPassword();
     }
+  }
+
+  private char randomCharacter(char[] alphabet) {
+    return alphabet[random.nextInt(alphabet.length)];
   }
 
   private void clear(byte[] value) {

@@ -46,19 +46,32 @@ class ExpenseControllerTest {
     ExpenseClaimRequest request = request();
     ExpenseClaimResponse row = response("exp-1", "草稿");
     when(authService.requireUser("Bearer token")).thenReturn(boss);
-    when(expenseService.save(boss, null, request)).thenReturn(row);
+    when(expenseService.save(boss, null, request, "expense-create-retry-1")).thenReturn(row);
     when(expenseService.save(boss, "exp-1", request)).thenReturn(row);
 
-    ApiResponse<ExpenseClaimResponse> created = controller.create("Bearer token", request);
+    ApiResponse<ExpenseClaimResponse> created = controller.create("Bearer token", "expense-create-retry-1", request);
     ApiResponse<ExpenseClaimResponse> updated = controller.update("Bearer token", "exp-1", request);
     ApiResponse<Void> deleted = controller.delete("Bearer token", "exp-1");
 
     assertThat(created.data()).isSameAs(row);
     assertThat(updated.data()).isSameAs(row);
     assertThat(deleted.success()).isTrue();
-    verify(expenseService).save(boss, null, request);
+    verify(expenseService).save(boss, null, request, "expense-create-retry-1");
     verify(expenseService).save(boss, "exp-1", request);
     verify(expenseService).delete(boss, "exp-1");
+  }
+
+  @Test
+  void detailAndPrimaryAttachmentDeletionUseAuthenticatedScopedService() {
+    ExpenseClaimResponse row = response("exp-1", "草稿");
+    when(authService.requireUser("Bearer token")).thenReturn(boss);
+    when(expenseService.claim(boss, "exp-1")).thenReturn(row);
+
+    assertThat(controller.claim("Bearer token", "exp-1").data()).isSameAs(row);
+    assertThat(controller.deleteAttachment("Bearer token", "exp-1", 9L).success()).isTrue();
+
+    verify(expenseService).claim(boss, "exp-1");
+    verify(expenseService).deleteAttachment(boss, "exp-1", 9L);
   }
 
   @Test
@@ -162,6 +175,7 @@ class ExpenseControllerTest {
     return new ExpenseClaimRequest(
         "s1",
         "2026-05",
+        "2026-05-15",
         new BigDecimal("128.50"),
         "物料采购",
         "牛奶采购",

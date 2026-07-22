@@ -26,8 +26,10 @@ export interface SessionUser {
 }
 
 export interface LoginResponse {
-  token: string
-  user: SessionUser
+  token: string | null
+  user: SessionUser | null
+  status: 'AUTHENTICATED' | 'PASSWORD_CHANGE_REQUIRED'
+  passwordChangeCredential: string | null
 }
 
 export function loginApi(username: string, password: string) {
@@ -35,6 +37,17 @@ export function loginApi(username: string, password: string) {
     username,
     password,
   })
+}
+
+export function changeInitialPasswordApi(
+  credential: string,
+  newPassword: string,
+  confirmPassword: string,
+) {
+  return apiPost<void, { credential: string; newPassword: string; confirmPassword: string }>(
+    '/api/auth/initial-password',
+    { credential, newPassword, confirmPassword },
+  )
 }
 
 export function logoutApi() {

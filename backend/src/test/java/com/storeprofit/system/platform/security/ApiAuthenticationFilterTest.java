@@ -60,6 +60,7 @@ class ApiAuthenticationFilterTest {
 
     for (MockHttpServletRequest request : new MockHttpServletRequest[] {
         request("POST", "/api/auth/login"),
+        request("POST", "/api/auth/initial-password"),
         request("GET", "/api/health"),
         request("POST", "/api/eleme/message"),
         request("OPTIONS", "/api/finance/entries")
@@ -70,6 +71,22 @@ class ApiAuthenticationFilterTest {
       verify(chain).doFilter(request, response);
     }
     verify(authService, never()).requireUser(any());
+  }
+
+  @Test
+  void keepsHealthDiagnosticsBehindBearerAuthentication() throws Exception {
+    AuthService authService = mock(AuthService.class);
+    when(authService.requireUser(null)).thenThrow(new BusinessException(
+        "UNAUTHORIZED", "请先登录", HttpStatus.UNAUTHORIZED));
+    ApiAuthenticationFilter filter = new ApiAuthenticationFilter(authService, new ObjectMapper());
+    MockHttpServletRequest request = request("GET", "/api/health/diagnostics");
+    MockHttpServletResponse response = new MockHttpServletResponse();
+    FilterChain chain = mock(FilterChain.class);
+
+    filter.doFilter(request, response, chain);
+
+    assertThat(response.getStatus()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
+    verify(chain, never()).doFilter(any(), any());
   }
 
   private MockHttpServletRequest request(String method, String path) {

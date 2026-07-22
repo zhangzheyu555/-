@@ -187,7 +187,8 @@ class AssistantAnalysisPipelineTest {
         new DeepSeekCallResult("利润变化主要受成本和费用结构影响，建议先复核费用明细。", "request", "test-model", 200, 1)
     );
     AssistantDataEngine dataEngine = mock(AssistantDataEngine.class);
-    when(dataEngine.build(any(), any(), any())).thenReturn(dataResult());
+    when(dataEngine.build(any(), any(), any())).thenReturn(
+        dataResult(), missingBasicMetricsResult(), dataResult());
     AssistantService service = new AssistantService(properties, dataEngine, client, new ObjectMapper());
 
     AssistantChatResponse result = service.chat(boss, request("7月净利润为什么变化"));
@@ -448,6 +449,45 @@ class AssistantAnalysisPipelineTest {
     assertThatThrownBy(() -> service.chat(boss, request("7月净利润为什么变化")))
         .isInstanceOf(BusinessException.class)
         .hasMessageContaining("只能查看自己门店");
+  }
+
+  @Test
+  void questionOnlyPilotNeverSendsTheOperatingSnapshotAndRejectsSensitiveQuestions() {
+    DeepSeekProperties properties = new DeepSeekProperties();
+    properties.setApiKey("test-only-key");
+    properties.setExternalPilotEnabled(true);
+    properties.setQuestionOnly(true);
+    DeepSeekClient client = mock(DeepSeekClient.class);
+    when(client.analyzeFast(any(), any(), any(Duration.class))).thenReturn(
+        new DeepSeekCallResult("建议先明确目标并记录结果。", "provider-request", "deepseek-test-model", 200, 1)
+    );
+    AssistantDataEngine dataEngine = mock(AssistantDataEngine.class);
+    when(dataEngine.build(any(), any(), any())).thenReturn(dataResult());
+    AssistantService service = new AssistantService(properties, dataEngine, client, new ObjectMapper());
+
+    AssistantChatResponse safe = service.chat(boss, request("门店如何安排每周经营复盘"));
+    ArgumentCaptor<String> systemPrompt = ArgumentCaptor.forClass(String.class);
+    verify(client).analyzeFast(systemPrompt.capture(), any(), any(Duration.class));
+    assertThat(safe.error()).isNull();
+    assertThat(systemPrompt.getValue())
+        .contains("没有附带数据库快照")
+        .doesNotContain("权限过滤后的测试数据", "120000", "30000", "南阳三中店");
+
+    AssistantChatResponse cached = service.chat(boss, request("门店如何安排每周经营复盘"));
+    assertThat(cached.error()).isNull();
+    verify(client, times(1)).analyzeFast(any(), any(), any(Duration.class));
+
+    properties.setQuestionOnly(false);
+    AssistantChatResponse business = service.chat(boss, request("门店如何安排每周经营复盘"));
+    assertThat(business.error()).isNull();
+    verify(client, times(2)).analyzeFast(systemPrompt.capture(), any(), any(Duration.class));
+    assertThat(systemPrompt.getAllValues().getLast()).contains("权限过滤后的测试数据");
+
+    properties.setQuestionOnly(true);
+    AssistantChatResponse rejected = service.chat(boss, request("分析员工姓名和工资"));
+    assertThat(rejected.error().code()).isEqualTo("DEEPSEEK_PILOT_DATA_REJECTED");
+    verify(dataEngine, times(3)).build(any(), any(), any());
+    verify(client, times(2)).analyzeFast(any(), any(), any(Duration.class));
   }
 
   private AssistantChatRequest request(String message) {

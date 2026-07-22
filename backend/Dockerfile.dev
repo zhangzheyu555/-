@@ -1,33 +1,6 @@
-# 开发环境镜像：从源码构建，宿主机无需预先安装 Maven 或生成 JAR。
-FROM maven:3.9.9-eclipse-temurin-21 AS build
-
-WORKDIR /workspace
-
-COPY pom.xml ./
-COPY docker-maven-settings.xml /root/.m2/settings.xml
-
-# 使用镜像加速依赖下载，并让网络异常尽快失败。
-RUN mvn -B -DskipTests dependency:go-offline \
-      -Dhttp.keepAlive=false \
-      -Dmaven.wagon.http.retryHandler.count=3 \
-      -Dmaven.wagon.http.connectionTimeout=10000 \
-      -Dmaven.wagon.http.readTimeout=60000
-
-COPY src ./src
-RUN mvn -q -DskipTests package
-
-FROM eclipse-temurin:21-jre-jammy
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
-    && rm -rf /var/lib/apt/lists/*
+FROM eclipse-temurin:21-jre
 
 WORKDIR /app
-RUN groupadd --system app && useradd --system --gid app app
-
-COPY --from=build /workspace/target/store-profit-backend-*.jar /app/app.jar
-
+COPY target/store-profit-backend-*.jar app.jar
 EXPOSE 8080
-USER app
-
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]

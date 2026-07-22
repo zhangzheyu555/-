@@ -2,6 +2,9 @@ package com.storeprofit.system.assistant;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.storeprofit.system.audit.AuditLogRequest;
+import com.storeprofit.system.audit.AuditRepository;
+import com.storeprofit.system.common.BusinessException;
 import com.storeprofit.system.finance.FinanceService;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
@@ -9,6 +12,7 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.ArrayDeque;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -30,7 +34,9 @@ import org.springframework.stereotype.Service;
 public class AssistantService {
   private static final Logger log = LoggerFactory.getLogger(AssistantService.class);
   static final String PROMPT_VERSION = "business-analysis-v4-strict-json-data-limited";
+  private static final String QUESTION_ONLY_PROMPT_VERSION = "question-only-v1";
   private static final Duration CACHE_TTL = Duration.ofMinutes(5);
+  private static final int MAX_EXTERNAL_PILOT_REQUEST_WINDOWS = 128;
   private static final Set<String> ACTION_OWNER_ROLES = Set.of(
       "BOSS", "FINANCE", "STORE_MANAGER", "SUPERVISOR", "WAREHOUSE"
   );
@@ -73,25 +79,46 @@ public class AssistantService {
       "报表", "趋势", "异常", "原因", "建议", "改善", "风险", "仓库", "库存", "叫货", "采购",
       "入库", "出库", "退货", "配送", "预警", "整改", "平台", "同步", "运营"
   );
+  private static final List<String> EXTERNAL_PILOT_SENSITIVE_TERMS = List.of(
+      "员工姓名", "姓名", "手机号", "电话", "身份证", "工资", "薪资", "银行卡",
+      "附件", "图片", "照片", "日志", "密码", "密钥", "令牌", "token", "api key", "apikey"
+  );
+  private static final Pattern EXTERNAL_PILOT_SENSITIVE_VALUE = Pattern.compile(
+      "(?i)(?:1[3-9]\\d{9}|\\d{17}[0-9x]|[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}|https?://\\S+|(?<!\\d)\\d{8,}(?!\\d))"
+  );
 
   private final DeepSeekProperties properties;
   private final AssistantDataEngine dataEngine;
   private final DeepSeekClient deepSeekClient;
   private final ObjectMapper objectMapper;
+  private final AuditRepository auditRepository;
   private final Map<String, CachedAnalysis> analysisCache = new ConcurrentHashMap<>();
   private final Map<String, CachedSnapshot> snapshotCache = new ConcurrentHashMap<>();
+  private final Map<String, ArrayDeque<Instant>> externalPilotRequestWindows = new ConcurrentHashMap<>();
 
   @Autowired
   public AssistantService(
       DeepSeekProperties properties,
       AssistantDataEngine dataEngine,
       DeepSeekClient deepSeekClient,
-      ObjectMapper objectMapper
+      ObjectMapper objectMapper,
+      AuditRepository auditRepository
   ) {
     this.properties = properties;
     this.dataEngine = dataEngine;
     this.deepSeekClient = deepSeekClient;
     this.objectMapper = objectMapper;
+    this.auditRepository = auditRepository;
+  }
+
+  /** Source-compatible constructor retained for focused tests without a persistence layer. */
+  public AssistantService(
+      DeepSeekProperties properties,
+      AssistantDataEngine dataEngine,
+      DeepSeekClient deepSeekClient,
+      ObjectMapper objectMapper
+  ) {
+    this(properties, dataEngine, deepSeekClient, objectMapper, null);
   }
 
   /**
@@ -128,6 +155,15 @@ public class AssistantService {
   }
 
   public AssistantChatResponse chat(AuthUser user, AssistantChatRequest request) {
+    try {
+      return auditChat(user, request, chatWithoutAudit(user, request));
+    } catch (BusinessException error) {
+      auditRejectedException(user, request, error.getCode());
+      throw error;
+    }
+  }
+
+  private AssistantChatResponse chatWithoutAudit(AuthUser user, AssistantChatRequest request) {
     String question = clean(request.message());
     if (hasBlockedWord(question)) {
       return blockedResponse(
@@ -165,6 +201,14 @@ public class AssistantService {
     ModeSelection selection = selectMode(requestedMode, question);
     String effectiveMode = selection.mode();
     boolean fastProfile = "AUTO".equals(requestedMode);
+    boolean questionOnlyPilot = isQuestionOnlyPilot();
+    if ("AI".equals(effectiveMode) && questionOnlyPilot && containsExternalPilotSensitiveData(question)) {
+      return blockedResponse(
+          question,
+          "DEEPSEEK_PILOT_DATA_REJECTED",
+          "本机试用的外部 AI 仅接受合成问题和公开知识，不能发送人员、凭据、附件或真实经营数据。"
+      );
+    }
     String correlationId = UUID.randomUUID().toString().substring(0, 8);
     SnapshotResolution resolution = resolveSnapshot(user, request, question);
     if (resolution.errorResponse() != null) return resolution.errorResponse();
@@ -188,7 +232,7 @@ public class AssistantService {
       );
     }
 
-    String key = cacheKey(user, data, question, fastProfile);
+    String key = cacheKey(user, data, question, fastProfile, questionOnlyPilot);
     CachedAnalysis cached = analysisCache.get(key);
     if (cached != null && cached.expiresAt().isAfter(Instant.now())) {
       return new AssistantChatResponse(
@@ -197,15 +241,22 @@ public class AssistantService {
     }
 
     long startedAt = System.nanoTime();
-    AnalysisExpectation expectation = analysisExpectation(localData);
+    String modelContext = questionOnlyPilot ? "" : data.modelContext();
+    AnalysisExpectation expectation = questionOnlyPilot
+        ? new AnalysisExpectation("FULL", false)
+        : analysisExpectation(localData);
     try {
+      acquireExternalPilotUserPermit(user);
       String modelQuestion = redactSensitiveForModel(question);
       DeepSeekCallResult modelResponse = analyzeWithinBudget(
-          systemPrompt(data.modelContext(), expectation), modelQuestion, startedAt, fastProfile
+          questionOnlyPilot ? questionOnlySystemPrompt() : systemPrompt(modelContext, expectation),
+          modelQuestion,
+          startedAt,
+          fastProfile
       );
       ParsedAnalysis parsed = parseAnalysis(modelResponse, data.limitations());
       logSchemaInvalidDiagnostic(parsed, startedAt);
-      QualityResult quality = qualityGate(localData, parsed, expectation, data.modelContext());
+      QualityResult quality = qualityGate(localData, parsed, expectation, modelContext);
 
       if (!quality.passed()) {
         log.warn("DeepSeek quality retry errorCode={} elapsedMs={}",
@@ -221,14 +272,14 @@ public class AssistantService {
           );
         }
         modelResponse = analyzeWithinBudget(
-            repairPrompt(data.modelContext(), quality, expectation), modelQuestion, startedAt, fastProfile
+            repairPrompt(modelContext, quality, expectation), modelQuestion, startedAt, fastProfile
         );
         parsed = parseAnalysis(modelResponse, data.limitations());
         logSchemaInvalidDiagnostic(parsed, startedAt);
-        quality = qualityGate(localData, parsed, expectation, data.modelContext());
+        quality = qualityGate(localData, parsed, expectation, modelContext);
         if ("UNKNOWN_AMOUNT".equals(quality.code())) {
-          parsed = sanitizeUnknownNumericReferences(parsed, localData, data.modelContext());
-          quality = qualityGate(localData, parsed, expectation, data.modelContext());
+          parsed = sanitizeUnknownNumericReferences(parsed, localData, modelContext);
+          quality = qualityGate(localData, parsed, expectation, modelContext);
         }
         if (!quality.passed()) {
           AnalysisFailure failure = analysisFailure(quality, expectation);
@@ -262,6 +313,60 @@ public class AssistantService {
           question, localDataFor(data, "FAILED", null), selection.reason(), ex.getCode(), ex.getUserMessage()
       );
     }
+  }
+
+  /**
+   * Persists only an audit-safe outcome: never the question, prompt, model text, credentials or
+   * operating amounts. The snapshot identifier is an opaque correlation key, not business data.
+   */
+  private AssistantChatResponse auditChat(
+      AuthUser user,
+      AssistantChatRequest request,
+      AssistantChatResponse response
+  ) {
+    if (auditRepository == null || user == null || response == null) return response;
+    AssistantChatResponse.LocalData localData = response.localData();
+    String snapshotId = localData == null ? "" : clean(localData.snapshotId());
+    String errorCode = response.error() == null ? "" : safeAuditToken(response.error().code());
+    String invocation = localData == null ? "" : safeAuditToken(localData.aiInvocation());
+    String mode = safeAuditToken(response.selectedMode());
+    boolean rejected = !errorCode.isBlank();
+    String scopeKind = request == null || clean(request.storeId()).isBlank() ? "AUTHORIZED_SCOPE" : "SELECTED_STORE";
+    String reason = "outcome=" + (rejected ? "REJECTED_" + errorCode : "ANSWERED_" + mode)
+        + "; snapshot=" + (snapshotId.isBlank() ? "NOT_EXPOSED" : "BOUND")
+        + "; scope=" + scopeKind
+        + "; invocation=" + (invocation.isBlank() ? "NOT_RECORDED" : invocation);
+    auditRepository.writeLog(user, new AuditLogRequest(
+        rejected ? "assistant.chat_rejected" : "assistant.chat",
+        "operating_assistant",
+        snapshotId.isBlank() ? null : snapshotId,
+        request == null ? null : clean(request.storeId()),
+        request == null ? null : clean(request.month()),
+        reason,
+        null,
+        null
+    ));
+    return response;
+  }
+
+  private void auditRejectedException(AuthUser user, AssistantChatRequest request, String errorCode) {
+    if (auditRepository == null || user == null) return;
+    String scopeKind = request == null || clean(request.storeId()).isBlank() ? "AUTHORIZED_SCOPE" : "SELECTED_STORE";
+    auditRepository.writeLog(user, new AuditLogRequest(
+        "assistant.chat_rejected",
+        "operating_assistant",
+        null,
+        request == null ? null : clean(request.storeId()),
+        request == null ? null : clean(request.month()),
+        "outcome=REJECTED_" + safeAuditToken(errorCode) + "; snapshot=NOT_EXPOSED; scope=" + scopeKind,
+        null,
+        null
+    ));
+  }
+
+  private String safeAuditToken(String value) {
+    String normalized = clean(value).replaceAll("[^A-Za-z0-9._:-]", "");
+    return normalized.isBlank() ? "UNKNOWN" : normalized.substring(0, Math.min(64, normalized.length()));
   }
 
   private SnapshotResolution resolveSnapshot(AuthUser user, AssistantChatRequest request, String question) {
@@ -1103,12 +1208,27 @@ public class AssistantService {
       AuthUser user,
       AssistantDataEngine.Result data,
       String question,
-      boolean fastProfile
+      boolean fastProfile,
+      boolean questionOnlyPilot
   ) {
-    OperatingSnapshot snapshot = data.snapshot();
     String environment = System.getProperty("app.env");
     if (environment == null || environment.isBlank()) environment = System.getenv("APP_ENV");
     if (environment == null || environment.isBlank()) environment = "LOCAL";
+    if (questionOnlyPilot) {
+      return String.join("|",
+          environment.trim().toUpperCase(Locale.ROOT),
+          "QUESTION_ONLY",
+          String.valueOf(user.tenantId()),
+          user.role(),
+          clean(question),
+          properties.getBaseUrl(),
+          fastProfile ? properties.getFastModel() : properties.getModel(),
+          String.valueOf(properties.getTemperature()),
+          String.valueOf(fastProfile ? properties.getFastMaxTokens() : properties.getMaxTokens()),
+          QUESTION_ONLY_PROMPT_VERSION
+      );
+    }
+    OperatingSnapshot snapshot = data.snapshot();
     String scope = snapshot == null
         ? data.storeId()
         : String.join(",", snapshot.storeScope().storeIds());
@@ -1116,6 +1236,7 @@ public class AssistantService {
     String sourceVersion = snapshot == null ? data.dataVersion() : snapshot.dataSourceVersion();
     return String.join("|",
         environment.trim().toUpperCase(Locale.ROOT),
+        "BUSINESS",
         String.valueOf(user.tenantId()),
         user.role(),
         scope,
@@ -1179,6 +1300,67 @@ public class AssistantService {
         当前分析类型要求：
         """ + typeInstruction + "\n当前权限过滤后的经营数据：\n"
         + (dataContext == null || dataContext.isBlank() ? "暂无可用数据。" : dataContext);
+  }
+
+  private String questionOnlySystemPrompt() {
+    return """
+        你是本机内部试用的通用经营知识助手。本次请求没有附带数据库快照、人员资料、附件或真实业务数据。
+        只能依据用户手工输入的合成问题和公开常识给出简短建议；不得声称已查询数据库，不得索要或推测姓名、电话、工资、账号、密码、附件、图片、日志或其他敏感信息。
+        如果回答需要真实经营数据，只说明需要由用户在本地系统中核对哪些非敏感指标。使用简洁中文纯文本回答。
+        """;
+  }
+
+  private boolean isQuestionOnlyPilot() {
+    return properties.isExternalPilotEnabled() && properties.isQuestionOnly();
+  }
+
+  private boolean containsExternalPilotSensitiveData(String value) {
+    String normalized = clean(value).toLowerCase(Locale.ROOT);
+    return EXTERNAL_PILOT_SENSITIVE_TERMS.stream().anyMatch(normalized::contains)
+        || EXTERNAL_PILOT_SENSITIVE_VALUE.matcher(normalized).find();
+  }
+
+  private void acquireExternalPilotUserPermit(AuthUser user) {
+    if (!isQuestionOnlyPilot() || user == null) return;
+    String key = user.tenantId() + ":" + user.id();
+    Instant now = Instant.now();
+    Instant windowStart = now.minusSeconds(60);
+    ArrayDeque<Instant> window;
+    synchronized (externalPilotRequestWindows) {
+      if (externalPilotRequestWindows.size() >= MAX_EXTERNAL_PILOT_REQUEST_WINDOWS) {
+        externalPilotRequestWindows.entrySet().removeIf(entry -> {
+          ArrayDeque<Instant> candidate = entry.getValue();
+          synchronized (candidate) {
+            removeExpiredRequests(candidate, windowStart);
+            return candidate.isEmpty();
+          }
+        });
+      }
+      window = externalPilotRequestWindows.get(key);
+      if (window == null) {
+        if (externalPilotRequestWindows.size() >= MAX_EXTERNAL_PILOT_REQUEST_WINDOWS) {
+          throw userRateLimitFailure();
+        }
+        window = new ArrayDeque<>();
+        externalPilotRequestWindows.put(key, window);
+      }
+    }
+    synchronized (window) {
+      removeExpiredRequests(window, windowStart);
+      if (window.size() >= properties.getMaxRequestsPerUserPerMinute()) {
+        throw userRateLimitFailure();
+      }
+      window.addLast(now);
+    }
+  }
+
+  private void removeExpiredRequests(ArrayDeque<Instant> window, Instant windowStart) {
+    while (!window.isEmpty() && window.peekFirst().isBefore(windowStart)) window.removeFirst();
+  }
+
+  private DeepSeekException userRateLimitFailure() {
+    return new DeepSeekException(
+        "DEEPSEEK_RATE_LIMITED_USER", "该账号的 AI 请求过于频繁，请稍后再试。", 0);
   }
 
   private String repairPrompt(

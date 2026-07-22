@@ -1,0 +1,311 @@
+# 发布候选暂存清单
+
+- 基准提交：`a7a4288931b2212bb25e6199fed25cc839712e74`
+- 状态：**RELEASE CANDIDATE READY FOR HUMAN REVIEW**；未提交、未打标签、未推送、未部署。
+- 精确白名单：264 个路径。
+- 实际暂存差异：262 个文件；白名单中的 FIN-04、FIN-05 两份报告与 HEAD 内容一致，因此不产生暂存差异。
+- 暂存状态：新增 87、修改 157、删除 18；白名单外暂存 0。
+- 候选门禁：后端全量 183 套件、887/887（0 failure/error/skip）；`mvn -q package`、`vue-tsc -b`、Vite build 均退出码 0。
+- 候选载荷补丁 SHA-256：`01e087b2e5a18c5169f86b36c3d32eeeef7363893a18f43e2159a37bb644d3bc`。为避免自引用，该稳定哈希明确排除本清单与 readiness 两份证据文档；包含证据文档的最终完整暂存补丁哈希在提交前交付报告中单独给出。
+- 当前工作区 JAR SHA-256：`82409e084732d90d94ce12d578c24323ca23ce15c4008e446cdae222d8c37d4c`。
+- 当前前端 dist 确定性汇总 SHA-256：`78ed4881ce2dac7a01c1df2de3266b8d6971f4b7ec074f7084dbabe87f805742`（对 `dist` 内相对路径排序后的逐文件 SHA-256 再汇总）。
+- 工具：Java 21.0.11、Maven 3.9.16、Node 24.14.0、npm 11.9.0、vue-tsc 5.9.3、Vite 8.1.5。
+
+## 后端运行代码、配置与迁移（83）
+
+- `backend/src/main/java/com/storeprofit/system/assistant/AssistantController.java`
+- `backend/src/main/java/com/storeprofit/system/assistant/AssistantService.java`
+- `backend/src/main/java/com/storeprofit/system/assistant/DeepSeekClient.java`
+- `backend/src/main/java/com/storeprofit/system/assistant/DeepSeekProperties.java`
+- `backend/src/main/java/com/storeprofit/system/config/DatabaseIdentityValidator.java`
+- `backend/src/main/java/com/storeprofit/system/config/LocalMockOutboundPolicy.java`
+- `backend/src/main/java/com/storeprofit/system/employee/EmployeeRepository.java`
+- `backend/src/main/java/com/storeprofit/system/employee/EmployeeService.java`
+- `backend/src/main/java/com/storeprofit/system/employeeassistant/EmployeeAssistantHandoffService.java`
+- `backend/src/main/java/com/storeprofit/system/employeeassistant/EmployeeAssistantProvider.java`
+- `backend/src/main/java/com/storeprofit/system/employeeassistant/EmployeeAssistantService.java`
+- `backend/src/main/java/com/storeprofit/system/employeeassistant/ModelEmployeeAssistantProvider.java`
+- `backend/src/main/java/com/storeprofit/system/employeeassistant/RemoteEmployeeAssistantProvider.java`
+- `backend/src/main/java/com/storeprofit/system/finance/FinanceService.java`
+- `backend/src/main/java/com/storeprofit/system/finance/ProfitEntryRequest.java`
+- `backend/src/main/java/com/storeprofit/system/health/HealthController.java`
+- `backend/src/main/java/com/storeprofit/system/importing/ProfitImportPreviewJobService.java`
+- `backend/src/main/java/com/storeprofit/system/importing/ProfitImportService.java`
+- `backend/src/main/java/com/storeprofit/system/importing/SpreadsheetProfitParser.java`
+- `backend/src/main/java/com/storeprofit/system/inspection/InspectionController.java`
+- `backend/src/main/java/com/storeprofit/system/inspection/InspectionRecordRepository.java`
+- `backend/src/main/java/com/storeprofit/system/inspection/InspectionService.java`
+- `backend/src/main/java/com/storeprofit/system/knowledgebase/KnowledgeBaseController.java`
+- `backend/src/main/java/com/storeprofit/system/knowledgebase/KnowledgeBaseDocumentResponse.java`
+- `backend/src/main/java/com/storeprofit/system/knowledgebase/KnowledgeBaseErrors.java`
+- `backend/src/main/java/com/storeprofit/system/knowledgebase/KnowledgeBaseRepository.java`
+- `backend/src/main/java/com/storeprofit/system/knowledgebase/KnowledgeBaseSearchResultResponse.java`
+- `backend/src/main/java/com/storeprofit/system/knowledgebase/KnowledgeBaseService.java`
+- `backend/src/main/java/com/storeprofit/system/knowledgebase/KnowledgeDocumentChunker.java`
+- `backend/src/main/java/com/storeprofit/system/knowledgebase/KnowledgeDocumentParser.java`
+- `backend/src/main/java/com/storeprofit/system/knowledgebase/LocalHashedVectorEmbeddingService.java`
+- `backend/src/main/java/com/storeprofit/system/operations/ExamCenterRepository.java`
+- `backend/src/main/java/com/storeprofit/system/organization/OrganizationRepository.java`
+- `backend/src/main/java/com/storeprofit/system/organization/OrganizationService.java`
+- `backend/src/main/java/com/storeprofit/system/platform/auth/AccessControlService.java`
+- `backend/src/main/java/com/storeprofit/system/platform/auth/AuthController.java`
+- `backend/src/main/java/com/storeprofit/system/platform/auth/AuthRepository.java`
+- `backend/src/main/java/com/storeprofit/system/platform/auth/AuthService.java`
+- `backend/src/main/java/com/storeprofit/system/platform/auth/InitialPasswordChangeRequest.java`
+- `backend/src/main/java/com/storeprofit/system/platform/auth/LoginResponse.java`
+- `backend/src/main/java/com/storeprofit/system/platform/auth/PasswordService.java`
+- `backend/src/main/java/com/storeprofit/system/platform/authorization/AuthorizationService.java`
+- `backend/src/main/java/com/storeprofit/system/platform/authorization/PermissionCodes.java`
+- `backend/src/main/java/com/storeprofit/system/platform/bootstrap/AdminBootstrapCommand.java`
+- `backend/src/main/java/com/storeprofit/system/platform/security/ApiAuthenticationFilter.java`
+- `backend/src/main/java/com/storeprofit/system/qmai/QmaiConfigService.java`
+- `backend/src/main/java/com/storeprofit/system/qmai/QmaiConsoleService.java`
+- `backend/src/main/java/com/storeprofit/system/qmai/QmaiController.java`
+- `backend/src/main/java/com/storeprofit/system/qmai/QmaiCredentialCipher.java`
+- `backend/src/main/java/com/storeprofit/system/qmai/QmaiOperatingDataRepository.java`
+- `backend/src/main/java/com/storeprofit/system/qmai/QmaiOperatingDataService.java`
+- `backend/src/main/java/com/storeprofit/system/qmai/QmaiOrderService.java`
+- `backend/src/main/java/com/storeprofit/system/qmai/QmaiOutboundPolicy.java`
+- `backend/src/main/java/com/storeprofit/system/qmai/QmaiProperties.java`
+- `backend/src/main/java/com/storeprofit/system/qmai/QmaiRecipeCalculationService.java`
+- `backend/src/main/java/com/storeprofit/system/qmai/QmaiRecipeCatalogRepository.java`
+- `backend/src/main/java/com/storeprofit/system/qmai/QmaiRecipeSnapshotService.java`
+- `backend/src/main/java/com/storeprofit/system/reporting/ExportController.java`
+- `backend/src/main/java/com/storeprofit/system/salary/SalaryExportService.java`
+- `backend/src/main/java/com/storeprofit/system/salary/SalaryRepository.java`
+- `backend/src/main/java/com/storeprofit/system/salary/SalaryService.java`
+- `backend/src/main/java/com/storeprofit/system/todo/RoleTodoRepository.java`
+- `backend/src/main/java/com/storeprofit/system/todo/RoleTodoService.java`
+- `backend/src/main/java/com/storeprofit/system/warehouse/WarehousePrintService.java`
+- `backend/src/main/java/com/storeprofit/system/warehouse/WarehouseRepository.java`
+- `backend/src/main/java/com/storeprofit/system/warehouse/WarehouseTopologyRepository.java`
+- `backend/src/main/java/com/storeprofit/system/warehouse/WarehouseTopologyService.java`
+- `backend/src/main/resources/application-qa.yml`
+- `backend/src/main/resources/application.yml`
+- `backend/src/main/resources/db/migration-h2/README.md`
+- `backend/src/main/resources/db/migration-h2/V24__employee_data_source.sql`
+- `backend/src/main/resources/db/migration-h2/V74__document_vector_knowledge_base.sql`
+- `backend/src/main/resources/db/migration-h2/V75__restrict_daily_loss_read_and_export_to_finance.sql`
+- `backend/src/main/resources/db/migration-h2/V76__qmai_encrypted_credentials.sql`
+- `backend/src/main/resources/db/migration-h2/V77__qmai_recipe_catalog.sql`
+- `backend/src/main/resources/db/migration-h2/V78__grant_finance_scoped_warehouse_read.sql`
+- `backend/src/main/resources/db/migration-h2/V79__employee_initial_password_change_required.sql`
+- `backend/src/main/resources/db/migration/V76__document_vector_knowledge_base.sql`
+- `backend/src/main/resources/db/migration/V77__restrict_daily_loss_read_and_export_to_finance.sql`
+- `backend/src/main/resources/db/migration/V78__qmai_encrypted_credentials.sql`
+- `backend/src/main/resources/db/migration/V79__qmai_recipe_catalog.sql`
+- `backend/src/main/resources/db/migration/V80__grant_finance_scoped_warehouse_read.sql`
+- `backend/src/main/resources/db/migration/V81__employee_initial_password_change_required.sql`
+
+## 后端直接及回归测试（排除 mobile 包）（65）
+
+- `backend/src/test/java/com/storeprofit/system/assistant/AssistantAuditH2Test.java`
+- `backend/src/test/java/com/storeprofit/system/assistant/AssistantConfigurationContractTest.java`
+- `backend/src/test/java/com/storeprofit/system/assistant/AssistantControllerAccessTest.java`
+- `backend/src/test/java/com/storeprofit/system/assistant/AssistantSnapshotServiceTest.java`
+- `backend/src/test/java/com/storeprofit/system/assistant/DeepSeekClientTest.java`
+- `backend/src/test/java/com/storeprofit/system/boss/BossDataHealthControllerTest.java`
+- `backend/src/test/java/com/storeprofit/system/config/CorsConfigTest.java`
+- `backend/src/test/java/com/storeprofit/system/config/DatabaseIdentityValidatorTest.java`
+- `backend/src/test/java/com/storeprofit/system/dailyloss/DailyLossServiceTest.java`
+- `backend/src/test/java/com/storeprofit/system/eleme/ElemeControllerDataScopeTest.java`
+- `backend/src/test/java/com/storeprofit/system/employee/EmployeeControllerAuthorizationTest.java`
+- `backend/src/test/java/com/storeprofit/system/employee/EmployeeServiceAuditH2Test.java`
+- `backend/src/test/java/com/storeprofit/system/employeeassistant/EmployeeAssistantConfigurationContractTest.java`
+- `backend/src/test/java/com/storeprofit/system/employeeassistant/EmployeeAssistantHandoffServiceTest.java`
+- `backend/src/test/java/com/storeprofit/system/employeeassistant/EmployeeAssistantServiceTest.java`
+- `backend/src/test/java/com/storeprofit/system/finance/FinanceServiceTest.java`
+- `backend/src/test/java/com/storeprofit/system/finance/ProfitEntryRequestValidationTest.java`
+- `backend/src/test/java/com/storeprofit/system/health/HealthControllerTest.java`
+- `backend/src/test/java/com/storeprofit/system/importing/ProfitImportControllerAuthorizationTest.java`
+- `backend/src/test/java/com/storeprofit/system/importing/ProfitImportPreviewJobControllerAuthorizationTest.java`
+- `backend/src/test/java/com/storeprofit/system/importing/ProfitImportPreviewJobServiceTest.java`
+- `backend/src/test/java/com/storeprofit/system/importing/SpreadsheetProfitParserTest.java`
+- `backend/src/test/java/com/storeprofit/system/inspection/InspectionControlledYoloTest.java`
+- `backend/src/test/java/com/storeprofit/system/inspection/InspectionRecordControllerTest.java`
+- `backend/src/test/java/com/storeprofit/system/inspection/InspectionRecordServiceTest.java`
+- `backend/src/test/java/com/storeprofit/system/inspection/InspectionRectificationWorkflowH2Test.java`
+- `backend/src/test/java/com/storeprofit/system/inspection/InspectionRestrictedPilotConfigurationTest.java`
+- `backend/src/test/java/com/storeprofit/system/inspection/InspectionServiceHealthTest.java`
+- `backend/src/test/java/com/storeprofit/system/inspection/InspectionServicePermissionTest.java`
+- `backend/src/test/java/com/storeprofit/system/knowledgebase/KnowledgeBaseServiceTest.java`
+- `backend/src/test/java/com/storeprofit/system/knowledgebase/KnowledgeBaseTransactionPolicyTest.java`
+- `backend/src/test/java/com/storeprofit/system/knowledgebase/KnowledgeDocumentParserTest.java`
+- `backend/src/test/java/com/storeprofit/system/knowledgebase/LocalHashedVectorEmbeddingServiceTest.java`
+- `backend/src/test/java/com/storeprofit/system/migration/DailyLossReadExportAuthorizationMigrationTest.java`
+- `backend/src/test/java/com/storeprofit/system/migration/DatabaseColumnCommentMigrationContractTest.java`
+- `backend/src/test/java/com/storeprofit/system/migration/DocumentVectorKnowledgeBaseMigrationTest.java`
+- `backend/src/test/java/com/storeprofit/system/migration/WarehouseWorkspacePermissionMigrationTest.java`
+- `backend/src/test/java/com/storeprofit/system/operations/ExamLearningFlowTest.java`
+- `backend/src/test/java/com/storeprofit/system/operations/OperationsBusinessControllerCompatibilityTest.java`
+- `backend/src/test/java/com/storeprofit/system/operations/OperationsBusinessServicePermissionTest.java`
+- `backend/src/test/java/com/storeprofit/system/organization/OrganizationDataScopeRepositoryTest.java`
+- `backend/src/test/java/com/storeprofit/system/organization/OrganizationServicePermissionTest.java`
+- `backend/src/test/java/com/storeprofit/system/organization/StoreControllerHttpAuthorizationTest.java`
+- `backend/src/test/java/com/storeprofit/system/platform/auth/AccessControlServiceTest.java`
+- `backend/src/test/java/com/storeprofit/system/platform/auth/AccountBootstrapRemovalContractTest.java`
+- `backend/src/test/java/com/storeprofit/system/platform/auth/AuthControllerContractTest.java`
+- `backend/src/test/java/com/storeprofit/system/platform/auth/AuthInitialPasswordChangeH2Test.java`
+- `backend/src/test/java/com/storeprofit/system/platform/auth/AuthServiceLoginTest.java`
+- `backend/src/test/java/com/storeprofit/system/platform/auth/AuthTokenHashMigrationTest.java`
+- `backend/src/test/java/com/storeprofit/system/platform/authorization/AuthorizationServiceTest.java`
+- `backend/src/test/java/com/storeprofit/system/platform/authorization/DataScopeServiceTest.java`
+- `backend/src/test/java/com/storeprofit/system/platform/authorization/TokenPermissionVersionIntegrationTest.java`
+- `backend/src/test/java/com/storeprofit/system/platform/bootstrap/AdminBootstrapCommandTest.java`
+- `backend/src/test/java/com/storeprofit/system/platform/integration/PlatformStatusControllerDataScopeTest.java`
+- `backend/src/test/java/com/storeprofit/system/platform/security/ApiAuthenticationFilterTest.java`
+- `backend/src/test/java/com/storeprofit/system/qmai/QmaiControllerAuthorizationTest.java`
+- `backend/src/test/java/com/storeprofit/system/qmai/QmaiSecurityAndRecipeTest.java`
+- `backend/src/test/java/com/storeprofit/system/reporting/ExportControllerScopeTest.java`
+- `backend/src/test/java/com/storeprofit/system/todo/BusinessTodoServiceTest.java`
+- `backend/src/test/java/com/storeprofit/system/todo/RoleTodoServiceTest.java`
+- `backend/src/test/java/com/storeprofit/system/todo/TodoAuthorizationBoundaryTest.java`
+- `backend/src/test/java/com/storeprofit/system/warehouse/WarehouseMultiFacilityFlowTest.java`
+- `backend/src/test/java/com/storeprofit/system/warehouse/WarehousePermissionDelegationTest.java`
+- `backend/src/test/java/com/storeprofit/system/warehouse/WarehousePrintPermissionDelegationTest.java`
+- `backend/src/test/java/com/storeprofit/system/warehouse/WarehouseServiceTest.java`
+
+## 前端运行源码（35）
+
+- `frontend-vue/src/api/auth.ts`
+- `frontend-vue/src/api/dailyLoss.ts`
+- `frontend-vue/src/api/exams.ts`
+- `frontend-vue/src/api/finance.ts`
+- `frontend-vue/src/api/http.ts`
+- `frontend-vue/src/api/inspection.ts`
+- `frontend-vue/src/api/knowledgeBase.ts`
+- `frontend-vue/src/api/operations.ts`
+- `frontend-vue/src/api/reports.ts`
+- `frontend-vue/src/api/todos.ts`
+- `frontend-vue/src/api/warehouse.ts`
+- `frontend-vue/src/components/inspection/InspectionStandardReadinessNotice.vue`
+- `frontend-vue/src/components/sidebar/AppSidebar.vue`
+- `frontend-vue/src/pages/AssistantPage.vue`
+- `frontend-vue/src/pages/BossDashboardPage.vue`
+- `frontend-vue/src/pages/DailyLossPage.vue`
+- `frontend-vue/src/pages/EmployeeAssistantPage.vue`
+- `frontend-vue/src/pages/ExamCenterPage.vue`
+- `frontend-vue/src/pages/KnowledgeBasePage.vue`
+- `frontend-vue/src/pages/LoginPage.vue`
+- `frontend-vue/src/pages/PlatformLoginPage.vue`
+- `frontend-vue/src/pages/StaffProfilePage.vue`
+- `frontend-vue/src/pages/StoreManagementPage.vue`
+- `frontend-vue/src/pages/SupervisorWorkbenchPage.vue`
+- `frontend-vue/src/pages/WarehousePage.vue`
+- `frontend-vue/src/pages/WarehouseWorkbenchPage.vue`
+- `frontend-vue/src/pages/workspaces/OperationsWorkspace.vue`
+- `frontend-vue/src/permissions/menu.ts`
+- `frontend-vue/src/permissions/permissions.ts`
+- `frontend-vue/src/router/index.ts`
+- `frontend-vue/src/stores/auth.ts`
+- `frontend-vue/src/stores/boss.ts`
+- `frontend-vue/src/stores/warehouse.ts`
+- `frontend-vue/src/utils/auditLogDisplay.ts`
+- `frontend-vue/src/utils/roleTodoNavigation.ts`
+
+## 前端直接及回归测试（排除明确 mobile 用例）（25）
+
+- `frontend-vue/tests/e2e/01-role-routing.spec.ts`
+- `frontend-vue/tests/e2e/02-menu-permission.spec.ts`
+- `frontend-vue/tests/e2e/04-core-pages.spec.ts`
+- `frontend-vue/tests/e2e/05-business-readonly.spec.ts`
+- `frontend-vue/tests/e2e/06-responsive.spec.ts`
+- `frontend-vue/tests/e2e/08-sidebar-logout.spec.ts`
+- `frontend-vue/tests/e2e/09-sidebar-routing.spec.ts`
+- `frontend-vue/tests/e2e/11-login-security.spec.ts`
+- `frontend-vue/tests/e2e/14-inspection-standard-export.spec.ts`
+- `frontend-vue/tests/e2e/14-permission-architecture.spec.ts`
+- `frontend-vue/tests/e2e/18-inspection-detection-confirm.spec.ts`
+- `frontend-vue/tests/e2e/18-warehouse-network-ui.spec.ts`
+- `frontend-vue/tests/e2e/19-warehouse-purchase-flow.spec.ts`
+- `frontend-vue/tests/e2e/20-employee-assistant-status.spec.ts`
+- `frontend-vue/tests/e2e/22-assistant-status-refresh.spec.ts`
+- `frontend-vue/tests/e2e/25-assistant-analysis-quality-states.spec.ts`
+- `frontend-vue/tests/e2e/26-data-export-scope.spec.ts`
+- `frontend-vue/tests/e2e/31-employee-assistant-experience.spec.ts`
+- `frontend-vue/tests/e2e/32-assistant-operating-snapshot.spec.ts`
+- `frontend-vue/tests/e2e/34-store-management.spec.ts`
+- `frontend-vue/tests/e2e/35-employee-training-desktop.spec.ts`
+- `frontend-vue/tests/e2e/35-inspection-rectification-desktop.spec.ts`
+- `frontend-vue/tests/e2e/36-qmai-server-snapshot-desktop.spec.ts`
+- `frontend-vue/tests/e2e/37-flow-role-todo-navigation.spec.ts`
+- `frontend-vue/tests/e2e/auth.setup.ts`
+
+## 构建配置（1）
+
+- `frontend-vue/vite.config.ts`
+
+## simplify 确认的无引用源码删除（18）
+
+- `backend/src/main/java/com/storeprofit/system/dailyloss/DailyLossPhotoExportFile.java`
+- `backend/src/main/java/com/storeprofit/system/platform/auth/WeChatBindingStatusResponse.java`
+- `backend/src/main/java/com/storeprofit/system/platform/auth/WeChatLoginRequest.java`
+- `backend/src/main/java/com/storeprofit/system/salary/SalaryAttendanceRequest.java`
+- `frontend-vue/src/components/inspection/InspectionDoneReview.vue`
+- `frontend-vue/src/components/inspection/InspectionRecordPanel.vue`
+- `frontend-vue/src/components/inspection/InspectionReviewPanel.vue`
+- `frontend-vue/src/components/inspection/InspectionStatCards.vue`
+- `frontend-vue/src/components/inspection/InspectionTaskPanel.vue`
+- `frontend-vue/src/components/salary/SalaryDetailDrawer.vue`
+- `frontend-vue/src/components/salary/SalaryEmptyState.vue`
+- `frontend-vue/src/components/salary/SalaryFilters.vue`
+- `frontend-vue/src/components/salary/SalaryWorkflowActions.vue`
+- `frontend-vue/src/components/warehouse/RequisitionForm.vue`
+- `frontend-vue/src/data/fruitUsage.ts`
+- `frontend-vue/src/pages/EmployeeAssistantHandoffPage.vue`
+- `frontend-vue/src/pages/EmployeeAssistantKnowledgePage.vue`
+- `frontend-vue/src/pages/PlaceholderPage.vue`
+
+## 内部试用 Markdown 验收报告（37）
+
+- `output/internal-pilot-acceptance/20260720-internal-pilot/00-environment-and-baseline/g0-gate-ledger.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/01-build-and-migration/g1-gate-ledger.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/02-role-access/g2-gate-ledger.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/03-module-45-cases/STORE-01-acceptance-report.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/03-module-45-cases/ai-01-to-ai-02-acceptance.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/03-module-45-cases/emp-01-to-emp-04-final-retest.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/03-module-45-cases/emp-01-to-emp-04-isolated-acceptance.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/03-module-45-cases/emp-01-to-emp-04-retest.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/03-module-45-cases/fin-04-reimbursement-acceptance.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/03-module-45-cases/fin-05-salary-acceptance.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/03-module-45-cases/fin-06-export-acceptance.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/03-module-45-cases/fin-06-export-scope-freeze.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/03-module-45-cases/flow-01-acceptance.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/03-module-45-cases/g3-final-execution-summary.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/03-module-45-cases/g3-gate-ledger.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/03-module-45-cases/gov-01-to-gov-03-acceptance.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/03-module-45-cases/ins-01-to-ins-05-isolated-acceptance.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/03-module-45-cases/ins-01-to-ins-05-retest.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/03-module-45-cases/previous-gate-test-logic-audit.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/03-module-45-cases/qmai-01-04-final-retest.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/03-module-45-cases/qmai-01-04-isolated-acceptance.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/03-module-45-cases/qmai-01-04-retest.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/03-module-45-cases/wh-01-to-wh-03-isolated-acceptance.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/04-cross-role-flows/flow-01-qa-acceptance.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/04-cross-role-flows/flow-02-qa-acceptance.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/04-cross-role-flows/flow-03-qa-acceptance.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/04-cross-role-flows/flow-04-qa-acceptance.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/04-cross-role-flows/flow-05-qa-acceptance.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/04-cross-role-flows/flow-06-qa-acceptance.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/04-cross-role-flows/g4-fixture-api-readonly-audit.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/04-cross-role-flows/g4-flow-04-06-api-audit.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/04-cross-role-flows/g4-flow-07-local-mock-audit.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/04-cross-role-flows/g4-preflight-audit.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/2026-07-22-internal-pilot-release-readiness.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/defects-and-waivers.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/release-candidate-staging-manifest.md`
+- `output/internal-pilot-acceptance/20260720-internal-pilot/test-ledger.md`
+
+## 明确排除
+
+- 68 项历史文档及清单删除：保留在工作区，不暂存。
+- `.env*`、日志、备份、截图、上传样本、SQL QA 基线、JSON 运行摘要、JAR、dist 和其他忽略产物。
+- `.github/`、`deploy/`、compose、顶层及 `scripts/` 下云演示、移动端、账号轮换、QA/验证脚本。
+- `backend/src/test/java/com/storeprofit/system/mobile/` 的两个修改。
+- `frontend-vue/tests/e2e/30-mobile-employee-assistant-safety.spec.ts`。
+- `frontend-vue/scripts/verify-daily-loss-reimbursement.mjs` 与 `verify-role-menus.mjs`。
+- `docs/` 的修改和删除。本轮不处理、不回滚。
+
+审计结果：剩余未暂存差异 93 个、未跟踪文件 0 个；93 个均属于以上排除项。`backend/src/main` 与 `frontend-vue/src` 中不存在候选运行源码的未暂存差异。高置信度敏感信息与产物路径检查未发现候选中包含 `.env`、密码/token/私钥、连接串、数据库备份、日志、截图、上传样本、JAR、`target` 或 `dist`。
+
+FLOW-07 深度回归及 G5～G7 继续为 **POST-RELEASE PENDING**，不是 PASS。

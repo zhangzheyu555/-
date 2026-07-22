@@ -1,4 +1,5 @@
 import { apiGet, apiPost, http } from './http'
+import { downloadBlob } from './reports'
 
 export interface RoleTodoAction {
   target?: string
@@ -184,12 +185,5 @@ export async function downloadBusinessTodoAttachment(todoId: string, attachment:
   const path = attachment.downloadUrl
     || `/api/todos/${encodeURIComponent(todoId)}/attachments/${encodeURIComponent(attachment.id)}`
   const response = await http.get<Blob>(path, { responseType: 'blob' })
-  const blobUrl = URL.createObjectURL(response.data)
-  const link = document.createElement('a')
-  link.href = blobUrl
-  link.download = attachment.fileName || '待办附件'
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  URL.revokeObjectURL(blobUrl)
+  downloadBlob(response.data, attachment.fileName || '待办附件')
 }

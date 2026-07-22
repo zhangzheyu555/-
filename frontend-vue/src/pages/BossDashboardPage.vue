@@ -379,7 +379,7 @@ onMounted(() => {
 
 <template>
   <section class="page-panel boss-page">
-    <PageHeader :subtitle="profitMonth ? `${profitMonth} 经营数据` : '经营数据'">
+    <PageHeader>
       <template #actions>
         <button v-if="canAccess" class="ghost-button" type="button" :disabled="boss.loading" @click="refresh">
           <RefreshCw :size="16" />刷新数据

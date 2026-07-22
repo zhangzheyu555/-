@@ -14,6 +14,7 @@ import com.storeprofit.system.platform.auth.AuthUser;
 import com.storeprofit.system.platform.authorization.DataScopeDomains;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -98,6 +99,32 @@ class TodoAuthorizationBoundaryTest {
     verify(repository).profitRiskEntries(1L, null, "s2", 50);
     verify(repository).pendingExpenseClaims(1L, null, "s1", 50);
     verify(repository).pendingExpenseClaims(1L, null, "s2", 50);
+  }
+
+  @Test
+  void supervisorDailyLossProjectionUsesOnlyTheAuthorizedStoreScope() {
+    AccessControlService accessControl = mock(AccessControlService.class);
+    RoleTodoRepository repository = mock(RoleTodoRepository.class);
+    RoleTodoEscalationRepository escalationRepository = mock(RoleTodoEscalationRepository.class);
+    RoleTodoActionRepository actionRepository = mock(RoleTodoActionRepository.class);
+    RoleTodoService service = new RoleTodoService(repository, escalationRepository, actionRepository, accessControl);
+    AuthUser supervisor = user(6L, "SUPERVISOR", null);
+
+    when(actionRepository.completedActions(1L)).thenReturn(Map.of());
+    when(escalationRepository.resolvedSourceTodoIds(1L)).thenReturn(Set.of());
+    when(escalationRepository.openSourceTodoIds(1L, "SUPERVISOR")).thenReturn(Set.of());
+    when(accessControl.hasAllDataScope(supervisor, DataScopeDomains.INSPECTION)).thenReturn(false);
+    when(accessControl.hasAllDataScope(supervisor, DataScopeDomains.STORE)).thenReturn(false);
+    when(accessControl.allowedStoreIds(supervisor, DataScopeDomains.INSPECTION)).thenReturn(Set.of("s1"));
+    when(accessControl.allowedStoreIds(supervisor, DataScopeDomains.STORE)).thenReturn(Set.of("s1"));
+    when(repository.failedInspections(1L, null, "s1", 50)).thenReturn(List.of());
+    when(repository.pendingDailyLossReviews(1L, null, "s1", 50)).thenReturn(List.of());
+    when(repository.dataImportIssues(1L, 50)).thenReturn(List.of());
+
+    service.todos(supervisor, RoleTodoAudience.SUPERVISOR, RoleTodoQuery.defaults());
+
+    verify(repository).pendingDailyLossReviews(1L, null, "s1", 50);
+    verify(repository, never()).pendingDailyLossReviews(1L, null, "s2", 50);
   }
 
   @Test

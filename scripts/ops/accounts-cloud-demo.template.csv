@@ -3,7 +3,6 @@ boss,老板（演示）,BOSS,,,true
 finance,财务（演示）,FINANCE,,,true
 supervisor,督导（演示）,SUPERVISOR,,rg1;rg2;rg3;rg4;rg5;rg6;rg7;rg8;bw1;bw2;bw5;rx3,true
 warehouse,仓库管理员（演示）,WAREHOUSE,,,true
-operations,运营（演示）,OPERATIONS,,,true
 rg1,荆州之星店店长,STORE_MANAGER,rg1,rg1,true
 rg2,荆州江汉店店长,STORE_MANAGER,rg2,rg2,true
 rg3,荆州沙市店店长,STORE_MANAGER,rg3,rg3,true

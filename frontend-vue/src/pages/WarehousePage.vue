@@ -214,12 +214,7 @@ watch(
 
 <template>
   <section class="page-panel warehouse-page">
-    <PageHeader
-      title="仓库中心"
-      :subtitle="businessScope.isStoreManager.value
-        ? businessScope.managerScopeLabel.value
-        : '统一管理库存、物料和采购流转'"
-    >
+    <PageHeader title="仓库中心">
       <template #actions>
         <button class="ghost-button" type="button" :disabled="warehouse.loading" @click="refresh">
           <RefreshCw :size="16" />刷新

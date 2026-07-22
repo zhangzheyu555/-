@@ -79,6 +79,8 @@ interface PurchaseState {
   approveCalls: number
   receiveBodies: Array<Record<string, unknown>>
   consoleErrors: string[]
+  transferContextWarehouseIds: number[]
+  incompleteTransferContext?: boolean
 }
 
 function purchaseOrder(state: PurchaseState) {
@@ -158,6 +160,32 @@ function overview(warehouseId: number, state: PurchaseState) {
   }
 }
 
+function transferContext(warehouseId: number) {
+  const central = warehouses[0]
+  const regional = warehouses[1]
+  const route = {
+    sourceWarehouse: central,
+    targetWarehouse: regional,
+    formAction: warehouseId === regional.id ? 'REQUEST_REPLENISHMENT' : 'PROACTIVE_ALLOCATION',
+    actions: {
+      canCreate: true,
+      canSubmit: true,
+      canApprove: warehouseId === central.id,
+      canReject: warehouseId === central.id,
+      canShip: warehouseId === central.id,
+      canReceive: warehouseId === regional.id,
+      canCancel: true,
+    },
+    materials: [{ itemId: 11, itemName: '鲜牛奶', unit: '箱', availableQuantity: 18 }],
+  }
+  return {
+    currentWarehouse: warehouseId === regional.id ? regional : central,
+    mode: route.formAction,
+    routes: [route],
+    todos: {},
+  }
+}
+
 async function prepare(page: Page, state: PurchaseState) {
   page.on('console', (message) => {
     if (message.type() === 'error') state.consoleErrors.push(message.text())
@@ -178,6 +206,16 @@ async function fulfillApi(route: Route, state: PurchaseState) {
   if (path === '/api/warehouse/warehouses') return route.fulfill(ok(warehouses))
   if (path === '/api/warehouse/overview') {
     return route.fulfill(ok(overview(Number(url.searchParams.get('warehouseId') || 1), state)))
+  }
+  if (path === '/api/warehouse/transfers/context') {
+    const warehouseId = Number(url.searchParams.get('warehouseId') || 1)
+    state.transferContextWarehouseIds.push(warehouseId)
+    const context = transferContext(warehouseId)
+    if (state.incompleteTransferContext) {
+      const { routes: _routes, ...incomplete } = context
+      return route.fulfill(ok(incomplete))
+    }
+    return route.fulfill(ok(context))
   }
   if (path === '/api/warehouse/purchase-orders' && request.method() === 'POST') {
     state.createBodies.push(request.postDataJSON())
@@ -205,7 +243,14 @@ async function fulfillApi(route: Route, state: PurchaseState) {
 }
 
 function newState(): PurchaseState {
-  return { status: null, createBodies: [], approveCalls: 0, receiveBodies: [], consoleErrors: [] }
+  return {
+    status: null,
+    createBodies: [],
+    approveCalls: 0,
+    receiveBodies: [],
+    consoleErrors: [],
+    transferContextWarehouseIds: [],
+  }
 }
 
 test('荆州总仓外部采购按草稿、审批、按单入库顺序完成', async ({ page }) => {
@@ -256,10 +301,21 @@ test('山东分仓页面不提供外部采购入口', async ({ page }) => {
   await page.goto('/warehouse/shandong')
 
   const pageRoot = page.locator('.warehouse-page')
-  await expect(pageRoot.getByRole('link', { name: '向荆州总仓申请补货', exact: true })).toBeVisible()
+  await expect.poll(() => state.transferContextWarehouseIds.includes(2)).toBe(true)
+  await expect(pageRoot.getByRole('link', { name: '向上级总仓申请补货', exact: true })).toBeVisible()
   await expect(pageRoot.getByRole('link', { name: '外部采购', exact: true })).toHaveCount(0)
   await expect(pageRoot.getByRole('link', { name: '外部采购入库', exact: true })).toHaveCount(0)
   await expect(pageRoot.getByRole('button', { name: '创建采购草稿' })).toHaveCount(0)
   expect(state.createBodies).toEqual([])
+  expect(state.consoleErrors).toEqual([])
+})
+
+test('缺少调拨 routes 时按空路线安全降级且不影响采购页面', async ({ page }) => {
+  const state = { ...newState(), incompleteTransferContext: true }
+  await prepare(page, state)
+  await page.goto('/warehouse/purchase')
+
+  await expect(page.locator('.receive-form').getByText('采购仓：荆州总仓')).toBeVisible()
+  await expect(page.getByRole('link', { name: '调拨', exact: true })).toHaveCount(0)
   expect(state.consoleErrors).toEqual([])
 })

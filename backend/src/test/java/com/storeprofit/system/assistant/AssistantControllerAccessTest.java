@@ -3,11 +3,15 @@ package com.storeprofit.system.assistant;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.storeprofit.system.audit.AuditRepository;
 import com.storeprofit.system.common.BusinessException;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthService;
@@ -33,6 +37,28 @@ class AssistantControllerAccessTest {
     );
 
     assertThat(error.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+    verifyNoInteractions(assistantService);
+  }
+
+  @Test
+  void authenticatedPermissionDenialWritesOnlySafeOperatingAssistantAuditMetadata() {
+    AuthService authService = mock(AuthService.class);
+    AssistantService assistantService = mock(AssistantService.class);
+    AccessControlService accessControl = mock(AccessControlService.class);
+    AuditRepository auditRepository = mock(AuditRepository.class);
+    AuthUser employee = user("EMPLOYEE");
+    when(authService.requireUser("Bearer employee-token")).thenReturn(employee);
+    doThrow(new BusinessException("FORBIDDEN", "当前账号无权使用门店经营助手", HttpStatus.FORBIDDEN))
+        .when(accessControl).requireAssistantUse(employee);
+    AssistantController controller = new AssistantController(
+        authService, assistantService, mock(DeepSeekProperties.class), accessControl, auditRepository);
+
+    BusinessException error = catchThrowableOfType(
+        () -> controller.chat("Bearer employee-token", null), BusinessException.class);
+
+    assertThat(error.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+    verify(auditRepository).writePermissionDenied(eq(employee), eq("使用门店经营助手"),
+        eq("operating_assistant"), eq(null), eq(null), anyString());
     verifyNoInteractions(assistantService);
   }
 

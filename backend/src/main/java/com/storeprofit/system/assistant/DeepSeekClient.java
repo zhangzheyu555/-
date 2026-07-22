@@ -2,6 +2,7 @@ package com.storeprofit.system.assistant;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.storeprofit.system.config.LocalMockOutboundPolicy;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -16,9 +17,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.Semaphore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
@@ -33,22 +36,47 @@ public class DeepSeekClient {
   private final DeepSeekProperties properties;
   private final ObjectMapper objectMapper;
   private final HttpClient httpClient;
+  private final String runtimeEnvironment;
+  private final Semaphore concurrentRequests;
   private final ArrayDeque<Instant> requestWindow = new ArrayDeque<>();
   private final AtomicInteger consecutiveTransientFailures = new AtomicInteger();
   private volatile Instant circuitOpenUntil;
 
   @Autowired
-  public DeepSeekClient(DeepSeekProperties properties, ObjectMapper objectMapper) {
+  public DeepSeekClient(
+      DeepSeekProperties properties,
+      ObjectMapper objectMapper,
+      @Value("${app.environment:TEST}") String runtimeEnvironment
+  ) {
     this(properties, objectMapper, HttpClient.newBuilder()
         .connectTimeout(properties.getConnectTimeout())
         .followRedirects(HttpClient.Redirect.NEVER)
-        .build());
+        .build(), runtimeEnvironment);
+  }
+
+  /** Compatibility constructor for focused loopback-only tests. */
+  DeepSeekClient(DeepSeekProperties properties, ObjectMapper objectMapper) {
+    this(properties, objectMapper, HttpClient.newBuilder()
+        .connectTimeout(properties.getConnectTimeout())
+        .followRedirects(HttpClient.Redirect.NEVER)
+        .build(), "TEST");
   }
 
   DeepSeekClient(DeepSeekProperties properties, ObjectMapper objectMapper, HttpClient httpClient) {
+    this(properties, objectMapper, httpClient, "TEST");
+  }
+
+  DeepSeekClient(
+      DeepSeekProperties properties,
+      ObjectMapper objectMapper,
+      HttpClient httpClient,
+      String runtimeEnvironment
+  ) {
     this.properties = properties;
     this.objectMapper = objectMapper;
     this.httpClient = httpClient;
+    this.runtimeEnvironment = runtimeEnvironment == null ? "" : runtimeEnvironment.trim();
+    this.concurrentRequests = new Semaphore(properties.getMaxConcurrentRequests(), true);
   }
 
   /**
@@ -93,45 +121,95 @@ public class DeepSeekClient {
       int maxTokens
   ) {
     requireConfigured();
+    requireOutboundAllowed();
     requireCircuitClosed();
-    acquireRateLimitPermit();
-    long deadlineNanos = deadlineNanos(totalBudget);
+    acquireConcurrencyPermit();
+    try {
+      acquireRateLimitPermit();
+      long deadlineNanos = deadlineNanos(totalBudget);
 
-    DeepSeekException lastFailure = null;
-    for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      try {
-        DeepSeekCallResult result = execute(
-            systemPrompt,
-            userPrompt,
-            timeoutForAttempt(totalBudget, deadlineNanos),
-            model,
-            maxTokens
-        );
-        consecutiveTransientFailures.set(0);
-        circuitOpenUntil = null;
-        properties.markSuccess();
-        // Never log prompts, response content, model context, store scope, or credentials.
-        // requestId is retained only as a safe correlation handle for a real upstream response.
-        log.info("DeepSeek request succeeded requestId={} elapsedMs={}",
-            safeLogValue(result.requestId()), result.latencyMs());
-        return result;
-      } catch (DeepSeekException failure) {
-        lastFailure = failure;
-        if (attempt >= MAX_ATTEMPTS || !isRetryable(failure)) {
-          recordFailure(failure);
-          throw failure;
-        }
-        log.warn("DeepSeek request retry errorCode={}", failure.getCode());
+      DeepSeekException lastFailure = null;
+      for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         try {
-          waitBeforeRetry(totalBudget, deadlineNanos);
-        } catch (DeepSeekException timeout) {
-          recordFailure(timeout);
-          throw timeout;
+          DeepSeekCallResult result = execute(
+              systemPrompt,
+              userPrompt,
+              timeoutForAttempt(totalBudget, deadlineNanos),
+              model,
+              maxTokens
+          );
+          consecutiveTransientFailures.set(0);
+          circuitOpenUntil = null;
+          properties.markSuccess();
+          // Never log prompts, response content, model context, store scope, or credentials.
+          // requestId is retained only as a safe correlation handle for a real upstream response.
+          log.info("DeepSeek request succeeded requestId={} elapsedMs={}",
+              safeLogValue(result.requestId()), result.latencyMs());
+          return result;
+        } catch (DeepSeekException failure) {
+          lastFailure = failure;
+          if (attempt >= MAX_ATTEMPTS || !isRetryable(failure)) {
+            recordFailure(failure);
+            throw failure;
+          }
+          log.warn("DeepSeek request retry errorCode={}", failure.getCode());
+          try {
+            waitBeforeRetry(totalBudget, deadlineNanos);
+          } catch (DeepSeekException timeout) {
+            recordFailure(timeout);
+            throw timeout;
+          }
         }
       }
+      recordFailure(lastFailure);
+      throw lastFailure;
+    } finally {
+      concurrentRequests.release();
     }
-    recordFailure(lastFailure);
-    throw lastFailure;
+  }
+
+  private void requireOutboundAllowed() {
+    if (LocalMockOutboundPolicy.isAllowed(
+        runtimeEnvironment, properties.getOutboundMode(), properties.getBaseUrl())) {
+      return;
+    }
+    if (isTrustedExternalPilot(runtimeEnvironment, properties)) return;
+    throw new DeepSeekException(
+        "DEEPSEEK_OUTBOUND_BLOCKED", "AI服务出网未获授权；测试仅允许本机 Mock。", 0);
+  }
+
+  static boolean isTrustedExternalPilot(String environment, DeepSeekProperties properties) {
+    if (properties == null
+        || !"LIVE".equalsIgnoreCase(properties.getOutboundMode())
+        || !properties.isExternalPilotEnabled()
+        || !properties.isQuestionOnly()) {
+      return false;
+    }
+    String normalizedEnvironment = environment == null ? "" : environment.trim();
+    if (!"QA".equalsIgnoreCase(normalizedEnvironment)) {
+      return false;
+    }
+    try {
+      URI uri = URI.create(properties.getBaseUrl());
+      String path = uri.getRawPath();
+      return "https".equalsIgnoreCase(uri.getScheme())
+          && "api.deepseek.com".equalsIgnoreCase(uri.getHost())
+          && (uri.getPort() == -1 || uri.getPort() == 443)
+          && uri.getUserInfo() == null
+          && uri.getRawQuery() == null
+          && uri.getRawFragment() == null
+          && (path == null || path.isBlank() || "/".equals(path));
+    } catch (IllegalArgumentException ex) {
+      return false;
+    }
+  }
+
+  private void acquireConcurrencyPermit() {
+    if (concurrentRequests.tryAcquire()) return;
+    DeepSeekException failure = new DeepSeekException(
+        "DEEPSEEK_CONCURRENCY_LIMITED", "AI分析任务较多，请稍后再试。", 0);
+    properties.markFailure(failure.getCode());
+    throw failure;
   }
 
   private DeepSeekCallResult execute(

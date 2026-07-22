@@ -187,6 +187,135 @@ class StorageServiceTest {
         .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
   }
 
+  @Test
+  void expenseAttachmentCannotUseGenericAttachmentPermissionAsWriteBypass() {
+    ExpenseAttachmentFixture fixture = expenseAttachmentFixture();
+    AuthUser supervisor = user(31L, "SUPERVISOR", "s1");
+    fixture.insertExpenseClaim("exp-1", "s1", "2026-07", "草稿");
+    fixture.allowGenericAttachmentWrite(supervisor, Set.of("s1"));
+
+    assertThatThrownBy(() -> fixture.storageService.upload(
+        supervisor,
+        jpeg("receipt.jpg"),
+        "EXPENSE_CLAIM",
+        "exp-1",
+        "s1"))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
+
+    assertThat(fixture.attachmentCount()).isZero();
+  }
+
+  @Test
+  void expenseAttachmentRejectsOversizeInvalidTypeAndNonEditableClaimWithoutWritingRows() {
+    ExpenseAttachmentFixture fixture = expenseAttachmentFixture();
+    AuthUser manager = user(32L, "STORE_MANAGER", "s1");
+    fixture.insertExpenseClaim("exp-draft", "s1", "2026-07", "草稿");
+    fixture.insertExpenseClaim("exp-pending", "s1", "2026-07", "待审核");
+    fixture.allowExpenseAttachmentAccess(manager, Set.of("s1"));
+
+    MockMultipartFile oversized = new MockMultipartFile(
+        "file",
+        "receipt.jpg",
+        "image/jpeg",
+        new byte[10 * 1024 * 1024 + 1]);
+    assertThatThrownBy(() -> fixture.storageService.upload(
+        manager, oversized, "EXPENSE", "exp-draft", "s1"))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode())
+            .isEqualTo("EXPENSE_ATTACHMENT_TOO_LARGE"));
+
+    MockMultipartFile extensionAndMimeMismatch = new MockMultipartFile(
+        "file",
+        "receipt.png",
+        "image/jpeg",
+        new byte[] {(byte) 0xff, (byte) 0xd8, (byte) 0xff, (byte) 0xd9});
+    assertThatThrownBy(() -> fixture.storageService.upload(
+        manager, extensionAndMimeMismatch, "EXPENSE", "exp-draft", "s1"))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode())
+            .isEqualTo("EXPENSE_ATTACHMENT_IMAGE_REQUIRED"));
+
+    MockMultipartFile wrongMagic = new MockMultipartFile(
+        "file",
+        "receipt.jpg",
+        "image/jpeg",
+        new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a});
+    assertThatThrownBy(() -> fixture.storageService.upload(
+        manager, wrongMagic, "EXPENSE", "exp-draft", "s1"))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode())
+            .isEqualTo("EXPENSE_ATTACHMENT_IMAGE_REQUIRED"));
+
+    assertThatThrownBy(() -> fixture.storageService.upload(
+        manager, jpeg("receipt.jpg"), "EXPENSE", "exp-pending", "s1"))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode())
+            .isEqualTo("EXPENSE_ATTACHMENT_STATUS_INVALID"));
+
+    assertThat(fixture.attachmentCount()).isZero();
+  }
+
+  @Test
+  void expenseAttachmentAcceptsVerifiedImageAndAuditsUploadAndDownloadWithMonth() {
+    ExpenseAttachmentFixture fixture = expenseAttachmentFixture();
+    AuthUser manager = user(33L, "STORE_MANAGER", "s1");
+    fixture.insertExpenseClaim("exp-1", "s1", "2026-07", "草稿");
+    fixture.allowExpenseAttachmentAccess(manager, Set.of("s1"));
+
+    StorageUploadResponse upload = fixture.storageService.upload(
+        manager, jpeg("receipt.JPEG"), "expense_claim", "exp-1", "s1");
+
+    assertThat(upload.id()).isNotNull();
+    assertThat(upload.url()).isEqualTo("/api/storage/attachments/" + upload.id());
+    assertThat(fixture.storageService.attachment(manager, upload.id())).isPresent();
+    assertThat(fixture.attachmentCount()).isEqualTo(1);
+    assertThat(fixture.auditCount(
+        "reimbursement_attachment_upload", "expense_claim", "exp-1", "s1", "2026-07")).isEqualTo(1);
+    assertThat(fixture.auditCount(
+        "reimbursement_attachment_download", "expense_claim", "exp-1", "s1", "2026-07")).isEqualTo(1);
+  }
+
+  @Test
+  void expenseAttachmentDownloadRequiresFinanceScopeEvenWhenExpenseReadIsGranted() {
+    ExpenseAttachmentFixture fixture = expenseAttachmentFixture();
+    AuthUser manager = user(34L, "STORE_MANAGER", "s1");
+    fixture.insertExpenseClaim("exp-1", "s1", "2026-07", "草稿");
+    long attachmentId = fixture.insertExpenseAttachment("exp-1", "s1");
+    fixture.allowExpenseRead(manager, Set.of());
+
+    assertThatThrownBy(() -> fixture.storageService.attachment(manager, attachmentId))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
+
+    assertThat(fixture.auditCount(
+        "reimbursement_attachment_download", "expense_claim", "exp-1", "s1", "2026-07")).isZero();
+    assertThat(fixture.permissionDeniedCount("exp-1", "s1", "2026-07")).isEqualTo(1);
+  }
+
+  @Test
+  void forgedOwnStoreAndForeignExpenseIdIsDeniedAgainstTheActualExpenseScope() {
+    ExpenseAttachmentFixture fixture = expenseAttachmentFixture();
+    AuthUser manager = user(35L, "STORE_MANAGER", "s1");
+    fixture.insertExpenseClaim("exp-own", "s1", "2026-07", "草稿");
+    fixture.insertExpenseClaim("exp-foreign", "s2", "2026-07", "草稿");
+    fixture.allowExpenseAttachmentAccess(manager, Set.of("s1"));
+
+    assertThatThrownBy(() -> fixture.storageService.upload(
+        manager, jpeg("receipt.jpg"), "EXPENSE_CLAIM", "exp-foreign", "s1"))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
+
+    assertThat(fixture.attachmentCount()).isZero();
+    assertThat(fixture.permissionDeniedCountForAction(
+        "exp-foreign", "s2", "2026-07", "上传报销凭证")).isEqualTo(1);
+  }
+
+  private MockMultipartFile jpeg(String fileName) {
+    return new MockMultipartFile(
+        "file", fileName, "image/jpeg", new byte[] {(byte) 0xff, (byte) 0xd8, (byte) 0xff, (byte) 0xd9});
+  }
+
   private AuthUser user(String role) {
     return new AuthUser(1L, 1L, "default", role.toLowerCase(), "", role, role, null, true);
   }
@@ -252,6 +381,73 @@ class StorageServiceTest {
     );
   }
 
+  private ExpenseAttachmentFixture expenseAttachmentFixture() {
+    JdbcTemplate realJdbc = new JdbcTemplate(dataSource());
+    realJdbc.execute("""
+        create table store_branch(
+          tenant_id bigint not null,
+          id varchar(64) not null,
+          primary key(tenant_id, id)
+        )
+        """);
+    realJdbc.execute("""
+        create table expense_claim(
+          tenant_id bigint not null,
+          id varchar(120) not null,
+          store_id varchar(64) not null,
+          month varchar(7) not null,
+          status varchar(30) not null,
+          primary key(tenant_id, id)
+        )
+        """);
+    realJdbc.execute("""
+        create table warehouse_attachment(
+          id bigint generated by default as identity primary key,
+          tenant_id bigint not null,
+          store_id varchar(64),
+          business_type varchar(60) not null,
+          business_id varchar(120) not null,
+          file_name varchar(255) not null,
+          content_type varchar(120),
+          file_size bigint,
+          storage_path varchar(500),
+          content blob,
+          uploaded_by bigint,
+          uploaded_at timestamp default current_timestamp
+        )
+        """);
+    realJdbc.execute("""
+        create table operation_log(
+          id bigint generated by default as identity primary key,
+          tenant_id bigint,
+          operator_id bigint,
+          operator_name varchar(120),
+          action varchar(120),
+          target_type varchar(120),
+          target_id varchar(120),
+          store_id varchar(64),
+          month varchar(7),
+          reason varchar(500),
+          created_at timestamp default current_timestamp
+        )
+        """);
+    AuthorizationService authorizationService = mock(AuthorizationService.class);
+    DataScopeService dataScopeService = mock(DataScopeService.class);
+    AccessControlService scopedAccess = new AccessControlService(
+        mock(AuthService.class),
+        mock(AuthRepository.class),
+        new AuditRepository(realJdbc),
+        authorizationService,
+        dataScopeService
+    );
+    return new ExpenseAttachmentFixture(
+        realJdbc,
+        new StorageService(realJdbc, scopedAccess),
+        authorizationService,
+        dataScopeService
+    );
+  }
+
   private DataSource dataSource() {
     JdbcDataSource dataSource = new JdbcDataSource();
     dataSource.setURL("jdbc:h2:mem:storage-service-" + System.nanoTime()
@@ -310,6 +506,99 @@ class StorageServiceTest {
           from operation_log
           where action = ? and target_type = ? and target_id = ? and store_id = ?
           """, Integer.class, action, targetType, targetId, storeId);
+      return count == null ? 0 : count;
+    }
+  }
+
+  private static final class ExpenseAttachmentFixture {
+    private final JdbcTemplate jdbcTemplate;
+    private final StorageService storageService;
+    private final AuthorizationService authorizationService;
+    private final DataScopeService dataScopeService;
+
+    private ExpenseAttachmentFixture(
+        JdbcTemplate jdbcTemplate,
+        StorageService storageService,
+        AuthorizationService authorizationService,
+        DataScopeService dataScopeService
+    ) {
+      this.jdbcTemplate = jdbcTemplate;
+      this.storageService = storageService;
+      this.authorizationService = authorizationService;
+      this.dataScopeService = dataScopeService;
+    }
+
+    private void insertExpenseClaim(String id, String storeId, String month, String status) {
+      jdbcTemplate.update("merge into store_branch(tenant_id, id) key(tenant_id, id) values (1, ?)", storeId);
+      jdbcTemplate.update("""
+          insert into expense_claim(tenant_id, id, store_id, month, status)
+          values (1, ?, ?, ?, ?)
+          """, id, storeId, month, status);
+    }
+
+    private long insertExpenseAttachment(String expenseId, String storeId) {
+      jdbcTemplate.update("""
+          insert into warehouse_attachment(
+            tenant_id, store_id, business_type, business_id, file_name, content_type,
+            file_size, content, uploaded_by
+          ) values (1, ?, 'EXPENSE', ?, 'receipt.jpg', 'image/jpeg', 4, ?, 1)
+          """, storeId, expenseId, new byte[] {(byte) 0xff, (byte) 0xd8, (byte) 0xff, (byte) 0xd9});
+      return jdbcTemplate.queryForObject("select max(id) from warehouse_attachment", Long.class);
+    }
+
+    private void allowGenericAttachmentWrite(AuthUser user, Set<String> storeIds) {
+      when(authorizationService.hasPermission(user, PermissionCodes.ATTACHMENT_WRITE)).thenReturn(true);
+      allowScope(user, DataScopeDomains.STORE, storeIds);
+    }
+
+    private void allowExpenseAttachmentAccess(AuthUser user, Set<String> storeIds) {
+      allowGenericAttachmentWrite(user, storeIds);
+      when(authorizationService.hasPermission(user, PermissionCodes.EXPENSE_CREATE)).thenReturn(true);
+      when(authorizationService.hasPermission(user, PermissionCodes.EXPENSE_READ)).thenReturn(true);
+      allowScope(user, DataScopeDomains.FINANCE, storeIds);
+    }
+
+    private void allowExpenseRead(AuthUser user, Set<String> financeStoreIds) {
+      when(authorizationService.hasPermission(user, PermissionCodes.EXPENSE_READ)).thenReturn(true);
+      allowScope(user, DataScopeDomains.FINANCE, financeStoreIds);
+    }
+
+    private void allowScope(AuthUser user, String domain, Set<String> storeIds) {
+      when(dataScopeService.hasAllDataScope(user, domain)).thenReturn(false);
+      when(dataScopeService.allowedStoreIds(user, domain)).thenReturn(storeIds);
+    }
+
+    private int attachmentCount() {
+      Integer count = jdbcTemplate.queryForObject("select count(*) from warehouse_attachment", Integer.class);
+      return count == null ? 0 : count;
+    }
+
+    private int auditCount(String action, String targetType, String targetId, String storeId, String month) {
+      Integer count = jdbcTemplate.queryForObject("""
+          select count(*)
+          from operation_log
+          where action = ? and target_type = ? and target_id = ? and store_id = ? and month = ?
+          """, Integer.class, action, targetType, targetId, storeId, month);
+      return count == null ? 0 : count;
+    }
+
+    private int permissionDeniedCount(String expenseId, String storeId, String month) {
+      Integer count = jdbcTemplate.queryForObject("""
+          select count(*)
+          from operation_log
+          where action = 'permission_denied' and target_type = 'expense_claim'
+            and target_id = ? and store_id = ? and month = ? and reason like '查看报销凭证%'
+          """, Integer.class, expenseId, storeId, month);
+      return count == null ? 0 : count;
+    }
+
+    private int permissionDeniedCountForAction(String expenseId, String storeId, String month, String action) {
+      Integer count = jdbcTemplate.queryForObject("""
+          select count(*)
+          from operation_log
+          where action = 'permission_denied' and target_type = 'expense_claim'
+            and target_id = ? and store_id = ? and month = ? and reason like ?
+          """, Integer.class, expenseId, storeId, month, action + "%");
       return count == null ? 0 : count;
     }
   }

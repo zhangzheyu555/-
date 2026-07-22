@@ -39,12 +39,11 @@ test.describe('role login and default routing', () => {
     })
   }
 
-  test('ops and operations usernames are both accepted for operations role', async () => {
-    const ops = await loginApi(roleByKey.operations.username, roleByKey.operations.password)
-    expect(ops.user.role).toBe('OPERATIONS')
-
-    const operations = await loginApi('operations', roleByKey.operations.password)
-    expect(operations.user.role).toBe('OPERATIONS')
+  test('supervisor is the formal role and legacy role codes normalize to supervisor', async () => {
+    const supervisor = await loginApi(roleByKey.supervisor.username, roleByKey.supervisor.password)
+    expect(supervisor.user.role).toBe('SUPERVISOR')
+    expect(normalizeRoleCode('OPS')).toBe('SUPERVISOR')
+    expect(normalizeRoleCode('OPERATIONS')).toBe('SUPERVISOR')
   })
 
   test('supervisor and employee keep independent role identities', () => {

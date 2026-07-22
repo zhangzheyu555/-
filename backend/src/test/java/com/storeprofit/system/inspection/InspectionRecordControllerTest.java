@@ -1,18 +1,23 @@
 package com.storeprofit.system.inspection;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.storeprofit.system.common.ApiResponse;
+import com.storeprofit.system.common.BusinessException;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
 import java.math.BigDecimal;
 import java.util.Map;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
+import org.springframework.mock.web.MockMultipartFile;
 
 class InspectionRecordControllerTest {
   private final AccessControlService accessControl = mock(AccessControlService.class);
@@ -120,6 +125,27 @@ class InspectionRecordControllerTest {
     verify(accessControl).requireUser("Bearer token");
     verify(accessControl).requireInspectionManage(supervisor);
     verify(inspectionService).repairHistory(supervisor);
+  }
+
+  @Test
+  void rawImageDetectionStopsBeforeServiceForAnonymousAndForbiddenRequests() {
+    MockMultipartFile file = new MockMultipartFile("file", "synthetic.jpg", "image/jpeg", new byte[] {1});
+    when(accessControl.requireUser(null)).thenThrow(new BusinessException(
+        "UNAUTHORIZED", "登录已失效", HttpStatus.UNAUTHORIZED));
+
+    assertThatThrownBy(() -> controller.detect(null, "STORE-1", file))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getStatus()).isEqualTo(HttpStatus.UNAUTHORIZED));
+    verifyNoInteractions(inspectionService);
+
+    when(accessControl.requireUser("Bearer forbidden")).thenReturn(supervisor);
+    org.mockito.Mockito.doThrow(new BusinessException("FORBIDDEN", "没有巡检管理权限", HttpStatus.FORBIDDEN))
+        .when(accessControl).requireInspectionManage(supervisor);
+
+    assertThatThrownBy(() -> controller.detect("Bearer forbidden", "STORE-1", file))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getStatus()).isEqualTo(HttpStatus.FORBIDDEN));
+    verifyNoInteractions(inspectionService);
   }
 
   private InspectionRecordRequest request() {

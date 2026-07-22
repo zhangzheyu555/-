@@ -2,8 +2,6 @@
 
 UniApp Vue 3 + TypeScript + Pinia mobile client. It adds H5, WeChat Mini Program and native App candidates without replacing `frontend-vue`.
 
-The current UI follows the AI Profit OS orange mobile design: role-based workbench metrics, task-driven navigation, 16rpx operational cards, five-tab navigation, and a server-backed business-message view. Visual references may come from the desktop `miniapp` prototype, but authentication, permissions, API contracts, data scopes, idempotency, and uploads must stay on this production mobile implementation.
-
 ## Boundaries
 
 - The app stores one bearer token key only. Session user, permissions, store scope and all business data are fetched from the Spring Boot APIs.

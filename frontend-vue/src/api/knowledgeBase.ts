@@ -1,4 +1,5 @@
 import { http, apiGet, apiPost, apiPostForm } from './http'
+import { downloadBlob } from './reports'
 
 export type KnowledgeBaseVisibility = 'TENANT' | 'ROLE' | 'STORE'
 export type KnowledgeBaseStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
@@ -77,12 +78,5 @@ export async function downloadKnowledgeBaseDocument(id: number, fileName: string
   const responseContentType = response.headers['content-type']
   const contentType = typeof responseContentType === 'string' ? responseContentType : 'application/octet-stream'
   const blob = new Blob([response.data], { type: contentType })
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = fileName
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
-  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+  downloadBlob(blob, fileName)
 }

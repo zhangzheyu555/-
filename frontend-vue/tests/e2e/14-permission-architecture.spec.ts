@@ -18,7 +18,7 @@ test('session and role contracts preserve effective authorization fields', () =>
   expect(roleSource).toContain("SUPERVISOR: '督导'")
   expect(roleSource).toContain("EMPLOYEE: '员工'")
   expect(roles.map((role) => role.key)).toEqual([
-    'boss', 'finance', 'warehouse', 'store', 'operations', 'learner',
+    'boss', 'finance', 'warehouse', 'store', 'supervisor', 'learner',
   ])
 })
 

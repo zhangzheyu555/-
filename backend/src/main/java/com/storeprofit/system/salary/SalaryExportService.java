@@ -76,7 +76,7 @@ public class SalaryExportService {
     return escaped;
   }
 
-  private String statusLabel(String status) {
+  static String statusLabel(String status) {
     return switch (status == null ? "DRAFT" : status) {
       case "DRAFT" -> "草稿";
       case "SUBMITTED" -> "待审核";

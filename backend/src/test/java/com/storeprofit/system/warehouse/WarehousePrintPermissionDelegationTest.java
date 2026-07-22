@@ -33,7 +33,7 @@ class WarehousePrintPermissionDelegationTest {
 
   @Test
   void delegatedStoreReaderCanDownloadOnlyScopedDeliveryWithCostsRedacted() {
-    AuthUser delegated = user("OPERATIONS", "rg1");
+    AuthUser delegated = user("SUPERVISOR", "rg1");
     WarehouseDeliveryPrintHeader header = header("REQ-1", "rg1");
     WarehouseDeliveryPrintLine line = new WarehouseDeliveryPrintLine(
         1L,
@@ -73,7 +73,7 @@ class WarehousePrintPermissionDelegationTest {
 
   @Test
   void explicitCrossStoreDeliveryIdReturnsForbiddenAndIsNotRendered() {
-    AuthUser delegated = user("OPERATIONS", "rg1");
+    AuthUser delegated = user("SUPERVISOR", "rg1");
     BusinessException denied = forbidden();
     when(accessControl.hasPermission(delegated, PermissionCodes.WAREHOUSE_CENTRAL_READ)).thenReturn(false);
     when(accessControl.dataScope(delegated, DataScopeDomains.WAREHOUSE))
@@ -97,7 +97,7 @@ class WarehousePrintPermissionDelegationTest {
 
   @Test
   void explicitCrossStoreReturnIdReturnsForbiddenAndIsNotRendered() {
-    AuthUser delegated = user("OPERATIONS", "rg1");
+    AuthUser delegated = user("SUPERVISOR", "rg1");
     BusinessException denied = forbidden();
     WarehouseReturnResponse otherStore = returnOrder("PSTH-OTHER", "rg2", null);
     when(accessControl.hasPermission(delegated, PermissionCodes.WAREHOUSE_CENTRAL_READ)).thenReturn(false);
@@ -114,7 +114,7 @@ class WarehousePrintPermissionDelegationTest {
 
   @Test
   void personalStoreReadDenyPreventsPdfRendering() {
-    AuthUser delegated = user("OPERATIONS", "rg1");
+    AuthUser delegated = user("SUPERVISOR", "rg1");
     BusinessException denied = forbidden();
     when(accessControl.hasPermission(delegated, PermissionCodes.WAREHOUSE_CENTRAL_READ)).thenReturn(false);
     when(accessControl.dataScope(delegated, DataScopeDomains.WAREHOUSE))
@@ -132,12 +132,28 @@ class WarehousePrintPermissionDelegationTest {
 
   @Test
   void receiptPdfRequiresCentralReadBeforeLoadingTheBatch() {
-    AuthUser delegated = user("OPERATIONS", "rg1");
+    AuthUser delegated = user("SUPERVISOR", "rg1");
     BusinessException denied = forbidden();
     doThrow(denied).when(accessControl).requireWarehouseCentralRead(delegated);
 
     assertThatThrownBy(() -> service.receiptPdf(delegated, 7L)).isSameAs(denied);
 
+    verify(repository, never()).receiptPrintRow(1L, 7L);
+  }
+
+  @Test
+  void topologyReceiptUsesScopedWarehouseReadInsteadOfPurchaseWritePermission() {
+    WarehouseTopologyService topology = mock(WarehouseTopologyService.class);
+    WarehousePrintService topologyAware = new WarehousePrintService(repository, renderer, accessControl, topology);
+    AuthUser finance = user("FINANCE", null);
+    BusinessException denied = forbidden();
+    doThrow(denied).when(accessControl).requireWarehouseRead(finance);
+
+    assertThatThrownBy(() -> topologyAware.receiptPdf(finance, 7L)).isSameAs(denied);
+
+    verify(accessControl).requireWarehouseRead(finance);
+    verify(accessControl, never()).requireWarehousePurchase(finance);
+    verify(repository, never()).batchWarehouseId(1L, 7L);
     verify(repository, never()).receiptPrintRow(1L, 7L);
   }
 

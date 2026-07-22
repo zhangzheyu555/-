@@ -875,7 +875,7 @@ const WORKSPACE_LABELS: Record<string, string> = {
   '/boss': '老板工作台',
   '/finance': '财务工作台',
   '/warehouse': '仓库中心',
-  '/store': '门店工作台',
+  '/store': '门店详情',
   '/operations': '运营工作台',
   '/learn/exams': '学习考试',
 }

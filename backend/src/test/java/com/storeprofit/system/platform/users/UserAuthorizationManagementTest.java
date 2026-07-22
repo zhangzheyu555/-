@@ -69,7 +69,12 @@ class UserAuthorizationManagementTest {
         catalogEntry(PermissionCodes.FINANCE_PROFIT_READ),
         catalogEntry(PermissionCodes.FINANCE_EXPORT),
         catalogEntry(PermissionCodes.EXAM_LEARN),
-        catalogEntry(PermissionCodes.EXAM_MANAGE)
+        catalogEntry(PermissionCodes.EXAM_MANAGE),
+        catalogEntry(PermissionCodes.WAREHOUSE_READ),
+        catalogEntry(PermissionCodes.EMPLOYEE_READ),
+        catalogEntry(PermissionCodes.ASSISTANT_USE),
+        catalogEntry(PermissionCodes.EMPLOYEE_ASSISTANT_USE),
+        catalogEntry(PermissionCodes.DAILY_LOSS_READ)
     ));
   }
 
@@ -218,6 +223,31 @@ class UserAuthorizationManagementTest {
   }
 
   @Test
+  void financeCannotReceiveWarehouseOrEmployeeAssistantPermission() {
+    AuthUser finance = user(6L, "finance-boundary", "FINANCE", null, 2L);
+    stubAuthorizationSnapshot(finance);
+
+    for (String permissionCode : List.of(
+        PermissionCodes.WAREHOUSE_READ,
+        PermissionCodes.EMPLOYEE_ASSISTANT_USE,
+        PermissionCodes.DAILY_LOSS_READ)) {
+      assertThatThrownBy(() -> service.updateAuthorization(
+          boss,
+          6L,
+          new UserAuthorizationUpdateRequest(
+              List.of(new UserPermissionOverrideRequest(permissionCode, "ALLOW")),
+              List.of())))
+          .isInstanceOf(BusinessException.class)
+          .satisfies(error -> assertThat(((BusinessException) error).getCode())
+              .isEqualTo("FINANCE_PERMISSION_BOUNDARY"));
+    }
+
+    verify(authorizationService, never()).replaceUserOverrides(
+        eq(1L), eq(6L), org.mockito.ArgumentMatchers.anyList(), eq(1L));
+    verify(authorizationService, never()).incrementPermissionVersionAndDeleteTokens(1L, 6L);
+  }
+
+  @Test
   void supervisorCanReceiveOperationsPermissionWithinFormalBoundary() {
     AuthUser supervisor = user(9L, "supervisor", "SUPERVISOR", null, 2L);
     stubAuthorizationSnapshot(supervisor);
@@ -235,6 +265,32 @@ class UserAuthorizationManagementTest {
   }
 
   @Test
+  void supervisorCannotReceiveWarehouseEmployeeProfileOrAssistantPermission() {
+    AuthUser supervisor = user(11L, "supervisor-boundary", "SUPERVISOR", null, 2L);
+    stubAuthorizationSnapshot(supervisor);
+
+    for (String permissionCode : List.of(
+        PermissionCodes.WAREHOUSE_READ,
+        PermissionCodes.EMPLOYEE_READ,
+        PermissionCodes.ASSISTANT_USE,
+        PermissionCodes.EMPLOYEE_ASSISTANT_USE)) {
+      assertThatThrownBy(() -> service.updateAuthorization(
+          boss,
+          11L,
+          new UserAuthorizationUpdateRequest(
+              List.of(new UserPermissionOverrideRequest(permissionCode, "ALLOW")),
+              List.of())))
+          .isInstanceOf(BusinessException.class)
+          .satisfies(error -> assertThat(((BusinessException) error).getCode())
+              .isEqualTo("SUPERVISOR_PERMISSION_BOUNDARY"));
+    }
+
+    verify(authorizationService, never()).replaceUserOverrides(
+        eq(1L), eq(11L), org.mockito.ArgumentMatchers.anyList(), eq(1L));
+    verify(authorizationService, never()).incrementPermissionVersionAndDeleteTokens(1L, 11L);
+  }
+
+  @Test
   void supervisorDataScopeSupportsAssignedOperationsDomainsWithoutAll() {
     AuthUser supervisor = user(10L, "supervisor2", "SUPERVISOR", null, 2L);
     stubAuthorizationSnapshot(supervisor);
@@ -245,6 +301,17 @@ class UserAuthorizationManagementTest {
         new UserAuthorizationUpdateRequest(
             List.of(),
             List.of(new UserDataScopeRequest(DataScopeDomains.PLATFORM, DataScopeModes.ALL, List.of())))))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode())
+            .isEqualTo("SUPERVISOR_SCOPE_BOUNDARY"));
+
+    assertThatThrownBy(() -> service.updateAuthorization(
+        boss,
+        10L,
+        new UserAuthorizationUpdateRequest(
+            List.of(),
+            List.of(new UserDataScopeRequest(
+                DataScopeDomains.WAREHOUSE, DataScopeModes.STORE_LIST, List.of("rg1"))))))
         .isInstanceOf(BusinessException.class)
         .satisfies(error -> assertThat(((BusinessException) error).getCode())
             .isEqualTo("SUPERVISOR_SCOPE_BOUNDARY"));
@@ -373,7 +440,7 @@ class UserAuthorizationManagementTest {
             "manager2", "二店店长", "STORE_MANAGER", "rg1", List.of("rg1"), "secure-password")
     );
 
-    verify(authRepository).createUser(
+    verify(authRepository).createUserRequiringPasswordChange(
         1L, "manager2", "password-hash", "二店店长", "STORE_MANAGER", "rg1");
     verify(dataScopeService).replaceAssignments(
         eq(1L),
@@ -491,9 +558,12 @@ class UserAuthorizationManagementTest {
     service.create(boss, new UserCreateRequest(
         "employee2", "学员", "EMPLOYEE", null, List.of(), "secure-password"));
 
-    verify(authRepository).createUser(1L, "warehouse2", "password-hash", "仓库", "WAREHOUSE", null);
-    verify(authRepository).createUser(1L, "supervisor2", "password-hash", "督导", "SUPERVISOR", null);
-    verify(authRepository).createUser(1L, "employee2", "password-hash", "学员", "EMPLOYEE", null);
+    verify(authRepository).createUserRequiringPasswordChange(
+        1L, "warehouse2", "password-hash", "仓库", "WAREHOUSE", null);
+    verify(authRepository).createUserRequiringPasswordChange(
+        1L, "supervisor2", "password-hash", "督导", "SUPERVISOR", null);
+    verify(authRepository).createUserRequiringPasswordChange(
+        1L, "employee2", "password-hash", "学员", "EMPLOYEE", null);
 
     for (String legacyRole : List.of("OPERATIONS", "OPS")) {
       assertThatThrownBy(() -> service.create(boss, new UserCreateRequest(
@@ -503,7 +573,7 @@ class UserAuthorizationManagementTest {
               .isEqualTo("ROLE_LEGACY_REJECTED"));
     }
 
-    verify(authRepository, never()).createUser(
+    verify(authRepository, never()).createUserRequiringPasswordChange(
         eq(1L), org.mockito.ArgumentMatchers.startsWith("legacy-"), org.mockito.ArgumentMatchers.anyString(),
         org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
         org.mockito.ArgumentMatchers.any());

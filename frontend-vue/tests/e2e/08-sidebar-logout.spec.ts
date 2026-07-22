@@ -5,7 +5,7 @@ const roleCases = [
   { role: 'FINANCE', label: '财务', name: '测试财务', assistant: true },
   { role: 'STORE_MANAGER', label: '店长', name: '测试店长', assistant: true },
   { role: 'WAREHOUSE', label: '仓库管理员', name: '测试仓库管理员', assistant: true },
-  { role: 'OPERATIONS', label: '运营', name: '测试运营', assistant: true },
+  { role: 'SUPERVISOR', label: '督导', name: '测试督导', assistant: true },
 ] as const
 
 const roleContracts: Record<string, { permissions: string[]; dataScopes: Record<string, { mode: string; storeIds: string[] }>; defaultWorkspace: string }> = {
@@ -13,7 +13,7 @@ const roleContracts: Record<string, { permissions: string[]; dataScopes: Record<
   FINANCE: { permissions: ['system.dashboard.read', 'store.read', 'finance.profit.read', 'finance.profit.write', 'finance.export', 'expense.read', 'expense.create', 'expense.review', 'salary.read', 'salary.edit', 'assistant.use'], dataScopes: { STORE: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] }, FINANCE: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] }, SALARY: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] } }, defaultWorkspace: '/finance' },
   STORE_MANAGER: { permissions: ['system.dashboard.read', 'store.read', 'finance.profit.read', 'finance.profit.write', 'expense.read', 'expense.create', 'salary.read', 'warehouse.store.read', 'warehouse.requisition.create', 'warehouse.requisition.receive', 'inspection.read', 'exam.learn', 'exam.report', 'assistant.use'], dataScopes: { STORE: { mode: 'OWN_STORE', storeIds: ['TEST-STORE'] }, FINANCE: { mode: 'OWN_STORE', storeIds: ['TEST-STORE'] }, SALARY: { mode: 'OWN_STORE', storeIds: ['TEST-STORE'] }, WAREHOUSE: { mode: 'OWN_STORE', storeIds: ['TEST-STORE'] }, INSPECTION: { mode: 'OWN_STORE', storeIds: ['TEST-STORE'] }, EXAM: { mode: 'OWN_STORE', storeIds: ['TEST-STORE'] } }, defaultWorkspace: '/store' },
   WAREHOUSE: { permissions: ['system.dashboard.read', 'warehouse.read', 'warehouse.purchase', 'warehouse.transfer.request', 'warehouse.transfer.approve', 'warehouse.transfer.ship', 'warehouse.transfer.receive', 'warehouse.requisition.process', 'warehouse.configure', 'warehouse.central.read', 'warehouse.central.manage', 'assistant.use'], dataScopes: { WAREHOUSE: { mode: 'CENTRAL_WAREHOUSE', storeIds: [] } }, defaultWorkspace: '/warehouse' },
-  OPERATIONS: { permissions: ['system.dashboard.read', 'operations.dashboard.read', 'store.read', 'warehouse.store.read', 'inspection.read', 'inspection.manage', 'exam.learn', 'exam.manage', 'exam.report', 'platform.read', 'platform.manage', 'assistant.use'], dataScopes: { STORE: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] }, WAREHOUSE: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] }, INSPECTION: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] }, EXAM: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] } }, defaultWorkspace: '/operations' },
+  SUPERVISOR: { permissions: ['system.dashboard.read', 'operations.dashboard.read', 'store.read', 'warehouse.store.read', 'inspection.read', 'inspection.manage', 'exam.learn', 'exam.manage', 'exam.report', 'platform.read', 'platform.manage', 'assistant.use'], dataScopes: { STORE: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] }, WAREHOUSE: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] }, INSPECTION: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] }, EXAM: { mode: 'STORE_LIST', storeIds: ['TEST-STORE'] } }, defaultWorkspace: '/operations' },
 }
 
 async function seedSession(page: Page, item: typeof roleCases[number]) {

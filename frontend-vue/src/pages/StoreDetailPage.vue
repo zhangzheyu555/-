@@ -4,6 +4,7 @@ import { ClipboardCheck, Download, Home, ReceiptText, RefreshCw, X } from 'lucid
 import { useRoute, useRouter } from 'vue-router'
 import { getStores, type StoreInfo } from '../api/operations'
 import { getProfitDashboard, type ProfitDashboard, type ProfitEntry } from '../api/profit'
+import { downloadCsvRows } from '../api/reports'
 import BrandBadge from '../components/common/BrandBadge.vue'
 import BrandSelect from '../components/common/BrandSelect.vue'
 import PageHeader from '../components/common/PageHeader.vue'
@@ -58,12 +59,6 @@ const storeManagementAccessDenied = computed(() => (
 const detailTitle = computed(() => businessScope.isStoreManager.value
   ? `${businessScope.boundStoreName.value || selectedStore.value?.name || '本店'}详情`
   : '门店详情')
-const detailSubtitle = computed(() => {
-  if (!businessScope.isStoreManager.value) return ''
-  const brandName = businessScope.brandName.value || selectedStore.value?.brandName || '品牌待配置'
-  const storeCode = selectedStore.value?.code || businessScope.boundStoreId.value || '待配置'
-  return `${brandName} · 门店编号 ${storeCode} · ${statusText(selectedStore.value?.status)}`
-})
 const monthOptions = computed(() => dashboard.value?.months || [])
 const profitRows = computed(() => dashboard.value?.entries || [])
 const storeProfitRows = computed(() => {
@@ -182,16 +177,10 @@ function exportStoreCsv() {
     amount(entry.net).toFixed(2),
     percent(entry.margin),
   ])
-  const csv = [headers, ...rows]
-    .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
-    .join('\n')
-  const blob = new Blob([`\ufeff${csv}`], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = `门店详情-${storeName}-${selectedMonth.value || '全部月份'}.csv`
-  link.click()
-  URL.revokeObjectURL(url)
+  downloadCsvRows(
+    [headers, ...rows],
+    `门店详情-${storeName}-${selectedMonth.value || '全部月份'}.csv`,
+  )
 }
 
 watch(
@@ -218,7 +207,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
 
 <template>
   <section class="page-panel store-detail-page">
-    <PageHeader class="store-detail-header" :title="detailTitle" :subtitle="detailSubtitle">
+    <PageHeader class="store-detail-header" :title="detailTitle">
       <template #actions>
         <div class="store-header-actions">
           <label v-if="businessScope.isStoreManager.value" class="manager-month-field">

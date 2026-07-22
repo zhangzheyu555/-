@@ -1,9 +1,11 @@
 package com.storeprofit.system.qmai;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -55,7 +57,7 @@ public class QmaiOperatingDataRepository {
         text.append(" and 1 = 0");
       } else {
         text.append(" and store_id in (");
-        text.append(String.join(",", java.util.Collections.nCopies(allowedStoreIds.size(), "?")));
+        text.append(String.join(",", Collections.nCopies(allowedStoreIds.size(), "?")));
         text.append(")");
         args.addAll(allowedStoreIds);
       }
@@ -64,11 +66,11 @@ public class QmaiOperatingDataRepository {
   }
 
   private BigDecimal money(BigDecimal value) {
-    return value == null ? BigDecimal.ZERO : value.setScale(2, java.math.RoundingMode.HALF_UP);
+    return value == null ? BigDecimal.ZERO : value.setScale(2, RoundingMode.HALF_UP);
   }
 
   private BigDecimal qty(BigDecimal value) {
-    return value == null ? BigDecimal.ZERO : value.setScale(3, java.math.RoundingMode.HALF_UP);
+    return value == null ? BigDecimal.ZERO : value.setScale(3, RoundingMode.HALF_UP);
   }
 
   private record Sql(String text, List<Object> args) {}

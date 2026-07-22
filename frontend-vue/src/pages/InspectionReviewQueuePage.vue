@@ -78,7 +78,7 @@ function unavailableMessage(reason: unknown, fallback: string) {
 
 <template>
   <section class="page-panel review-page">
-    <PageHeader title="整改复核" subtitle="核对店长提交的整改说明与现场证据；通过或驳回都会保留业务备注和操作日志。">
+    <PageHeader title="整改复核">
       <template #actions>
         <UiButton variant="secondary" :loading="loading" @click="loadQueue">
           <template #icon><RefreshCw :size="16" /></template>

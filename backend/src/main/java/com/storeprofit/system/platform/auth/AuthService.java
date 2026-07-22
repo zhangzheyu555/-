@@ -14,9 +14,13 @@ import com.storeprofit.system.platform.authorization.DataScopeModes;
 import com.storeprofit.system.platform.authorization.DataScopeService;
 import com.storeprofit.system.platform.authorization.WorkspaceAccessProfile;
 import com.storeprofit.system.platform.authorization.WorkspaceAccessResolver;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.OffsetDateTime;
 import java.util.Base64;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -39,6 +43,7 @@ public class AuthService {
   private static final int MAX_FAILED_LOGIN_ATTEMPTS = 5;
   private static final long FAILED_LOGIN_WINDOW_MILLIS = 5 * 60 * 1000L;
   private static final int MAX_TRACKED_LOGIN_FAILURE_KEYS = 10_000;
+  private static final long PASSWORD_CHANGE_GRANT_TTL_MILLIS = 10 * 60 * 1000L;
   private final AuthRepository authRepository;
   private final PasswordService passwordService;
   private final AuditRepository auditRepository;
@@ -47,8 +52,10 @@ public class AuthService {
   private final WorkspaceAccessResolver workspaceAccessResolver;
   private final BusinessScopeResolver businessScopeResolver;
   private final long tokenTtlHours;
+  private final long passwordChangeGrantTtlMillis;
   private final SecureRandom secureRandom = new SecureRandom();
   private final ConcurrentMap<String, FailedLoginWindow> failedLogins = new ConcurrentHashMap<>();
+  private final ConcurrentMap<String, PasswordChangeGrant> passwordChangeGrants = new ConcurrentHashMap<>();
 
   @Autowired
   public AuthService(
@@ -59,7 +66,8 @@ public class AuthService {
       DataScopeService dataScopeService,
       WorkspaceAccessResolver workspaceAccessResolver,
       BusinessScopeResolver businessScopeResolver,
-      @Value("${app.auth.token-ttl-hours:12}") long tokenTtlHours
+      @Value("${app.auth.token-ttl-hours:12}") long tokenTtlHours,
+      @Value("${app.auth.password-change-grant-ttl-minutes:10}") long passwordChangeGrantTtlMinutes
   ) {
     this.authRepository = authRepository;
     this.passwordService = passwordService;
@@ -69,6 +77,7 @@ public class AuthService {
     this.workspaceAccessResolver = workspaceAccessResolver;
     this.businessScopeResolver = businessScopeResolver;
     this.tokenTtlHours = tokenTtlHours;
+    this.passwordChangeGrantTtlMillis = Math.max(0, passwordChangeGrantTtlMinutes) * 60 * 1000L;
   }
 
   /** Compatibility constructor retained for focused authorization tests. */
@@ -88,7 +97,32 @@ public class AuthService {
         dataScopeService,
         new WorkspaceAccessResolver(),
         null,
-        tokenTtlHours
+        tokenTtlHours,
+        10
+    );
+  }
+
+  /** Compatibility constructor retained for tests with explicit workspace and scope resolvers. */
+  public AuthService(
+      AuthRepository authRepository,
+      PasswordService passwordService,
+      AuditRepository auditRepository,
+      AuthorizationService authorizationService,
+      DataScopeService dataScopeService,
+      WorkspaceAccessResolver workspaceAccessResolver,
+      BusinessScopeResolver businessScopeResolver,
+      long tokenTtlHours
+  ) {
+    this(
+        authRepository,
+        passwordService,
+        auditRepository,
+        authorizationService,
+        dataScopeService,
+        workspaceAccessResolver,
+        businessScopeResolver,
+        tokenTtlHours,
+        10
     );
   }
 
@@ -106,6 +140,26 @@ public class AuthService {
         null,
         null,
         tokenTtlHours
+    );
+  }
+
+  AuthService(
+      AuthRepository authRepository,
+      PasswordService passwordService,
+      AuditRepository auditRepository,
+      long tokenTtlHours,
+      long passwordChangeGrantTtlMinutes
+  ) {
+    this(
+        authRepository,
+        passwordService,
+        auditRepository,
+        null,
+        null,
+        new WorkspaceAccessResolver(),
+        null,
+        tokenTtlHours,
+        passwordChangeGrantTtlMinutes
     );
   }
 
@@ -133,6 +187,10 @@ public class AuthService {
       throw new BusinessException("LOGIN_FAILED", "账号或密码错误", HttpStatus.UNAUTHORIZED);
     }
     attemptKeys.forEach(failedLogins::remove);
+    if (authRepository.passwordChangeRequired(user.tenantId(), user.id())) {
+      authRepository.deleteTokensForUser(user.tenantId(), user.id());
+      return LoginResponse.passwordChangeRequired(issuePasswordChangeGrant(user));
+    }
     // Resolve permissions and the effective single-store context before issuing a token. A store
     // manager with an invalid binding must not receive a usable session token.
     SessionUser sessionUser = toSessionUser(user);
@@ -145,7 +203,72 @@ public class AuthService {
         user.permissionVersion(),
         OffsetDateTime.now().plusHours(tokenTtlHours)
     );
-    return new LoginResponse(token, sessionUser);
+    return LoginResponse.authenticated(token, sessionUser);
+  }
+
+  @Transactional
+  public void changeInitialPassword(InitialPasswordChangeRequest request) {
+    if (request == null || request.credential() == null || request.credential().isBlank()) {
+      throw invalidPasswordChangeCredential();
+    }
+    PasswordChangeGrant grant = passwordChangeGrants.get(hashCredential(request.credential()));
+    if (grant == null || grant.expiresAtMillis() <= System.currentTimeMillis()) {
+      if (grant != null) {
+        passwordChangeGrants.remove(hashCredential(request.credential()), grant);
+      }
+      throw invalidPasswordChangeCredential();
+    }
+    String newPassword = request.newPassword();
+    if (newPassword == null || request.confirmPassword() == null) {
+      throw new BusinessException("PASSWORD_INVALID", "请完整填写新密码和确认密码", HttpStatus.BAD_REQUEST);
+    }
+    if (!newPassword.equals(request.confirmPassword())) {
+      throw new BusinessException("PASSWORD_CONFIRMATION_MISMATCH", "两次输入的新密码不一致", HttpStatus.BAD_REQUEST);
+    }
+    if (newPassword.length() < 8 || newPassword.length() > 128) {
+      throw new BusinessException("PASSWORD_INVALID", "密码长度必须为 8 至 128 位", HttpStatus.BAD_REQUEST);
+    }
+    AuthUser user = authRepository.user(grant.tenantId(), grant.userId())
+        .filter(AuthUser::enabled)
+        .orElseThrow(this::invalidPasswordChangeCredential);
+    if (!authRepository.passwordChangeRequired(user.tenantId(), user.id())) {
+      passwordChangeGrants.remove(hashCredential(request.credential()), grant);
+      throw invalidPasswordChangeCredential();
+    }
+    if (passwordService.matches(newPassword, user.passwordHash())) {
+      throw new BusinessException("PASSWORD_REUSE_REJECTED", "新密码不能与初始密码相同", HttpStatus.BAD_REQUEST);
+    }
+    String passwordHash = passwordService.hash(newPassword);
+    if (!authRepository.completeInitialPasswordChange(user.tenantId(), user.id(), passwordHash)) {
+      throw invalidPasswordChangeCredential();
+    }
+    authRepository.deleteTokensForUser(user.tenantId(), user.id());
+    auditRepository.writeLog(user, new AuditLogRequest(
+        "首次登录修改密码",
+        "auth_user",
+        String.valueOf(user.id()),
+        user.storeId(),
+        null,
+        "首次登录密码修改成功，会话已失效",
+        null,
+        null
+    ));
+    passwordChangeGrants.entrySet().removeIf(entry ->
+        entry.getValue().tenantId() == user.tenantId() && entry.getValue().userId() == user.id());
+  }
+
+  private String issuePasswordChangeGrant(AuthUser user) {
+    passwordChangeGrants.entrySet().removeIf(entry ->
+        entry.getValue().tenantId() == user.tenantId() && entry.getValue().userId() == user.id());
+    String credential = newToken();
+    passwordChangeGrants.put(hashCredential(credential), new PasswordChangeGrant(
+        user.tenantId(), user.id(), System.currentTimeMillis() + passwordChangeGrantTtlMillis));
+    return credential;
+  }
+
+  private BusinessException invalidPasswordChangeCredential() {
+    return new BusinessException(
+        "PASSWORD_CHANGE_CREDENTIAL_INVALID", "改密凭据无效或已过期，请重新登录", HttpStatus.UNAUTHORIZED);
   }
 
   private List<String> loginAttemptKeys(long tenantId, String username, String sourceIp) {
@@ -201,6 +324,12 @@ public class AuthService {
   public void deleteExpiredLoginFailures() {
     long cutoff = System.currentTimeMillis() - FAILED_LOGIN_WINDOW_MILLIS;
     failedLogins.entrySet().removeIf(entry -> entry.getValue().startedAtMillis() <= cutoff);
+  }
+
+  @Scheduled(fixedDelay = PASSWORD_CHANGE_GRANT_TTL_MILLIS)
+  public void deleteExpiredPasswordChangeGrants() {
+    long now = System.currentTimeMillis();
+    passwordChangeGrants.entrySet().removeIf(entry -> entry.getValue().expiresAtMillis() <= now);
   }
 
   public void logout(String authorization) {
@@ -313,6 +442,16 @@ public class AuthService {
     return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
   }
 
+  private String hashCredential(String credential) {
+    try {
+      byte[] digest = MessageDigest.getInstance("SHA-256")
+          .digest(credential.getBytes(StandardCharsets.UTF_8));
+      return HexFormat.of().formatHex(digest);
+    } catch (NoSuchAlgorithmException ex) {
+      throw new IllegalStateException("SHA-256 is not available", ex);
+    }
+  }
+
   private String extractToken(String authorization) {
     if (authorization == null || authorization.isBlank()) {
       return null;
@@ -336,5 +475,8 @@ public class AuthService {
   }
 
   private record FailedLoginWindow(int attempts, long startedAtMillis) {
+  }
+
+  private record PasswordChangeGrant(long tenantId, long userId, long expiresAtMillis) {
   }
 }

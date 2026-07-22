@@ -4,7 +4,6 @@ import { useRoute } from 'vue-router'
 
 const props = defineProps<{
   title?: string
-  subtitle?: string
 }>()
 
 const route = useRoute()
@@ -17,7 +16,6 @@ const hasActions = computed(() => Boolean(slots.actions || slots.default))
   <header class="business-page-header">
     <div class="business-page-heading">
       <h1>{{ resolvedTitle }}</h1>
-      <p v-if="subtitle">{{ subtitle }}</p>
     </div>
     <div v-if="hasActions" class="business-page-actions">
       <slot name="actions"><slot /></slot>
@@ -42,7 +40,6 @@ const hasActions = computed(() => Boolean(slots.actions || slots.default))
   display: grid;
   flex: 1 1 240px;
   min-width: 0;
-  gap: 3px;
 }
 
 .business-page-heading h1 {
@@ -53,14 +50,6 @@ const hasActions = computed(() => Boolean(slots.actions || slots.default))
   line-height: 1.35;
   letter-spacing: 0;
   text-wrap: balance;
-}
-
-.business-page-heading p {
-  margin: 0;
-  color: var(--ds-muted);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.4;
 }
 
 .business-page-actions {

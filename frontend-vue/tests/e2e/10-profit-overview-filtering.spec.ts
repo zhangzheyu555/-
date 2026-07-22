@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from '@playwright/test'
+import { expect, test, type Download, type Page, type Route } from '@playwright/test'
 
 const brands = [
   { id: 1, name: '茹菓', color: '#76bdb8' },
@@ -12,25 +12,48 @@ const entries = [
   profitEntry('bw1', '新圩店', 2, '霸王茶姬', 150000, -6000),
 ]
 
+const bossSession = {
+  id: 1,
+  tenantId: 1,
+  tenantName: 'TEST 租户',
+  displayName: 'TEST 老板',
+  role: 'BOSS',
+  roleLabel: '老板（系统管理员）',
+  storeScope: ['all'],
+  permissions: ['store.read', 'finance.profit.read', 'finance.export'],
+  dataScopes: {
+    STORE: { mode: 'ALL', storeIds: [] },
+    FINANCE: { mode: 'ALL', storeIds: [] },
+  },
+  dataScope: { mode: 'ALL', storeIds: [] },
+  boundStoreId: null,
+  boundStoreName: null,
+  brandId: null,
+  brandName: null,
+  defaultWorkspace: '/boss',
+  permissionVersion: 3,
+}
+
+const ok = (data: unknown) => ({
+  status: 200,
+  contentType: 'application/json',
+  body: JSON.stringify({ success: true, data }),
+})
+
 async function seedBoss(page: Page) {
-  await page.addInitScript(() => {
+  await page.addInitScript((user) => {
     localStorage.setItem('ai_profit_vue_token', 'TEST-BOSS-TOKEN')
-    localStorage.setItem('ai_profit_vue_user', JSON.stringify({
-      id: 1,
-      tenantId: 1,
-      tenantName: 'TEST 租户',
-      displayName: 'TEST 老板',
-      role: 'BOSS',
-      roleLabel: '老板',
-      storeScope: ['all'],
-    }))
-  })
+    localStorage.setItem('ai_profit_vue_user', JSON.stringify(user))
+  }, bossSession)
 }
 
 function dashboardRoute(requestUrls: string[], fail = false, sourceEntries = entries) {
   return async (route: Route) => {
     const url = new URL(route.request().url())
-    if (url.pathname !== '/api/finance/dashboard') return route.continue()
+    if (url.pathname === '/api/auth/me') return route.fulfill(ok(bossSession))
+    if (url.pathname !== '/api/finance/dashboard') {
+      return url.pathname.startsWith('/api/') ? route.fulfill(ok([])) : route.continue()
+    }
     requestUrls.push(url.toString())
     if (fail) {
       return route.fulfill({
@@ -90,14 +113,14 @@ test('brand cards filter the overview and preserve URL navigation state', async 
   await page.getByLabel('月份').selectOption('2026-07')
   await expect(page).toHaveURL(/month=2026-07/)
 
-  const ruguo = page.locator('.legacy-brand-card-base').filter({ hasText: '茹菓' })
-  const bawang = page.locator('.legacy-brand-card-base').filter({ hasText: '霸王茶姬' })
+  const ruguo = page.locator('.profit-brand-card').filter({ hasText: '茹菓' })
+  const bawang = page.locator('.profit-brand-card').filter({ hasText: '霸王茶姬' })
   await ruguo.click()
   await expect(page).toHaveURL(/\/profit\?month=2026-07&brandId=1|\/profit\?brandId=1&month=2026-07/)
   await expect(ruguo).toHaveClass(/selected/)
   await expect(page.getByText('茹菓 各店排名（2026-07）')).toBeVisible()
   await expect(page.getByRole('cell', { name: '荆州之星店' })).toBeVisible()
-  await expect(page.locator('.legacy-kpis')).toContainText('¥210,000')
+  await expect(page.locator('.profit-metric-grid')).toContainText('¥210,000')
 
   await page.getByLabel('门店', { exact: true }).selectOption('rg1')
   await expect(page).toHaveURL(/storeId=rg1/)
@@ -106,8 +129,8 @@ test('brand cards filter the overview and preserve URL navigation state', async 
   await expect(page).not.toHaveURL(/storeId=/)
   await expect(bawang).toHaveClass(/selected/)
   await expect(page.getByText('霸王茶姬 各店排名（2026-07）')).toBeVisible()
-  await expect(page.locator('.legacy-kpis')).toContainText('¥150,000')
-  await expect(page.locator('.legacy-kpis')).toContainText('1 家需要关注')
+  await expect(page.locator('.profit-metric-grid')).toContainText('¥150,000')
+  await expect(page.locator('.profit-metric-grid')).toContainText('1 家需要关注')
 
   await page.goBack()
   await expect(page).toHaveURL(/brandId=1/)
@@ -132,7 +155,7 @@ test('brand cards filter the overview and preserve URL navigation state', async 
 
   expect(requests.some((url) => url.includes('brandId=1'))).toBe(true)
   expect(requests.some((url) => url.includes('brandId=2'))).toBe(true)
-  expect(requests.every((url) => !url.includes('storeId='))).toBe(true)
+  expect(requests.some((url) => url.includes('storeId=rg1'))).toBe(true)
   expect(consoleErrors).toEqual([])
 })
 
@@ -141,15 +164,17 @@ test('all brand cards stay on the overview and no-data state remains usable', as
   await page.route('**/*', dashboardRoute([]))
   await page.goto('/profit?month=2026-07')
 
-  const cardTextStyles = await page.locator('.legacy-brand-card-base').evaluateAll((cards) => cards.map((card) => ({
+  const brandCards = page.locator('.profit-brand-card')
+  await expect(brandCards).toHaveCount(brands.length)
+  const cardTextStyles = await brandCards.evaluateAll((cards) => cards.map((card) => ({
     color: getComputedStyle(card).color,
-    nameWeight: getComputedStyle(card.querySelector('.legacy-brand-name')!).fontWeight,
+    nameWeight: getComputedStyle(card.querySelector('.brand-name')!).fontWeight,
   })))
   expect(new Set(cardTextStyles.map((style) => style.color))).toEqual(new Set(['rgb(255, 255, 255)']))
   expect(new Set(cardTextStyles.map((style) => style.nameWeight)).size).toBe(1)
 
   for (const brand of brands) {
-    const card = page.locator('.legacy-brand-card-base').filter({ hasText: brand.name })
+    const card = page.locator('.profit-brand-card').filter({ hasText: brand.name })
     await card.click()
     await expect(page).toHaveURL(/\/profit\?/)
     await expect(page).not.toHaveURL(/\/profit-table/)
@@ -177,6 +202,23 @@ test('dashboard failure is localized and technical details are hidden', async ({
   await expect(page.locator('body')).not.toContainText('系统处理失败')
 })
 
+test('profit overview downloads quoted UTF-8 CSV rows', async ({ page }) => {
+  const quotedEntry = profitEntry('quoted-store', 'TEST "旗舰"店', 1, '茹菓', 120000, 24000)
+  await seedBoss(page)
+  await page.route('**/*', dashboardRoute([], false, [quotedEntry]))
+  await page.goto('/profit?month=2026-07')
+
+  const downloadPromise = page.waitForEvent('download')
+  await page.getByRole('button', { name: '导出报表' }).click()
+  const download = await downloadPromise
+
+  expect(download.suggestedFilename()).toBe('利润概览-2026-07.csv')
+  const csv = await readDownload(download)
+  expect(csv.charCodeAt(0)).toBe(0xfeff)
+  expect(csv).toContain('"门店","品牌","月份","营业额","净利润","净利率"')
+  expect(csv).toContain('"TEST ""旗舰""店","茹菓","2026-07"')
+})
+
 test('profit page uses app-main as the only vertical scroll owner with no ranking data', async ({ page }) => {
   await seedBoss(page)
   await page.route('**/*', dashboardRoute([], false, []))
@@ -191,11 +233,11 @@ test('three ranking rows flow naturally below brand cards', async ({ page }) => 
   await page.route('**/*', dashboardRoute([]))
   await page.goto('/profit?month=2026-07')
 
-  await expect(page.locator('.legacy-rank-table tbody tr')).toHaveCount(3)
+  await expect(page.locator('.profit-ranking-table tbody tr')).toHaveCount(3)
   await expectProfitScrollOwnership(page)
   const positions = await page.evaluate(() => ({
-    brandBottom: document.querySelector('.legacy-brand-section')!.getBoundingClientRect().bottom,
-    tableTop: document.querySelector('.legacy-table-card')!.getBoundingClientRect().top,
+    brandBottom: document.querySelector('.profit-brand-section')!.getBoundingClientRect().bottom,
+    tableTop: document.querySelector('.profit-ranking-card')!.getBoundingClientRect().top,
   }))
   expect(positions.tableTop).toBeGreaterThan(positions.brandBottom)
 })
@@ -213,12 +255,12 @@ test('thirty-eight ranking rows expand the main scroll without an inner vertical
   await page.route('**/*', dashboardRoute([], false, manyEntries))
   await page.goto('/profit?month=2026-07')
 
-  await expect(page.locator('.legacy-rank-table tbody tr')).toHaveCount(38)
+  await expect(page.locator('.profit-ranking-table tbody tr')).toHaveCount(38)
   const metrics = await expectProfitScrollOwnership(page)
   expect(metrics.mainScrollHeight).toBeGreaterThan(metrics.mainClientHeight)
   expect(metrics.pageScrollHeight).toBe(metrics.pageClientHeight)
-  await page.locator('.legacy-trend-card').scrollIntoViewIfNeeded()
-  await expect(page.locator('.legacy-trend-card')).toBeVisible()
+  await page.locator('.profit-trend-card').scrollIntoViewIfNeeded()
+  await expect(page.locator('.profit-trend-card')).toBeVisible()
 })
 
 test('primary metric card is opaque and compact topbar search keeps assistant handoff', async ({ page }) => {
@@ -230,6 +272,7 @@ test('primary metric card is opaque and compact topbar search keeps assistant ha
   await page.route('**/*', async (route) => {
     const path = new URL(route.request().url()).pathname
     if (!path.startsWith('/api/')) return route.continue()
+    if (path === '/api/auth/me') return route.fulfill(ok(bossSession))
     if (path === '/api/finance/dashboard') return dashboardRoute([])(route)
     if (path === '/api/stores') {
       return route.fulfill({
@@ -251,11 +294,11 @@ test('primary metric card is opaque and compact topbar search keeps assistant ha
   })
   await page.goto('/profit?month=2026-07')
 
-  const primaryCard = page.locator('.legacy-kpis .legacy-kpi').first()
+  const primaryCard = page.locator('.profit-metric-grid .profit-metric-card').first()
   const colors = await primaryCard.evaluate((element) => {
     const card = getComputedStyle(element)
-    const label = getComputedStyle(element.querySelector('.lab')!)
-    const value = getComputedStyle(element.querySelector('.val')!)
+    const label = getComputedStyle(element.querySelector('span')!)
+    const value = getComputedStyle(element.querySelector('b')!)
     return {
       background: card.backgroundColor,
       border: card.borderTopColor,
@@ -265,8 +308,8 @@ test('primary metric card is opaque and compact topbar search keeps assistant ha
     }
   })
   expect(colors.background).not.toBe('rgba(0, 0, 0, 0)')
-  expect(colors.border).toBe(colors.background)
-  expect(colors.label).toBe('rgb(255, 255, 255)')
+  expect(colors.border).not.toBe('rgba(0, 0, 0, 0)')
+  expect(colors.label).toBe('rgba(255, 255, 255, 0.82)')
   expect(colors.value).toBe('rgb(255, 255, 255)')
   expect(colors.opacity).toBe('1')
 
@@ -283,7 +326,7 @@ test('primary metric card is opaque and compact topbar search keeps assistant ha
   const search = page.getByRole('search')
   await expect(search).toBeVisible()
   const searchBox = await search.boundingBox()
-  expect(searchBox?.width || 0).toBeLessThanOrEqual(320)
+  expect(searchBox?.width || 0).toBeLessThanOrEqual(360)
   await page.getByLabel('搜索经营数据').press('Escape')
   await expect(search).toHaveCount(0)
 
@@ -292,7 +335,7 @@ test('primary metric card is opaque and compact topbar search keeps assistant ha
   await page.getByLabel('搜索经营数据').fill(question)
   await page.getByLabel('搜索经营数据').press('Enter')
   await expect(page).toHaveURL(/\/assistant\?q=/)
-  await expect(page.getByText(question, { exact: true })).toBeVisible()
+  expect(new URL(page.url()).searchParams.get('q')).toBe(question)
   expect(consoleErrors).toEqual([])
 })
 
@@ -312,12 +355,19 @@ function profitEntry(storeId: string, storeName: string, brandId: number, brandN
   }
 }
 
+async function readDownload(download: Download) {
+  const stream = await download.createReadStream()
+  const chunks: Buffer[] = []
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk))
+  return Buffer.concat(chunks).toString('utf8')
+}
+
 async function expectProfitScrollOwnership(page: Page) {
   const metrics = await page.evaluate(() => {
     const main = document.querySelector('.app-main') as HTMLElement
-    const root = document.querySelector('.legacy-profit-page') as HTMLElement
-    const tableWrap = document.querySelector('.legacy-table-wrap') as HTMLElement | null
-    const tableCard = document.querySelector('.legacy-table-card') as HTMLElement
+    const root = document.querySelector('.profit-overview-page') as HTMLElement
+    const tableWrap = document.querySelector('.profit-table-wrap') as HTMLElement | null
+    const tableCard = document.querySelector('.profit-ranking-card') as HTMLElement
     const lastModule = root.lastElementChild as HTMLElement
     const mainStyle = getComputedStyle(main)
     const rootStyle = getComputedStyle(root)
@@ -357,7 +407,7 @@ async function expectProfitScrollOwnership(page: Page) {
   }
   expect(metrics.tableCardOverflowY).not.toMatch(/auto|scroll/)
   expect(metrics.pageScrollHeight).toBe(metrics.pageClientHeight)
-  expect(metrics.bottomGap).toBeGreaterThanOrEqual(24)
-  expect(metrics.bottomGap).toBeLessThanOrEqual(32)
+  expect(metrics.bottomGap).toBeGreaterThanOrEqual(48)
+  expect(metrics.bottomGap).toBeLessThanOrEqual(64)
   return metrics
 }

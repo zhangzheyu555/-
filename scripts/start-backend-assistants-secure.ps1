@@ -58,27 +58,17 @@ function Wait-ForBackendHealth {
   throw '后端未在 60 秒内通过健康检查。'
 }
 
-function Assert-ExpectedBackendHealth {
-  param(
-    [Parameter(Mandatory)]$Health,
-    [Parameter(Mandatory)][string]$ExpectedEnvironment,
-    [Parameter(Mandatory)][int]$ExpectedDatabasePort,
-    [Parameter(Mandatory)][string]$ExpectedDatabaseName
-  )
-  if ($Health.environment -ne $ExpectedEnvironment -or
-      [int]$Health.databasePort -ne $ExpectedDatabasePort -or
-      $Health.databaseName -ne $ExpectedDatabaseName -or
-      $Health.databaseAccountScope -ne 'LOCAL_SCOPED' -or
-      [string]::IsNullOrWhiteSpace([string]$Health.databaseMigrationVersion)) {
-    throw '候选健康响应与预期环境、3307 目标库、受限账号或 Flyway 状态不一致。'
+function Assert-BackendLiveness {
+  param([Parameter(Mandatory)]$Health)
+  if ([string]$Health.status -ne 'UP') {
+    throw '公开存活检查未返回 UP。'
   }
 }
 
 function Write-SafeHealth {
   param([Parameter(Mandatory)]$Health, [Parameter(Mandatory)][int]$Port)
-  Write-Host ("健康检查通过：端口={0}，状态={1}，环境={2}，Flyway={3}，账号范围={4}。" -f
-      $Port, $Health.status, $Health.environment, $Health.databaseMigrationVersion,
-      $Health.databaseAccountScope) -ForegroundColor Green
+  Write-Host ("公开存活检查通过：端口={0}，状态={1}。运行环境和数据库目标已由受控启动配置及 DatabaseEnvironmentGuard 校验。" -f
+      $Port, $Health.status) -ForegroundColor Green
 }
 
 function Assert-UnauthenticatedAssistantGate {
@@ -512,7 +502,7 @@ try {
   $candidateConfiguration = $null
 
   $candidateHealth = Wait-ForBackendHealth $CandidatePort $candidate.Process
-  Assert-ExpectedBackendHealth $candidateHealth $AppEnvironment $MySqlPort $MySqlDatabase
+  Assert-BackendLiveness $candidateHealth
   Write-SafeHealth $candidateHealth $CandidatePort
   Assert-UnauthenticatedAssistantGate $CandidatePort '/api/assistant/status' '门店经营助手'
   Assert-UnauthenticatedAssistantGate $CandidatePort '/api/employee-assistant/status' '员工服务助手'
@@ -555,7 +545,7 @@ try {
   $mysqlPassword.Dispose(); $mysqlPassword = $null
 
   $productionHealth = Wait-ForBackendHealth 18081 $production.Process
-  Assert-ExpectedBackendHealth $productionHealth $AppEnvironment $MySqlPort $MySqlDatabase
+  Assert-BackendLiveness $productionHealth
   Write-SafeHealth $productionHealth 18081
   Assert-UnauthenticatedAssistantGate 18081 '/api/assistant/status' '门店经营助手'
   Assert-UnauthenticatedAssistantGate 18081 '/api/employee-assistant/status' '员工服务助手'

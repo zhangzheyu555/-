@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -88,6 +89,31 @@ class AccessControlServiceTest {
   }
 
   @Test
+  void storeManagerCannotExportOperatingDataEvenWithPersonalPermission() {
+    AuthUser manager = user("STORE_MANAGER", "rg1");
+    AuthorizationService authorizationService = mock(AuthorizationService.class);
+    AccessControlService exportAccess = new AccessControlService(
+        authService, authRepository, auditRepository, authorizationService, null);
+    when(authorizationService.hasPermission(manager, PermissionCodes.FINANCE_EXPORT)).thenReturn(true);
+
+    assertThatThrownBy(() -> exportAccess.requireDataExport(manager, "rg1", "2026-07"))
+        .isInstanceOfSatisfying(BusinessException.class, error -> {
+          assertThat(error.getCode()).isEqualTo("FORBIDDEN");
+          assertThat(error.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+        });
+
+    verify(auditRepository).writePermissionDenied(
+        org.mockito.ArgumentMatchers.eq(manager),
+        org.mockito.ArgumentMatchers.eq("导出经营数据"),
+        org.mockito.ArgumentMatchers.eq("API"),
+        org.mockito.ArgumentMatchers.eq(PermissionCodes.FINANCE_EXPORT),
+        org.mockito.ArgumentMatchers.eq("rg1"),
+        org.mockito.ArgumentMatchers.eq("2026-07"),
+        org.mockito.ArgumentMatchers.contains("仅限财务或老板")
+    );
+  }
+
+  @Test
   void rejectedFinanceWritesKeepTheRequestedStoreAndMonthInTheAuditRecord() {
     AuthUser supervisor = user("SUPERVISOR", null);
 
@@ -103,6 +129,26 @@ class AccessControlServiceTest {
         org.mockito.ArgumentMatchers.eq("rg2"),
         org.mockito.ArgumentMatchers.eq("2026-07"),
         org.mockito.ArgumentMatchers.contains("账号不具备权限")
+    );
+  }
+
+  @Test
+  void rejectedSalaryEditKeepsTheRequestedRecordStoreAndPeriodInTheAuditRecord() {
+    AuthUser supervisor = user("SUPERVISOR", "rg1");
+
+    assertThatThrownBy(() -> service.requireSalaryEdit(
+        supervisor, "salary-401", "rg2", "2026-10"))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
+
+    verify(auditRepository).writePermissionDenied(
+        org.mockito.ArgumentMatchers.eq(supervisor),
+        org.mockito.ArgumentMatchers.eq("录入工资数据"),
+        org.mockito.ArgumentMatchers.eq("salary_record"),
+        org.mockito.ArgumentMatchers.eq("salary-401"),
+        org.mockito.ArgumentMatchers.eq("rg2"),
+        org.mockito.ArgumentMatchers.eq("2026-10"),
+        org.mockito.ArgumentMatchers.contains(PermissionCodes.SALARY_EDIT)
     );
   }
 
@@ -223,6 +269,92 @@ class AccessControlServiceTest {
   }
 
   @Test
+  void expenseAttachmentDenialKeepsDocumentStoreAndMonthInTheAuditRecord() {
+    AuthorizationService authorizationService = mock(AuthorizationService.class);
+    AccessControlService expenseAccess = new AccessControlService(
+        authService,
+        authRepository,
+        auditRepository,
+        authorizationService,
+        mock(DataScopeService.class)
+    );
+    AuthUser supervisor = user("SUPERVISOR", "rg1");
+    when(authorizationService.hasPermission(supervisor, PermissionCodes.ATTACHMENT_WRITE)).thenReturn(true);
+    when(authorizationService.hasPermission(supervisor, PermissionCodes.EXPENSE_CREATE)).thenReturn(true);
+
+    assertThatThrownBy(() -> expenseAccess.requireExpenseAttachmentWrite(
+        supervisor, "exp-401", "rg2", "2026-07"))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
+
+    verify(auditRepository).writePermissionDenied(
+        org.mockito.ArgumentMatchers.eq(supervisor),
+        org.mockito.ArgumentMatchers.eq("录入报销数据"),
+        org.mockito.ArgumentMatchers.eq("expense_claim"),
+        org.mockito.ArgumentMatchers.eq("exp-401"),
+        org.mockito.ArgumentMatchers.eq("rg2"),
+        org.mockito.ArgumentMatchers.eq("2026-07"),
+        org.mockito.ArgumentMatchers.contains("仅限财务、店长或老板")
+    );
+  }
+
+  @Test
+  void forgedExpenseAttachmentStoreIsRejectedWithDocumentContext() {
+    AuthUser finance = user("FINANCE", "rg1");
+
+    assertThatThrownBy(() -> service.requireExpenseDocumentStore(
+        finance, "exp-forged", "rg2", "rg1", "2026-07", "上传报销凭证"))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
+
+    verify(auditRepository).writePermissionDenied(
+        org.mockito.ArgumentMatchers.eq(finance),
+        org.mockito.ArgumentMatchers.eq("上传报销凭证"),
+        org.mockito.ArgumentMatchers.eq("expense_claim"),
+        org.mockito.ArgumentMatchers.eq("exp-forged"),
+        org.mockito.ArgumentMatchers.eq("rg2"),
+        org.mockito.ArgumentMatchers.eq("2026-07"),
+        org.mockito.ArgumentMatchers.contains("门店不一致")
+    );
+  }
+
+  @Test
+  void expenseReviewRemainsFinanceOrBossOnlyEvenWhenSupervisorHasAStalePersonalAllow() {
+    AuthorizationService authorizationService = mock(AuthorizationService.class);
+    AccessControlService expenseAccess = new AccessControlService(
+        authService,
+        authRepository,
+        auditRepository,
+        authorizationService,
+        mock(DataScopeService.class)
+    );
+    AuthUser supervisor = user("SUPERVISOR", "rg1");
+    AuthUser finance = user("FINANCE", null);
+    when(authorizationService.hasPermission(supervisor, PermissionCodes.EXPENSE_REVIEW)).thenReturn(true);
+    when(authorizationService.hasPermission(finance, PermissionCodes.EXPENSE_REVIEW)).thenReturn(true);
+
+    assertThatThrownBy(() -> expenseAccess.requireExpenseReview(supervisor))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> {
+          BusinessException forbidden = (BusinessException) error;
+          assertThat(forbidden.getCode()).isEqualTo("FORBIDDEN");
+          assertThat(forbidden.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+        });
+    expenseAccess.requireExpenseReview(finance);
+    expenseAccess.requireExpenseReview(user("BOSS", null));
+
+    verify(auditRepository).writePermissionDenied(
+        org.mockito.ArgumentMatchers.eq(supervisor),
+        org.mockito.ArgumentMatchers.eq("审核报销数据"),
+        org.mockito.ArgumentMatchers.eq("expense_claim"),
+        isNull(),
+        isNull(),
+        isNull(),
+        org.mockito.ArgumentMatchers.contains("仅限财务或老板")
+    );
+  }
+
+  @Test
   void bossHasWildcardPermissionAcrossBusinessModules() {
     AuthUser boss = user("BOSS", null);
 
@@ -256,7 +388,7 @@ class AccessControlServiceTest {
   }
 
   @Test
-  void supervisorCannotReadDailyLossEvenWhenPersonalPermissionExistsAndDenialIsAudited() {
+  void dailyLossQueryAllowsStoreManagerWhileExcelExportRemainsBossSupervisorOnly() {
     AuthorizationService authorizationService = mock(AuthorizationService.class);
     AccessControlService dailyLossAccess = new AccessControlService(
         authService,
@@ -265,24 +397,68 @@ class AccessControlServiceTest {
         authorizationService,
         mock(DataScopeService.class)
     );
+    AuthUser boss = user("BOSS", null);
+    AuthUser finance = user("FINANCE", null);
+    AuthUser manager = user("STORE_MANAGER", "rg1");
     AuthUser supervisor = user("SUPERVISOR", null);
+    AuthUser warehouse = user("WAREHOUSE", null);
+    AuthUser employee = user("EMPLOYEE", "rg1");
     when(authorizationService.hasPermission(supervisor, PermissionCodes.DAILY_LOSS_READ)).thenReturn(true);
+    when(authorizationService.hasPermission(supervisor, PermissionCodes.DAILY_LOSS_EXPORT)).thenReturn(true);
+    when(authorizationService.hasPermission(manager, PermissionCodes.DAILY_LOSS_READ)).thenReturn(true);
+    when(authorizationService.hasPermission(manager, PermissionCodes.DAILY_LOSS_EXPORT)).thenReturn(true);
 
-    assertThatThrownBy(() -> dailyLossAccess.requireDailyLossRead(supervisor))
-        .isInstanceOf(BusinessException.class)
-        .satisfies(error -> {
-          BusinessException forbidden = (BusinessException) error;
-          assertThat(forbidden.getCode()).isEqualTo("FORBIDDEN");
-          assertThat(forbidden.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+    dailyLossAccess.requireDailyLossRead(boss);
+    dailyLossAccess.requireDailyLossExport(boss);
+    dailyLossAccess.requireDailyLossRead(supervisor);
+    dailyLossAccess.requireDailyLossExport(supervisor);
+    dailyLossAccess.requireDailyLossRead(manager);
+
+    assertThatThrownBy(() -> dailyLossAccess.requireDailyLossExport(manager))
+        .isInstanceOfSatisfying(BusinessException.class, error -> {
+          assertThat(error.getCode()).isEqualTo("FORBIDDEN");
+          assertThat(error.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
         });
 
-    verify(auditRepository).writePermissionDenied(
-        org.mockito.ArgumentMatchers.eq(supervisor),
-        org.mockito.ArgumentMatchers.eq("查看每日报损"),
+    for (AuthUser denied : List.of(finance, warehouse, employee)) {
+      when(authorizationService.hasPermission(denied, PermissionCodes.DAILY_LOSS_READ)).thenReturn(true);
+      when(authorizationService.hasPermission(denied, PermissionCodes.DAILY_LOSS_EXPORT)).thenReturn(true);
+
+      assertThatThrownBy(() -> dailyLossAccess.requireDailyLossRead(denied))
+          .isInstanceOfSatisfying(BusinessException.class, error -> {
+            assertThat(error.getCode()).isEqualTo("FORBIDDEN");
+            assertThat(error.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+          });
+      assertThatThrownBy(() -> dailyLossAccess.requireDailyLossExport(denied))
+          .isInstanceOfSatisfying(BusinessException.class, error -> {
+            assertThat(error.getCode()).isEqualTo("FORBIDDEN");
+            assertThat(error.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+      });
+    }
+
+    verify(auditRepository, times(7)).writePermissionDenied(
+        any(AuthUser.class),
+        any(String.class),
         org.mockito.ArgumentMatchers.eq("API"),
-        org.mockito.ArgumentMatchers.eq(PermissionCodes.DAILY_LOSS_READ),
+        any(String.class),
         isNull(),
-        org.mockito.ArgumentMatchers.contains("仅限财务或老板")
+        any(String.class)
+    );
+    verify(auditRepository).writePermissionDenied(
+        org.mockito.ArgumentMatchers.eq(manager),
+        org.mockito.ArgumentMatchers.eq("导出每日报损"),
+        org.mockito.ArgumentMatchers.eq("API"),
+        org.mockito.ArgumentMatchers.eq(PermissionCodes.DAILY_LOSS_EXPORT),
+        isNull(),
+        org.mockito.ArgumentMatchers.contains("仅限督导或老板")
+    );
+    verify(auditRepository).writePermissionDenied(
+        org.mockito.ArgumentMatchers.eq(finance),
+        org.mockito.ArgumentMatchers.eq("导出每日报损"),
+        org.mockito.ArgumentMatchers.eq("API"),
+        org.mockito.ArgumentMatchers.eq(PermissionCodes.DAILY_LOSS_EXPORT),
+        isNull(),
+        org.mockito.ArgumentMatchers.contains("仅限督导或老板")
     );
   }
 

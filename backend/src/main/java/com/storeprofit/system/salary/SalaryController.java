@@ -18,24 +18,18 @@ public class SalaryController {
   private final SalaryWorkflowService salaryWorkflowService;
   private final SalaryExportService salaryExportService;
 
-  // Backward-compatible: keep old SalaryService reference for any code that still uses it
-  @SuppressWarnings("unused")
-  private final SalaryService salaryService;
-
   public SalaryController(
       AuthService authService,
       SalaryQueryService salaryQueryService,
       SalaryGenerationService salaryGenerationService,
       SalaryWorkflowService salaryWorkflowService,
-      SalaryExportService salaryExportService,
-      SalaryService salaryService
+      SalaryExportService salaryExportService
   ) {
     this.authService = authService;
     this.salaryQueryService = salaryQueryService;
     this.salaryGenerationService = salaryGenerationService;
     this.salaryWorkflowService = salaryWorkflowService;
     this.salaryExportService = salaryExportService;
-    this.salaryService = salaryService;
   }
 
   @GetMapping

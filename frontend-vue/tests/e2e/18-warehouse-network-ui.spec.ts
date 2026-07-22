@@ -196,6 +196,18 @@ const transferContext = (warehouseId: number, session: typeof baseSession) => {
       unit: '箱',
       availableQuantity: 18,
       shortageMessage: '荆州总仓当前可发 18 箱鲜牛奶，请调整数量或等待补货。',
+    }, {
+      itemId: 12,
+      itemName: '双杯纸袋',
+      itemCode: '01003',
+      unit: '个',
+      availableQuantity: 60,
+    }, {
+      itemId: 13,
+      itemName: '卡士酸奶',
+      itemCode: 'BC0104',
+      unit: '件',
+      availableQuantity: 24,
     }],
   }
   if (warehouseId === 1) {
@@ -491,6 +503,46 @@ test('central warehouse without pending work falls back to proactive allocation 
   expect(log.consoleErrors).toEqual([])
 })
 
+test('warehouse center sidebar opens the authorized central workbench and keeps warehouse context in the URL', async ({ page }) => {
+  const log = await prepare(page, warehouseAdminSession)
+  await page.goto('/warehouse/central')
+
+  await page.locator('.app-sidebar--desktop').getByRole('link', { name: '仓库中心', exact: true }).click()
+  await expect.poll(() => new URL(page.url()).pathname).toBe('/warehouse/detail/1')
+  await expect(page.getByRole('heading', { name: '荆州总仓', exact: true })).toBeVisible()
+
+  const selector = page.getByLabel('当前仓库')
+  await expect(selector).toHaveValue('1')
+  await expect(selector.locator('option')).toHaveText(['荆州总仓', '山东分仓'])
+  await expect.poll(() => log.urls.some((raw) => {
+    const requestUrl = new URL(raw)
+    return requestUrl.pathname === '/api/warehouse/overview' && requestUrl.searchParams.get('warehouseId') === '1'
+  })).toBe(true)
+
+  await selector.selectOption('2')
+  await expect.poll(() => new URL(page.url()).pathname).toBe('/warehouse/detail/2')
+  await expect(page.getByRole('heading', { name: '山东分仓', exact: true })).toBeVisible()
+  for (const endpoint of ['/api/warehouse/overview', '/api/warehouse/transfers', '/api/warehouse/transfers/context']) {
+    expect(log.urls.some((raw) => {
+      const requestUrl = new URL(raw)
+      return requestUrl.pathname === endpoint && requestUrl.searchParams.get('warehouseId') === '2'
+    })).toBe(true)
+  }
+  await expect.poll(() => page.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth))).toBeLessThanOrEqual(1280)
+
+  await page.goBack()
+  await expect.poll(() => new URL(page.url()).pathname).toBe('/warehouse/detail/1')
+  await expect(page.getByRole('heading', { name: '荆州总仓', exact: true })).toBeVisible()
+  await page.goForward()
+  await expect.poll(() => new URL(page.url()).pathname).toBe('/warehouse/detail/2')
+  await expect(page.getByRole('heading', { name: '山东分仓', exact: true })).toBeVisible()
+
+  await page.goto('/warehouse')
+  await expect.poll(() => new URL(page.url()).pathname).toBe('/warehouse/detail/1')
+  await expect(page.getByRole('heading', { name: '荆州总仓', exact: true })).toBeVisible()
+  expect(log.consoleErrors).toEqual([])
+})
+
 test('multi-warehouse admin switches by scoped warehouse id and ignores query tampering', async ({ page }) => {
   const log = await prepare(page, warehouseAdminSession)
   await page.goto('/warehouse/central')
@@ -498,7 +550,7 @@ test('multi-warehouse admin switches by scoped warehouse id and ignores query ta
   await expect(selector).toBeVisible()
   await expect(selector.locator('option')).toHaveCount(2)
   await selector.selectOption('2')
-  await expect.poll(() => new URL(page.url()).pathname).toBe('/warehouse/shandong')
+  await expect.poll(() => new URL(page.url()).pathname).toBe('/warehouse/detail/2')
 
   await page.goto('/warehouse/shandong?warehouseId=1')
   await expect(page.getByRole('link', { name: '向上级总仓申请补货' })).toBeVisible()
@@ -516,13 +568,23 @@ test('transfer workbench keeps its route while switching warehouse context and r
   await expect(page.getByRole('heading', { name: '向分仓主动配货', exact: true })).toBeVisible()
   await expect(page.getByLabel('调出仓')).toHaveValue('荆州总仓')
   const centralTarget = page.getByLabel('调入仓')
-  await expect(centralTarget.locator('option')).toHaveCount(1)
-  await expect(centralTarget).toHaveValue('1:2')
+  await expect(centralTarget).toHaveValue('山东分仓')
+  await expect(centralTarget).toHaveAttribute('readonly', '')
   await expect(page.getByText('主动配货草稿', { exact: true })).toBeVisible()
   await expect(page.getByText('待审批', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('待发货', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('DB-JZ-001', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '发货', exact: true })).toBeVisible()
+
+  await page.getByRole('button', { name: '增加物料', exact: true }).click()
+  const materialSearch = page.getByLabel('搜索调拨物料', { exact: true })
+  const materialSelect = page.getByLabel('调拨物料', { exact: true })
+  await expect(materialSelect.locator('option')).toHaveCount(4)
+  await materialSearch.fill('01003')
+  await expect(materialSelect.locator('option')).toHaveCount(2)
+  await expect(materialSelect.locator('option')).toContainText(['请选择物料', '双杯纸袋 · 01003 · 可发 60 个'])
+  await expect(page.getByText('找到 1 条，共 3 条物料', { exact: true })).toBeVisible()
+  await materialSelect.selectOption('12')
 
   await page.getByRole('button', { name: '提交', exact: true }).click()
   await expect.poll(() => log.urls.some((raw) => new URL(raw).pathname.endsWith('/TR-JZ-DRAFT/submit'))).toBe(true)

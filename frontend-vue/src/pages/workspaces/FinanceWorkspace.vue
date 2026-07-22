@@ -21,7 +21,7 @@ const modules = computed(() => [
 
 <template>
   <section class="page-panel finance-workspace">
-    <PageHeader subtitle="仅展示当前账号已获授权的财务模块。" />
+    <PageHeader />
     <nav v-if="modules.length" class="workspace-links" aria-label="财务业务入口">
       <RouterLink v-for="item in modules" :key="item.to" :to="item.to">
         <component :is="item.icon" :size="20" aria-hidden="true" />

@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 import com.storeprofit.system.common.BusinessException;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
+import com.storeprofit.system.todo.BusinessTodoService;
 import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -198,6 +199,19 @@ class ExpenseSupplementServiceTest {
         "FORBIDDEN"
     );
     verify(accessControl).requireExpenseWrite(warehouse, "exp-1", "s1", "2026-05");
+  }
+
+  @Test
+  void supplementRestoresOnlyTheAffectedStoreExpenseReviewTodo() {
+    BusinessTodoService todoService = mock(BusinessTodoService.class);
+    ExpenseSupplementService reconciledService = new ExpenseSupplementService(
+        expenseRepository, supplementRepository, accessControl, todoService, storageRoot);
+
+    ExpenseClaimResponse response = reconciledService.submit(
+        manager("s1"), "exp-1", "补充说明", List.of(file("invoice.png", "image/png", png())));
+
+    assertThat(response.status()).isEqualTo("待审核");
+    verify(todoService).reconcileExpenseReviewForStore(1L, "s1", "2026-05");
   }
 
   @Test

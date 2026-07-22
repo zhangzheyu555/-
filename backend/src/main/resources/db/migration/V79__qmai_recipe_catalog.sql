@@ -1,4 +1,4 @@
--- Server-owned recipe definitions. Product sales can only be converted through these tenant/brand
+-- V79: server-owned recipe definitions. Product sales can only be converted through these tenant/brand
 -- scoped rows; the browser is never an authority for grams, yield, or conversion factors.
 create table qmai_recipe_definition (
   id bigint not null auto_increment primary key,

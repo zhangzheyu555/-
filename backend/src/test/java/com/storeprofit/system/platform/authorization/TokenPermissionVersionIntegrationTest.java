@@ -19,7 +19,7 @@ class TokenPermissionVersionIntegrationTest {
     AuthRepository authRepository = new AuthRepository(jdbcTemplate);
     authRepository.createUser(
         1L, "stale-version-user", new PasswordService().hash("test-password"),
-        "旧版本测试", "OPERATIONS", null);
+        "督导权限版本测试", "SUPERVISOR", null);
     var user = authRepository.findByUsername(1L, "stale-version-user").orElseThrow();
     authRepository.createToken(
         "TEST_STALE_PERMISSION_TOKEN",

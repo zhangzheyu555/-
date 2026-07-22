@@ -1,10 +1,6 @@
-# 同时支持服务器产物镜像和开发源码构建镜像。
-# dist/ 供服务器镜像使用，src/ 供开发镜像在容器内构建。
-node_modules/
-.vite/
-test-results/
-playwright-report/
-.idea/
-.vscode/
+node_modules
+dist
+test-results
+playwright-report
+.git
 *.log
-# dist/ 不忽略，服务器镜像需要 COPY；开发镜像会自行生成。

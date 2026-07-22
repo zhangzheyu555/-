@@ -31,6 +31,11 @@ final class RemoteEmployeeAssistantProvider implements EmployeeAssistantProvider
   }
 
   @Override
+  public String target() {
+    return upstreamUrl;
+  }
+
+  @Override
   public HttpRequest healthRequest(Duration timeout) {
     return request("/api/v1/health", timeout).GET().build();
   }

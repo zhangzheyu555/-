@@ -1,6 +1,7 @@
 param(
   [int]$TimeoutSeconds = 120,
   [int]$HealthPort = $(if ($env:SERVER_PORT) { [int]$env:SERVER_PORT } else { 8080 }),
+  [string]$DiagnosticsAuthorizationToken = $env:QA_BOSS_TOKEN,
   [switch]$SkipPackage
 )
 
@@ -24,6 +25,14 @@ if ([string]::IsNullOrWhiteSpace($env:APP_ENV)) {
 }
 if ([string]::IsNullOrWhiteSpace($env:SERVER_PORT)) {
   $env:SERVER_PORT = [string]$HealthPort
+}
+if ([string]::IsNullOrWhiteSpace($DiagnosticsAuthorizationToken)) {
+  throw 'A BOSS diagnostics token is required. Set QA_BOSS_TOKEN or pass -DiagnosticsAuthorizationToken.'
+}
+$diagnosticsAuthorization = if ($DiagnosticsAuthorizationToken.Trim().StartsWith('Bearer ', [StringComparison]::OrdinalIgnoreCase)) {
+  $DiagnosticsAuthorizationToken.Trim()
+} else {
+  'Bearer ' + $DiagnosticsAuthorizationToken.Trim()
 }
 
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -73,9 +82,10 @@ try {
     try {
       $health = Invoke-RestMethod -Uri $healthUrl -TimeoutSec 3
       if ($health.success -and $health.data.status -eq 'UP') {
-        $version = [string]$health.data.databaseMigrationVersion
-        Write-Host "Backend health is UP. Flyway current version: $version"
-        Write-Host "Database: $($health.data.databaseName) on port $($health.data.databasePort)"
+        $diagnostics = Invoke-RestMethod -Uri "$healthUrl/diagnostics" -Headers @{ Authorization = $diagnosticsAuthorization } -TimeoutSec 3
+        $version = [string]$diagnostics.data.databaseMigrationVersion
+        Write-Host "Backend liveness is UP. Authenticated Flyway current version: $version"
+        Write-Host "Authenticated database target: $($diagnostics.data.databaseName) on port $($diagnostics.data.databasePort)"
         if ($version -ne '62') {
           Write-Warning "Expected Flyway version 62. Current version is $version."
         }
@@ -89,6 +99,8 @@ try {
 
   throw "Timed out waiting for $healthUrl after $TimeoutSeconds seconds. Logs: $stdout ; $stderr"
 } finally {
+  $DiagnosticsAuthorizationToken = $null
+  $diagnosticsAuthorization = $null
   if ($process -and -not $process.HasExited) {
     Stop-Process -Id $process.Id -Force
   }

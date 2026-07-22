@@ -19,14 +19,12 @@ class SalaryControllerTest {
   private final SalaryGenerationService salaryGenerationService = mock(SalaryGenerationService.class);
   private final SalaryWorkflowService salaryWorkflowService = mock(SalaryWorkflowService.class);
   private final SalaryExportService salaryExportService = mock(SalaryExportService.class);
-  private final SalaryService salaryService = mock(SalaryService.class);
   private final SalaryController controller = new SalaryController(
       authService,
       salaryQueryService,
       salaryGenerationService,
       salaryWorkflowService,
-      salaryExportService,
-      salaryService
+      salaryExportService
   );
   private final AuthUser boss = new AuthUser(1L, 1L, "default", "boss", "", "Boss", "BOSS", null, true);
 

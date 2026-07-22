@@ -40,11 +40,12 @@ public class UserManagementService {
       "BOSS", "FINANCE", "STORE_MANAGER", "WAREHOUSE", "SUPERVISOR", "EMPLOYEE");
   private static final Set<String> SUPERVISOR_SCOPE_DOMAINS = Set.of(
       DataScopeDomains.STORE,
-      DataScopeDomains.WAREHOUSE,
       DataScopeDomains.INSPECTION,
       DataScopeDomains.EXAM,
       DataScopeDomains.PLATFORM
   );
+  private static final String WAREHOUSE_PERMISSION_PREFIX = "warehouse.";
+  private static final String DAILY_LOSS_PERMISSION_PREFIX = "daily_loss.";
 
   private final AuthRepository authRepository;
   private final PasswordService passwordService;
@@ -155,8 +156,9 @@ public class UserManagementService {
         true
     );
     String password = normalizePassword(request == null ? null : request.password());
-    authRepository.createUser(
-        currentUser.tenantId(), username, passwordService.hash(password), profile.displayName(), profile.role(), profile.storeId());
+    authRepository.createUserRequiringPasswordChange(
+        currentUser.tenantId(), username, passwordService.hash(password), profile.displayName(), profile.role(),
+        profile.storeId());
     AuthUser created = authRepository.findByUsername(currentUser.tenantId(), username)
         .orElseThrow(() -> new BusinessException("USER_CREATE_FAILED", "账号创建失败", HttpStatus.INTERNAL_SERVER_ERROR));
     authRepository.replaceStoreScope(currentUser.tenantId(), created.id(), profile.storeScope());
@@ -445,30 +447,38 @@ public class UserManagementService {
             "FINANCE_IMPORT_FINANCE_ONLY", "月度经营数据导入仅限财务或老板，不能授予其他账号", HttpStatus.BAD_REQUEST);
       }
       String targetRole = AccessControlService.canonicalRole(target.role());
+      if ("FINANCE".equals(targetRole)
+          && effect == PermissionEffect.ALLOW
+          && (permissionCode.startsWith(WAREHOUSE_PERMISSION_PREFIX)
+              || PermissionCodes.EMPLOYEE_ASSISTANT_USE.equals(permissionCode)
+              || permissionCode.startsWith(DAILY_LOSS_PERMISSION_PREFIX))) {
+        throw new BusinessException(
+            "FINANCE_PERMISSION_BOUNDARY",
+            "财务账号不能获得仓库中心、员工服务助手或每日报损权限",
+            HttpStatus.BAD_REQUEST);
+      }
       if ("SUPERVISOR".equals(targetRole)
           && effect == PermissionEffect.ALLOW
-          && Set.of(
-              PermissionCodes.SYSTEM_USER_MANAGE,
-              PermissionCodes.STORE_MANAGE,
-              PermissionCodes.FINANCE_PROFIT_WRITE,
-              PermissionCodes.FINANCE_PROFIT_IMPORT,
-              PermissionCodes.FINANCE_PROFIT_DELETE,
-              PermissionCodes.SALARY_READ,
-              PermissionCodes.SALARY_EDIT,
-              PermissionCodes.SALARY_REVIEW,
-              PermissionCodes.SALARY_PAY,
-              PermissionCodes.WAREHOUSE_CENTRAL_READ,
-              PermissionCodes.WAREHOUSE_CENTRAL_MANAGE,
-              PermissionCodes.WAREHOUSE_PURCHASE,
-              PermissionCodes.WAREHOUSE_TRANSFER_REQUEST,
-              PermissionCodes.WAREHOUSE_TRANSFER_APPROVE,
-              PermissionCodes.WAREHOUSE_TRANSFER_SHIP,
-              PermissionCodes.WAREHOUSE_TRANSFER_RECEIVE,
-              PermissionCodes.WAREHOUSE_REQUISITION_PROCESS,
-              PermissionCodes.WAREHOUSE_CONFIGURE).contains(permissionCode)) {
+          && (permissionCode.startsWith(WAREHOUSE_PERMISSION_PREFIX)
+              || Set.of(
+                  PermissionCodes.SYSTEM_USER_MANAGE,
+                  PermissionCodes.STORE_MANAGE,
+                  PermissionCodes.EMPLOYEE_READ,
+                  PermissionCodes.EMPLOYEE_MANAGE,
+                  PermissionCodes.FINANCE_PROFIT_WRITE,
+                  PermissionCodes.FINANCE_PROFIT_IMPORT,
+                  PermissionCodes.FINANCE_PROFIT_DELETE,
+                  PermissionCodes.SALARY_READ,
+                  PermissionCodes.SALARY_EDIT,
+                  PermissionCodes.SALARY_REVIEW,
+                  PermissionCodes.SALARY_PAY,
+                  PermissionCodes.ASSISTANT_USE,
+                  PermissionCodes.EMPLOYEE_ASSISTANT_USE,
+                  PermissionCodes.EMPLOYEE_ASSISTANT_KNOWLEDGE_MANAGE,
+                  PermissionCodes.EMPLOYEE_ASSISTANT_HANDOFF_MANAGE).contains(permissionCode))) {
         throw new BusinessException(
             "SUPERVISOR_PERMISSION_BOUNDARY",
-            "督导不能获得财务写入、工资、账号权限、门店管理或总仓操作权限",
+            "督导不能获得仓库中心、员工档案、门店经营助手、员工服务助手、财务写入、工资、账号权限或门店管理权限",
             HttpStatus.BAD_REQUEST);
       }
       if ("EMPLOYEE".equals(targetRole)
@@ -622,14 +632,12 @@ public class UserManagementService {
     }
     if ("SUPERVISOR".equals(role)) {
       boolean valid = SUPERVISOR_SCOPE_DOMAINS.contains(domain)
-          ? (DataScopeDomains.WAREHOUSE.equals(domain)
-              ? Set.of(DataScopeModes.STORE_LIST, DataScopeModes.WAREHOUSE_LIST, DataScopeModes.NONE).contains(mode)
-              : Set.of(DataScopeModes.STORE_LIST, DataScopeModes.NONE).contains(mode))
+          ? Set.of(DataScopeModes.STORE_LIST, DataScopeModes.NONE).contains(mode)
           : DataScopeModes.NONE.equals(mode);
       if (!valid) {
         throw new BusinessException(
             "SUPERVISOR_SCOPE_BOUNDARY",
-            "督导角色只能配置已授权门店或仓库的数据范围",
+            "督导角色只能配置已授权门店范围，不能配置仓库范围",
             HttpStatus.BAD_REQUEST
         );
       }

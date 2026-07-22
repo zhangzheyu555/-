@@ -115,6 +115,16 @@ async function prepare(page: Page) {
     { id: 'store-1', code: 'S001', name: '测试门店', brandId: 1, brandName: '测试品牌', status: 'ACTIVE' },
   ])))
   await page.route('**/api/finance/months', (route) => route.fulfill(ok(['2026-07'])))
+  await page.route('**/api/finance/dashboard**', (route) => route.fulfill(ok({
+    months: ['2026-07'],
+    brands: [],
+    summary: {
+      month: '2026-07', storeCount: 1, entryCount: 1, sales: 100, income: 100,
+      costSum: 30, expenseSum: 42, net: 28, margin: 0.28, riskStoreCount: 0,
+    },
+    entries: [],
+    trend: [],
+  })))
   await page.route('**/api/assistant/status', (route) => route.fulfill(ok(status())))
   await seedAuth(page, { token: 'e2e-assistant-snapshot-token', user: assistantUser })
 }

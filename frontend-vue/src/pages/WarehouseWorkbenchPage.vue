@@ -685,75 +685,82 @@ watch(
       :pending-requisition-count="overview?.summary.pendingRequisitionCount || 0"
     />
 
-    <section v-if="isWarehouseEntrance" class="warehouse-workbench-grid">
-      <section class="warehouse-priority-panel" aria-labelledby="warehouse-priority-heading">
-        <div class="workbench-section-heading">
-          <div>
-            <span>今日工作重点</span>
-            <h3 id="warehouse-priority-heading">待优先处理</h3>
-          </div>
+    <section v-if="isWarehouseEntrance" class="warehouse-operations-overview" aria-labelledby="warehouse-overview-heading">
+      <div class="warehouse-operations-main">
+        <div class="warehouse-overview-title">
+          <span aria-hidden="true"></span>
+          <h3 id="warehouse-overview-heading">运营概览</h3>
         </div>
-        <div v-if="priorityItems.length" class="priority-list">
-          <RouterLink v-for="item in priorityItems" :key="item.key" class="priority-item" :to="item.to">
-            <span class="priority-item__count">{{ item.count }}</span>
-            <span class="priority-item__copy"><b>{{ item.title }}</b><small>{{ item.detail }}</small></span>
-            <ArrowRight :size="18" aria-hidden="true" />
-          </RouterLink>
-        </div>
-        <div v-else class="priority-empty">当前没有需要优先处理的事项。</div>
-      </section>
 
-      <section class="warehouse-action-panel" aria-labelledby="warehouse-actions-heading">
-        <div class="workbench-section-heading">
-          <div>
-            <span>按当前仓库权限执行</span>
-            <h3 id="warehouse-actions-heading">常用操作</h3>
+        <section class="warehouse-priority-panel" aria-labelledby="warehouse-priority-heading">
+          <div class="workbench-section-heading">
+            <div>
+              <span>今日工作重点</span>
+              <h3 id="warehouse-priority-heading">待优先处理</h3>
+            </div>
           </div>
-        </div>
-        <div class="warehouse-action-list">
-          <RouterLink v-if="primaryAction" class="primary-button warehouse-primary-action" :to="primaryAction.to">
-            <ClipboardList :size="18" />{{ primaryAction.label }}
-          </RouterLink>
-          <RouterLink v-if="selectedWarehouse?.type === 'CENTRAL' && canPurchase" class="secondary-action" to="/warehouse/purchase">
-            <PackagePlus :size="18" />外部采购入库
-          </RouterLink>
-          <RouterLink v-if="canConfigureWarehouse && warehouseDetailSection !== 'catalog'" class="text-action" to="/warehouse/items">物料档案 <ArrowRight :size="15" /></RouterLink>
-          <RouterLink v-if="warehouseDetailSection === 'catalog'" class="text-action" :to="warehouseHomeRoute">返回库存 <ArrowRight :size="15" /></RouterLink>
-          <span v-if="!primaryAction && !(selectedWarehouse?.type === 'CENTRAL' && canPurchase)" class="action-empty">当前账号没有可执行的仓库操作。</span>
-        </div>
-      </section>
-    </section>
+          <div v-if="priorityItems.length" class="priority-list">
+            <RouterLink v-for="item in priorityItems" :key="item.key" class="priority-item" :to="item.to">
+              <span class="priority-item__count">{{ item.count }}</span>
+              <span class="priority-item__copy"><b>{{ item.title }}</b><small>{{ item.detail }}</small></span>
+              <ArrowRight :size="18" aria-hidden="true" />
+            </RouterLink>
+          </div>
+          <div v-else class="priority-empty">当前没有需要优先处理的事项。</div>
+        </section>
 
-    <section v-if="isWarehouseEntrance" class="warehouse-overview-grid">
-      <div class="content-card overview-card">
-        <div class="table-heading">
-          <div><h3>库存预警</h3></div>
-          <button class="mini-button" type="button" @click="setTab('inventory')">查看库存</button>
-        </div>
-        <div v-if="alerts.length" class="overview-list">
-          <div v-for="alert in alerts.slice(0, 6)" :key="`${alert.type}-${alert.itemId}`" class="overview-list-row">
-            <b :class="statusClass(alert.severity)">{{ alert.type === 'EXPIRING' ? '临期' : '低库存' }}</b>
-            <strong>{{ alert.itemName }}</strong>
-            <span>{{ alert.message }}</span>
+        <div class="warehouse-alerts-panel">
+          <div class="table-heading">
+            <div><h3>库存预警</h3></div>
+            <button class="mini-button" type="button" @click="setTab('inventory')">查看库存</button>
           </div>
+          <div v-if="alerts.length" class="overview-list">
+            <div v-for="alert in alerts.slice(0, 6)" :key="`${alert.type}-${alert.itemId}`" class="overview-list-row">
+              <b :class="statusClass(alert.severity)">{{ alert.type === 'EXPIRING' ? '临期' : '低库存' }}</b>
+              <strong>{{ alert.itemName }}</strong>
+              <span>{{ alert.message }}</span>
+            </div>
+          </div>
+          <div v-else class="empty-state compact">当前没有库存预警。</div>
         </div>
-        <div v-else class="empty-state compact">当前没有库存预警。</div>
       </div>
 
-      <div class="content-card overview-card">
-        <div class="table-heading">
-          <div><h3>门店叫货</h3></div>
-          <button class="mini-button" type="button" @click="setTab('requisitions')">查看全部</button>
-        </div>
-        <div v-if="pendingRequisitions.length" class="overview-list">
-          <div v-for="row in pendingRequisitions.slice(0, 6)" :key="row.id" class="overview-list-row order-row">
-            <strong>{{ row.storeName || row.storeId }}</strong>
-            <span>{{ row.lines.map((line) => `${line.itemName} × ${line.requestedQuantity}${line.unit || ''}`).join('，') }}</span>
-            <b>{{ row.statusLabel || row.status }}</b>
+      <aside class="warehouse-operations-rail">
+        <section class="warehouse-action-panel" aria-labelledby="warehouse-actions-heading">
+          <div class="workbench-section-heading">
+            <div>
+              <span>按当前仓库权限执行</span>
+              <h3 id="warehouse-actions-heading">快捷处理</h3>
+            </div>
           </div>
-        </div>
-        <div v-else class="empty-state compact">当前没有待处理叫货。</div>
-      </div>
+          <div class="warehouse-action-list">
+            <RouterLink v-if="primaryAction" class="primary-button warehouse-primary-action" :to="primaryAction.to">
+              <ClipboardList :size="18" />{{ primaryAction.label }}
+            </RouterLink>
+            <RouterLink v-if="selectedWarehouse?.type === 'CENTRAL' && canPurchase" class="secondary-action" to="/warehouse/purchase">
+              <PackagePlus :size="18" />外部采购入库
+            </RouterLink>
+            <RouterLink v-if="canConfigureWarehouse && warehouseDetailSection !== 'catalog'" class="text-action" to="/warehouse/items">物料档案 <ArrowRight :size="15" /></RouterLink>
+            <RouterLink v-if="warehouseDetailSection === 'catalog'" class="text-action" :to="warehouseHomeRoute">返回库存 <ArrowRight :size="15" /></RouterLink>
+            <span v-if="!primaryAction && !(selectedWarehouse?.type === 'CENTRAL' && canPurchase)" class="action-empty">当前账号没有可执行的仓库操作。</span>
+          </div>
+        </section>
+
+        <section class="warehouse-requisition-overview">
+          <div class="table-heading">
+            <div><h3>门店叫货</h3></div>
+            <button class="mini-button" type="button" @click="setTab('requisitions')">查看全部</button>
+          </div>
+          <div v-if="pendingRequisitions.length" class="overview-list">
+            <div v-for="row in pendingRequisitions.slice(0, 6)" :key="row.id" class="overview-list-row order-row">
+              <strong>{{ row.storeName || row.storeId }}</strong>
+              <span>{{ row.lines.map((line) => `${line.itemName} × ${line.requestedQuantity}${line.unit || ''}`).join('，') }}</span>
+              <b>{{ row.statusLabel || row.status }}</b>
+            </div>
+          </div>
+          <div v-else class="empty-state compact">当前没有待处理叫货。</div>
+        </section>
+      </aside>
     </section>
 
     <WarehouseInventoryPanel
@@ -918,7 +925,7 @@ watch(
 .warehouse-workbench,
 .section-stack {
   display: grid;
-  gap: 22px;
+  gap: 16px;
 }
 
 .warehouse-workbench {
@@ -928,21 +935,21 @@ watch(
 
 .warehouse-context-section {
   display: grid;
-  gap: 12px;
+  gap: 14px;
+  padding-top: 2px;
 }
 
 .warehouse-context-header {
   display: flex;
   min-width: 0;
-  align-items: flex-start;
+  align-items: flex-end;
   gap: 20px;
-  padding: 2px 0 0;
 }
 
 .warehouse-context-copy {
   display: grid;
   min-width: 0;
-  gap: 9px;
+  gap: 8px;
   margin-right: auto;
 }
 
@@ -1026,30 +1033,80 @@ watch(
   min-height: 44px;
 }
 
-.warehouse-workbench-grid {
+.warehouse-operations-overview {
   display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(300px, 0.75fr);
-  gap: 24px;
-  padding: 20px 0;
-  border-top: 1px solid var(--ds-line);
-  border-bottom: 1px solid var(--ds-line);
+  grid-template-columns: minmax(0, 1.7fr) minmax(310px, 0.9fr);
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--ds-line);
+  border-radius: 12px;
+  background: var(--ds-surface);
 }
 
+.warehouse-operations-main,
+.warehouse-operations-rail,
 .warehouse-priority-panel,
-.warehouse-action-panel {
+.warehouse-action-panel,
+.warehouse-alerts-panel,
+.warehouse-requisition-overview {
   min-width: 0;
 }
 
-.warehouse-action-panel {
-  padding-left: 24px;
+.warehouse-operations-main {
+  padding: 20px 22px 18px;
+}
+
+.warehouse-operations-rail {
+  display: grid;
+  align-content: start;
+  background: color-mix(in srgb, var(--ds-surface-muted) 52%, var(--ds-surface));
   border-left: 1px solid var(--ds-line);
+}
+
+.warehouse-overview-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.warehouse-overview-title > span {
+  width: 4px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--ds-primary-hover);
+}
+
+.warehouse-overview-title h3 {
+  margin: 0;
+  color: var(--ds-ink);
+  font-size: 17px;
+  line-height: 1.2;
+}
+
+.warehouse-priority-panel {
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--ds-line);
+}
+
+.warehouse-alerts-panel {
+  padding-top: 16px;
+}
+
+.warehouse-action-panel,
+.warehouse-requisition-overview {
+  padding: 20px;
+}
+
+.warehouse-requisition-overview {
+  border-top: 1px solid var(--ds-line);
 }
 
 .workbench-section-heading {
   display: flex;
   align-items: start;
   justify-content: space-between;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .workbench-section-heading span {
@@ -1123,14 +1180,17 @@ watch(
 
 .priority-empty {
   display: grid;
-  min-height: 112px;
-  place-items: center start;
+  min-height: 82px;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--ds-surface-muted);
+  text-align: center;
 }
 
 .warehouse-action-list {
   align-items: stretch;
   flex-direction: column;
-  gap: 9px;
+  gap: 8px;
 }
 
 .warehouse-primary-action,
@@ -1164,7 +1224,7 @@ watch(
 .text-action {
   display: inline-flex;
   width: fit-content;
-  min-height: 38px;
+  min-height: 34px;
   align-items: center;
   gap: 5px;
   color: var(--ds-primary-hover);
@@ -1200,19 +1260,9 @@ watch(
 
 .warehouse-business-navigation :deep(.secondary-navigation__item--active) {
   border-bottom-color: var(--ds-primary);
-  background: var(--ds-primary-soft);
+  background: transparent;
   box-shadow: none;
-  color: var(--ds-ink);
-}
-
-.warehouse-overview-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.overview-card {
-  min-height: 216px;
+  color: var(--ds-primary-hover);
 }
 
 .overview-list {
@@ -1224,7 +1274,7 @@ watch(
   grid-template-columns: 58px minmax(104px, 0.7fr) minmax(0, 1.8fr);
   gap: 10px;
   align-items: center;
-  min-height: 44px;
+  min-height: 40px;
   border-bottom: 1px solid #edf1f2;
   color: #687586;
   font-size: 13px;
@@ -1247,7 +1297,7 @@ watch(
 }
 
 .overview-list-row.order-row {
-  grid-template-columns: minmax(100px, 0.8fr) minmax(0, 1.6fr) auto;
+  grid-template-columns: minmax(86px, 0.8fr) minmax(0, 1.6fr) auto;
 }
 
 .overview-list-row.order-row b {
@@ -1266,20 +1316,28 @@ watch(
     width: 100%;
   }
 
-  .warehouse-workbench-grid {
+  .warehouse-operations-overview {
     grid-template-columns: 1fr;
-    gap: 20px;
   }
 
-  .warehouse-action-panel {
-    padding-top: 20px;
-    padding-left: 0;
+  .warehouse-operations-rail {
     border-top: 1px solid var(--ds-line);
     border-left: 0;
   }
 
-  .warehouse-overview-grid {
-    grid-template-columns: 1fr;
+  .warehouse-operations-main,
+  .warehouse-action-panel,
+  .warehouse-requisition-overview {
+    padding: 16px;
+  }
+
+  .overview-list-row,
+  .overview-list-row.order-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .overview-list-row > span {
+    grid-column: 1 / -1;
   }
 }
 </style>

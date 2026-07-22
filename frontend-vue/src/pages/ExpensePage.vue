@@ -396,10 +396,6 @@ watch([selectedMonth, selectedBrand, selectedStore, selectedStatus], () => {
   font-size: 13px;
 }
 
-.today-status b {
-  color: var(--primary-dark);
-}
-
 @media (max-width: 720px) {
   .business-summary,
   .expense-actions {

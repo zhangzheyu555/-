@@ -38,6 +38,16 @@ async function prepareAssistantPage(page: Page) {
   ])))
   await page.route('**/api/finance/months', (route) => route.fulfill(ok(['2026-07'])))
   await page.route('**/api/finance/entries**', (route) => route.fulfill(ok([])))
+  await page.route('**/api/finance/dashboard**', (route) => route.fulfill(ok({
+    months: ['2026-07'],
+    brands: [],
+    summary: {
+      month: '2026-07', storeCount: 1, entryCount: 1, sales: 100, income: 100,
+      costSum: 30, expenseSum: 42, net: 28, margin: 0.28, riskStoreCount: 0,
+    },
+    entries: [],
+    trend: [],
+  })))
   await page.route('**/api/assistant/operating-snapshot**', (route) => route.fulfill(ok(snapshot)))
   await seedAuth(page, { token: 'e2e-assistant-status-token', user: assistantUser })
 }
@@ -167,9 +177,10 @@ test.describe('store assistant status refresh', () => {
     await page.getByLabel('经营问题').fill('本月净利润怎么样？')
     await page.getByRole('button', { name: '发送' }).click()
 
-    await expect(page.getByText('经营数据', { exact: true })).toBeVisible()
-    await expect(page.locator('.run-facts')).toHaveAttribute('data-snapshot-id', snapshot.snapshotId)
-    await expect(page.locator('.run-facts')).toContainText('经营利润率 28.0%')
+    const localFacts = page.getByRole('region', { name: '经营数据' })
+    await expect(localFacts).toBeVisible()
+    await expect(localFacts).toContainText('本月真实经营数据已查询完成。')
+    await expect(page.locator('.metric-strip')).toContainText('28.0%')
     await expect(page.getByText('AI分析服务尚未配置，本地经营数据仍可正常查询。')).toBeVisible()
   })
 

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { AlertCircle, Eye, EyeOff, Headphones, LockKeyhole, ShieldCheck, UserRound } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import { ApiError } from '../api/http'
+import { changeInitialPasswordApi } from '../api/auth'
 import { getHealth } from '../api/health'
 import { useAuthStore } from '../stores/auth'
 
@@ -17,6 +18,12 @@ const capsLockOn = ref(false)
 const usernameError = ref('')
 const passwordError = ref('')
 const submitError = ref('')
+const passwordChangeCredential = ref('')
+const newPassword = ref('')
+const confirmPassword = ref('')
+const newPasswordError = ref('')
+const passwordChangeSuccess = ref('')
+const changingPassword = ref(false)
 const showHelp = ref(false)
 const systemHealthy = ref(false)
 const REMEMBERED_USERNAME_KEY = 'ai_profit_remembered_username'
@@ -35,7 +42,13 @@ async function submit() {
     return
   }
   try {
-    await auth.login(username.value.trim(), password.value)
+    const outcome = await auth.login(username.value.trim(), password.value)
+    password.value = ''
+    if (outcome.passwordChangeRequired) {
+      passwordChangeCredential.value = outcome.credential
+      submitError.value = ''
+      return
+    }
     if (rememberUsername.value) {
       localStorage.setItem(REMEMBERED_USERNAME_KEY, username.value.trim())
     } else {
@@ -46,6 +59,41 @@ async function submit() {
   } catch (err) {
     applyLoginError(err)
   }
+}
+
+async function submitInitialPasswordChange() {
+  if (changingPassword.value || !passwordChangeCredential.value) return
+  newPasswordError.value = ''
+  submitError.value = ''
+  if (newPassword.value.length < 8 || newPassword.value.length > 128) {
+    newPasswordError.value = '新密码长度必须为 8 至 128 位'
+    return
+  }
+  if (newPassword.value !== confirmPassword.value) {
+    newPasswordError.value = '两次输入的新密码不一致'
+    return
+  }
+  changingPassword.value = true
+  try {
+    await changeInitialPasswordApi(
+      passwordChangeCredential.value,
+      newPassword.value,
+      confirmPassword.value,
+    )
+    clearPasswordChangeState()
+    passwordChangeSuccess.value = '密码修改成功，请使用新密码重新登录'
+  } catch (err) {
+    newPasswordError.value = err instanceof Error ? err.message : '密码修改失败，请重新登录后重试'
+    if (err instanceof ApiError && err.status === 401) clearPasswordChangeState()
+  } finally {
+    changingPassword.value = false
+  }
+}
+
+function clearPasswordChangeState() {
+  passwordChangeCredential.value = ''
+  newPassword.value = ''
+  confirmPassword.value = ''
 }
 
 function resolveRedirect(redirect: unknown) {
@@ -117,6 +165,8 @@ onMounted(async () => {
     systemHealthy.value = false
   }
 })
+
+onBeforeUnmount(clearPasswordChangeState)
 </script>
 
 <template>
@@ -133,11 +183,10 @@ onMounted(async () => {
         <ShieldCheck :size="52" stroke-width="1.7" />
         <div>
           <h1>安全登录</h1>
-          <p>使用公司账号进入工作台</p>
         </div>
       </section>
 
-      <form class="login-form" novalidate @submit.prevent="submit">
+      <form v-if="!passwordChangeCredential" class="login-form" novalidate @submit.prevent="submit">
         <div class="login-field" :class="{ invalid: usernameError }">
           <label for="login-username">账号</label>
           <div class="input-shell">
@@ -187,6 +236,7 @@ onMounted(async () => {
         </div>
 
         <div v-if="submitError" class="submit-error"><AlertCircle :size="16" />{{ submitError }}</div>
+        <div v-if="passwordChangeSuccess" class="password-change-success">{{ passwordChangeSuccess }}</div>
         <div v-if="showHelp" class="login-help">请联系系统维护人员核验身份后，通过账号权限执行安全重置。</div>
 
         <button class="login-submit" type="submit" :disabled="auth.loading">
@@ -194,6 +244,32 @@ onMounted(async () => {
         </button>
 
         <div class="support-row"><Headphones :size="18" />登录遇到问题？请联系系统维护人员</div>
+      </form>
+
+
+      <form v-else class="login-form" novalidate @submit.prevent="submitInitialPasswordChange">
+        <div class="password-change-notice">
+          <strong>首次登录必须修改密码</strong>
+          <span>完成修改后，请使用新密码重新登录。</span>
+        </div>
+        <div class="login-field" :class="{ invalid: newPasswordError }">
+          <label for="initial-new-password">新密码</label>
+          <div class="input-shell">
+            <LockKeyhole :size="20" />
+            <input id="initial-new-password" v-model="newPassword" type="password" autocomplete="new-password" placeholder="8 至 128 位" />
+          </div>
+        </div>
+        <div class="login-field" :class="{ invalid: newPasswordError }">
+          <label for="initial-confirm-password">确认新密码</label>
+          <div class="input-shell">
+            <LockKeyhole :size="20" />
+            <input id="initial-confirm-password" v-model="confirmPassword" type="password" autocomplete="new-password" placeholder="再次输入新密码" />
+          </div>
+          <span v-if="newPasswordError" class="field-error"><AlertCircle :size="16" />{{ newPasswordError }}</span>
+        </div>
+        <button class="login-submit" type="submit" :disabled="changingPassword">
+          {{ changingPassword ? '正在修改...' : '修改密码' }}
+        </button>
       </form>
     </main>
 
@@ -266,12 +342,6 @@ onMounted(async () => {
   color: var(--ds-ink);
   font-size: 34px;
   font-weight: 800;
-}
-
-.login-intro p {
-  margin: 12px 0 0;
-  color: var(--ds-muted);
-  font-size: 17px;
 }
 
 .login-form {
@@ -392,6 +462,22 @@ onMounted(async () => {
   background: var(--ds-danger-soft);
 }
 
+.password-change-notice,
+.password-change-success {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border-radius: 6px;
+  background: var(--ds-warning-soft);
+  color: #6d4b24;
+  font-size: 14px;
+}
+
+.password-change-success {
+  background: var(--ds-success-soft);
+  color: var(--ds-success);
+}
+
 .login-help {
   color: #6d4b24;
   background: var(--ds-warning-soft);
@@ -484,10 +570,6 @@ onMounted(async () => {
 
   .login-intro h1 {
     font-size: 28px;
-  }
-
-  .login-intro p {
-    font-size: 15px;
   }
 
   .login-form {

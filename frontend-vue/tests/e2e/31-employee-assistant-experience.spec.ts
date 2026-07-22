@@ -6,8 +6,8 @@ const employeeAssistantUser = {
   tenantId: 1,
   tenantName: '员工助手体验测试租户',
   displayName: '员工助手体验测试用户',
-  role: 'OPERATIONS',
-  roleLabel: '运营',
+  role: 'SUPERVISOR',
+  roleLabel: '督导',
   storeScope: ['all'],
   permissions: ['employee_assistant.use'],
   dataScopes: { STORE: { mode: 'ALL', storeIds: [], warehouseIds: [] } },
@@ -74,7 +74,7 @@ test.describe('employee assistant experience', () => {
     await page.goto('/employee-assistant')
 
     await page.getByLabel('服务问题').fill('顾客要求退款，应该怎么回应？')
-    await page.getByRole('button', { name: '发送', exact: true }).click()
+    await page.getByRole('button', { name: '发送问题', exact: true }).click()
 
     const sections = page.locator('.ea-answer__section')
     await expect(sections).toHaveCount(3)
@@ -116,7 +116,7 @@ test.describe('employee assistant experience', () => {
     await assertInputInViewport(page, '390x844 before sending')
     await expectNoWholePageOverflow(page, '390px employee assistant')
     await page.getByLabel('服务问题').fill('顾客等待太久，应该怎么回应？')
-    await page.getByRole('button', { name: '发送', exact: true }).click()
+    await page.getByRole('button', { name: '发送问题', exact: true }).click()
 
     await expect(page.getByText('正在查找标准话术', { exact: false })).toBeVisible()
     await expect(page.getByText('回复稍慢，仍在处理中')).toBeVisible({ timeout: 6_500 })
@@ -159,7 +159,7 @@ test.describe('employee assistant experience', () => {
     await page.goto('/employee-assistant')
 
     await page.getByLabel('服务问题').fill(question)
-    await page.getByRole('button', { name: '发送', exact: true }).click()
+    await page.getByRole('button', { name: '发送问题', exact: true }).click()
     await expect(page.getByText(question, { exact: true })).toHaveCount(1)
     await expect(page.locator('.ea-msg__recovery').getByText('请求超时，请重新发送或转人工处理', { exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: '重新发送' })).toBeVisible()

@@ -60,7 +60,7 @@ class MobileApiContractTest {
       7L, 1L, "测试企业", "manager-s1", "", "一店店长", "STORE_MANAGER", "s1", true);
   private static final String INSPECTOR_TOKEN = "Bearer mobile-inspector-token";
   private static final AuthUser INSPECTOR = new AuthUser(
-      8L, 1L, "测试企业", "inspector", "", "移动督导", "OPERATIONS", "s1", true);
+      8L, 1L, "测试企业", "inspector", "", "移动督导", "SUPERVISOR", "s1", true);
 
   @Test
   void unauthenticatedSessionReturns401() throws Exception {

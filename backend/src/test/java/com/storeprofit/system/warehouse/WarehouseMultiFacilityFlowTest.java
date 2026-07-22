@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -36,6 +37,7 @@ import org.flywaydb.core.Flyway;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -54,6 +56,7 @@ class WarehouseMultiFacilityFlowTest {
   private WarehouseRepository warehouseRepository;
   private AccessControlService accessControl;
   private BusinessScopeResolver businessScopeResolver;
+  private AuditRepository auditRepository;
   private WarehouseTopologyService topologyService;
   private WarehouseNetworkService networkService;
   private WarehouseService warehouseService;
@@ -93,7 +96,7 @@ class WarehouseMultiFacilityFlowTest {
     warehouseRepository = new WarehouseRepository(jdbc);
     accessControl = mock(AccessControlService.class);
     businessScopeResolver = mock(BusinessScopeResolver.class);
-    AuditRepository auditRepository = mock(AuditRepository.class);
+    auditRepository = mock(AuditRepository.class);
     topologyService = new WarehouseTopologyService(
         topologyRepository, accessControl, businessScopeResolver, auditRepository);
     networkService = new WarehouseNetworkService(
@@ -199,6 +202,9 @@ class WarehouseMultiFacilityFlowTest {
 
   @Test
   void centralPurchaseRequiresApprovalAndReceivingIsIdempotent() {
+    jdbc.execute("alter table warehouse_purchase_order alter column version drop default");
+    jdbc.execute("alter table warehouse_purchase_order_line alter column received_quantity drop default");
+    jdbc.execute("alter table warehouse_stock_batch alter column version drop default");
     Long supplierId = jdbc.queryForObject(
         "select min(id) from warehouse_supplier where tenant_id = 1 and active = 1",
         Long.class);
@@ -228,6 +234,12 @@ class WarehouseMultiFacilityFlowTest {
     assertThat(jdbc.queryForObject(
         "select count(*) from warehouse_purchase_order where tenant_id = 1 and idempotency_key = ?",
         Integer.class, "purchase-create-flow-1")).isOne();
+    assertThat(jdbc.queryForObject(
+        "select version from warehouse_purchase_order where tenant_id = 1 and id = ?",
+        Long.class, draft.id())).isZero();
+    assertThat(jdbc.queryForObject(
+        "select received_quantity from warehouse_purchase_order_line where tenant_id = 1 and purchase_order_id = ? and item_id = ?",
+        BigDecimal.class, draft.id(), itemId)).isEqualByComparingTo("0.00");
 
     WarehousePurchaseOrderResponse ordered = warehouseService.approvePurchaseOrder(
         centralManager, draft.id());
@@ -272,6 +284,12 @@ class WarehouseMultiFacilityFlowTest {
 
   @Test
   void transferPreservesQuantityAndCostAndAllActionsAreIdempotent() {
+    for (String column : List.of(
+        "approved_quantity", "reserved_quantity", "shipped_quantity", "received_quantity",
+        "in_transit_quantity", "unit_cost", "amount", "version"
+    )) {
+      jdbc.execute("alter table warehouse_transfer_line alter column " + column + " drop default");
+    }
     BigDecimal initialInventoryValue = inventoryValue(itemId);
     BigDecimal initialBatchValue = batchValue(itemId);
     BigDecimal initialCentralQuantity = inventoryQuantity(centralWarehouseId, itemId, "on_hand_quantity");
@@ -285,6 +303,13 @@ class WarehouseMultiFacilityFlowTest {
     WarehouseTransferResponse created = networkService.create(regionalManager, createRequest);
     WarehouseTransferResponse duplicateCreate = networkService.create(regionalManager, createRequest);
     assertThat(duplicateCreate.id()).isEqualTo(created.id());
+    assertThat(jdbc.queryForObject("""
+        select count(*) from warehouse_transfer_line
+        where tenant_id = 1 and transfer_order_id = ?
+          and approved_quantity = 0 and reserved_quantity = 0 and shipped_quantity = 0
+          and received_quantity = 0 and in_transit_quantity = 0 and unit_cost = 0
+          and amount = 0 and version = 0
+        """, Integer.class, created.id())).isOne();
 
     networkService.submit(regionalManager, created.id(),
         new WarehouseTransferActionRequest("transfer-submit-1", "提交审批"));
@@ -470,6 +495,46 @@ class WarehouseMultiFacilityFlowTest {
         regionalManager, centralWarehouseId, "越权查看荆州总仓"))
         .isInstanceOf(BusinessException.class)
         .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
+  }
+
+  @Test
+  void foreignTenantWarehouseIdIsForbiddenAndAuditedWhileUnknownIdStaysNotFound() {
+    jdbc.update("""
+        insert into tenant(id, name, industry, scale, status, created_at)
+        values (2, '隔离验收租户', 'chain_store', 'qa', 'ACTIVE', current_timestamp)
+        """);
+    jdbc.update("""
+        insert into warehouse_facility(
+          tenant_id, code, name, warehouse_type, region_code, parent_warehouse_id,
+          external_purchase_allowed, store_supply_allowed, enabled, created_at
+        ) values (2, 'QA-FOREIGN-CENTRAL', '隔离验收总仓', 'CENTRAL', 'JINGZHOU', null, 1, 1, 1, current_timestamp)
+        """);
+    long foreignWarehouseId = jdbc.queryForObject("""
+        select id from warehouse_facility
+        where tenant_id = 2 and code = 'QA-FOREIGN-CENTRAL'
+        """, Long.class);
+
+    assertThatThrownBy(() -> topologyService.requireVisibleFacility(
+        regionalManager, foreignWarehouseId, "查看跨租户仓库"))
+        .isInstanceOfSatisfying(BusinessException.class, error -> {
+          assertThat(error.getCode()).isEqualTo("FORBIDDEN");
+          assertThat(error.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+        });
+    verify(auditRepository).writePermissionDenied(
+        regionalManager,
+        "查看跨租户仓库",
+        "WAREHOUSE",
+        Long.toString(foreignWarehouseId),
+        null,
+        "仓库不在当前账号的数据范围内");
+
+    assertThatThrownBy(() -> topologyService.requireVisibleFacility(
+        regionalManager, 9_999_999L, "查看不存在仓库"))
+        .isInstanceOfSatisfying(BusinessException.class, error -> {
+          assertThat(error.getCode()).isEqualTo("WAREHOUSE_NOT_FOUND");
+          assertThat(error.getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+        });
+    verifyNoMoreInteractions(auditRepository);
   }
 
   @Test

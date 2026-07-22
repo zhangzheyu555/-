@@ -50,6 +50,11 @@ final class ModelEmployeeAssistantProvider implements EmployeeAssistantProvider 
   }
 
   @Override
+  public String target() {
+    return baseUrl;
+  }
+
+  @Override
   public HttpRequest healthRequest(Duration timeout) {
     return request("/models", timeout).GET().build();
   }

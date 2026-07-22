@@ -39,7 +39,9 @@ export default defineConfig(({ mode }) => {
     // The gateway mounts the desktop app at /admin/.  Keep Vite's asset base
     // aligned with Vue Router's BASE_URL so a deployed page never renders an
     // unmatched blank RouterView at that mount point.
-    base: env.VITE_PUBLIC_BASE || '/',
+    // 生产包默认部署在网关的 /admin/ 下；开发服务器仍使用根路径。
+    // 允许显式变量覆盖，供独立前端容器等特殊运行方式使用。
+    base: env.VITE_PUBLIC_BASE || (mode === 'production' ? '/admin/' : '/'),
     plugins: [vue()],
     server: {
       host: '127.0.0.1',

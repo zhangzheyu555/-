@@ -20,7 +20,7 @@ class PlatformStatusControllerDataScopeTest {
   private final PlatformAdapterRegistry registry = mock(PlatformAdapterRegistry.class);
   private final AccessControlService accessControl = mock(AccessControlService.class);
   private final AuthUser user = new AuthUser(
-      7L, 1L, "tenant", "operator", "", "运营", "OPERATIONS", "store-a", true);
+      7L, 1L, "tenant", "supervisor", "", "督导", "SUPERVISOR", "store-a", true);
   private final PlatformStatusController controller =
       new PlatformStatusController(registry, accessControl);
 

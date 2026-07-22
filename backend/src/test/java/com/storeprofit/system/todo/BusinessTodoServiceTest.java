@@ -110,6 +110,13 @@ class BusinessTodoServiceTest {
     ArgumentCaptor<RoleTodoActionRecord> action = ArgumentCaptor.forClass(RoleTodoActionRecord.class);
     verify(actionRepository).saveAction(action.capture());
     assertThat(action.getValue().actionType()).isEqualTo("ASSISTANT_MANUAL_CREATE");
+    ArgumentCaptor<RoleTodoOperationLogRecord> audit = ArgumentCaptor.forClass(RoleTodoOperationLogRecord.class);
+    verify(actionRepository).saveOperationLog(audit.capture());
+    assertThat(audit.getValue())
+        .extracting(RoleTodoOperationLogRecord::action, RoleTodoOperationLogRecord::targetType,
+            RoleTodoOperationLogRecord::storeId, RoleTodoOperationLogRecord::month)
+        .containsExactly("待办状态变更", "business_todo", "s1", "2026-07");
+    assertThat(audit.getValue().reason()).isEqualTo("已人工确认经营分析行动并加入待办");
   }
 
   @Test

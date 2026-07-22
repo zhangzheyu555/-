@@ -30,7 +30,7 @@ class ElemeControllerDataScopeTest {
   private final ElemeWebhookService webhookService = mock(ElemeWebhookService.class);
   private final AccessControlService accessControl = mock(AccessControlService.class);
   private final AuthUser user = new AuthUser(
-      7L, 1L, "tenant", "operator", "", "运营", "OPERATIONS", "store-a", true);
+      7L, 1L, "tenant", "supervisor", "", "督导", "SUPERVISOR", "store-a", true);
   private final ElemeSummaryResponse emptySummary = new ElemeSummaryResponse(
       "UNCONFIGURED", "未配置", 7, "2026-07-11 12:00:00",
       BigDecimal.ZERO, BigDecimal.ZERO, 0L, List.of());

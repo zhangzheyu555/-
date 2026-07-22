@@ -147,17 +147,13 @@ function New-DemoDataScopes {
     'WAREHOUSE' {
       return @((New-DataScope -Domain 'WAREHOUSE' -Mode 'CENTRAL_WAREHOUSE'))
     }
-    'OPERATIONS' {
-      return @(
-        (New-DataScope -Domain 'STORE' -Mode 'STORE_LIST' -StoreIds $scope),
-        (New-DataScope -Domain 'EXAM' -Mode 'ALL'),
-        (New-DataScope -Domain 'PLATFORM' -Mode 'ALL')
-      )
-    }
     'SUPERVISOR' {
       return @(
         (New-DataScope -Domain 'STORE' -Mode 'STORE_LIST' -StoreIds $scope),
-        (New-DataScope -Domain 'INSPECTION' -Mode 'STORE_LIST' -StoreIds $scope)
+        (New-DataScope -Domain 'WAREHOUSE' -Mode 'STORE_LIST' -StoreIds $scope),
+        (New-DataScope -Domain 'INSPECTION' -Mode 'STORE_LIST' -StoreIds $scope),
+        (New-DataScope -Domain 'EXAM' -Mode 'STORE_LIST' -StoreIds $scope),
+        (New-DataScope -Domain 'PLATFORM' -Mode 'STORE_LIST' -StoreIds $scope)
       )
     }
     'STORE_MANAGER' {

@@ -48,47 +48,54 @@ function money(value: number) {
 .warehouse-stat-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 12px;
+  overflow: hidden;
+  border: 1px solid var(--ds-line, #e1ebe9);
+  border-radius: 12px;
+  background: var(--ds-surface, #fff);
 }
 
 .warehouse-stat {
   position: relative;
-  min-height: 96px;
-  padding: 17px 16px;
+  min-width: 0;
+  min-height: 88px;
+  padding: 16px 48px 15px 18px;
   overflow: hidden;
-  border: 1px solid #e5eaed;
-  border-radius: 6px;
-  background: #fff;
+  border-right: 1px solid var(--ds-line, #e1ebe9);
+  background: transparent;
+}
+
+.warehouse-stat:last-child {
+  border-right: 0;
 }
 
 .warehouse-stat.featured {
-  border-color: var(--primary, #76bdb8);
-  background-color: var(--primary, #76bdb8);
-  background-image: none;
-  color: #fff;
+  background: var(--ds-primary-soft, #e9f6f5);
 }
 
 .warehouse-stat span {
   display: block;
-  color: #75808e;
-  font-size: 13px;
+  overflow: hidden;
+  color: var(--ds-muted, #6f817f);
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .warehouse-stat.featured span {
-  color: #fff;
-  opacity: 1;
+  color: var(--ds-primary-hover, #285f5c);
 }
 
 .warehouse-stat b {
   display: block;
-  margin-top: 12px;
-  color: #1e293b;
-  font-size: 28px;
+  margin-top: 10px;
+  color: var(--ds-ink, #182424);
+  font-size: 26px;
   line-height: 1;
 }
 
 .warehouse-stat.featured b {
-  color: #fff;
+  color: var(--ds-primary-active, #1f4d4a);
 }
 
 .warehouse-stat b small {
@@ -99,9 +106,11 @@ function money(value: number) {
 
 .warehouse-stat svg {
   position: absolute;
-  right: 14px;
-  bottom: 14px;
-  opacity: 0.3;
+  top: 50%;
+  right: 17px;
+  color: var(--ds-primary-hover, #285f5c);
+  opacity: 0.5;
+  transform: translateY(-50%);
 }
 
 @media (max-width: 768px) {
@@ -112,11 +121,24 @@ function money(value: number) {
   .warehouse-stat {
     min-height: 82px;
     padding: 14px;
+    border-bottom: 1px solid var(--ds-line, #e1ebe9);
+  }
+
+  .warehouse-stat:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .warehouse-stat:last-child {
+    border-bottom: 0;
   }
 
   .warehouse-stat b {
     margin-top: 9px;
     font-size: 23px;
+  }
+
+  .warehouse-stat svg {
+    right: 12px;
   }
 }
 </style>

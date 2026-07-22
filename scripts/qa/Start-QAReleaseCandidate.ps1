@@ -23,6 +23,11 @@ param(
   [ValidatePattern('^[A-Za-z_][A-Za-z0-9_]*$')]
   [string]$PasswordEnvironmentName = 'QA_MYSQL_PASSWORD',
 
+  # A BOSS token is required only after the candidate has passed anonymous liveness. It authorizes
+  # the non-public database readiness diagnostics without placing deployment details on /api/health.
+  [ValidatePattern('^[A-Za-z_][A-Za-z0-9_]*$')]
+  [string]$DiagnosticsBossTokenEnvironmentName = 'QA_BOOTSTRAP_BOSS_TOKEN',
+
   [ValidateRange(1, 300)]
   [int]$StartupTimeoutSeconds = 90,
 
@@ -65,6 +70,8 @@ Import-Module (Join-Path $PSScriptRoot 'QAReleaseCommon.psm1') -Force
 $run = New-QAReleaseRun -EvidenceRoot $EvidenceRoot -Category 'qa/candidate'
 $reportPath = Join-Path $run.directory 'qa-candidate.json'
 $candidateProcess = $null
+$diagnosticsToken = $null
+$diagnosticsAuthorization = $null
 $result = [ordered]@{
   schema = 'ai-profit-os/qa-release-candidate/v1'
   runId = $run.id
@@ -100,8 +107,15 @@ function Test-ListeningPort {
 }
 
 function Get-QAHealth {
-  param([Parameter(Mandatory = $true)][string]$Uri)
-  $response = Invoke-WebRequest -UseBasicParsing -Uri $Uri -Method Get -TimeoutSec 3 -ErrorAction Stop
+  param(
+    [Parameter(Mandatory = $true)][string]$Uri,
+    [AllowEmptyString()][string]$Authorization = ''
+  )
+  $requestParameters = @{ Uri = $Uri; Method = 'Get'; TimeoutSec = 3; ErrorAction = 'Stop'; UseBasicParsing = $true }
+  if (-not [string]::IsNullOrWhiteSpace($Authorization)) {
+    $requestParameters.Headers = @{ Authorization = $Authorization }
+  }
+  $response = Invoke-WebRequest @requestParameters
   $payload = $response.Content | ConvertFrom-Json -ErrorAction Stop
   $data = if ($null -ne $payload.PSObject.Properties['data']) { $payload.data } else { $payload }
   $requestId = [string]$response.Headers['X-Request-Id']
@@ -214,23 +228,38 @@ try {
     catch { Start-Sleep -Seconds 1 }
   }
   if ($null -eq $health) { throw "QA candidate did not become healthy within $StartupTimeoutSeconds seconds." }
-  if ([string]$health.data.status -ne 'UP' -or [string]$health.data.environment -ne 'QA') {
-    throw 'Candidate health did not report UP/QA.'
+  if ([string]$health.data.status -ne 'UP') {
+    throw 'Candidate public liveness did not report UP.'
   }
-  if ([int]$health.data.databasePort -ne $MySqlPort -or [int]$health.data.databasePort -eq 3307) {
-    throw 'Candidate health reported an unexpected or protected database port.'
+
+  $diagnosticsToken = Get-QAReleaseSecret -EnvironmentName $DiagnosticsBossTokenEnvironmentName
+  $diagnosticsAuthorization = if ($diagnosticsToken.StartsWith('Bearer ', [StringComparison]::OrdinalIgnoreCase)) {
+    $diagnosticsToken
+  } else {
+    'Bearer ' + $diagnosticsToken
   }
-  if (-not ([string]$health.data.databaseName).Equals($MySqlDatabase, [StringComparison]::OrdinalIgnoreCase)) {
-    throw 'Candidate health reported a database other than the requested QA database.'
+  $diagnostics = Get-QAHealth -Uri "$healthUri/diagnostics" -Authorization $diagnosticsAuthorization
+  $diagnosticsToken = $null
+  $diagnosticsAuthorization = $null
+  if ($diagnostics.statusCode -ne 200 -or [string]$diagnostics.data.status -ne 'UP' -or [string]$diagnostics.data.environment -ne 'QA') {
+    throw 'Candidate authenticated diagnostics did not report UP/QA.'
+  }
+  if ([int]$diagnostics.data.databasePort -ne $MySqlPort -or [int]$diagnostics.data.databasePort -eq 3307) {
+    throw 'Candidate diagnostics reported an unexpected or protected database port.'
+  }
+  if (-not ([string]$diagnostics.data.databaseName).Equals($MySqlDatabase, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Candidate diagnostics reported a database other than the requested QA database.'
   }
   $result.health = [ordered]@{
-    status = [string]$health.data.status
-    environment = [string]$health.data.environment
-    flywayVersion = [string]$health.data.databaseMigrationVersion
-    databasePort = [int]$health.data.databasePort
-    databaseName = [string]$health.data.databaseName
-    httpStatus = $health.statusCode
-    requestId = $health.requestId
+    status = [string]$diagnostics.data.status
+    environment = [string]$diagnostics.data.environment
+    flywayVersion = [string]$diagnostics.data.databaseMigrationVersion
+    databasePort = [int]$diagnostics.data.databasePort
+    databaseName = [string]$diagnostics.data.databaseName
+    httpStatus = $diagnostics.statusCode
+    requestId = $diagnostics.requestId
+    livenessHttpStatus = $health.statusCode
+    livenessRequestId = $health.requestId
   }
   $result.status = 'PASS_QA_CANDIDATE_STARTED'
 }
@@ -240,6 +269,8 @@ catch {
   throw
 }
 finally {
+  $diagnosticsToken = $null
+  $diagnosticsAuthorization = $null
   if ($candidateProcess -and -not $candidateProcess.HasExited -and -not $KeepRunning) {
     Stop-Process -Id $candidateProcess.Id -Force -ErrorAction SilentlyContinue
     $candidateProcess.WaitForExit()

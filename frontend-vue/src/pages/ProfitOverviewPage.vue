@@ -2,6 +2,7 @@
 import { computed, watch } from 'vue'
 import { Download, FileBarChart } from 'lucide-vue-next'
 import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
+import { downloadCsvRows } from '../api/reports'
 import BusinessScopeBar from '../components/common/BusinessScopeBar.vue'
 import PageHeader from '../components/common/PageHeader.vue'
 import { useBusinessScope } from '../composables/useBusinessScope'
@@ -253,16 +254,7 @@ function exportCsv() {
     amount(entry.net).toFixed(2),
     percent(entry.margin),
   ])
-  const csv = [headers, ...rows]
-    .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
-    .join('\n')
-  const blob = new Blob([`\ufeff${csv}`], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = `利润概览-${profit.summary.month || '当前月份'}.csv`
-  link.click()
-  URL.revokeObjectURL(url)
+  downloadCsvRows([headers, ...rows], `利润概览-${profit.summary.month || '当前月份'}.csv`)
 }
 
 watch(

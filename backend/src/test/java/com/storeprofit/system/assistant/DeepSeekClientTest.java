@@ -9,6 +9,7 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
@@ -183,6 +184,55 @@ class DeepSeekClientTest {
     assertThatThrownBy(() -> client.analyze("system", "user"))
         .isInstanceOfSatisfying(DeepSeekException.class,
             failure -> assertThat(failure.getCode()).isEqualTo("DEEPSEEK_NOT_CONFIGURED"));
+  }
+
+  @Test
+  void qaBlocksLiveModeAndAnyNonLoopbackMockBeforeOpeningATransportConnection() {
+    AtomicInteger calls = new AtomicInteger();
+    server.createContext("/chat/completions", exchange -> {
+      calls.incrementAndGet();
+      respond(exchange, 200, successResponse("unexpected", "configured-model", "{}"));
+    });
+    properties.setOutboundMode("LIVE");
+
+    assertThatThrownBy(() -> new DeepSeekClient(properties, objectMapper, HttpClient.newHttpClient(), "QA")
+        .analyze("system", "user"))
+        .isInstanceOfSatisfying(DeepSeekException.class,
+            failure -> assertThat(failure.getCode()).isEqualTo("DEEPSEEK_OUTBOUND_BLOCKED"));
+    assertThat(calls).hasValue(0);
+
+    properties.setOutboundMode("MOCK");
+    properties.setBaseUrl("https://example.test");
+    assertThatThrownBy(() -> new DeepSeekClient(properties, objectMapper, HttpClient.newHttpClient(), "QA")
+        .analyze("system", "user"))
+        .isInstanceOfSatisfying(DeepSeekException.class,
+            failure -> assertThat(failure.getCode()).isEqualTo("DEEPSEEK_OUTBOUND_BLOCKED"));
+    assertThat(calls).hasValue(0);
+  }
+
+  @Test
+  void qaExternalPilotRequiresBothFlagsAndTheExactOfficialHttpsEndpoint() {
+    properties.setOutboundMode("LIVE");
+    properties.setBaseUrl("https://api.deepseek.com");
+
+    assertThat(DeepSeekClient.isTrustedExternalPilot("QA", properties)).isFalse();
+    properties.setExternalPilotEnabled(true);
+    assertThat(DeepSeekClient.isTrustedExternalPilot("QA", properties)).isFalse();
+    properties.setQuestionOnly(true);
+    assertThat(DeepSeekClient.isTrustedExternalPilot("QA", properties)).isTrue();
+
+    for (String rejected : List.of(
+        "http://api.deepseek.com",
+        "https://api.deepseek.com.evil.example",
+        "https://user@api.deepseek.com",
+        "https://api.deepseek.com/redirect",
+        "https://api.deepseek.com?target=other")) {
+      properties.setBaseUrl(rejected);
+      assertThat(DeepSeekClient.isTrustedExternalPilot("QA", properties)).isFalse();
+    }
+    properties.setBaseUrl("https://api.deepseek.com");
+    assertThat(DeepSeekClient.isTrustedExternalPilot("TEST", properties)).isFalse();
+    assertThat(DeepSeekClient.isTrustedExternalPilot("PRODUCTION", properties)).isFalse();
   }
 
   @Test

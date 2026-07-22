@@ -1067,7 +1067,7 @@ async function runPhotoDetection(photo: DraftPhoto) {
   removeModelDeduction(photo)
   removeModelPhotoLink(photo)
   try {
-    photo.detection = await detectInspectionPhoto(photo.sourceFile)
+    photo.detection = await detectInspectionPhoto(photo.sourceFile, draft.storeId)
     photo.detectionStatus = 'success'
     if (!detectionServiceUp.value) void refreshDetectionService()
   } catch (error) {

@@ -77,6 +77,43 @@ class AdminBootstrapCommandTest {
   }
 
   @Test
+  void qaDockerIdentityModeRequiresExplicitQaLoopbackTarget() {
+    Map<String, String> accepted = validEnvironment();
+    accepted.put(AdminBootstrapCommand.QA_DOCKER_IDENTITY_ENVIRONMENT, "true");
+    AdminBootstrapCommand.DatabaseConfig config = AdminBootstrapCommand.DatabaseConfig.from(accepted);
+    assertThat(config.allowQaDockerIdentity()).isTrue();
+
+    Map<String, String> staging = new HashMap<>(accepted);
+    staging.put("APP_ENV", "STAGING");
+    staging.put("MYSQL_DATABASE", "store_profit_mysql8");
+    staging.put("MYSQL_PORT", "3307");
+    assertThat(org.assertj.core.api.Assertions.catchThrowable(
+        () -> AdminBootstrapCommand.DatabaseConfig.from(staging)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("QA Docker bootstrap");
+
+    Map<String, String> remote = new HashMap<>(accepted);
+    remote.put("MYSQL_HOST", "192.168.1.10");
+    assertThat(org.assertj.core.api.Assertions.catchThrowable(
+        () -> AdminBootstrapCommand.DatabaseConfig.from(remote)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("QA Docker bootstrap");
+
+    Map<String, String> test = new HashMap<>(accepted);
+    test.put("APP_ENV", "TEST");
+    test.put("MYSQL_DATABASE", "bootstrap_test");
+    assertThat(org.assertj.core.api.Assertions.catchThrowable(
+        () -> AdminBootstrapCommand.DatabaseConfig.from(test)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("QA Docker bootstrap");
+
+    Map<String, String> defaultQa = validEnvironment();
+    AdminBootstrapCommand.DatabaseConfig defaultConfig =
+        AdminBootstrapCommand.DatabaseConfig.from(defaultQa);
+    assertThat(defaultConfig.allowQaDockerIdentity()).isFalse();
+  }
+
+  @Test
   void tenantMustExistBeActiveAndMatchConfirmationExactly() throws Exception {
     Fixture missing = fixture(false);
     assertThat(missing.command().execute(arguments(), validEnvironment(), password()).exitCode())

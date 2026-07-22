@@ -726,7 +726,7 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="page-panel exam-shell">
-    <PageHeader title="培训考试" subtitle="课程学习、考试发布与成绩管理">
+    <PageHeader title="培训考试">
       <template #actions>
         <button class="button" :disabled="loading" @click="loadAll"><RefreshCw :size="16" />重新加载</button>
       </template>

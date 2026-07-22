@@ -1,9 +1,14 @@
 import { defineStore } from 'pinia'
-import { currentSession, login as loginApi, logout as logoutApi, weChatLogin } from '@/api/auth'
+import { currentSession, login as loginApi, logout as logoutApi } from '@/api/auth'
 import { ApiError } from '@/api/client'
 import { clearSessionToken, readSessionToken, writeSessionToken } from '@/platform/session'
-import type { LoginRequest, LoginResponse, SessionDataScope, SessionUser } from '@/types/auth'
-import { dataScope, hasAnyPermission, hasPermission } from '@/permissions'
+import type { LoginRequest, SessionDataScope, SessionUser } from '@/types/auth'
+
+const NONE_SCOPE: SessionDataScope = { mode: 'NONE', storeIds: [], warehouseIds: [] }
+
+function normalizeCode(value: string): string {
+  return value.trim().toLowerCase()
+}
 
 export const useSessionStore = defineStore('mobile-session', {
   state: () => ({
@@ -16,11 +21,16 @@ export const useSessionStore = defineStore('mobile-session', {
   }),
   getters: {
     isAuthenticated: (state) => Boolean(state.token && state.user),
-    hasPermission: (state) => (permission: string) => hasPermission(state.user, permission),
-    hasAnyPermission(): (permissions: string[]) => boolean {
-      return (permissions) => hasAnyPermission(this.user, permissions)
+    hasPermission: (state) => (permission: string) => {
+      const expected = normalizeCode(permission)
+      return Boolean(expected && state.user?.permissions.some((item) => normalizeCode(item) === expected))
     },
-    dataScope: (state) => (domain: string): SessionDataScope => dataScope(state.user, domain),
+    hasAnyPermission(): (permissions: string[]) => boolean {
+      return (permissions) => permissions.some((permission) => this.hasPermission(permission))
+    },
+    dataScope: (state) => (domain: string): SessionDataScope => (
+      state.user?.dataScopes[domain.trim().toUpperCase()] || NONE_SCOPE
+    ),
     scopeLabel(): string {
       const scope = this.dataScope('STORE')
       if (scope.mode === 'ALL') return '全部门店'
@@ -55,23 +65,17 @@ export const useSessionStore = defineStore('mobile-session', {
       this.submitting = true
       this.error = ''
       try {
-        await this.completeLogin(loginApi(request))
+        const response = await loginApi(request)
+        const token = response.token?.trim()
+        if (!token) throw new Error('登录返回的会话凭据不完整')
+        writeSessionToken(token)
+        this.token = token
+        // 登录响应与 /me 使用同一 SessionUser 契约；再次读取可捕获即时权限版本变化。
+        this.user = await currentSession()
+        this.initialized = true
       } catch (error) {
         this.clear()
         this.error = error instanceof Error ? error.message : '登录失败，请稍后重试'
-        throw error
-      } finally {
-        this.submitting = false
-      }
-    },
-    async loginWithWeChatCode(code: string): Promise<void> {
-      this.submitting = true
-      this.error = ''
-      try {
-        await this.completeLogin(weChatLogin(code))
-      } catch (error) {
-        this.clear()
-        this.error = error instanceof Error ? error.message : '微信登录失败，请稍后重试'
         throw error
       } finally {
         this.submitting = false
@@ -93,16 +97,6 @@ export const useSessionStore = defineStore('mobile-session', {
       this.token = ''
       this.user = null
       this.error = ''
-      this.initialized = true
-    },
-    async completeLogin(responsePromise: Promise<LoginResponse>): Promise<void> {
-      const response = await responsePromise
-      const token = response.token?.trim()
-      if (!token) throw new Error('登录返回的会话凭据不完整')
-      writeSessionToken(token)
-      this.token = token
-      // 登录响应与 /me 使用同一 SessionUser 契约；再次读取可捕获即时权限版本变化。
-      this.user = await currentSession()
       this.initialized = true
     },
   },

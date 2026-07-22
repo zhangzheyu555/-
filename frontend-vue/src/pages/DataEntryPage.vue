@@ -139,7 +139,6 @@ const importTargetStoreId = computed(() => scope.scopedStoreId(selectedStoreId.v
 const canSave = computed(() => auth.hasPermission(PERMISSIONS.FINANCE_PROFIT_WRITE))
 const canImportMonthlySummary = computed(() => canUseFinanceProfitImport(auth.role, auth.permissions))
 const pageTitle = '数据录入'
-const pageSubtitle = '一次只录入一个门店、一个月份的经营数据。'
 const historyPreview = computed(() => historyRows.value.slice(0, 5))
 const historyPageCount = computed(() => Math.max(1, Math.ceil(historyRows.value.length / HISTORY_PAGE_SIZE)))
 const pagedHistory = computed(() => {
@@ -648,7 +647,7 @@ watch(
 
 <template>
   <section class="page-panel data-entry-page">
-    <PageHeader :title="pageTitle" :subtitle="pageSubtitle">
+    <PageHeader :title="pageTitle">
       <template #actions>
         <div class="entry-toolbar__actions">
           <span v-if="isDirty" class="entry-dirty" role="status"><i aria-hidden="true" />尚未保存</span>

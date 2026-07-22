@@ -24,4 +24,4 @@ R1-01 起，本地 Web 应用启动和登录接口都不会创建业务账号。
 mvn spring-boot:run -Dspring-boot.run.profiles=local
 ```
 
-**维护约定：给 `db/migration/` 加新迁移时，必须同步在本目录加对应的 H2 版本**（无 MySQL 动态语法时可直接复制）。
+**维护约定：给 `db/migration/` 加新迁移时，必须同步在本目录加对应的 H2 版本**（无 MySQL 动态语法时可直接复制）。本目录是独立兼容链，版本号不得与 MySQL 目录机械对齐；请在 H2 文件头标注其对应的 MySQL 迁移。

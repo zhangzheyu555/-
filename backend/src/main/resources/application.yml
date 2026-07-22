@@ -83,6 +83,8 @@ app:
     timeout: ${QMAI_TIMEOUT:20s}
     # 默认拒绝任何企迈出站；本地验收仅可设 MOCK 且地址必须为 loopback。
     outbound-mode: ${QMAI_OUTBOUND_MODE:DISABLED}
+    # QMAI-04 未完成专项验收，内部试用默认关闭；不得仅靠前端隐藏。
+    recipe-enabled: ${QMAI_RECIPE_ENABLED:false}
     # 仅由部署密钥系统注入的 Base64 AES 密钥；缺失时拒绝持久化凭证。
     credential-encryption-key: ${QMAI_CREDENTIAL_ENCRYPTION_KEY:}
     # 已授权门店（shopCode:门店名:本系统storeId），逗号分隔
@@ -134,6 +136,11 @@ app:
       enabled: ${DEEPSEEK_ENABLED:true}
       api-key: ${DEEPSEEK_API_KEY:}
       base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
+      # TEST only accepts MOCK + literal loopback; QA LIVE requires the explicit question-only pilot flags below.
+      outbound-mode: ${DEEPSEEK_OUTBOUND_MODE:LIVE}
+      # QA 外网试用必须同时显式开启，且 question-only 禁止发送本地经营快照。
+      external-pilot-enabled: ${DEEPSEEK_EXTERNAL_PILOT_ENABLED:false}
+      question-only: ${DEEPSEEK_QUESTION_ONLY:false}
       model: ${DEEPSEEK_MODEL:deepseek-v4-flash}
       # 自动模式始终走快速模型；显式“深度分析”仍使用上面的 DEEPSEEK_MODEL。
       fast-model: ${DEEPSEEK_FAST_MODEL:deepseek-v4-flash}
@@ -145,6 +152,8 @@ app:
       # 一次经营分析（含最多一次结构修复）的总耗时上限；单次请求仍使用 timeout。
       analysis-timeout: ${DEEPSEEK_ANALYSIS_TIMEOUT:30s}
       max-requests-per-minute: ${DEEPSEEK_MAX_REQUESTS_PER_MINUTE:30}
+      max-requests-per-user-per-minute: ${DEEPSEEK_MAX_REQUESTS_PER_USER_PER_MINUTE:10}
+      max-concurrent-requests: ${DEEPSEEK_MAX_CONCURRENT_REQUESTS:2}
       circuit-failure-threshold: ${DEEPSEEK_CIRCUIT_FAILURE_THRESHOLD:3}
       circuit-open-duration: ${DEEPSEEK_CIRCUIT_OPEN_DURATION:30s}
       blocked-words:
@@ -181,6 +190,8 @@ app:
     model-name: ${EMPLOYEE_ASSISTANT_MODEL_NAME:}
     # 仅由统一安全启动器注入；手工 java -jar 不会设置此标记，员工助手将拒绝就绪。
     runtime-secured: ${ASSISTANT_RUNTIME_SECURED:false}
+    # QA/TEST only accept MOCK + literal loopback; LIVE is for explicitly configured non-QA deployment.
+    outbound-mode: ${EMPLOYEE_ASSISTANT_OUTBOUND_MODE:LIVE}
 
 logging:
   level:

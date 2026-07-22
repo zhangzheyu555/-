@@ -25,7 +25,6 @@ public class DataScopeService {
   /** Supervisor owns the former operations workspace, only for explicitly assigned scope. */
   private static final Set<String> SUPERVISOR_SCOPE_DOMAINS = Set.of(
       DataScopeDomains.STORE,
-      DataScopeDomains.WAREHOUSE,
       DataScopeDomains.INSPECTION,
       DataScopeDomains.EXAM,
       DataScopeDomains.PLATFORM
@@ -70,9 +69,7 @@ public class DataScopeService {
       }
       String mode = normalizeMode(row.scopeType());
       if (supervisor && (!SUPERVISOR_SCOPE_DOMAINS.contains(domain)
-          || !(DataScopeModes.STORE_LIST.equals(mode)
-              || (DataScopeDomains.WAREHOUSE.equals(domain)
-                  && DataScopeModes.WAREHOUSE_LIST.equals(mode))))) {
+          || !DataScopeModes.STORE_LIST.equals(mode))) {
         result.put(domain, DataScope.none());
         continue;
       }

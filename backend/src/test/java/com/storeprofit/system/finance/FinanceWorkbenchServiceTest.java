@@ -104,8 +104,8 @@ class FinanceWorkbenchServiceTest {
 
   @Test
   void requestInfoUsesExpenseReviewFlow() {
-    when(expenseService.reject(finance, "exp1", new ExpenseReviewRequest("要求补充资料：请补票据")))
-        .thenReturn(expense("已驳回"));
+    when(expenseService.requestInfo(finance, "exp1", new ExpenseReviewRequest("要求补充资料：请补票据")))
+        .thenReturn(expense("待补资料"));
 
     FinanceTodoActionResponse response = service.requestInfo(
         finance,
@@ -114,8 +114,9 @@ class FinanceWorkbenchServiceTest {
     );
 
     assertThat(response.action()).isEqualTo("要求补充资料");
-    assertThat(response.status()).isEqualTo("已处理");
-    verify(expenseService).reject(finance, "exp1", new ExpenseReviewRequest("要求补充资料：请补票据"));
+    assertThat(response.status()).isEqualTo("待补资料");
+    verify(expenseService).requestInfo(finance, "exp1", new ExpenseReviewRequest("要求补充资料：请补票据"));
+    verify(expenseService, never()).reject(any(), any(), any());
   }
 
   @Test
@@ -138,6 +139,19 @@ class FinanceWorkbenchServiceTest {
 
     verify(actionRepository).saveAction(any(RoleTodoActionRepository.RoleTodoActionRecord.class));
     verify(actionRepository).saveOperationLog(any(RoleTodoActionRepository.RoleTodoOperationLogRecord.class));
+  }
+
+  @Test
+  void completingExpenseTodoIsAuditedAndRejectedThroughTheExpenseWorkflow() {
+    when(expenseService.claim(finance, "exp1")).thenReturn(expense("待审核"));
+
+    assertThatThrownBy(() -> service.complete(finance, "expense-exp1", new RoleTodoCompletionRequest("", List.of())))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode())
+            .isEqualTo("EXPENSE_APPROVAL_WORKFLOW_REQUIRED"));
+
+    verify(actionRepository).saveRejectedOperationLog(any(RoleTodoActionRepository.RoleTodoOperationLogRecord.class));
+    verify(roleTodoService, never()).resolve(any(), any(), any(), any());
   }
 
   private RoleTodoItemResponse todo(String id, String title, String status, String dataSource, boolean escalated) {

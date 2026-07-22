@@ -72,9 +72,9 @@ class BossDataHealthControllerTest {
   }
 
   @Test
-  void compatibilityConstructorRejectsOperationsStaffFromBossDataHealth() {
+  void compatibilityConstructorRejectsSupervisorFromBossDataHealth() {
     BossDataHealthService service = new BossDataHealthService();
-    AuthUser user = new AuthUser(3L, 1L, "default", "operations", "", "Operations", "OPERATIONS", null, true);
+    AuthUser user = new AuthUser(3L, 1L, "default", "supervisor", "", "督导", "SUPERVISOR", null, true);
 
     assertThatThrownBy(() -> service.dataHealth(user))
         .isInstanceOfSatisfying(BusinessException.class, ex -> {
@@ -87,7 +87,7 @@ class BossDataHealthControllerTest {
   void productionServiceDelegatesToSystemDashboardPermission() {
     AccessControlService accessControl = mock(AccessControlService.class);
     BossDataHealthService service = new BossDataHealthService(accessControl);
-    AuthUser user = new AuthUser(3L, 1L, "default", "operations", "", "Operations", "OPERATIONS", null, true);
+    AuthUser user = new AuthUser(3L, 1L, "default", "supervisor", "", "督导", "SUPERVISOR", null, true);
 
     BossDataHealthResponse result = service.dataHealth(user);
 

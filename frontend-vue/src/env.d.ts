@@ -9,7 +9,6 @@ declare module 'vue-router' {
     roles?: string[]
     requiresAuth?: boolean
     title?: string
-    subtitle?: string
     warehouseTab?: string
     storeWarehouseTab?: string
     inspectionTab?: string

@@ -53,12 +53,12 @@
       "passwordEnvironmentName": "QA_E2E_STORE_MANAGER_PASSWORD"
     },
     {
-      "username": "e2e_yyyymmdd_operations",
-      "displayName": "E2E_YYYYMMDD_OPERATIONS",
-      "role": "OPERATIONS",
+      "username": "e2e_yyyymmdd_supervisor",
+      "displayName": "E2E_YYYYMMDD_SUPERVISOR",
+      "role": "SUPERVISOR",
       "storeId": null,
       "storeScope": ["E2E_YYYYMMDD_STORE_A", "E2E_YYYYMMDD_STORE_B"],
-      "passwordEnvironmentName": "QA_E2E_OPERATIONS_PASSWORD"
+      "passwordEnvironmentName": "QA_E2E_SUPERVISOR_PASSWORD"
     },
     {
       "username": "e2e_yyyymmdd_employee",

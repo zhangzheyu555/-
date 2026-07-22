@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.storeprofit.system.audit.AuditLogRequest;
 import com.storeprofit.system.audit.AuditRepository;
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.config.LocalMockOutboundPolicy;
 import com.storeprofit.system.platform.auth.AuthUser;
 import java.io.IOException;
 import java.net.http.HttpClient;
@@ -80,12 +81,14 @@ public class EmployeeAssistantService {
   private final LocalEmployeeAssistantResponder localResponder;
   private final EmployeeAssistantKnowledgeRepository knowledgeRepository;
   private final boolean runtimeSecured;
+  private final String runtimeEnvironment;
+  private final String outboundMode;
   private final ConcurrentMap<AnswerCacheKey, CachedAnswer> answerCache = new ConcurrentHashMap<>();
 
   /** Compatibility constructor for Spring proxy creation. */
   EmployeeAssistantService() {
     this("", "", "", "", "", "", Duration.ofSeconds(5), Duration.ofSeconds(15),
-        new ObjectMapper(), null, HttpClient.newHttpClient(), null, false);
+        new ObjectMapper(), null, HttpClient.newHttpClient(), null, false, "TEST", "MOCK");
   }
 
   @Autowired
@@ -99,6 +102,8 @@ public class EmployeeAssistantService {
       @Value("${app.employee-assistant.model-api-key:}") String modelApiKey,
       @Value("${app.employee-assistant.model-name:}") String modelName,
       @Value("${app.employee-assistant.runtime-secured:false}") boolean runtimeSecured,
+      @Value("${app.environment:TEST}") String runtimeEnvironment,
+      @Value("${app.employee-assistant.outbound-mode:LIVE}") String outboundMode,
       ObjectMapper objectMapper,
       AuditRepository auditRepository,
       EmployeeAssistantKnowledgeRepository knowledgeRepository
@@ -109,7 +114,31 @@ public class EmployeeAssistantService {
         objectMapper, auditRepository, HttpClient.newBuilder()
             .connectTimeout(bounded(connectTimeout, Duration.ofSeconds(2), Duration.ofSeconds(3)))
             .followRedirects(HttpClient.Redirect.NEVER)
-            .build(), knowledgeRepository, runtimeSecured);
+            .build(), knowledgeRepository, runtimeSecured, runtimeEnvironment, outboundMode);
+  }
+
+  /** Compatibility constructor for configuration-budget tests without a Spring Environment. */
+  EmployeeAssistantService(
+      String upstreamUrl,
+      String apiToken,
+      Duration connectTimeout,
+      Duration timeout,
+      String providerName,
+      String modelUrl,
+      String modelApiKey,
+      String modelName,
+      boolean runtimeSecured,
+      ObjectMapper objectMapper,
+      AuditRepository auditRepository,
+      EmployeeAssistantKnowledgeRepository knowledgeRepository
+  ) {
+    this(providerName, upstreamUrl, apiToken, modelUrl, modelApiKey, modelName,
+        bounded(connectTimeout, Duration.ofSeconds(2), Duration.ofSeconds(3)),
+        bounded(timeout, Duration.ofSeconds(8), Duration.ofSeconds(10)),
+        objectMapper, auditRepository, HttpClient.newBuilder()
+            .connectTimeout(bounded(connectTimeout, Duration.ofSeconds(2), Duration.ofSeconds(3)))
+            .followRedirects(HttpClient.Redirect.NEVER)
+            .build(), knowledgeRepository, runtimeSecured, "TEST", "MOCK");
   }
 
   EmployeeAssistantService(
@@ -122,7 +151,7 @@ public class EmployeeAssistantService {
       HttpClient httpClient
   ) {
     this("REMOTE", upstreamUrl, apiToken, "", "", "", connectTimeout, timeout, objectMapper,
-        auditRepository, httpClient, null, false);
+        auditRepository, httpClient, null, false, "TEST", "MOCK");
   }
 
   EmployeeAssistantService(
@@ -139,7 +168,7 @@ public class EmployeeAssistantService {
       HttpClient httpClient
   ) {
     this(providerName, upstreamUrl, apiToken, modelUrl, modelApiKey, modelName, connectTimeout, timeout,
-        objectMapper, auditRepository, httpClient, null, false);
+        objectMapper, auditRepository, httpClient, null, false, "TEST", "MOCK");
   }
 
   EmployeeAssistantService(
@@ -157,12 +186,35 @@ public class EmployeeAssistantService {
       EmployeeAssistantKnowledgeRepository knowledgeRepository,
       boolean runtimeSecured
   ) {
+    this(providerName, upstreamUrl, apiToken, modelUrl, modelApiKey, modelName, connectTimeout, timeout,
+        objectMapper, auditRepository, httpClient, knowledgeRepository, runtimeSecured, "TEST", "MOCK");
+  }
+
+  EmployeeAssistantService(
+      String providerName,
+      String upstreamUrl,
+      String apiToken,
+      String modelUrl,
+      String modelApiKey,
+      String modelName,
+      Duration connectTimeout,
+      Duration timeout,
+      ObjectMapper objectMapper,
+      AuditRepository auditRepository,
+      HttpClient httpClient,
+      EmployeeAssistantKnowledgeRepository knowledgeRepository,
+      boolean runtimeSecured,
+      String runtimeEnvironment,
+      String outboundMode
+  ) {
     this.timeout = nonZero(timeout, Duration.ofSeconds(15));
     this.objectMapper = objectMapper;
     this.auditRepository = auditRepository;
     this.httpClient = httpClient;
     this.knowledgeRepository = knowledgeRepository;
     this.runtimeSecured = runtimeSecured;
+    this.runtimeEnvironment = runtimeEnvironment == null ? "" : runtimeEnvironment.trim();
+    this.outboundMode = outboundMode == null ? "" : outboundMode.trim();
     this.localMode = isValidLocalMode(
         providerName, upstreamUrl, apiToken, modelUrl, modelApiKey, modelName);
     this.localResponder = new LocalEmployeeAssistantResponder();
@@ -191,6 +243,11 @@ public class EmployeeAssistantService {
               : "员工服务助手未配置";
         }
         status = status(EmployeeAssistantState.UNCONFIGURED, message, knowledgeAvailable);
+        return status;
+      }
+      if (!outboundAllowed()) {
+        status = status(EmployeeAssistantState.UNAVAILABLE,
+            unavailableMessage("员工服务助手出网未获授权；测试仅允许本机 Mock", knowledgeAvailable), knowledgeAvailable);
         return status;
       }
       HttpResponse<Void> response = httpClient.send(provider.healthRequest(timeout), HttpResponse.BodyHandlers.discarding());
@@ -265,6 +322,11 @@ public class EmployeeAssistantService {
         throw safeFailure("EMPLOYEE_ASSISTANT_NOT_CONFIGURED",
             "员工服务助手未通过安全启动器注入，请联系管理员使用统一安全启动器重启服务",
             HttpStatus.SERVICE_UNAVAILABLE);
+      }
+      if (!outboundAllowed()) {
+        outcome = "OUTBOUND_BLOCKED";
+        throw safeFailure("EMPLOYEE_ASSISTANT_OUTBOUND_BLOCKED",
+            "员工服务助手出网未获授权；测试仅允许本机 Mock", HttpStatus.SERVICE_UNAVAILABLE);
       }
       AnswerCacheKey cacheKey = cacheKey(user, sanitized.value(), knowledgeLookup.versionKey(), inputRedacted);
       CachedAnswer cachedAnswer = cacheKey == null ? null : answerCache.get(cacheKey);
@@ -635,6 +697,10 @@ public class EmployeeAssistantService {
           : new ModelEmployeeAssistantProvider(modelUrl, modelApiKey, modelName);
       default -> new RemoteEmployeeAssistantProvider("", "");
     };
+  }
+
+  private boolean outboundAllowed() {
+    return LocalMockOutboundPolicy.isAllowed(runtimeEnvironment, outboundMode, provider.target());
   }
 
   private static boolean isValidLocalMode(String providerName, String upstreamUrl, String apiToken,

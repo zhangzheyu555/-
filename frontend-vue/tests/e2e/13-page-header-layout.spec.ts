@@ -87,7 +87,12 @@ test('all business routes use one content title and a compact tool-only topbar',
     await expect(page.locator('.app-topbar h1')).toHaveCount(0)
     await expect(page.locator('.app-main h1')).toHaveCount(1)
     await expect(page.locator('.date-display')).toBeVisible()
-    await expect(page.getByLabel('全局门店')).toBeVisible()
+    if (path === '/assistant') {
+      await expect(page.getByLabel('全局门店')).toHaveCount(0)
+      await expect(page.getByText('范围', { exact: true })).toBeVisible()
+    } else {
+      await expect(page.getByLabel('全局门店')).toBeVisible()
+    }
     await expect(page.getByRole('button', { name: '打开全局搜索' })).toBeVisible()
     await expect(page.getByRole('button', { name: '消息提醒' })).toBeVisible()
     const topbarHeight = await page.locator('.app-topbar').evaluate((element) => element.getBoundingClientRect().height)

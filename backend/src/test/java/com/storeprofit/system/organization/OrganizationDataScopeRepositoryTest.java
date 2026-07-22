@@ -1,13 +1,24 @@
 package com.storeprofit.system.organization;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
+import com.storeprofit.system.audit.AuditRepository;
+import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.platform.auth.AccessControlService;
+import com.storeprofit.system.platform.auth.AuthUser;
 import com.storeprofit.system.platform.authorization.DataScope;
 import com.storeprofit.system.platform.authorization.DataScopeModes;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
@@ -41,7 +52,8 @@ public class OrganizationDataScopeRepositoryTest {
           id varchar(64) not null primary key, tenant_id bigint not null, brand_id bigint,
           code varchar(80), name varchar(160), area varchar(160), manager varchar(120),
           open_date date, status varchar(40), note varchar(255), region_code varchar(40),
-          supply_warehouse_id bigint
+          supply_warehouse_id bigint, created_at timestamp, updated_at timestamp,
+          unique(tenant_id, code)
         )
         """);
     jdbc.update("""
@@ -90,6 +102,48 @@ public class OrganizationDataScopeRepositoryTest {
 
     assertThat(repository.storeHasLinkedData(1L, "s1")).isTrue();
     assertThat(repository.storeHasLinkedData(1L, "s2")).isFalse();
+  }
+
+  @Test
+  void h2StoreUpsertValidatesBrandStatusAndDuplicateCodeBeforeWriting() {
+    AccessControlService accessControl = mock(AccessControlService.class);
+    AuditRepository auditRepository = mock(AuditRepository.class);
+    OrganizationService service = new OrganizationService(
+        repository, null, accessControl, null, null, auditRepository);
+    AuthUser boss = new AuthUser(7L, 1L, "default", "boss", "", "老板", "BOSS", null, true);
+    StoreUpsertRequest valid = new StoreUpsertRequest(
+        "new-store", "NEW-001", "新增门店", 1L, "荆州", "李四", "2026-07-21", "营业中", "H2 合成数据");
+
+    service.upsertStore(boss, valid);
+
+    assertThat(repository.storeCount(1L)).isEqualTo(3);
+    assertThat(repository.store(1L, "new-store")).isPresent();
+    verify(auditRepository).writeLog(any(), any());
+
+    assertThatThrownBy(() -> service.upsertStore(boss, new StoreUpsertRequest(
+        "bad-brand", "NEW-002", "错误品牌", 3L, "荆州", "", "", "营业中", "")))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("BRAND_NOT_FOUND"));
+    assertThatThrownBy(() -> service.upsertStore(boss, new StoreUpsertRequest(
+        "bad-status", "NEW-003", "错误状态", 1L, "荆州", "", "", "未知状态", "")))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("STORE_STATUS_INVALID"));
+    assertThatThrownBy(() -> service.upsertStore(boss, new StoreUpsertRequest(
+        "duplicate-code", "NEW-001", "重复编号", 1L, "荆州", "", "", "营业中", "")))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("STORE_CODE_DUPLICATE"));
+    assertThatThrownBy(() -> service.upsertStore(boss, new StoreUpsertRequest(
+        "other", "OTHER-001", "跨租户门店", 1L, "荆州", "", "", "营业中", "")))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> {
+          BusinessException forbidden = (BusinessException) error;
+          assertThat(forbidden.getCode()).isEqualTo("FORBIDDEN");
+          assertThat(forbidden.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+        });
+
+    assertThat(repository.storeCount(1L)).isEqualTo(3);
+    verify(auditRepository).writePermissionDenied(
+        eq(boss), eq("维护门店档案"), eq("API"), eq("other"), eq("other"), contains("不属于当前企业"));
   }
 
   public static String dateFormat(java.sql.Date value, String ignoredPattern) {

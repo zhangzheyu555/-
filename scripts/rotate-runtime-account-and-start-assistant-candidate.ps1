@@ -171,8 +171,8 @@ try {
 
   $candidate = Assert-StableCandidateJar $CandidateJarPath
   $currentHealth = Invoke-RestMethod -Uri 'http://127.0.0.1:18081/api/health' -TimeoutSec 8
-  if ($currentHealth.data.status -ne 'UP' -or [int]$currentHealth.data.databaseMigrationVersion -ne $script:ExpectedMigrationVersion) {
-    throw '当前 18081 健康状态或 Flyway 版本不符合受控替换前提。'
+  if ($currentHealth.data.status -ne 'UP') {
+    throw '当前 18081 公开存活检查未通过；拒绝开始受控替换。'
   }
 
   $rootPasswordInput = Read-Host '请输入 MySQL 3307 root 密码（输入不会显示）' -AsSecureString
@@ -182,6 +182,9 @@ try {
 
   [void](Invoke-MySqlCommandSafely -OptionFile $rootOptionFile -Sql 'SELECT 1;' -Action 'MySQL root 连接只读核验')
   $databaseVersion = [string](Invoke-MySqlCommandSafely -OptionFile $rootOptionFile -Sql 'SELECT version FROM `store_profit_mysql8`.`flyway_schema_history` WHERE success = 1 ORDER BY installed_rank DESC LIMIT 1;' -Action 'Flyway 版本只读核验').Trim()
+  if ([int]$databaseVersion -ne $script:ExpectedMigrationVersion) {
+    throw "当前数据库 Flyway 为 V$databaseVersion，预期为 V$script:ExpectedMigrationVersion；拒绝开始受控替换。"
+  }
   if ([int]$databaseVersion -ne $candidate.MigrationVersion) {
     throw "数据库 Flyway 为 V$databaseVersion，候选为 V$($candidate.MigrationVersion)；拒绝让启动器执行迁移。"
   }

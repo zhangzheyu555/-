@@ -20,11 +20,11 @@ const pages: Array<{ role: RoleKey; path: string; text: string }> = [
   { role: 'warehouse', path: '/warehouse/items', text: '商品档案' },
   { role: 'warehouse', path: '/warehouse/purchase', text: '采购入库' },
   { role: 'warehouse', path: '/warehouse/movements', text: '出入库记录' },
-  { role: 'operations', path: '/operations/inspection', text: '督导巡店' },
-  { role: 'operations', path: '/operations/inspection/records', text: '巡检记录' },
-  { role: 'operations', path: '/operations/inspection/tasks', text: '发起巡检' },
-  { role: 'operations', path: '/operations/exams', text: '培训考试' },
-  { role: 'operations', path: '/platform-login', text: '平台配置' },
+  { role: 'supervisor', path: '/operations/inspection', text: '督导巡店' },
+  { role: 'supervisor', path: '/operations/inspection/records', text: '巡检记录' },
+  { role: 'supervisor', path: '/operations/inspection/tasks', text: '发起巡检' },
+  { role: 'supervisor', path: '/operations/exams', text: '培训考试' },
+  { role: 'supervisor', path: '/platform-login', text: '平台配置' },
   { role: 'store', path: '/warehouse', text: '仓库中心' },
 ]
 

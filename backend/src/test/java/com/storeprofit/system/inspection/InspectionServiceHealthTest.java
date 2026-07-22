@@ -66,16 +66,27 @@ class InspectionServiceHealthTest {
     assertThat(response.message()).contains("未配置");
   }
 
+  @Test
+  void qaHealthRefusesLiveOrExternalDetectionTargetsWithoutOpeningANetworkConnection() {
+    InspectionService service = new InspectionService(
+        mock(InspectionRecordRepository.class), null, null, null,
+        "https://inspection.example.test/detect", "https://inspection.example.test/export", Duration.ofMillis(500),
+        "QA", "MOCK", null);
+
+    InspectionServiceHealthResponse response = service.serviceHealth();
+
+    assertThat(response.status()).isEqualTo("OUTBOUND_BLOCKED");
+    assertThat(response.configured()).isFalse();
+    assertThat(response.message()).contains("本机 Mock");
+  }
+
   private InspectionService serviceFor(String detectUrl) {
     String exportUrl = detectUrl == null || detectUrl.isBlank()
         ? ""
         : detectUrl.replace("/detect", "/export");
     return new InspectionService(
-        mock(InspectionRecordRepository.class),
-        detectUrl,
-        exportUrl,
-        Duration.ofMillis(500)
-    );
+        mock(InspectionRecordRepository.class), null, null, null,
+        detectUrl, exportUrl, Duration.ofMillis(500), "TEST", "MOCK", null);
   }
 
   private int closedLocalPort() throws IOException {

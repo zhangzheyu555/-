@@ -32,6 +32,7 @@ class AuthServiceLoginTest {
     LoginResponse response = service.login(new LoginRequest("boss", "submitted-password", null));
 
     assertThat(response.token()).isNotBlank();
+    assertThat(response.status()).isEqualTo("AUTHENTICATED");
     assertThat(response.user().role()).isEqualTo("BOSS");
     verify(repository).deleteTokensForUser(1L, 1L);
     verify(repository).createToken(

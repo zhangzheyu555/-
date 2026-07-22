@@ -34,6 +34,14 @@ public class AuthController {
     return ApiResponse.ok();
   }
 
+  @PostMapping("/initial-password")
+  public ApiResponse<Void> changeInitialPassword(
+      @Valid @RequestBody InitialPasswordChangeRequest request
+  ) {
+    authService.changeInitialPassword(request);
+    return ApiResponse.ok();
+  }
+
   @GetMapping("/me")
   public ApiResponse<SessionUser> me(
       @RequestHeader(value = "Authorization", required = false) String authorization

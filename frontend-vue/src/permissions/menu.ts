@@ -53,8 +53,7 @@ interface MenuSubject {
 const WORKSPACE_ITEMS: PermissionMenuItem[] = [
   { key: 'boss-workspace', label: '老板工作台', to: '/boss', icon: 'dashboard', requiredPermission: PERMISSIONS.SYSTEM_DASHBOARD_READ, bossOnly: true, workspacePath: '/boss' },
   { key: 'finance-workspace', label: '财务工作台', to: '/finance', icon: 'dashboard', requiredPermission: PERMISSIONS.FINANCE_PROFIT_READ, allowedRoles: ['FINANCE'], workspacePath: '/finance' },
-  { key: 'warehouse-workspace', label: '仓库工作台', to: '/warehouse', icon: 'warehouse', requiredPermission: PERMISSIONS.WAREHOUSE_READ, alternativePermissions: [PERMISSIONS.WAREHOUSE_CENTRAL_READ], workspacePath: '/warehouse', requiredDataScope: { domain: 'WAREHOUSE', modes: ['ALL', 'WAREHOUSE_LIST', 'CENTRAL_WAREHOUSE'] } },
-  { key: 'store-workspace', label: '门店工作台', to: '/store', icon: 'store', requiredPermission: PERMISSIONS.STORE_READ, allowedRoles: ['STORE_MANAGER'], workspacePath: '/store' },
+  { key: 'warehouse-workspace', label: '仓库工作台', to: '/warehouse', icon: 'warehouse', requiredPermission: PERMISSIONS.WAREHOUSE_READ, alternativePermissions: [PERMISSIONS.WAREHOUSE_CENTRAL_READ], hiddenRoles: ['SUPERVISOR'], workspacePath: '/warehouse', requiredDataScope: { domain: 'WAREHOUSE', modes: ['ALL', 'WAREHOUSE_LIST', 'CENTRAL_WAREHOUSE'] } },
   { key: 'supervisor-workspace', label: '督导工作台', to: '/operations', icon: 'dashboard', requiredPermission: PERMISSIONS.OPERATIONS_DASHBOARD_READ, allowedRoles: ['SUPERVISOR'], workspacePath: '/operations' },
   { key: 'employee-workspace', label: '员工工作台', to: '/employee', icon: 'dashboard', requiredPermission: PERMISSIONS.EXAM_LEARN, allowedRoles: ['EMPLOYEE'], workspacePath: '/employee' },
 ]
@@ -108,6 +107,7 @@ export const MENU_GROUP_CONFIG: PermissionMenuGroup[] = [
           PERMISSIONS.WAREHOUSE_REQUISITION_CREATE,
           PERMISSIONS.WAREHOUSE_REQUISITION_RECEIVE,
         ],
+        hiddenRoles: ['SUPERVISOR'],
         requiredDataScope: { domain: 'WAREHOUSE', modes: ['ALL', 'WAREHOUSE_LIST', 'CENTRAL_WAREHOUSE', 'STORE_LIST', 'OWN_STORE'] },
       },
       {
@@ -116,7 +116,7 @@ export const MENU_GROUP_CONFIG: PermissionMenuGroup[] = [
         to: '/daily-loss',
         icon: 'inventory',
         requiredPermission: PERMISSIONS.DAILY_LOSS_READ,
-        allowedRoles: ['FINANCE'],
+        allowedRoles: ['STORE_MANAGER', 'SUPERVISOR'],
       },
       {
         label: '门店详情',
@@ -124,6 +124,7 @@ export const MENU_GROUP_CONFIG: PermissionMenuGroup[] = [
         to: '/store-detail',
         icon: 'store',
         requiredPermission: PERMISSIONS.STORE_READ,
+        hiddenRoles: ['SUPERVISOR'],
         requiredDataScope: { domain: 'STORE', modes: ['ALL', 'STORE_LIST', 'OWN_STORE'] },
       },
     ],
@@ -175,7 +176,7 @@ export const MENU_GROUP_CONFIG: PermissionMenuGroup[] = [
     title: '系统管理',
     items: [
       { key: 'store-management', label: '门店管理', to: '/stores', icon: 'store', requiredPermission: PERMISSIONS.STORE_MANAGE, bossOnly: true },
-      { key: 'staff-profiles', label: '员工档案', to: '/staff', icon: 'users', requiredPermission: PERMISSIONS.EMPLOYEE_READ },
+      { key: 'staff-profiles', label: '员工档案', to: '/staff', icon: 'users', requiredPermission: PERMISSIONS.EMPLOYEE_READ, hiddenRoles: ['SUPERVISOR'] },
       { key: 'user-permissions', label: '账号权限', to: '/users', icon: 'users', requiredPermission: PERMISSIONS.SYSTEM_USER_MANAGE },
       { key: 'operation-logs', label: '操作日志', to: '/logs', icon: 'log', requiredPermission: PERMISSIONS.SYSTEM_AUDIT_READ },
     ],
@@ -183,8 +184,8 @@ export const MENU_GROUP_CONFIG: PermissionMenuGroup[] = [
 ]
 
 export const UTILITY_MENU_CONFIG: PermissionMenuItem[] = [
-  { key: 'assistant', label: '门店经营助手', to: '/assistant', icon: 'assistant', requiredPermission: PERMISSIONS.ASSISTANT_USE },
-  { key: 'employee-assistant', label: '员工服务助手', to: '/employee-assistant', icon: 'assistant', requiredPermission: PERMISSIONS.EMPLOYEE_ASSISTANT_USE },
+  { key: 'assistant', label: '门店经营助手', to: '/assistant', icon: 'assistant', requiredPermission: PERMISSIONS.ASSISTANT_USE, hiddenRoles: ['SUPERVISOR'] },
+  { key: 'employee-assistant', label: '员工服务助手', to: '/employee-assistant', icon: 'assistant', requiredPermission: PERMISSIONS.EMPLOYEE_ASSISTANT_USE, hiddenRoles: ['SUPERVISOR'] },
   { key: 'knowledge-base', label: '知识库', to: '/knowledge-base', icon: 'knowledge', requiredPermission: PERMISSIONS.KNOWLEDGE_BASE_SEARCH },
 ]
 
@@ -209,7 +210,12 @@ function canShow(item: PermissionMenuItem, subject: MenuSubject) {
   if (item.allowedRoles?.length
     && !isBossRole(subject.role)
     && !item.allowedRoles.some((role) => normalizeRoleCode(role) === normalizeRoleCode(subject.role))) return false
-  const canAccess = hasPermission(subject.role, subject.permissions, item.requiredPermission)
+  // 每日报损的角色归属是固定业务规则，不应因浏览器中的旧权限快照被隐藏。
+  // 路由和后端 API 仍会继续执行权限校验。
+  const roleOwnsDailyLoss = item.key === 'daily-loss'
+    && ['STORE_MANAGER', 'SUPERVISOR'].includes(normalizeRoleCode(subject.role))
+  const canAccess = roleOwnsDailyLoss
+    || hasPermission(subject.role, subject.permissions, item.requiredPermission)
     || item.alternativePermissions?.some((permission) => hasPermission(subject.role, subject.permissions, permission))
   if (!canAccess) return false
   if (!item.requiredDataScope) return true

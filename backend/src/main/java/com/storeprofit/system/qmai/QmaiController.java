@@ -1,18 +1,18 @@
 package com.storeprofit.system.qmai;
 
-import com.storeprofit.system.common.ApiResponse;
-import com.storeprofit.system.common.BusinessException;
 import com.storeprofit.system.audit.AuditLogRequest;
 import com.storeprofit.system.audit.AuditRepository;
+import com.storeprofit.system.common.ApiResponse;
+import com.storeprofit.system.common.BusinessException;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
 import com.storeprofit.system.platform.authorization.DataScope;
 import com.storeprofit.system.platform.authorization.DataScopeDomains;
 import com.storeprofit.system.platform.authorization.DataScopeModes;
+import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
-import java.nio.charset.StandardCharsets;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -43,6 +43,7 @@ public class QmaiController {
   private final AuditRepository auditRepository;
   private final QmaiOperatingDataService operatingDataService;
   private final QmaiRecipeSnapshotService recipeSnapshotService;
+  private final QmaiProperties properties;
 
   public QmaiController(
       QmaiConfigService configService,
@@ -51,7 +52,8 @@ public class QmaiController {
       AccessControlService accessControl,
       AuditRepository auditRepository,
       QmaiOperatingDataService operatingDataService,
-      QmaiRecipeSnapshotService recipeSnapshotService
+      QmaiRecipeSnapshotService recipeSnapshotService,
+      QmaiProperties properties
   ) {
     this.configService = configService;
     this.orderService = orderService;
@@ -60,6 +62,7 @@ public class QmaiController {
     this.auditRepository = auditRepository;
     this.operatingDataService = operatingDataService;
     this.recipeSnapshotService = recipeSnapshotService;
+    this.properties = properties;
   }
 
   @GetMapping("/status")
@@ -252,6 +255,7 @@ public class QmaiController {
   ) {
     AuthUser user = accessControl.requireUser(authorization);
     accessControl.requireQmaiRecipeRead(user);
+    requireRecipeEnabled();
     String safeMonth = operatingDataService.month(month);
     QmaiRecipeSnapshotService.Snapshot snapshot = recipeSnapshotService.monthly(
         user.tenantId(), brand, safeMonth, qmaiRecipeStoreScope(user, storeId));
@@ -270,16 +274,17 @@ public class QmaiController {
   ) {
     AuthUser user = accessControl.requireUser(authorization);
     accessControl.requireQmaiRecipeRead(user);
+    requireRecipeEnabled();
     String safeMonth = operatingDataService.month(month);
     QmaiRecipeSnapshotService.Snapshot snapshot = recipeSnapshotService.monthly(
         user.tenantId(), brand, safeMonth, qmaiRecipeStoreScope(user, storeId));
     auditRepository.writeLog(user, new AuditLogRequest("导出企迈配方用量", "qmai_export", "recipe-usage",
         storeId, safeMonth, "已导出服务端配方快照，匹配商品=" + snapshot.matchedProductCount(), null, null));
-    StringBuilder content = new StringBuilder("水果,配方净用量(克),折算毛重(克),折算采购毛重(斤),备注\\r\\n");
+    StringBuilder content = new StringBuilder("水果,配方净用量(克),折算毛重(克),折算采购毛重(斤),备注\r\n");
     for (QmaiRecipeCalculationService.FruitUsage row : snapshot.calculation().fruits()) {
       content.append(csvValue(row.fruit())).append(',').append(row.netGrams()).append(',')
           .append(row.rawGrams()).append(',').append(row.rawJin()).append(',')
-          .append(csvValue(row.approximate() ? "无出肉率，按 1:1 折算" : "")).append("\\r\\n");
+          .append(csvValue(row.approximate() ? "无出肉率，按 1:1 折算" : "")).append("\r\n");
     }
     return csv("企迈配方用量-" + safeMonth + ".csv", content.toString());
   }
@@ -338,6 +343,13 @@ public class QmaiController {
     return List.of(requested);
   }
 
+  private void requireRecipeEnabled() {
+    if (!properties.isRecipeEnabled()) {
+      throw new BusinessException(
+          "QMAI_RECIPE_DISABLED", "企迈配方用量功能暂未开放", HttpStatus.SERVICE_UNAVAILABLE);
+    }
+  }
+
   private ResponseEntity<byte[]> csv(String fileName, String content) {
     return ResponseEntity.ok()
         .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + java.net.URLEncoder.encode(fileName, StandardCharsets.UTF_8))
@@ -346,20 +358,20 @@ public class QmaiController {
   }
 
   private String revenueCsv(List<QmaiOperatingDataRepository.RevenueRow> rows) {
-    StringBuilder csv = new StringBuilder("门店,订单数,营业额,退款金额,成本金额\\r\\n");
+    StringBuilder csv = new StringBuilder("门店,订单数,营业额,退款金额,成本金额\r\n");
     for (QmaiOperatingDataRepository.RevenueRow row : rows) {
       csv.append(csvValue(row.storeId())).append(',').append(row.orderCount()).append(',')
-          .append(row.revenue()).append(',').append(row.refund()).append(',').append(row.cost()).append("\\r\\n");
+          .append(row.revenue()).append(',').append(row.refund()).append(',').append(row.cost()).append("\r\n");
     }
     return csv.toString();
   }
 
   private String productsCsv(List<QmaiOperatingDataRepository.ProductRow> rows) {
-    StringBuilder csv = new StringBuilder("门店,商品,分类,销量,退款销量,营业额,退款金额\\r\\n");
+    StringBuilder csv = new StringBuilder("门店,商品,分类,销量,退款销量,营业额,退款金额\r\n");
     for (QmaiOperatingDataRepository.ProductRow row : rows) {
       csv.append(csvValue(row.storeId())).append(',').append(csvValue(row.itemName())).append(',')
           .append(csvValue(row.categoryName())).append(',').append(row.quantity()).append(',')
-          .append(row.refundQuantity()).append(',').append(row.revenue()).append(',').append(row.refund()).append("\\r\\n");
+          .append(row.refundQuantity()).append(',').append(row.revenue()).append(',').append(row.refund()).append("\r\n");
     }
     return csv.toString();
   }

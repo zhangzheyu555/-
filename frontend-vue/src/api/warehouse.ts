@@ -1,4 +1,5 @@
 import { apiDelete, apiGet, apiPost, http } from './http'
+import { decodeFilename, downloadBlob } from './reports'
 
 export interface WarehouseSummary {
   itemCount: number
@@ -644,19 +645,5 @@ export async function downloadWarehousePdf(url: string, fallbackName: string) {
   const response = await http.get<Blob>(url, { responseType: 'blob' })
   const disposition = String(response.headers['content-disposition'] || '')
   const filename = decodeFilename(disposition) || fallbackName
-  const blobUrl = URL.createObjectURL(response.data)
-  const link = document.createElement('a')
-  link.href = blobUrl
-  link.download = filename
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  URL.revokeObjectURL(blobUrl)
-}
-
-function decodeFilename(disposition: string) {
-  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
-  if (encoded) return decodeURIComponent(encoded)
-  const plain = disposition.match(/filename="?([^";]+)"?/i)?.[1]
-  return plain ? decodeURIComponent(plain) : ''
+  downloadBlob(response.data, filename)
 }

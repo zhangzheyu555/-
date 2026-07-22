@@ -22,11 +22,12 @@ const modules = computed(() => [
     permission: PERMISSIONS.INSPECTION_MANAGE,
   },
   {
-    label: '每日报损复核',
+    label: '每日报损',
     description: '按已授权门店查看已提交报损，核对照片和明细后完成复核。',
     to: '/daily-loss',
     icon: PackageMinus,
     permission: PERMISSIONS.DAILY_LOSS_READ,
+    roleOwned: true,
   },
   {
     label: '培训考试',
@@ -42,12 +43,12 @@ const modules = computed(() => [
     icon: Settings2,
     permission: PERMISSIONS.PLATFORM_READ,
   },
-].filter((item) => auth.hasPermission(item.permission)))
+].filter((item) => item.roleOwned || auth.hasPermission(item.permission)))
 </script>
 
 <template>
   <section class="page-panel operations-workspace">
-    <PageHeader subtitle="按当前账号的有效权限进入运营模块。" />
+    <PageHeader />
     <nav v-if="modules.length" class="workspace-links" aria-label="运营业务入口">
       <RouterLink v-for="item in modules" :key="item.to" :to="item.to">
         <component :is="item.icon" :size="20" aria-hidden="true" />

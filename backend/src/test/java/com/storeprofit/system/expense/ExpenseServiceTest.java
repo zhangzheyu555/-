@@ -3,6 +3,8 @@ package com.storeprofit.system.expense;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.storeprofit.system.common.BusinessException;
@@ -12,9 +14,15 @@ import com.storeprofit.system.platform.authorization.DataScope;
 import com.storeprofit.system.platform.authorization.DataScopeDomains;
 import com.storeprofit.system.platform.authorization.DataScopeModes;
 import com.storeprofit.system.platform.authorization.DataScopeService;
+import com.storeprofit.system.todo.BusinessTodoService;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -198,6 +206,7 @@ class ExpenseServiceTest {
     assertThat(submitted.submittedBy()).isEqualTo(storeManager().id());
     assertThat(rejected.status()).isEqualTo("已驳回");
     assertThat(rejected.reviewedBy()).isEqualTo(finance().id());
+    assertThat(rejected.reviewNote()).isEqualTo("Need invoice");
     assertThat(resubmitted.status()).isEqualTo("待审核");
     assertThat(approved.status()).isEqualTo("已完成");
     assertThat(approved.reviewedBy()).isEqualTo(boss().id());
@@ -285,10 +294,247 @@ class ExpenseServiceTest {
     assertThat(service.submit(storeManager(), "exp-image-required").status()).isEqualTo("待审核");
   }
 
+  @Test
+  void persistsDeclaredExpenseDateAndRejectsInvalidRequiredBusinessFields() {
+    ExpenseClaimResponse saved = service.save(
+        boss(), "dated", request("s1", "2026-05", "128.50"));
+
+    assertThat(saved.expenseDate()).hasToString("2026-05-15");
+    assertThat(jdbcTemplate.queryForObject(
+        "select expense_date from expense_claim where id = 'dated'", java.sql.Date.class))
+        .hasToString("2026-05-15");
+
+    assertThatThrownBy(() -> service.save(boss(), null, new ExpenseClaimRequest(
+        "s1", "2026-05", "2026-06-01", new BigDecimal("1.00"), "物料", "说明", null)))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode())
+            .isEqualTo("EXPENSE_DATE_MONTH_MISMATCH"));
+    assertThatThrownBy(() -> service.save(boss(), null, new ExpenseClaimRequest(
+        "s1", "2026-05", "2026-05-16", new BigDecimal("1.00"), " ", "说明", null)))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode())
+            .isEqualTo("CATEGORY_REQUIRED"));
+    assertThatThrownBy(() -> service.save(boss(), null, new ExpenseClaimRequest(
+        "s1", "2026-05", "2026-05-16", new BigDecimal("1.001"), "物料", "说明", null)))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("BAD_AMOUNT"));
+  }
+
+  @Test
+  void duplicateSubmitAndStaleStatusUpdateCannotCreateASecondWorkflowEvent() {
+    service.save(storeManager(), "exp-once", request("s1", "2026-05", "128.50"));
+    attachImage("exp-once", "s1");
+
+    assertThat(service.submit(storeManager(), "exp-once").status()).isEqualTo("待审核");
+    assertThatThrownBy(() -> service.submit(storeManager(), "exp-once"))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("BAD_STATUS"));
+    assertThat(repository.updateStatus(
+        1L,
+        "exp-once",
+        ExpenseService.STATUS_DRAFT,
+        ExpenseService.STATUS_APPROVED,
+        null,
+        boss().id())).isZero();
+
+    assertThat(jdbcTemplate.queryForObject(
+        "select count(*) from operation_log where action = 'reimbursement_submit' and target_id = 'exp-once'",
+        Integer.class)).isEqualTo(1);
+    assertThat(jdbcTemplate.queryForObject(
+        "select status from expense_claim where id = 'exp-once'", String.class)).isEqualTo("待审核");
+  }
+
+  @Test
+  void sameIdempotencyKeyCreatesOneDraftAndOneAuditRecordAcrossRetries() {
+    ExpenseClaimRequest initial = request("s1", "2026-05", "128.50");
+
+    ExpenseClaimResponse first = service.save(storeManager(), null, initial, "expense-retry-001");
+    ExpenseClaimResponse replay = service.save(storeManager(), null, initial, "expense-retry-001");
+
+    assertThat(replay.id()).isEqualTo(first.id());
+    assertThat(jdbcTemplate.queryForObject(
+        "select count(*) from expense_claim where id = ?", Integer.class, first.id())).isEqualTo(1);
+    assertThat(jdbcTemplate.queryForObject(
+        "select count(*) from operation_log where action = 'expense_save' and target_id = ?", Integer.class, first.id()))
+        .isEqualTo(1);
+    assertThatThrownBy(() -> service.save(storeManager(), null,
+        request("s1", "2026-05", "129.00"), "expense-retry-001"))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("IDEMPOTENCY_KEY_REUSED"));
+  }
+
+  @Test
+  void concurrentIdempotentCreateReturnsTheSameDraftWithoutDuplicateAudit() throws Exception {
+    ExecutorService workers = Executors.newFixedThreadPool(2);
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    try {
+      java.util.concurrent.Callable<ExpenseClaimResponse> create = () -> {
+        ready.countDown();
+        if (!start.await(5, TimeUnit.SECONDS)) {
+          throw new IllegalStateException("并发创建测试未能同时开始");
+        }
+        return service.save(storeManager(), null, request("s1", "2026-05", "128.50"), "expense-retry-concurrent");
+      };
+      Future<ExpenseClaimResponse> first = workers.submit(create);
+      Future<ExpenseClaimResponse> second = workers.submit(create);
+      assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+      start.countDown();
+
+      ExpenseClaimResponse firstResult = first.get(5, TimeUnit.SECONDS);
+      ExpenseClaimResponse secondResult = second.get(5, TimeUnit.SECONDS);
+      assertThat(secondResult.id()).isEqualTo(firstResult.id());
+      assertThat(jdbcTemplate.queryForObject(
+          "select count(*) from expense_claim where id = ?", Integer.class, firstResult.id())).isEqualTo(1);
+      assertThat(jdbcTemplate.queryForObject(
+          "select count(*) from operation_log where action = 'expense_save' and target_id = ?", Integer.class, firstResult.id()))
+          .isEqualTo(1);
+    } finally {
+      workers.shutdownNow();
+    }
+  }
+
+  @Test
+  void concurrentApprovalCompareAndSetAllowsExactlyOneDatabaseTransition() throws Exception {
+    service.save(storeManager(), "exp-concurrent", request("s1", "2026-05", "128.50"));
+    attachImage("exp-concurrent", "s1");
+    service.submit(storeManager(), "exp-concurrent");
+
+    ExecutorService workers = Executors.newFixedThreadPool(2);
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    try {
+      java.util.concurrent.Callable<Integer> approve = () -> {
+        ready.countDown();
+        if (!start.await(5, TimeUnit.SECONDS)) {
+          throw new IllegalStateException("并发测试未能同时开始");
+        }
+        return repository.updateStatus(
+            1L,
+            "exp-concurrent",
+            ExpenseService.STATUS_PENDING,
+            ExpenseService.STATUS_APPROVED,
+            null,
+            boss().id());
+      };
+      Future<Integer> first = workers.submit(approve);
+      Future<Integer> second = workers.submit(approve);
+      assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+      start.countDown();
+
+      assertThat(List.of(first.get(5, TimeUnit.SECONDS), second.get(5, TimeUnit.SECONDS)))
+          .containsExactlyInAnyOrder(0, 1);
+      assertThat(jdbcTemplate.queryForObject(
+          "select status from expense_claim where id = 'exp-concurrent'", String.class)).isEqualTo("已完成");
+    } finally {
+      workers.shutdownNow();
+    }
+  }
+
+  @Test
+  void rejectionRequiresReasonAndDraftAttachmentDeletionIsAuditedAndImmutableAfterSubmit() {
+    service.save(storeManager(), "exp-reject", request("s1", "2026-05", "128.50"));
+    attachImage("exp-reject", "s1");
+    service.submit(storeManager(), "exp-reject");
+
+    assertThatThrownBy(() -> service.reject(finance(), "exp-reject", new ExpenseReviewRequest(" ")))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("REJECT_REASON_REQUIRED"));
+
+    long submittedAttachmentId = jdbcTemplate.queryForObject(
+        "select id from warehouse_attachment where business_id = 'exp-reject'", Long.class);
+    assertThatThrownBy(() -> service.deleteAttachment(storeManager(), "exp-reject", submittedAttachmentId))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("BAD_STATUS"));
+
+    service.save(storeManager(), "exp-draft-receipt", request("s1", "2026-05", "88.00"));
+    attachImage("exp-draft-receipt", "s1");
+    long draftAttachmentId = jdbcTemplate.queryForObject(
+        "select id from warehouse_attachment where business_id = 'exp-draft-receipt'", Long.class);
+    service.deleteAttachment(storeManager(), "exp-draft-receipt", draftAttachmentId);
+
+    assertThat(jdbcTemplate.queryForObject(
+        "select count(*) from warehouse_attachment where business_id = 'exp-draft-receipt'", Integer.class)).isZero();
+    assertThat(jdbcTemplate.queryForObject(
+        "select count(*) from operation_log where action = 'reimbursement_attachment_delete' and target_id = 'exp-draft-receipt'",
+        Integer.class)).isEqualTo(1);
+  }
+
+  @Test
+  void reviewNotesOverAuditLimitAreRejectedBeforeAnyStateOrAuditChange() {
+    service.save(storeManager(), "exp-long-note", request("s1", "2026-05", "128.50"));
+    attachImage("exp-long-note", "s1");
+    service.submit(storeManager(), "exp-long-note");
+    String tooLong = "审".repeat(256);
+
+    assertThatThrownBy(() -> service.requestInfo(finance(), "exp-long-note", new ExpenseReviewRequest(tooLong)))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("REVIEW_NOTE_REQUIRED_TOO_LONG"));
+    assertThatThrownBy(() -> service.reject(finance(), "exp-long-note", new ExpenseReviewRequest(tooLong)))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("REJECT_REASON_REQUIRED_TOO_LONG"));
+
+    assertThat(jdbcTemplate.queryForObject(
+        "select status from expense_claim where id = 'exp-long-note'", String.class)).isEqualTo("待审核");
+    assertThat(jdbcTemplate.queryForObject(
+        "select count(*) from operation_log where target_id = 'exp-long-note' and action in ('expense_request_info', 'reimbursement_reject')",
+        Integer.class)).isZero();
+  }
+
+  @Test
+  void storeManagerExpenseMutationUsesInternalReconciliationNotProfitWritePermission() {
+    BusinessTodoService todoService = mock(BusinessTodoService.class);
+    ExpenseService reconciledService = new ExpenseService(repository, null, null, todoService, null);
+
+    ExpenseClaimResponse saved = reconciledService.save(
+        storeManager(), "exp-manager-reconcile", request("s1", "2026-05", "128.50"));
+    attachImage("exp-manager-reconcile", "s1");
+    ExpenseClaimResponse submitted = reconciledService.submit(storeManager(), "exp-manager-reconcile");
+
+    assertThat(saved.status()).isEqualTo("草稿");
+    assertThat(submitted.status()).isEqualTo("待审核");
+    verify(todoService, times(2)).reconcileExpenseReviewForStore(storeManager().tenantId(), "s1", "2026-05");
+  }
+
+  @Test
+  void updatingAnExistingClaimCannotMoveItsStoreAndLeavePrimaryReceiptsOrphaned() {
+    service.save(boss(), "exp-store-lock", request("s1", "2026-05", "100"));
+    attachImage("exp-store-lock", "s1");
+
+    assertThatThrownBy(() -> service.save(boss(), "exp-store-lock", request("s2", "2026-05", "100")))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("EXPENSE_STORE_IMMUTABLE"));
+
+    assertThat(jdbcTemplate.queryForObject(
+        "select store_id from expense_claim where id = 'exp-store-lock'", String.class)).isEqualTo("s1");
+    assertThat(jdbcTemplate.queryForObject(
+        "select count(*) from warehouse_attachment where business_id = 'exp-store-lock' and store_id = 's1'", Integer.class))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void deletingDraftCleansPrimaryReceiptsButSubmittedClaimCannotBeDeleted() {
+    service.save(boss(), "draft-with-receipt", request("s1", "2026-05", "100"));
+    attachImage("draft-with-receipt", "s1");
+
+    service.delete(boss(), "draft-with-receipt");
+
+    assertThat(jdbcTemplate.queryForObject(
+        "select count(*) from warehouse_attachment where business_id = 'draft-with-receipt'", Integer.class)).isZero();
+
+    service.save(boss(), "pending-delete", request("s1", "2026-05", "100"));
+    attachImage("pending-delete", "s1");
+    service.submit(boss(), "pending-delete");
+    assertThatThrownBy(() -> service.delete(boss(), "pending-delete"))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("BAD_STATUS"));
+  }
+
   private ExpenseClaimRequest request(String storeId, String month, String amount) {
     return new ExpenseClaimRequest(
         storeId,
         month,
+        month + "-15",
         new BigDecimal(amount),
         "物料采购",
         "牛奶采购",

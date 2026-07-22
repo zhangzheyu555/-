@@ -43,7 +43,7 @@ const stateCases: Array<{
 test.describe('employee assistant availability', () => {
   for (const scenario of stateCases) {
     test(`shows ${scenario.state} as a distinct business state`, async ({ page }) => {
-      await seedEmployeeAssistantSession(page, scenario.state === 'UNCONFIGURED' ? 'BOSS' : 'OPERATIONS')
+      await seedEmployeeAssistantSession(page, scenario.state === 'UNCONFIGURED' ? 'BOSS' : 'SUPERVISOR')
       await mockStatus(page, scenario)
 
       await page.goto('/employee-assistant')
@@ -162,7 +162,7 @@ test.describe('employee assistant availability', () => {
   })
 
   test('keeps deployment variables hidden from an ordinary assistant user', async ({ page }) => {
-    await seedEmployeeAssistantSession(page, 'OPERATIONS')
+    await seedEmployeeAssistantSession(page, 'SUPERVISOR')
     await mockStatus(page, stateCases[0])
 
     await page.goto('/employee-assistant')
@@ -233,7 +233,7 @@ async function mockStatus(page: Page, scenario: (typeof stateCases)[number]) {
   })
 }
 
-async function seedEmployeeAssistantSession(page: Page, role: 'BOSS' | 'OPERATIONS' = 'OPERATIONS') {
+async function seedEmployeeAssistantSession(page: Page, role: 'BOSS' | 'SUPERVISOR' = 'SUPERVISOR') {
   const isBoss = role === 'BOSS'
   const user = {
     id: 901,

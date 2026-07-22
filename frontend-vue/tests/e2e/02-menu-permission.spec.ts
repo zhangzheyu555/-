@@ -48,8 +48,8 @@ test.describe('page and API permission guardrails', () => {
     { role: 'warehouse', path: '/boss' },
     { role: 'warehouse', path: '/profit' },
     { role: 'store', path: '/boss' },
-    { role: 'operations', path: '/boss' },
-    { role: 'operations', path: '/profit' },
+    { role: 'supervisor', path: '/boss' },
+    { role: 'supervisor', path: '/profit' },
     { role: 'learner', path: '/finance' },
     { role: 'learner', path: '/operations' },
   ]
@@ -136,7 +136,7 @@ test.describe('page and API permission guardrails', () => {
     { role: 'finance', path: '/api/warehouse/requisitions/TEST-NO-SUCH/ship', method: 'POST', data: { note: 'permission smoke' } },
     { role: 'warehouse', path: '/api/finance/todos/TEST-NO-SUCH/complete', method: 'POST', data: { note: 'permission smoke' } },
     { role: 'learner', path: '/api/boss/todos/TEST-NO-SUCH/resolve', method: 'POST', data: { note: 'permission smoke' } },
-    { role: 'operations', path: '/api/boss/todos/TEST-NO-SUCH/resolve', method: 'POST', data: { note: 'permission smoke' } },
+    { role: 'supervisor', path: '/api/boss/todos/TEST-NO-SUCH/resolve', method: 'POST', data: { note: 'permission smoke' } },
   ]
 
   for (const check of apiChecks) {

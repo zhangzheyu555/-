@@ -130,12 +130,17 @@ try {
   }
   if (-not $AuthorizeQaFixtureWrite) { throw 'QA fixture creation requires explicit authorization. Re-run only after approval with -Apply -AuthorizeQaFixtureWrite.' }
 
-  $health = Invoke-QAApi -Method GET -Path '/api/health'
-  if ([string]$health.data.environment -ne 'QA' -or [int]$health.data.databasePort -eq 3307 -or ([string]$health.data.databaseName -notmatch '(?i)(qa|test)')) {
-    throw 'The supplied endpoint is not an isolated QA candidate according to /api/health.'
+  $liveness = Invoke-QAApi -Method GET -Path '/api/health'
+  if ([string]$liveness.data.status -ne 'UP') {
+    throw 'The supplied endpoint did not pass the public liveness check.'
   }
   $token = Get-QAReleaseSecret -EnvironmentName $BootstrapBossTokenEnvironmentName
   $authorization = if ($token.StartsWith('Bearer ', [StringComparison]::OrdinalIgnoreCase)) { $token } else { 'Bearer ' + $token }
+  $token = $null
+  $diagnostics = Invoke-QAApi -Method GET -Path '/api/health/diagnostics' -Authorization $authorization
+  if ([string]$diagnostics.data.environment -ne 'QA' -or [int]$diagnostics.data.databasePort -eq 3307 -or ([string]$diagnostics.data.databaseName -notmatch '(?i)(qa|test)')) {
+    throw 'The supplied endpoint is not an isolated QA candidate according to authenticated diagnostics.'
+  }
   $me = Invoke-QAApi -Method GET -Path '/api/auth/me' -Authorization $authorization
   if ([string]$me.data.role -ne 'BOSS') { throw 'QA fixture creation requires a QA BOSS bootstrap token.' }
   $brandResponse = Invoke-QAApi -Method GET -Path '/api/brands' -Authorization $authorization

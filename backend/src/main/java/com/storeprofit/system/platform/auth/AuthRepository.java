@@ -51,6 +51,7 @@ public class AuthRepository {
             and t.permission_version = u.permission_version
             and t.expires_at > current_timestamp
             and u.enabled = 1
+            and u.password_change_required = 0
             and ten.status = 'ACTIVE'
           """, this::mapUser, hashToken(token)));
     } catch (EmptyResultDataAccessException ex) {
@@ -215,13 +216,54 @@ public class AuthRepository {
   }
 
   public void createUser(long tenantId, String username, String passwordHash, String displayName, String role, String storeId) {
+    createUser(tenantId, username, passwordHash, displayName, role, storeId, false);
+  }
+
+  public void createUserRequiringPasswordChange(
+      long tenantId,
+      String username,
+      String passwordHash,
+      String displayName,
+      String role,
+      String storeId
+  ) {
+    createUser(tenantId, username, passwordHash, displayName, role, storeId, true);
+  }
+
+  public void createUser(
+      long tenantId,
+      String username,
+      String passwordHash,
+      String displayName,
+      String role,
+      String storeId,
+      boolean passwordChangeRequired
+  ) {
     jdbcTemplate.update("""
         insert into auth_user(
           tenant_id, username, password_hash, display_name, role, store_id,
-          enabled, permission_version, created_at
+          enabled, permission_version, password_change_required, created_at
         )
-        values (?, ?, ?, ?, ?, ?, 1, 1, current_timestamp)
-        """, tenantId, username, passwordHash, displayName, role, storeId);
+        values (?, ?, ?, ?, ?, ?, 1, 1, ?, current_timestamp)
+        """, tenantId, username, passwordHash, displayName, role, storeId, passwordChangeRequired);
+  }
+
+  public boolean passwordChangeRequired(long tenantId, long userId) {
+    Boolean required = jdbcTemplate.queryForObject("""
+        select password_change_required
+        from auth_user
+        where tenant_id = ? and id = ?
+        """, Boolean.class, tenantId, userId);
+    return Boolean.TRUE.equals(required);
+  }
+
+  public boolean completeInitialPasswordChange(long tenantId, long userId, String passwordHash) {
+    return jdbcTemplate.update("""
+        update auth_user
+        set password_hash = ?, password_change_required = 0,
+            permission_version = permission_version + 1
+        where tenant_id = ? and id = ? and enabled = 1 and password_change_required = 1
+        """, passwordHash, tenantId, userId) == 1;
   }
 
   public boolean updateUser(

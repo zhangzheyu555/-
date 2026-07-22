@@ -19,14 +19,19 @@ class AuthTokenHashMigrationTest {
     migrateTo(dataSource, "56");
     JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
     AuthRepository repository = new AuthRepository(jdbcTemplate);
-    repository.createUser(
+    jdbcTemplate.update("""
+        insert into auth_user(
+          tenant_id, username, password_hash, display_name, role, store_id,
+          enabled, permission_version, created_at
+        )
+        values (?, ?, ?, ?, ?, ?, 1, 1, current_timestamp)
+        """,
         1L,
         "legacy-token-user",
         new PasswordService().hash("test-password"),
         "旧会话测试用户",
         "FINANCE",
-        null
-    );
+        null);
     AuthUser user = repository.findByUsername(1L, "legacy-token-user").orElseThrow();
     jdbcTemplate.update("""
         insert into auth_token(token, tenant_id, user_id, permission_version, expires_at, created_at)
@@ -44,6 +49,8 @@ class AuthTokenHashMigrationTest {
         from information_schema.columns
         where lower(table_name) = 'auth_token'
         """, String.class)).contains("token_hash").doesNotContain("token");
+    // The repository reflects the current schema, while this test intentionally stops at V58.
+    jdbcTemplate.execute("alter table auth_user add column password_change_required boolean not null default false");
     assertThat(repository.findByToken(LEGACY_RAW_TOKEN)).isPresent();
   }
 

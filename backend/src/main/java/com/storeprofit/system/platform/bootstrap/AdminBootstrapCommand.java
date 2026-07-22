@@ -22,7 +22,8 @@ import java.util.Set;
 public final class AdminBootstrapCommand {
   public static final String COMMAND_ARGUMENT = "--admin-bootstrap";
   public static final String ENABLED_ENVIRONMENT = "APP_BOOTSTRAP_ADMIN_ENABLED";
-  static final int EXPECTED_FLYWAY_VERSION = 83;
+  static final String QA_DOCKER_IDENTITY_ENVIRONMENT = "APP_BOOTSTRAP_ADMIN_QA_DOCKER";
+  static final int EXPECTED_FLYWAY_VERSION = 89;
 
   private final PasswordService passwordService;
   private final ConnectionFactory connectionFactory;
@@ -290,7 +291,8 @@ public final class AdminBootstrapCommand {
         grants,
         config.port(),
         config.database(),
-        config.username());
+        config.username(),
+        config.allowQaDockerIdentity());
     validateFlywayHistory(connection);
     validateRequiredSchema(connection);
     validateTransactionalSchema(connection, config.database());
@@ -491,19 +493,22 @@ public final class AdminBootstrapCommand {
     private final String password;
     private final int port;
     private final String database;
+    private final boolean allowQaDockerIdentity;
 
     private DatabaseConfig(
         String jdbcUrl,
         String username,
         String password,
         int port,
-        String database
+        String database,
+        boolean allowQaDockerIdentity
     ) {
       this.jdbcUrl = jdbcUrl;
       this.username = username;
       this.password = password;
       this.port = port;
       this.database = database;
+      this.allowQaDockerIdentity = allowQaDockerIdentity;
     }
 
     static DatabaseConfig from(Map<String, String> environment) {
@@ -535,8 +540,15 @@ public final class AdminBootstrapCommand {
           + "&allowPublicKeyRetrieval=false&connectTimeout=5000&socketTimeout=30000";
       DatabaseEnvironmentGuard.ConnectionTarget target =
           DatabaseEnvironmentGuard.validateConnectionTarget(appEnvironment, jdbcUrl, username);
+      boolean allowQaDockerIdentity = "true".equals(environment.get(QA_DOCKER_IDENTITY_ENVIRONMENT));
+      if (allowQaDockerIdentity
+          && (!("QA".equals(target.environment()))
+              || !("127.0.0.1".equals(target.host()) || "localhost".equals(target.host()))
+              || (!target.database().contains("qa") && !target.database().contains("test")))) {
+        throw new IllegalArgumentException("QA Docker bootstrap requires a loopback QA or test database");
+      }
       return new DatabaseConfig(
-          jdbcUrl, username, password, target.port(), target.database());
+          jdbcUrl, username, password, target.port(), target.database(), allowQaDockerIdentity);
     }
 
     String jdbcUrl() {
@@ -557,6 +569,10 @@ public final class AdminBootstrapCommand {
 
     String database() {
       return database;
+    }
+
+    boolean allowQaDockerIdentity() {
+      return allowQaDockerIdentity;
     }
 
     @Override

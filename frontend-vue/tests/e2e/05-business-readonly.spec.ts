@@ -7,8 +7,8 @@ const pages: Array<{ role: RoleKey; path: string }> = [
   { role: 'finance', path: '/profit-table' },
   { role: 'finance', path: '/profit' },
   { role: 'warehouse', path: '/warehouse' },
-  { role: 'operations', path: '/operations/inspection' },
-  { role: 'operations', path: '/operations/exams' },
+  { role: 'supervisor', path: '/operations/inspection' },
+  { role: 'supervisor', path: '/operations/exams' },
   { role: 'store', path: '/warehouse' },
 ]
 

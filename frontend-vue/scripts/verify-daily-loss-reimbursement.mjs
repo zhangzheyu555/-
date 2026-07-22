@@ -17,59 +17,102 @@ function scope(mode, storeIds = []) {
 }
 
 function makeUser(role) {
-  const common = {
-    id: role === 'STORE_MANAGER' ? 301 : 302,
+  const profiles = {
+    STORE_MANAGER: {
+      id: 301,
+      displayName: '店长验收',
+      roleLabel: '店长',
+      defaultWorkspace: '/store',
+      storeScope: ['TEST-STORE-01'],
+      dataScope: scope('OWN_STORE', ['TEST-STORE-01']),
+      dataScopes: {
+        STORE: scope('OWN_STORE', ['TEST-STORE-01']),
+        FINANCE: scope('OWN_STORE', ['TEST-STORE-01']),
+        INSPECTION: scope('STORE_LIST', ['TEST-STORE-01']),
+      },
+      boundStoreId: 'TEST-STORE-01',
+      boundStoreName: '测试门店',
+      brandId: 1,
+      brandName: '验收品牌',
+      // 故意模拟遗留/误配的报损权限；路由仍必须拒绝店长。
+      permissions: [
+        'system.dashboard.read', 'store.read', 'expense.create', 'expense.read',
+        'daily_loss.read', 'daily_loss.create', 'daily_loss.export',
+        'attachment.read', 'attachment.write',
+      ],
+    },
+    SUPERVISOR: {
+      id: 302,
+      displayName: '督导验收',
+      roleLabel: '督导',
+      defaultWorkspace: '/operations/inspection',
+      storeScope: ['all'],
+      dataScope: scope('STORE_LIST', ['TEST-STORE-01']),
+      dataScopes: {
+        STORE: scope('STORE_LIST', ['TEST-STORE-01']),
+        FINANCE: scope('NONE'),
+        INSPECTION: scope('STORE_LIST', ['TEST-STORE-01']),
+      },
+      boundStoreId: null,
+      boundStoreName: null,
+      brandId: null,
+      brandName: null,
+      // 故意模拟遗留/误配的报损权限；路由仍必须拒绝督导。
+      permissions: [
+        'system.dashboard.read', 'operations.dashboard.read', 'store.read',
+        'daily_loss.read', 'daily_loss.review', 'daily_loss.export',
+        'inspection.read', 'inspection.manage', 'attachment.read', 'attachment.write',
+      ],
+    },
+    FINANCE: {
+      id: 303,
+      displayName: '财务验收',
+      roleLabel: '财务',
+      defaultWorkspace: '/finance',
+      storeScope: ['TEST-STORE-01'],
+      dataScope: scope('STORE_LIST', ['TEST-STORE-01']),
+      dataScopes: {
+        STORE: scope('STORE_LIST', ['TEST-STORE-01']),
+        FINANCE: scope('STORE_LIST', ['TEST-STORE-01']),
+        INSPECTION: scope('NONE'),
+      },
+      boundStoreId: null,
+      boundStoreName: null,
+      brandId: null,
+      brandName: null,
+      permissions: [
+        'system.dashboard.read', 'store.read', 'finance.profit.read',
+        'daily_loss.read', 'daily_loss.export', 'attachment.read',
+      ],
+    },
+    BOSS: {
+      id: 1,
+      displayName: '老板验收',
+      roleLabel: '老板（系统管理员）',
+      defaultWorkspace: '/boss',
+      storeScope: ['all'],
+      dataScope: scope('ALL', ['all']),
+      dataScopes: {
+        STORE: scope('ALL', ['all']),
+        FINANCE: scope('ALL', ['all']),
+        INSPECTION: scope('ALL', ['all']),
+      },
+      boundStoreId: null,
+      boundStoreName: null,
+      brandId: null,
+      brandName: null,
+      permissions: [],
+    },
+  }
+  const profile = profiles[role]
+  if (!profile) throw new Error(`Unsupported verification role: ${role}`)
+  return {
+    ...profile,
     tenantId: 1,
     tenantName: '验收租户',
     username: role.toLowerCase(),
-    displayName: role === 'STORE_MANAGER' ? '店长验收' : '督导验收',
     role,
-    roleLabel: role === 'STORE_MANAGER' ? '店长' : '督导',
-    storeScope: role === 'STORE_MANAGER' ? ['TEST-STORE-01'] : ['all'],
-    dataScope: role === 'STORE_MANAGER' ? scope('OWN_STORE', ['TEST-STORE-01']) : scope('STORE_LIST', ['TEST-STORE-01']),
-    dataScopes: {
-      STORE: role === 'STORE_MANAGER' ? scope('OWN_STORE', ['TEST-STORE-01']) : scope('STORE_LIST', ['TEST-STORE-01']),
-      FINANCE: role === 'STORE_MANAGER' ? scope('OWN_STORE', ['TEST-STORE-01']) : scope('NONE'),
-      INSPECTION: scope('STORE_LIST', ['TEST-STORE-01']),
-    },
-    boundStoreId: role === 'STORE_MANAGER' ? 'TEST-STORE-01' : null,
-    boundStoreName: role === 'STORE_MANAGER' ? '测试门店' : null,
-    brandId: role === 'STORE_MANAGER' ? 1 : null,
-    brandName: role === 'STORE_MANAGER' ? '验收品牌' : null,
     permissionVersion: 63,
-  }
-  if (role === 'STORE_MANAGER') {
-    return {
-      ...common,
-      defaultWorkspace: '/store',
-      permissions: [
-        'system.dashboard.read',
-        'store.read',
-        'expense.create',
-        'expense.read',
-        'daily_loss.read',
-        'daily_loss.create',
-        'daily_loss.export',
-        'attachment.read',
-        'attachment.write',
-      ],
-    }
-  }
-  return {
-    ...common,
-    defaultWorkspace: '/operations/inspection',
-    permissions: [
-      'system.dashboard.read',
-      'operations.dashboard.read',
-      'store.read',
-      'daily_loss.read',
-      'daily_loss.review',
-      'daily_loss.export',
-      'inspection.read',
-      'inspection.manage',
-      'attachment.read',
-      'attachment.write',
-    ],
   }
 }
 
@@ -238,11 +281,21 @@ async function verifyExpenseUploadPreview(browser) {
   }
 }
 
-async function verifyDailyLossPhotoPreview(browser, viewport, file) {
-  const { context, page } = await preparePage(browser, 'SUPERVISOR', viewport)
+async function assertNoHorizontalOverflow(page, label) {
+  const overflow = await page.evaluate(() => ({
+    document: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    body: document.body.scrollWidth - document.body.clientWidth,
+    width: window.innerWidth,
+  }))
+  if (overflow.document > 1 || overflow.body > 1) throw new Error(`${label} has horizontal overflow: ${JSON.stringify(overflow)}`)
+}
+
+async function verifyDailyLossPhotoPreview(browser, role, viewport, file) {
+  const { context, page } = await preparePage(browser, role, viewport)
   try {
     await page.goto(`${base}/daily-loss`, { waitUntil: 'domcontentloaded' })
     await page.waitForLoadState('networkidle').catch(() => undefined)
+    await assertNoHorizontalOverflow(page, `${role} daily-loss ${viewport.width}px`)
     await page.locator('.photo-grid img').first().waitFor({ state: 'visible', timeout: 15000 })
     await page.locator('.photo-grid button').first().click()
     await page.locator('.image-preview-dialog img').waitFor({ state: 'visible', timeout: 15000 })
@@ -254,8 +307,8 @@ async function verifyDailyLossPhotoPreview(browser, viewport, file) {
   }
 }
 
-async function verifyMonthlyExcelExport(browser) {
-  const { context, page } = await preparePage(browser, 'SUPERVISOR', { width: 1365, height: 900 })
+async function verifyMonthlyExcelExport(browser, role) {
+  const { context, page } = await preparePage(browser, role, { width: 1280, height: 900 })
   try {
     const exportRequests = []
     page.on('request', (request) => {
@@ -263,6 +316,7 @@ async function verifyMonthlyExcelExport(browser) {
     })
     await page.goto(`${base}/daily-loss`, { waitUntil: 'domcontentloaded' })
     await page.waitForLoadState('networkidle').catch(() => undefined)
+    await assertNoHorizontalOverflow(page, `${role} daily-loss 1280px`)
     const button = page.getByRole('button', { name: '导出本月报损 Excel' })
     await button.waitFor({ state: 'visible', timeout: 15000 })
     if (await page.getByText('导出照片包', { exact: true }).count()) throw new Error('旧照片 ZIP 导出入口仍可见')
@@ -278,7 +332,7 @@ async function verifyMonthlyExcelExport(browser) {
     await context.close()
   }
 
-  const failed = await preparePage(browser, 'SUPERVISOR', { width: 1365, height: 900 }, { exportFailure: true })
+  const failed = await preparePage(browser, 'FINANCE', { width: 1280, height: 900 }, { exportFailure: true })
   try {
     await failed.page.goto(`${base}/daily-loss`, { waitUntil: 'domcontentloaded' })
     await failed.page.waitForLoadState('networkidle').catch(() => undefined)
@@ -289,23 +343,44 @@ async function verifyMonthlyExcelExport(browser) {
   }
 }
 
+async function verifyDailyLossRouteDenied(browser) {
+  for (const role of ['STORE_MANAGER', 'SUPERVISOR']) {
+    const { context, page } = await preparePage(browser, role, { width: 1280, height: 900 })
+    try {
+      const dailyLossRequests = []
+      page.on('request', (request) => {
+        if (new URL(request.url()).pathname.startsWith('/api/daily-loss/')) dailyLossRequests.push(request.url())
+      })
+      await page.goto(`${base}/daily-loss`, { waitUntil: 'domcontentloaded' })
+      await page.waitForLoadState('networkidle').catch(() => undefined)
+      if (new URL(page.url()).pathname !== '/no-permission') {
+        throw new Error(`${role} with misconfigured daily-loss permissions was not routed to /no-permission`)
+      }
+      if (dailyLossRequests.length) throw new Error(`${role} route denial issued daily-loss API requests: ${dailyLossRequests.join(', ')}`)
+      if (await page.getByRole('button', { name: '导出本月报损 Excel' }).count()) {
+        throw new Error(`${role} route denial still exposed the Excel export entry`)
+      }
+    } finally {
+      await context.close()
+    }
+  }
+}
+
 await mkdir(artifactDir, { recursive: true })
 
 const browser = await chromium.launch()
 const screenshots = []
 try {
   screenshots.push(await verifyExpenseUploadPreview(browser))
+  await verifyDailyLossRouteDenied(browser)
   screenshots.push(await verifyDailyLossPhotoPreview(
     browser,
-    { width: 1365, height: 900 },
-    'daily-loss-reimbursement-supervisor-loss-photo-preview-desktop-1365x900.png',
+    'FINANCE',
+    { width: 1280, height: 900 },
+    'daily-loss-reimbursement-finance-loss-photo-preview-desktop-1280x900.png',
   ))
-  await verifyMonthlyExcelExport(browser)
-  screenshots.push(await verifyDailyLossPhotoPreview(
-    browser,
-    { width: 390, height: 844 },
-    'daily-loss-reimbursement-supervisor-loss-photo-preview-mobile-390x844.png',
-  ))
+  await verifyMonthlyExcelExport(browser, 'BOSS')
+  await verifyMonthlyExcelExport(browser, 'FINANCE')
   const summaryPath = resolve(artifactDir, 'daily-loss-reimbursement-ui-summary.json')
   await writeFile(summaryPath, `${JSON.stringify({ base, screenshots }, null, 2)}\n`, 'utf8')
   console.log(`daily loss reimbursement UI verification passed; artifacts=${artifactDir}`)

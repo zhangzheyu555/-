@@ -48,7 +48,7 @@ class ExamLearningFlowTest {
     ExamCenterService centerService = new ExamCenterService(
         centerRepository, operationsRepository, access, audit, learningRepository);
 
-    AuthUser operator = user(100L, "OPERATIONS", null, "TEST考试管理员");
+    AuthUser operator = user(100L, "SUPERVISOR", null, "TEST督导");
     AuthUser employee = user(101L, "EMPLOYEE", "TEST_STORE", "TEST员工");
     when(access.dataScope(operator, DataScopeDomains.EXAM)).thenReturn(DataScope.all());
     when(access.dataScope(employee, DataScopeDomains.EXAM))
@@ -92,6 +92,9 @@ class ExamLearningFlowTest {
         List.of("TEST_STORE"), List.of("EMPLOYEE"), List.of()
     ));
     var assignment = campaign.assignments().getFirst();
+    assertThat(centerRepository.campaigns(1L, List.of(), employee.id()))
+        .extracting(ExamCenterModels.ExamCampaignResponse::id)
+        .containsExactly(campaign.campaign().id());
     var questions = operationsRepository.examPaper(1L, paper.id(), true).orElseThrow().questions();
 
     var attempt = centerService.submit(employee, assignment.id(), new ExamSubmissionRequest(
@@ -152,7 +155,7 @@ class ExamLearningFlowTest {
         """);
     jdbc.update("""
         insert into auth_user(id, tenant_id, username, password_hash, display_name, role, store_id, enabled, created_at)
-        values (100, 1, 'test_exam_operator', 'TEST_HASH', 'TEST考试管理员', 'OPERATIONS', null, 1, current_timestamp)
+        values (100, 1, 'test_exam_supervisor', 'TEST_HASH', 'TEST督导', 'SUPERVISOR', null, 1, current_timestamp)
         """);
     jdbc.update("""
         insert into auth_user(id, tenant_id, username, password_hash, display_name, role, store_id, enabled, created_at)

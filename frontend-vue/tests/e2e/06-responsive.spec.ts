@@ -14,9 +14,9 @@ const pages: Array<{ role: RoleKey | null; path: string; name: string }> = [
   { role: 'finance', path: '/expenses', name: 'finance-expenses' },
   { role: 'warehouse', path: '/warehouse', name: 'warehouse' },
   { role: 'warehouse', path: '/warehouse/items', name: 'warehouse-items' },
-  { role: 'operations', path: '/operations/inspection', name: 'operations-inspection' },
-  { role: 'operations', path: '/operations/inspection/records', name: 'inspection-records' },
-  { role: 'operations', path: '/operations/exams', name: 'operations-exam' },
+  { role: 'supervisor', path: '/operations/inspection', name: 'supervisor-inspection' },
+  { role: 'supervisor', path: '/operations/inspection/records', name: 'inspection-records' },
+  { role: 'supervisor', path: '/operations/exams', name: 'supervisor-exam' },
 ]
 
 test.describe('responsive smoke checks', () => {

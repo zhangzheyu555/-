@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ExternalLink, X } from 'lucide-vue-next'
 import PageHeader from '../components/common/PageHeader.vue'
 import { apiGet, apiPut, http } from '../api/http'
+import { downloadBlob } from '../api/reports'
 import { useAuthStore } from '../stores/auth'
 
 interface QmaiConfigView {
@@ -309,6 +310,7 @@ const sortArrow = (key: SortKey) =>
 
 /* ---------------- 企迈商品销售（同一次刷新的数据，切标签即看） ---------------- */
 const activeTab = ref<'turnover' | 'items' | 'usage'>('turnover')
+const qmaiRecipeEnabled = import.meta.env.VITE_QMAI_RECIPE_ENABLED === 'true'
 
 // 门店筛选：'' = 全部门店
 const itemShopFilter = ref('')
@@ -442,147 +444,6 @@ const itemTotals = computed(() => {
   return t
 })
 
-/*
- * Legacy browser-held recipe catalogue.  It is deliberately disabled: grams, yields and
- * conversion factors are now owned by the server-side recipe catalogue and must never be
- * calculated from browser-provided inputs.
- *
-// 每个配方产品的杯数：可手输，也可用当月企迈商品销量一键填充后再改
-const cupInputs = reactive<Record<string, number>>({})
-const usageFillMsg = ref('')
-// 企迈卖了但配方表里没有的饮品（不参与测算，列出来给用户看缺口）
-const usageUnmatched = ref<{ name: string; num: number }[]>([])
-
-// 名称归一：去空格/反引号/标点，便于企迈商品名和配方名对上
-const usageNorm = (s: string) => (s || '').replace(/[\s`·.。()（）【】[\]-]/g, '')
-// 中/大杯变体：企迈名带「大杯」找大杯配方，否则默认填中杯
-const USAGE_SIZE = /(中|大)杯?/
-
-function fillCupsFromQmai() {
-  const items = turnover.value?.items ?? []
-  if (!items.length) {
-    usageFillMsg.value = '请先在所选月份点「刷新」拉取企迈商品销量。'
-    return
-  }
-  // 全门店按商品聚合杯数（饮品口径）
-  const sold = new Map<string, number>()
-  for (const it of items) {
-    if (!isDrink(it.itemName)) continue
-    sold.set(it.itemName, (sold.get(it.itemName) || 0) + (Number(it.num) || 0))
-  }
-  // 配方索引：精确名 + 基础名(中/大杯变体归到同一基础名)
-  const exact = new Map<string, string>()
-  const byBase = new Map<string, { 中?: string; 大?: string; single?: string }>()
-  for (const r of RECIPES) {
-    exact.set(usageNorm(r.name), r.name)
-    const base = usageNorm(r.baseName || r.name.replace(/[（(](中|大)杯?[)）]/g, ''))
-    const slot = byBase.get(base) || {}
-    if (/[（(]中/.test(r.name)) slot.中 = r.name
-    else if (/[（(]大/.test(r.name)) slot.大 = r.name
-    else slot.single = r.name
-    byBase.set(base, slot)
-  }
-  for (const r of RECIPES) cupInputs[r.name] = 0
-  let matched = 0
-  const unmatched: { name: string; num: number }[] = []
-  for (const [qName, num] of sold) {
-    const qn = usageNorm(qName)
-    let target = exact.get(qn)
-    if (!target) {
-      const sizeHit = qn.match(USAGE_SIZE)
-      const slot = byBase.get(qn.replace(USAGE_SIZE, ''))
-      if (slot) target = (sizeHit?.[1] === '大' ? slot.大 : slot.中) || slot.single || slot.中 || slot.大
-    }
-    if (target) {
-      cupInputs[target] = (cupInputs[target] || 0) + num
-      matched++
-    } else if (num > 0) {
-      unmatched.push({ name: qName, num })
-    }
-  }
-  unmatched.sort((a, b) => b.num - a.num)
-  usageUnmatched.value = unmatched
-  usageFillMsg.value = `已按 ${monthLabel.value} 全门店销量填充 ${matched} 个商品；` +
-    (unmatched.length ? `${unmatched.length} 个售卖商品配方表里没有（见下方清单），杯数可手动调整。` : '全部对上。')
-}
-
-function clearCups() {
-  for (const r of RECIPES) cupInputs[r.name] = 0
-  usageFillMsg.value = ''
-  usageUnmatched.value = []
-}
-
-interface FruitUsageRow { fruit: string; netG: number; rawG: number; approx: boolean }
-const usageResult = computed(() => {
-  const fruits = new Map<string, FruitUsageRow>()
-  const others = new Map<string, number>()
-  let cups = 0
-  let products = 0
-  for (const r of RECIPES) {
-    const n = Number(cupInputs[r.name]) || 0
-    if (n <= 0) continue
-    cups += n
-    products++
-    for (const ing of r.ingredients) {
-      const g = ing.grams * n
-      if (!ing.fruit) {
-        others.set(ing.label, (others.get(ing.label) || 0) + g)
-        continue
-      }
-      const row = fruits.get(ing.fruit) || { fruit: ing.fruit, netG: 0, rawG: 0, approx: false }
-      row.netG += g
-      if (ing.kind === 'juice') {
-        row.rawG += g * (ing.factor || 1)
-      } else if (ing.kind === 'flesh' && FRUIT_YIELD[ing.fruit]) {
-        row.rawG += g / FRUIT_YIELD[ing.fruit]
-      } else {
-        // 无出肉率数据（百香果/耙耙柑/羊角蜜/榴莲/羽衣甘蓝等）按 1:1，偏保守
-        row.rawG += g
-        row.approx = true
-      }
-      fruits.set(ing.fruit, row)
-    }
-  }
-  return {
-    cups,
-    products,
-    fruits: [...fruits.values()].sort((a, b) => b.rawG - a.rawG),
-    others: [...others.entries()].map(([label, g]) => ({ label, g })).sort((a, b) => b.g - a.g),
-  }
-})
-// 斤 = 500 克
-const jin = (g: number) => (g / 500).toFixed(1)
-const kg = (g: number) => (g / 1000).toFixed(1)
-
-function exportUsageExcel() {
-  const u = usageResult.value
-  if (!u.fruits.length) return
-  const lines: string[] = []
-  lines.push(`物料用量测算,${monthLabel.value},共 ${u.products} 个产品 ${qtyFmt(u.cups)} 杯`.split(',').join(','))
-  lines.push('')
-  lines.push(['水果', '配方用量(公斤)', '出肉率', '折算采购毛重(斤)', '备注'].join(','))
-  for (const f of u.fruits) {
-    lines.push([
-      f.fruit, kg(f.netG),
-      FRUIT_YIELD[f.fruit] ? (FRUIT_YIELD[f.fruit] * 100).toFixed(1) + '%' : '—',
-      jin(f.rawG),
-      f.approx ? '无出肉率数据,按1:1折算' : '',
-    ].join(','))
-  }
-  lines.push('')
-  lines.push(['其他物料', '用量(公斤)'].join(','))
-  for (const o of u.others) lines.push([o.label, kg(o.g)].join(','))
-  lines.push('')
-  lines.push(['产品', '杯数'].join(','))
-  for (const r of RECIPES) {
-    const n = Number(cupInputs[r.name]) || 0
-    if (n > 0) lines.push([`"${r.name}"`, n].join(','))
-  }
-  downloadCsv(lines, `${brandLabel.value}_物料用量测算_${monthLabel.value}.csv`)
-}
-
-*/
-
 /* ---------------- 服务端配方目录 × 本地销量快照 → 用量快照 ---------------- */
 interface RecipeUsageFruit {
   fruit: string
@@ -628,7 +489,10 @@ function clearRecipeUsage() {
 
 function exportUsageExcel() {
   if (!usageResult.value.fruits.length) return
-  void downloadServerCsv(`/api/qmai/recipe-usage.csv?month=${encodeURIComponent(month.value)}&brand=${encodeURIComponent(brand.value)}`)
+  void downloadServerCsv(
+    `/api/qmai/recipe-usage.csv?month=${encodeURIComponent(month.value)}&brand=${encodeURIComponent(brand.value)}`,
+    `${brandLabel.value}_物料用量测算_${monthLabel.value}.csv`,
+  )
 }
 
 function shiftMonth(delta: number) {
@@ -693,42 +557,31 @@ function exportExcel() {
   if (!t?.shops?.length) {
     return
   }
-  void downloadServerCsv(`/api/qmai/revenue.csv?month=${encodeURIComponent(month.value)}&brand=${encodeURIComponent(brand.value)}`)
+  void downloadServerCsv(
+    `/api/qmai/revenue.csv?month=${encodeURIComponent(month.value)}&brand=${encodeURIComponent(brand.value)}`,
+    `${brandLabel.value}_企迈营业额_${monthLabel.value}.csv`,
+  )
 }
 
 function exportItemsExcel() {
   if (!turnover.value?.items.length) return
   // 导出由后端从授权范围快照生成并写审计，避免浏览器绕过导出权限或审计。
-  void downloadServerCsv(`/api/qmai/products.csv?month=${encodeURIComponent(month.value)}&brand=${encodeURIComponent(brand.value)}`)
+  void downloadServerCsv(
+    `/api/qmai/products.csv?month=${encodeURIComponent(month.value)}&brand=${encodeURIComponent(brand.value)}`,
+    `${brandLabel.value}_企迈商品销量_${monthLabel.value}.csv`,
+  )
 }
 
 function downloadCsv(lines: string[], filename: string) {
   // UTF-8 BOM 让 Excel 正确识别中文
   const csv = '﻿' + lines.join('\r\n')
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+  downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8;' }), filename)
 }
 
-async function downloadServerCsv(path: string) {
+async function downloadServerCsv(path: string, filename: string) {
   try {
     const response = await http.get<Blob>(path, { responseType: 'blob' })
-    const url = URL.createObjectURL(response.data)
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = path.includes('products') ? `${brandLabel.value}_企迈商品销量_${monthLabel.value}.csv`
-      : path.includes('recipe-usage') ? `${brandLabel.value}_物料用量测算_${monthLabel.value}.csv`
-        : `${brandLabel.value}_企迈营业额_${monthLabel.value}.csv`
-    document.body.appendChild(anchor)
-    anchor.click()
-    anchor.remove()
-    URL.revokeObjectURL(url)
+    downloadBlob(response.data, filename)
   } catch (e) {
     turnoverError.value = e instanceof Error ? e.message : '导出失败，请稍后重试。'
   }
@@ -803,7 +656,7 @@ onMounted(loadQmai)
           <button v-if="!isConsoleBrand" :class="{ active: activeTab === 'items' }" @click="activeTab = 'items'">
             企迈商品销售
           </button>
-          <button v-if="!isConsoleBrand" :class="{ active: activeTab === 'usage' }" @click="activeTab = 'usage'">
+          <button v-if="!isConsoleBrand && qmaiRecipeEnabled" :class="{ active: activeTab === 'usage' }" @click="activeTab = 'usage'">
             物料用量
           </button>
         </div>

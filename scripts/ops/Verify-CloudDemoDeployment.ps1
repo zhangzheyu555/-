@@ -139,12 +139,13 @@ if (-not (Test-Path -LiteralPath $AccountsCsv -PathType Leaf)) {
   throw "ACCOUNTS_CSV does not exist: $AccountsCsv"
 }
 $accounts = @(Import-Csv -LiteralPath $AccountsCsv -Encoding UTF8)
-Assert-True ($accounts.Count -eq 47) "CSV contains exactly 47 accounts"
+Assert-True ($accounts.Count -eq 46) "CSV contains exactly 46 accounts"
 
-$health = Invoke-Api -Method GET -Path '/api/health' -Token '' -ExpectedStatus @(200)
-Assert-True ($health.Body.success -eq $true -and $health.Body.data.status -eq 'UP') '/api/health status is UP'
+$liveness = Invoke-Api -Method GET -Path '/api/health' -Token '' -ExpectedStatus @(200)
+Assert-True ($liveness.Body.success -eq $true -and $liveness.Body.data.status -eq 'UP') '/api/health status is UP'
+$diagnostics = Invoke-Api -Method GET -Path '/api/health/diagnostics' -ExpectedStatus @(200)
 $localLatest = Get-LatestLocalFlywayVersion
-$remoteVersion = [int]$health.Body.data.databaseMigrationVersion
+$remoteVersion = [int]$diagnostics.Body.data.databaseMigrationVersion
 Assert-True ($remoteVersion -eq $localLatest) "Flyway version matches local latest V$localLatest"
 
 $users = (Invoke-Api -Method GET -Path '/api/users').Body.data
@@ -201,23 +202,15 @@ Invoke-Api -Method GET -Path '/api/audit/logs?limit=1' -Token $employeeToken -Ex
 Write-Host 'PASS EMPLOYEE cannot access audit logs'
 
 $supervisor = $accounts | Where-Object { ([string]$_.role).Trim().ToUpperInvariant() -eq 'SUPERVISOR' } | Select-Object -First 1
-$operations = $accounts | Where-Object { ([string]$_.role).Trim().ToUpperInvariant() -eq 'OPERATIONS' } | Select-Object -First 1
 Assert-True ($null -ne $supervisor) 'CSV contains SUPERVISOR account'
-Assert-True ($null -ne $operations) 'CSV contains OPERATIONS account'
 
 $supervisorLogin = Invoke-Api -Method POST -Path '/api/auth/login' -Token '' -Body @{ username = $supervisor.username; password = $DemoPassword }
 $supervisorToken = $supervisorLogin.Body.data.token
-Assert-True ($supervisorLogin.Body.data.user.defaultWorkspace -eq '/operations/inspection') 'SUPERVISOR default workspace is inspection'
+Assert-True ($supervisorLogin.Body.data.user.defaultWorkspace -eq '/operations') 'SUPERVISOR default workspace is supervisor workspace'
 Invoke-Api -Method GET -Path '/api/inspections' -Token $supervisorToken -ExpectedStatus @(200) | Out-Null
 Write-Host 'PASS SUPERVISOR can read inspections'
-Invoke-Api -Method GET -Path '/api/operations/inventory-checks' -Token $supervisorToken -ExpectedStatus @(403) | Out-Null
-Write-Host 'PASS SUPERVISOR cannot access operations inventory checks'
-
-$operationsLogin = Invoke-Api -Method POST -Path '/api/auth/login' -Token '' -Body @{ username = $operations.username; password = $DemoPassword }
-$operationsToken = $operationsLogin.Body.data.token
-Assert-True ($operationsLogin.Body.data.user.defaultWorkspace -eq '/operations') 'OPERATIONS default workspace is operations'
-Invoke-Api -Method GET -Path '/api/operations/inventory-checks' -Token $operationsToken -ExpectedStatus @(200) | Out-Null
-Write-Host 'PASS OPERATIONS can access operations inventory checks'
+Invoke-Api -Method GET -Path '/api/operations/inventory-checks' -Token $supervisorToken -ExpectedStatus @(200) | Out-Null
+Write-Host 'PASS SUPERVISOR can access managed operations inventory checks'
 
 $logs = Invoke-Api -Method GET -Path '/api/audit/logs?limit=100'
 Assert-True ($logs.Body.success -eq $true -and @($logs.Body.data).Count -gt 0) 'operation_log is readable and has rows'

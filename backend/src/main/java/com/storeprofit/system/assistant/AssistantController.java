@@ -2,6 +2,7 @@ package com.storeprofit.system.assistant;
 
 import com.storeprofit.system.common.ApiResponse;
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.audit.AuditRepository;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthService;
 import com.storeprofit.system.platform.auth.AuthUser;
@@ -25,18 +26,31 @@ public class AssistantController {
   private final AssistantService assistantService;
   private final DeepSeekProperties deepSeekProperties;
   private final AccessControlService accessControl;
+  private final AuditRepository auditRepository;
 
   @Autowired
   public AssistantController(
       AuthService authService,
       AssistantService assistantService,
       DeepSeekProperties deepSeekProperties,
-      AccessControlService accessControl
+      AccessControlService accessControl,
+      AuditRepository auditRepository
   ) {
     this.authService = authService;
     this.assistantService = assistantService;
     this.deepSeekProperties = deepSeekProperties;
     this.accessControl = accessControl;
+    this.auditRepository = auditRepository;
+  }
+
+  /** Compatibility constructor retained for isolated controller tests. */
+  public AssistantController(
+      AuthService authService,
+      AssistantService assistantService,
+      DeepSeekProperties deepSeekProperties,
+      AccessControlService accessControl
+  ) {
+    this(authService, assistantService, deepSeekProperties, accessControl, null);
   }
 
   /** Compatibility constructor retained for isolated controller tests. */
@@ -45,7 +59,7 @@ public class AssistantController {
       AssistantService assistantService,
       DeepSeekProperties deepSeekProperties
   ) {
-    this(authService, assistantService, deepSeekProperties, null);
+    this(authService, assistantService, deepSeekProperties, null, null);
   }
 
   @PostMapping("/chat")
@@ -90,16 +104,24 @@ public class AssistantController {
   }
 
   private void requireAssistantUse(AuthUser user) {
-    if (accessControl != null) {
-      accessControl.requireAssistantUse(user);
-      return;
+    try {
+      if (accessControl != null) {
+        accessControl.requireAssistantUse(user);
+        return;
+      }
+      if (AccessControlService.isBoss(user)
+          || AuthorizationService.legacyTemplatePermissions(user == null ? null : user.role())
+              .contains(PermissionCodes.ASSISTANT_USE)) {
+        return;
+      }
+      throw new BusinessException("FORBIDDEN", "当前账号无权使用门店经营助手", HttpStatus.FORBIDDEN);
+    } catch (BusinessException error) {
+      if (auditRepository != null && user != null) {
+        auditRepository.writePermissionDenied(user, "使用门店经营助手", "operating_assistant", null,
+            user.storeId(), "权限或数据范围不足");
+      }
+      throw error;
     }
-    if (AccessControlService.isBoss(user)
-        || AuthorizationService.legacyTemplatePermissions(user == null ? null : user.role())
-            .contains(PermissionCodes.ASSISTANT_USE)) {
-      return;
-    }
-    throw new BusinessException("FORBIDDEN", "当前账号无权使用门店经营助手", HttpStatus.FORBIDDEN);
   }
 
   private void requireAssistantStatus(AuthUser user) {

@@ -26,7 +26,7 @@ class InspectionServicePermissionTest {
       Duration.ofSeconds(1)
   );
   private final AuthUser user = new AuthUser(
-      7L, 1L, "default", "operator", "", "运营", "OPERATIONS", null, true);
+      7L, 1L, "default", "supervisor", "", "督导", "SUPERVISOR", null, true);
 
   @Test
   void recordReadDelegatesToInspectionReadPermission() {

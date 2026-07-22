@@ -558,11 +558,11 @@ public class InspectionRecordRepository {
     jdbcTemplate.update("""
         insert into inspection_record(
           id, tenant_id, store_id, inspection_date, inspector, brand, full_score,
-          score, passed, deductions_json, redlines_json, photos_json, note,
+          pass_score, score, passed, deductions_json, redlines_json, photos_json, note,
           standard_version_id, standard_version, material_score, hygiene_score,
           service_score, result_code, created_at
         )
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
         """,
         id,
         tenantId,
@@ -571,6 +571,7 @@ public class InspectionRecordRepository {
         blankToNull(request.inspector()),
         blankToNull(request.brand()),
         amount(request.fullScore()),
+        amount(InspectionScoringRules.PASS_SCORE),
         amount(request.score()),
         request.passed() == null || request.passed() ? 1 : 0,
         blankToNull(request.deductionsJson()),

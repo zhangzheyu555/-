@@ -51,7 +51,7 @@ class AssistantConfigurationContractTest {
 
     assertThat(valueExpressions)
         .isNotEmpty()
-        .allMatch(value -> value.contains("app.employee-assistant."))
+        .allMatch(value -> value.contains("app.employee-assistant.") || value.equals("${app.environment:TEST}"))
         .noneMatch(value -> value.contains("DEEPSEEK") || value.contains("app.assistant.deepseek"));
   }
 

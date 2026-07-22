@@ -63,7 +63,7 @@ try {
     $health = Invoke-RestMethod -Uri "$backendUrl/api/health" -TimeoutSec 5
     if ($health.success -and $health.data.status -eq "UP") {
       $backendOk = $true
-      Write-Host "  Backend: $backendUrl/api/health [OK] Flyway=$($health.data.databaseMigrationVersion)" -ForegroundColor Green
+      Write-Host "  Backend: $backendUrl/api/health [OK]" -ForegroundColor Green
     }
   } catch {
     Write-Warning "  Backend health check failed."

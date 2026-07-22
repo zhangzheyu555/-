@@ -27,6 +27,11 @@ param(
   [ValidatePattern('^[A-Za-z_][A-Za-z0-9_]*$')]
   [string]$CrossPermissionTokenEnvironmentName = 'MOBILE_STAGING_LEAST_PRIVILEGE_TOKEN',
 
+  # Separate from the deliberately under-privileged token below. This BOSS token is used only
+  # against the protected readiness endpoint after anonymous liveness has succeeded.
+  [ValidatePattern('^[A-Za-z_][A-Za-z0-9_]*$')]
+  [string]$DiagnosticsBossTokenEnvironmentName = 'MOBILE_STAGING_BOSS_DIAGNOSTICS_TOKEN',
+
   [ValidatePattern('^127\.0\.0\.1$')]
   [string]$RedisHost = '127.0.0.1',
 
@@ -63,6 +68,8 @@ $runId = 'isolated-prerelease-{0}-{1}' -f [DateTime]::UtcNow.ToString('yyyyMMddT
 $candidateProcess = $null
 $mysqlPasswordPlain = $null
 $crossPermissionTokenPlain = $null
+$diagnosticsBossTokenPlain = $null
+$diagnosticsAuthorization = $null
 $redisPasswordPlain = $null
 $results = New-Object 'System.Collections.Generic.List[object]'
 $gateStatus = 'BLOCKED'
@@ -295,6 +302,7 @@ function Write-GateEvidence {
     secrets = [ordered]@{
       mysqlPasswordSource = 'environment-name-only'
       crossPermissionTokenSource = 'environment-name-only'
+      diagnosticsBossTokenSource = 'environment-name-only'
       redisPasswordSource = 'environment-name-only'
       valuesRecorded = $false
     }
@@ -354,9 +362,10 @@ try {
 
   $mysqlPasswordPlain = Get-EnvironmentSecret -Name $MySqlPasswordEnvironmentName
   $crossPermissionTokenPlain = Get-EnvironmentSecret -Name $CrossPermissionTokenEnvironmentName
+  $diagnosticsBossTokenPlain = Get-EnvironmentSecret -Name $DiagnosticsBossTokenEnvironmentName
   $redisPasswordPlain = Get-EnvironmentSecret -Name $RedisPasswordEnvironmentName
   Add-GateResult -Check 'Secret handling' -Status 'PASS' `
-    -Evidence 'MySQL password, Redis password, and least-privilege token were supplied only through environment-variable names; values are not recorded.'
+    -Evidence 'MySQL password, Redis password, least-privilege token, and BOSS diagnostics token were supplied only through environment-variable names; values are not recorded.'
 
   $jarFullPath = (Resolve-Path -LiteralPath $JarPath).Path
   $startInfo = New-Object Diagnostics.ProcessStartInfo
@@ -422,25 +431,39 @@ try {
   }
 
   $health = Get-ApiData -Content $healthResponse.content
+  if ([string]$health.status -ne 'UP') { throw 'The candidate public liveness status is not UP.' }
+
+  $diagnosticsAuthorization = if ($diagnosticsBossTokenPlain.Trim().StartsWith('Bearer ', [StringComparison]::OrdinalIgnoreCase)) {
+    $diagnosticsBossTokenPlain.Trim()
+  } else {
+    'Bearer ' + $diagnosticsBossTokenPlain.Trim()
+  }
+  $diagnosticsResponse = Invoke-HttpGet -Uri "$healthUri/diagnostics" -Headers @{ Authorization = $diagnosticsAuthorization }
+  $diagnosticsBossTokenPlain = $null
+  $diagnosticsAuthorization = $null
+  if ($diagnosticsResponse.statusCode -ne 200) {
+    throw "The authenticated diagnostics endpoint returned HTTP $($diagnosticsResponse.statusCode)."
+  }
+  $diagnostics = Get-ApiData -Content $diagnosticsResponse.content
   foreach ($property in @('status', 'environment', 'databaseMigrationVersion', 'databasePort', 'databaseName')) {
-    if ($null -eq $health.PSObject.Properties[$property]) {
-      throw "The health response omitted required field '$property'."
+    if ($null -eq $diagnostics.PSObject.Properties[$property]) {
+      throw "The diagnostics response omitted required field '$property'."
     }
   }
-  if ([string]$health.status -ne 'UP') { throw 'The candidate health status is not UP.' }
-  if ([string]$health.environment -ne 'QA') { throw 'The candidate did not report QA environment.' }
-  if ([string]$health.databaseMigrationVersion -ne [string]$flywaySource.version) {
-    throw "The isolated candidate did not report synchronized Flyway V$($flywaySource.version)."
+  if ([string]$diagnostics.status -ne 'UP') { throw 'The candidate diagnostics status is not UP.' }
+  if ([string]$diagnostics.environment -ne 'QA') { throw 'The candidate diagnostics did not report QA environment.' }
+  if ([string]$diagnostics.databaseMigrationVersion -ne [string]$flywaySource.version) {
+    throw "The isolated candidate diagnostics did not report synchronized Flyway V$($flywaySource.version)."
   }
-  if ([int]$health.databasePort -ne $MySqlPort -or [int]$health.databasePort -eq 3307) {
-    throw 'The candidate runtime database port does not match the isolated MySQL port.'
+  if ([int]$diagnostics.databasePort -ne $MySqlPort -or [int]$diagnostics.databasePort -eq 3307) {
+    throw 'The candidate diagnostics database port does not match the isolated MySQL port.'
   }
-  if (-not [string]$health.databaseName -or -not ([string]$health.databaseName).Equals($MySqlDatabase, [StringComparison]::OrdinalIgnoreCase)) {
-    throw 'The candidate runtime database name does not match the isolated QA database.'
+  if (-not [string]$diagnostics.databaseName -or -not ([string]$diagnostics.databaseName).Equals($MySqlDatabase, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'The candidate diagnostics database name does not match the isolated QA database.'
   }
-  Add-GateResult -Check "Health and Flyway V$($flywaySource.version)" -Status 'PASS' `
-    -Evidence "Health is UP in QA and reports Flyway V$($flywaySource.version) on the isolated QA database." `
-    -HttpStatus $healthResponse.statusCode -RequestId $healthResponse.requestId
+  Add-GateResult -Check "Authenticated diagnostics and Flyway V$($flywaySource.version)" -Status 'PASS' `
+    -Evidence "Public liveness is UP; authenticated diagnostics reports QA and Flyway V$($flywaySource.version) on the isolated QA database." `
+    -HttpStatus $diagnosticsResponse.statusCode -RequestId $diagnosticsResponse.requestId
   Add-GateResult -Check 'Shared Redis video-ticket store' -Status 'PASS' `
     -Evidence 'Candidate reached health only after required shared Redis ticket-store startup verification; no local-memory or sticky-session fallback is accepted.' `
     -HttpStatus $healthResponse.statusCode -RequestId $healthResponse.requestId
@@ -481,6 +504,8 @@ finally {
   }
   $mysqlPasswordPlain = $null
   $crossPermissionTokenPlain = $null
+  $diagnosticsBossTokenPlain = $null
+  $diagnosticsAuthorization = $null
   $redisPasswordPlain = $null
   if ($candidateProcess) { $candidateProcess.Dispose() }
 }

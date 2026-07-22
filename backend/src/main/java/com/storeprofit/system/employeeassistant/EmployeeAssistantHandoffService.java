@@ -151,7 +151,7 @@ public class EmployeeAssistantHandoffService {
       return true;
     }
     return row.storeId() != null && !row.storeId().isBlank()
-        && accessControl.canAccessStore(user, DataScopeDomains.STORE, row.storeId());
+        && accessControl.canAccessStore(user, DataScopeDomains.INSPECTION, row.storeId());
   }
 
   private void requireOwner(AuthUser user, EmployeeAssistantKnowledgeRepository.HandoffRow row) {
@@ -178,12 +178,26 @@ public class EmployeeAssistantHandoffService {
       storeId = user.storeId().trim();
     }
     if (storeId != null) {
+      if (isEmployee(user)) {
+        String ownStoreId = normalized(user.storeId());
+        if (!storeId.equals(ownStoreId)) {
+          auditRepository.writePermissionDenied(user, "创建员工助手人工事项", "employee_assistant_handoff", null,
+              storeId, "员工只能为本人所属门店创建人工事项");
+          throw new BusinessException("FORBIDDEN", "当前账号没有访问该业务的权限", HttpStatus.FORBIDDEN);
+        }
+        return storeId;
+      }
       accessControl.requireStoreAccess(user, DataScopeDomains.STORE, storeId, "创建员工助手人工事项");
     }
     if (storeId == null) {
       throw badRequest("EMPLOYEE_ASSISTANT_HANDOFF_STORE_REQUIRED", "请选择所属门店后再转人工处理");
     }
     return storeId;
+  }
+
+  /** Employees do not receive the management STORE scope, but may hand off their own-store issue. */
+  private boolean isEmployee(AuthUser user) {
+    return user != null && "EMPLOYEE".equalsIgnoreCase(normalized(user.role()));
   }
 
   private String resolution(EmployeeAssistantHandoffReplyRequest request) {

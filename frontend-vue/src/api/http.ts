@@ -39,7 +39,8 @@ function areProtectedRequestsBlocked() {
 }
 
 function isProtectedApiRequest(url?: string) {
-  return Boolean(url?.startsWith('/api/') && !['/api/auth/login', '/api/auth/logout'].includes(url))
+  return Boolean(url?.startsWith('/api/')
+    && !['/api/auth/login', '/api/auth/logout', '/api/auth/initial-password'].includes(url))
 }
 
 function releaseProtectedRequest(config?: object) {

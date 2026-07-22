@@ -85,6 +85,28 @@ class AuthorizationServiceTest {
   }
 
   @Test
+  void financeCompatibilityTemplateKeepsWarehouseAccessReadOnly() {
+    assertThat(AuthorizationService.legacyTemplatePermissions("FINANCE"))
+        .contains(PermissionCodes.WAREHOUSE_READ)
+        .doesNotContain(
+            PermissionCodes.WAREHOUSE_PURCHASE,
+            PermissionCodes.WAREHOUSE_TRANSFER_REQUEST,
+            PermissionCodes.WAREHOUSE_TRANSFER_APPROVE,
+            PermissionCodes.WAREHOUSE_TRANSFER_SHIP,
+            PermissionCodes.WAREHOUSE_TRANSFER_RECEIVE,
+            PermissionCodes.WAREHOUSE_REQUISITION_PROCESS,
+            PermissionCodes.WAREHOUSE_CONFIGURE
+        );
+  }
+
+  @Test
+  void storeManagerCompatibilityTemplateIncludesDailyLossReadAndCreateOnly() {
+    assertThat(AuthorizationService.legacyTemplatePermissions("STORE_MANAGER"))
+        .contains(PermissionCodes.DAILY_LOSS_READ, PermissionCodes.DAILY_LOSS_CREATE)
+        .doesNotContain(PermissionCodes.DAILY_LOSS_REVIEW, PermissionCodes.DAILY_LOSS_EXPORT);
+  }
+
+  @Test
   void bossSessionPermissionSetAlsoIncludesDatabaseCatalogExtensions() {
     AuthUser boss = user(1L, "BOSS");
     when(repository.enabledPermissionCodes()).thenReturn(Set.of("future.permission.catalogued"));
@@ -98,17 +120,19 @@ class AuthorizationServiceTest {
   }
 
   @Test
-  void employeeHardCeilingKeepsOnlyLearningAndEmployeeAssistantPermissions() {
+  void employeeHardCeilingKeepsOnlyLearningAssistantAndReadOnlyKnowledgePermissions() {
     AuthUser employee = user(9L, "EMPLOYEE");
     when(repository.roleTemplatePermissions(1L, "EMPLOYEE"))
         .thenReturn(Set.of(
             PermissionCodes.EXAM_LEARN,
             PermissionCodes.EMPLOYEE_ASSISTANT_USE,
+            PermissionCodes.KNOWLEDGE_BASE_SEARCH,
             PermissionCodes.SALARY_READ
         ));
     when(repository.enabledPermissionCodes()).thenReturn(Set.of(
         PermissionCodes.EXAM_LEARN,
         PermissionCodes.EMPLOYEE_ASSISTANT_USE,
+        PermissionCodes.KNOWLEDGE_BASE_SEARCH,
         PermissionCodes.SALARY_READ,
         PermissionCodes.PLATFORM_MANAGE
     ));
@@ -118,7 +142,8 @@ class AuthorizationServiceTest {
 
     assertThat(service.effectivePermissions(employee)).containsExactlyInAnyOrder(
         PermissionCodes.EXAM_LEARN,
-        PermissionCodes.EMPLOYEE_ASSISTANT_USE
+        PermissionCodes.EMPLOYEE_ASSISTANT_USE,
+        PermissionCodes.KNOWLEDGE_BASE_SEARCH
     );
   }
 
@@ -135,8 +160,16 @@ class AuthorizationServiceTest {
             PermissionCodes.INVENTORY_MANAGE,
             PermissionCodes.EXAM_MANAGE,
             PermissionCodes.FINANCE_PROFIT_WRITE,
+            PermissionCodes.EXPENSE_CREATE,
+            PermissionCodes.EXPENSE_READ,
+            PermissionCodes.EXPENSE_REVIEW,
             PermissionCodes.SALARY_EDIT,
-            PermissionCodes.WAREHOUSE_CENTRAL_MANAGE
+            PermissionCodes.WAREHOUSE_READ,
+            PermissionCodes.WAREHOUSE_STORE_READ,
+            PermissionCodes.WAREHOUSE_CENTRAL_MANAGE,
+            PermissionCodes.EMPLOYEE_READ,
+            PermissionCodes.ASSISTANT_USE,
+            PermissionCodes.EMPLOYEE_ASSISTANT_USE
         ));
     when(repository.enabledPermissionCodes()).thenReturn(Set.of(
         PermissionCodes.INSPECTION_READ,
@@ -148,12 +181,27 @@ class AuthorizationServiceTest {
         PermissionCodes.INVENTORY_MANAGE,
         PermissionCodes.EXAM_MANAGE,
         PermissionCodes.FINANCE_PROFIT_WRITE,
+        PermissionCodes.EXPENSE_CREATE,
+        PermissionCodes.EXPENSE_READ,
+        PermissionCodes.EXPENSE_REVIEW,
         PermissionCodes.SALARY_EDIT,
-        PermissionCodes.WAREHOUSE_CENTRAL_MANAGE
+        PermissionCodes.WAREHOUSE_READ,
+        PermissionCodes.WAREHOUSE_STORE_READ,
+        PermissionCodes.WAREHOUSE_CENTRAL_MANAGE,
+        PermissionCodes.EMPLOYEE_READ,
+        PermissionCodes.ASSISTANT_USE,
+        PermissionCodes.EMPLOYEE_ASSISTANT_USE
     ));
     when(repository.userOverrides(1L, 10L)).thenReturn(List.of(
         new UserPermissionOverride(PermissionCodes.TODO_READ, PermissionEffect.ALLOW),
-        new UserPermissionOverride(PermissionCodes.PLATFORM_MANAGE, PermissionEffect.ALLOW)
+        new UserPermissionOverride(PermissionCodes.PLATFORM_MANAGE, PermissionEffect.ALLOW),
+        new UserPermissionOverride(PermissionCodes.EXPENSE_CREATE, PermissionEffect.ALLOW),
+        new UserPermissionOverride(PermissionCodes.EXPENSE_READ, PermissionEffect.ALLOW),
+        new UserPermissionOverride(PermissionCodes.EXPENSE_REVIEW, PermissionEffect.ALLOW),
+        new UserPermissionOverride(PermissionCodes.WAREHOUSE_READ, PermissionEffect.ALLOW),
+        new UserPermissionOverride(PermissionCodes.EMPLOYEE_READ, PermissionEffect.ALLOW),
+        new UserPermissionOverride(PermissionCodes.ASSISTANT_USE, PermissionEffect.ALLOW),
+        new UserPermissionOverride(PermissionCodes.EMPLOYEE_ASSISTANT_USE, PermissionEffect.ALLOW)
     ));
 
     assertThat(service.roleTemplatePermissions(1L, "SUPERVISOR"))
@@ -164,7 +212,11 @@ class AuthorizationServiceTest {
             PermissionCodes.EXAM_MANAGE)
         .doesNotContain(PermissionCodes.FINANCE_PROFIT_WRITE, PermissionCodes.SALARY_EDIT,
             PermissionCodes.WAREHOUSE_CENTRAL_MANAGE, PermissionCodes.STORE_MANAGE,
-            PermissionCodes.SYSTEM_USER_MANAGE);
+            PermissionCodes.SYSTEM_USER_MANAGE, PermissionCodes.EXPENSE_CREATE,
+            PermissionCodes.EXPENSE_READ, PermissionCodes.EXPENSE_REVIEW,
+            PermissionCodes.WAREHOUSE_READ, PermissionCodes.WAREHOUSE_STORE_READ,
+            PermissionCodes.EMPLOYEE_READ, PermissionCodes.ASSISTANT_USE,
+            PermissionCodes.EMPLOYEE_ASSISTANT_USE);
     assertThat(service.effectivePermissions(supervisor))
         .contains(PermissionCodes.INSPECTION_READ, PermissionCodes.INSPECTION_MANAGE, PermissionCodes.TODO_READ,
             PermissionCodes.OPERATIONS_DASHBOARD_READ,
@@ -173,10 +225,19 @@ class AuthorizationServiceTest {
             PermissionCodes.EXAM_MANAGE)
         .doesNotContain(PermissionCodes.FINANCE_PROFIT_WRITE, PermissionCodes.SALARY_EDIT,
             PermissionCodes.WAREHOUSE_CENTRAL_MANAGE, PermissionCodes.STORE_MANAGE,
-            PermissionCodes.SYSTEM_USER_MANAGE);
+            PermissionCodes.SYSTEM_USER_MANAGE, PermissionCodes.EXPENSE_CREATE,
+            PermissionCodes.EXPENSE_READ, PermissionCodes.EXPENSE_REVIEW,
+            PermissionCodes.WAREHOUSE_READ, PermissionCodes.WAREHOUSE_STORE_READ,
+            PermissionCodes.EMPLOYEE_READ, PermissionCodes.ASSISTANT_USE,
+            PermissionCodes.EMPLOYEE_ASSISTANT_USE);
     assertThat(AuthorizationService.legacyTemplatePermissions("SUPERVISOR"))
         .contains(PermissionCodes.INSPECTION_READ, PermissionCodes.INSPECTION_MANAGE, PermissionCodes.TODO_TRANSITION,
-            PermissionCodes.OPERATIONS_DASHBOARD_READ, PermissionCodes.PLATFORM_MANAGE);
+            PermissionCodes.OPERATIONS_DASHBOARD_READ, PermissionCodes.PLATFORM_MANAGE,
+            PermissionCodes.DAILY_LOSS_READ, PermissionCodes.DAILY_LOSS_REVIEW, PermissionCodes.DAILY_LOSS_EXPORT)
+        .doesNotContain(PermissionCodes.WAREHOUSE_READ, PermissionCodes.WAREHOUSE_STORE_READ,
+            PermissionCodes.EMPLOYEE_READ, PermissionCodes.EMPLOYEE_MANAGE,
+            PermissionCodes.ASSISTANT_USE, PermissionCodes.EMPLOYEE_ASSISTANT_USE,
+            PermissionCodes.EMPLOYEE_ASSISTANT_HANDOFF_MANAGE);
   }
 
   @Test

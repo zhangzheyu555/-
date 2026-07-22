@@ -54,7 +54,8 @@ const appChildren: RouteRecordRaw[] = [
   { path: 'finance', name: 'finance-workspace', component: FinanceWorkspace, meta: permissionMeta(PERMISSIONS.FINANCE_PROFIT_READ, { menuKey: 'finance-workspace', title: '财务工作台', allowedRoles: ['FINANCE'] }) },
   { path: 'warehouse', name: 'warehouse-overview', component: WarehouseWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_READ, { moduleKey: 'warehouse', menuKey: 'warehouse-center', warehouseTab: 'overview', title: '仓库中心' }) },
   { path: 'warehouse/workspace', redirect: '/warehouse' },
-  { path: 'store', name: 'store-workspace', component: StoreManagerWorkspace, meta: permissionMeta(PERMISSIONS.STORE_READ, { menuKey: 'store-workspace', title: '门店工作台', allowedRoles: ['STORE_MANAGER'] }) },
+  // 店长默认工作区继续保留 /store 兼容旧链接，但与门店详情共用唯一侧栏入口。
+  { path: 'store', name: 'store-workspace', component: StoreManagerWorkspace, meta: permissionMeta(PERMISSIONS.STORE_READ, { menuKey: 'store-detail', title: '门店详情', allowedRoles: ['STORE_MANAGER'] }) },
   { path: 'operations', name: 'operations-workspace', component: OperationsWorkspace, meta: permissionMeta(PERMISSIONS.OPERATIONS_DASHBOARD_READ, { menuKey: 'supervisor-workspace', title: '督导工作台', allowedRoles: ['SUPERVISOR'] }) },
   { path: 'employee', name: 'employee-workspace', component: EmployeeWorkbenchPage, meta: permissionMeta(PERMISSIONS.EXAM_LEARN, { menuKey: 'employee-workspace', title: '员工工作台', allowedRoles: ['EMPLOYEE'] }) },
   { path: 'employee/profile', name: 'employee-profile', component: EmployeeProfilePage, meta: permissionMeta(PERMISSIONS.EXAM_LEARN, { menuKey: 'employee-profile', title: '我的资料', allowedRoles: ['EMPLOYEE'] }) },
@@ -66,7 +67,7 @@ const appChildren: RouteRecordRaw[] = [
   // 已下线的辅助页面：保留旧链接兼容，统一回到员工服务助手。
   { path: 'employee-assistant/knowledge', redirect: '/employee-assistant' },
   { path: 'employee-assistant/handoffs', redirect: '/employee-assistant' },
-  { path: 'daily-loss', name: 'daily-loss', component: DailyLossPage, meta: permissionMeta(PERMISSIONS.DAILY_LOSS_READ, { menuKey: 'daily-loss', title: '每日报损', allowedRoles: ['FINANCE', 'SUPERVISOR'] }) },
+  { path: 'daily-loss', name: 'daily-loss', component: DailyLossPage, meta: permissionMeta(PERMISSIONS.DAILY_LOSS_READ, { menuKey: 'daily-loss', title: '每日报损', allowedRoles: ['STORE_MANAGER', 'SUPERVISOR'] }) },
   { path: 'profit', name: 'profit', component: ProfitOverviewPage, meta: permissionMeta(PERMISSIONS.FINANCE_PROFIT_READ, { menuKey: 'profit-overview', title: '利润概览' }) },
   { path: 'profit-table', name: 'profit-table', component: ProfitTablePage, meta: permissionMeta(PERMISSIONS.FINANCE_PROFIT_READ, { menuKey: 'profit-table', title: '利润表' }) },
   { path: 'data-entry', name: 'data-entry', component: DataEntryPage, meta: permissionMeta(PERMISSIONS.FINANCE_PROFIT_WRITE, { menuKey: 'data-entry', title: '数据录入' }) },
@@ -274,6 +275,20 @@ router.beforeEach(async (to) => {
     return { name: 'no-permission', query: { from: to.fullPath } }
   }
 
+  const supervisorForbiddenSurface = normalizeRoleCode(auth.role) === 'SUPERVISOR'
+    && (to.path === '/staff'
+      || to.path === '/assistant'
+      || to.path === '/employee-assistant'
+      || to.path.startsWith('/employee-assistant/')
+      || to.path === '/store-detail'
+      || to.path === '/warehouse'
+      || to.path.startsWith('/warehouse/')
+      || to.path === '/store/inventory'
+      || to.path.startsWith('/store/inventory/'))
+  if (auth.isLoggedIn && supervisorForbiddenSurface) {
+    return { name: 'no-permission', query: { from: to.fullPath } }
+  }
+
   const allowedRoles = [...to.matched]
     .reverse()
     .map((record) => record.meta.allowedRoles)
@@ -322,7 +337,10 @@ router.beforeEach(async (to) => {
     .reverse()
     .map((record) => record.meta.permission)
     .find((permission): permission is string => typeof permission === 'string' && Boolean(permission))
+  const roleOwnsDailyLoss = to.name === 'daily-loss'
+    && ['STORE_MANAGER', 'SUPERVISOR'].includes(normalizeRoleCode(auth.role))
   const hasRequiredPermission = !requiredPermission
+    || roleOwnsDailyLoss
     || auth.hasPermission(requiredPermission)
     || (
       requiredPermission === PERMISSIONS.WAREHOUSE_READ

@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { Download } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import type { ProfitEntry } from '../api/profit'
+import { downloadCsvRows } from '../api/reports'
 import BrandBadge from '../components/common/BrandBadge.vue'
 import BrandSelect from '../components/common/BrandSelect.vue'
 import BusinessScopeBar from '../components/common/BusinessScopeBar.vue'
@@ -287,18 +288,10 @@ function exportProfitTable() {
         amount(entry.net).toFixed(2),
         percent(entry.margin),
       ])
-  const csv = [headers, ...rows]
-    .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
-    .join('\n')
-  const blob = new Blob([`\ufeff${csv}`], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = reportMode.value === 'single'
+  const filename = reportMode.value === 'single'
     ? `${selectedStore.value?.storeName || selectedStoreId.value}-${selectedMonth.value}-利润表.csv`
     : `${selectedMonth.value}-${brandNameByValue(selectedBrandId.value) || '全部品牌'}-利润汇总.csv`
-  link.click()
-  URL.revokeObjectURL(url)
+  downloadCsvRows([headers, ...rows], filename)
 }
 
 onMounted(async () => {

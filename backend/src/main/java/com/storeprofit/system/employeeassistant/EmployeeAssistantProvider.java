@@ -17,6 +17,9 @@ import java.util.List;
 interface EmployeeAssistantProvider {
   boolean configured();
 
+  /** Safe configuration metadata used only by the local outbound guard. */
+  String target();
+
   HttpRequest healthRequest(Duration timeout);
 
   HttpRequest chatRequest(

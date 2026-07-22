@@ -25,11 +25,11 @@ withDefaults(defineProps<{
 
 <style scoped lang="scss">
 .app-card {
-  padding: 28rpx;
+  padding: 32rpx;
   background: #ffffff;
   border: 1rpx solid $mobile-line;
-  border-radius: 14rpx;
-  box-shadow: 0 6rpx 18rpx rgba(30, 77, 71, 0.035);
+  border-radius: 28rpx;
+  box-shadow: 0 12rpx 32rpx rgba(26, 55, 43, 0.06);
 }
 
 .app-card--compact { padding: 24rpx; }
@@ -43,6 +43,6 @@ withDefaults(defineProps<{
 }
 
 .app-card__heading { display: flex; flex-direction: column; gap: 6rpx; }
-.app-card__eyebrow { color: $mobile-orange; font-size: 22rpx; font-weight: 700; letter-spacing: 0; }
+.app-card__eyebrow { color: $mobile-green; font-size: 22rpx; font-weight: 700; letter-spacing: 2rpx; }
 .app-card__title { color: $mobile-ink; font-size: 32rpx; font-weight: 700; line-height: 1.35; }
 </style>

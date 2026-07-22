@@ -1,6 +1,7 @@
 package com.storeprofit.system.qmai;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -26,7 +27,7 @@ public class QmaiRecipeCatalogRepository {
         join qmai_recipe_ingredient i on i.recipe_id = d.id
         where d.tenant_id = ? and d.brand_code = ? and d.active = 1
         order by d.product_name, i.sort_order, i.id
-        """, (RowCallbackHandler) rs -> result.computeIfAbsent(rs.getString("product_name"), ignored -> new java.util.ArrayList<>()).add(
+        """, (RowCallbackHandler) rs -> result.computeIfAbsent(rs.getString("product_name"), ignored -> new ArrayList<>()).add(
             new QmaiRecipeCalculationService.IngredientInput(rs.getString("material_name"),
                 rs.getString("fruit_name"), rs.getBigDecimal("grams_per_cup"),
                 rs.getString("conversion_kind"), rs.getBigDecimal("conversion_factor"))), tenantId, brand);

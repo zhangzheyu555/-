@@ -1044,9 +1044,6 @@ function normalizeError(value: unknown, fallback: string) {
     <div class="assistant-page-header">
       <PageHeader
         title="门店经营助手"
-        :subtitle="businessScope.isStoreManager.value
-          ? `${businessScope.managerScopeLabel.value} · 数据库负责事实，AI负责解释和行动建议`
-          : '数据库负责事实，AI负责解释和行动建议'"
       >
         <template #actions>
           <button class="secondary-button" type="button" :disabled="!runs.length || sending" @click="requestClearConversation">

@@ -129,7 +129,7 @@ button.danger { color: #963b30; background: #fff0ed; border-color: #f2c8c0; }
   width: min(100%, 1000rpx);
   min-height: 100vh;
   margin: 0 auto;
-  padding: 24rpx 32rpx calc(48rpx + env(safe-area-inset-bottom));
+  padding: 28rpx 24rpx calc(40rpx + env(safe-area-inset-bottom));
 }
 
 .mobile-stack { display: flex; flex-direction: column; gap: 24rpx; }
@@ -141,20 +141,20 @@ button.danger { color: #963b30; background: #fff0ed; border-color: #f2c8c0; }
   min-height: 92rpx;
   padding: 0 28rpx;
   color: $mobile-ink;
-  background: $mobile-surface;
-  border: 2rpx solid $mobile-line;
-  border-radius: 16rpx;
+  background: $mobile-surface-strong;
+  border: 1rpx solid transparent;
+  border-radius: 20rpx;
   font-size: 30rpx;
 }
 
-.mobile-input:focus { border-color: $mobile-orange; background: #ffffff; box-shadow: 0 0 0 4rpx rgba(39, 101, 95, 0.08); }
+.mobile-input:focus { border-color: $mobile-green; background: #ffffff; }
 
 .mobile-primary-button {
   min-height: 92rpx;
   margin: 0;
   color: #ffffff;
-  background: $mobile-orange;
-  border-radius: 14rpx;
+  background: $mobile-green;
+  border-radius: 22rpx;
   font-size: 30rpx;
   font-weight: 750;
   line-height: 92rpx;
@@ -162,22 +162,4 @@ button.danger { color: #963b30; background: #fff0ed; border-color: #f2c8c0; }
 
 .mobile-primary-button::after { border: 0; }
 .mobile-primary-button[disabled] { opacity: 0.52; }
-
-.mobile-ghost-button {
-  min-height: 88rpx;
-  margin: 0;
-  padding: 0 28rpx;
-  color: $mobile-orange-dark;
-  background: $mobile-surface;
-  border: 2rpx solid #bed9d4;
-  border-radius: 14rpx;
-  font-size: 26rpx;
-  font-weight: 700;
-  line-height: 84rpx;
-}
-
-.mobile-ghost-button::after { border: 0; }
-
-.mobile-feedback { transition: opacity 120ms ease; }
-.mobile-feedback:active { opacity: 0.7; }
 </style>

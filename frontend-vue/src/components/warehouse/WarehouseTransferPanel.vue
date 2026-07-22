@@ -34,6 +34,7 @@ interface DraftLine {
   itemId: number
   quantity: number
   note: string
+  materialQuery: string
 }
 
 type TransferAction = keyof WarehouseTransferRouteActions
@@ -51,6 +52,9 @@ const activeRoute = computed(() => (
   || null
 ))
 const isProactiveAllocation = computed(() => props.context?.mode === 'PROACTIVE_ALLOCATION')
+const canChooseTargetWarehouse = computed(() => (
+  isProactiveAllocation.value && createRoutes.value.length > 1
+))
 const visibleTransfers = computed(() => {
   const warehouseId = props.context?.currentWarehouse?.id
   if (warehouseId === undefined || warehouseId === null) return props.transfers
@@ -115,7 +119,7 @@ function resetDraft() {
 }
 
 function addLine() {
-  draft.lines.push({ itemId: 0, quantity: 1, note: '' })
+  draft.lines.push({ itemId: 0, quantity: 1, note: '', materialQuery: '' })
 }
 
 function removeLine(index: number) {
@@ -124,6 +128,18 @@ function removeLine(index: number) {
 
 function materialFor(line: DraftLine): WarehouseTransferMaterial | null {
   return activeRoute.value?.materials.find((item) => item.itemId === Number(line.itemId)) || null
+}
+
+function filteredMaterials(line: DraftLine) {
+  const materials = activeRoute.value?.materials || []
+  const query = line.materialQuery.trim().toLocaleLowerCase('zh-CN')
+  if (!query) return materials
+  return materials.filter((item) => (
+    item.itemId === Number(line.itemId)
+    || [item.itemName, item.itemCode, item.unit]
+      .filter(Boolean)
+      .some((value) => String(value).toLocaleLowerCase('zh-CN').includes(query))
+  ))
 }
 
 function shortageFor(line: DraftLine) {
@@ -243,7 +259,7 @@ function detailText(row: WarehouseTransfer) {
         <label>
           调入仓
           <select
-            v-if="isProactiveAllocation"
+            v-if="canChooseTargetWarehouse"
             v-model="selectedRouteKey"
             aria-label="调入仓"
           >
@@ -258,12 +274,25 @@ function detailText(row: WarehouseTransfer) {
         <div v-for="(line, index) in draft.lines" :key="index" class="transfer-line">
           <label>
             物料
-            <select v-model.number="line.itemId" required aria-label="调拨物料">
-              <option :value="0" disabled>请选择物料</option>
-              <option v-for="item in activeRoute.materials" :key="item.itemId" :value="item.itemId">
-                {{ item.itemName }}{{ item.itemCode ? ` · ${item.itemCode}` : '' }} · 可发 {{ qty(item.availableQuantity, item.unit) }}
-              </option>
-            </select>
+            <div class="material-picker">
+              <input
+                v-model="line.materialQuery"
+                type="search"
+                placeholder="搜索物料名称或编码"
+                aria-label="搜索调拨物料"
+                autocomplete="off"
+              />
+              <select v-model.number="line.itemId" required aria-label="调拨物料">
+                <option :value="0" disabled>请选择物料</option>
+                <option v-if="line.materialQuery.trim() && !filteredMaterials(line).length" :value="0" disabled>没有匹配的物料</option>
+                <option v-for="item in filteredMaterials(line)" :key="item.itemId" :value="item.itemId">
+                  {{ item.itemName }}{{ item.itemCode ? ` · ${item.itemCode}` : '' }} · 可发 {{ qty(item.availableQuantity, item.unit) }}
+                </option>
+              </select>
+              <small v-if="line.materialQuery.trim()" class="material-filter-count">
+                找到 {{ filteredMaterials(line).length }} 条，共 {{ activeRoute.materials.length }} 条物料
+              </small>
+            </div>
             <small v-if="materialFor(line)" :class="{ 'stock-shortage': shortageFor(line) }">
               实时可发 {{ qty(materialFor(line)?.availableQuantity, materialFor(line)?.unit) }}
             </small>
@@ -450,6 +479,15 @@ function detailText(row: WarehouseTransfer) {
   color: var(--ds-muted);
   font-size: 12px;
   font-weight: 500;
+}
+
+.material-picker {
+  display: grid;
+  gap: 6px;
+}
+
+.material-picker .material-filter-count {
+  color: var(--ds-primary-hover);
 }
 
 .transfer-line .stock-shortage {

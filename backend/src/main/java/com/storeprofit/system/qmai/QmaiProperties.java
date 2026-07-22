@@ -44,6 +44,9 @@ public class QmaiProperties {
    */
   private String outboundMode = "DISABLED";
 
+  /** QMAI-04 配方用量能力默认关闭，只有完成专项验收后才允许显式开启。 */
+  private boolean recipeEnabled = false;
+
   /** AES key (base64, 16/24/32 bytes) used only to encrypt persisted platform secrets. */
   private String credentialEncryptionKey = "";
 
@@ -163,6 +166,14 @@ public class QmaiProperties {
 
   public void setOutboundMode(String outboundMode) {
     this.outboundMode = outboundMode;
+  }
+
+  public boolean isRecipeEnabled() {
+    return recipeEnabled;
+  }
+
+  public void setRecipeEnabled(boolean recipeEnabled) {
+    this.recipeEnabled = recipeEnabled;
   }
 
   public String getCredentialEncryptionKey() {

@@ -2,7 +2,10 @@ package com.storeprofit.system.platform.authorization;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.storeprofit.system.audit.AuditRepository;
@@ -107,5 +110,24 @@ class BusinessScopeResolverTest {
     assertThat(result.storeId()).isNull();
     assertThat(result.brandId()).isNull();
     assertThat(result.dataScope().allowsAllStores()).isTrue();
+  }
+
+  @Test
+  void financeScopeBrandMismatchKeepsTheRequestedMonthInTheDenialAudit() {
+    AuthUser boss = new AuthUser(
+        1L, 1L, "测试企业", "boss", "hash", "老板", "BOSS", null, true, 3L);
+    when(dataScopeService.scope(boss, DataScopeDomains.FINANCE)).thenReturn(DataScope.all());
+    when(repository.store(1L, "rg1"))
+        .thenReturn(Optional.of(new StoreIdentity("rg1", "荆州之星店", 9L, "茹菓")));
+
+    assertThatThrownBy(() -> resolver.resolve(
+        boss, DataScopeDomains.FINANCE, "rg1", 10L, "查看报销数据", "2026-08"))
+        .isInstanceOfSatisfying(BusinessException.class, ex -> {
+          assertThat(ex.getCode()).isEqualTo("FORBIDDEN");
+          assertThat(ex.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+        });
+
+    verify(auditRepository).writePermissionDenied(
+        eq(boss), eq("查看报销数据"), eq("BRAND"), eq("10"), eq("rg1"), eq("2026-08"), anyString());
   }
 }

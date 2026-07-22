@@ -31,6 +31,22 @@ class TodoRepositoryScopeTest {
   }
 
   @Test
+  void pendingExpenseQueryOnlyReturnsClaimsThatFinanceCanActuallyReview() {
+    JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
+    NamedParameterJdbcTemplate named = mock(NamedParameterJdbcTemplate.class);
+    BusinessTodoRepository repository = new BusinessTodoRepository(jdbcTemplate, named);
+
+    repository.pendingExpenses(1L, "2026-08");
+
+    ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+    ArgumentCaptor<MapSqlParameterSource> params = ArgumentCaptor.forClass(MapSqlParameterSource.class);
+    verify(named).query(sql.capture(), params.capture(),
+        org.mockito.ArgumentMatchers.<RowMapper<BusinessTodoRepository.PendingExpenseRow>>any());
+    assertThat(sql.getValue()).contains("e.status in ('待审核', 'PENDING')");
+    assertThat(params.getValue().getValue("month")).isEqualTo("2026-08");
+  }
+
+  @Test
   void dataImportIssuesNeverReadGlobalKvForAnotherTenant() {
     JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
     NamedParameterJdbcTemplate named = mock(NamedParameterJdbcTemplate.class);

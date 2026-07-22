@@ -19,6 +19,7 @@ import {
 } from 'lucide-vue-next'
 import PageHeader from '../components/common/PageHeader.vue'
 import BusinessScopeBar from '../components/common/BusinessScopeBar.vue'
+import BrandSelect from '../components/common/BrandSelect.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import {
   downloadMonthlyDailyLossExcel,
@@ -38,6 +39,7 @@ import { useBusinessScope } from '../composables/useBusinessScope'
 import { PERMISSIONS } from '../permissions/permissions'
 import { isBossRole, normalizeRoleCode } from '../permissions/roles'
 import { useAuthStore } from '../stores/auth'
+import { normalizeBrandName } from '../utils/brand'
 
 interface LossLineForm {
   itemConfigId: string
@@ -61,6 +63,7 @@ const route = useRoute()
 const stores = ref<StoreInfo[]>([])
 const items = ref<DailyLossItem[]>([])
 const reports = ref<DailyLossReport[]>([])
+const selectedBrandId = ref('')
 const selectedStoreId = ref('')
 const selectedMonth = ref(currentMonth())
 const loading = ref(true)
@@ -105,8 +108,27 @@ const accessibleStores = computed(() => {
   if (storeIds.length) return stores.value.filter((store) => storeIds.includes(store.id))
   return stores.value
 })
+const brandOptions = computed(() => {
+  const seen = new Set<number>()
+  return accessibleStores.value.flatMap((store) => {
+    const id = Number(store.brandId)
+    const name = normalizeBrandName(store.brandName)
+    if (!Number.isSafeInteger(id) || id <= 0 || !name || seen.has(id)) return []
+    seen.add(id)
+    return [{ id, name }]
+  })
+})
+const selectedBrandNumericId = computed(() => {
+  const id = Number(selectedBrandId.value)
+  return Number.isSafeInteger(id) && id > 0 ? id : undefined
+})
+const selectableStores = computed(() => accessibleStores.value.filter((store) => (
+  !selectedBrandNumericId.value || Number(store.brandId) === selectedBrandNumericId.value
+)))
 const effectiveStoreId = computed(() => scope.scopedStoreId(selectedStoreId.value))
-const canSelectAllStores = computed(() => !scope.isStoreManager.value && storeScope.value?.mode === 'ALL')
+const canSelectAllStores = computed(() => !scope.isStoreManager.value
+  && storeScope.value?.mode === 'ALL'
+  && !selectedBrandNumericId.value)
 const canExport = computed(() => auth.hasPermission(PERMISSIONS.DAILY_LOSS_EXPORT)
   && (isBossRole(auth.role) || normalizeRoleCode(auth.role) === 'FINANCE'))
 const notReportedCount = computed(() => reports.value.filter((report) => statusKey(report) === 'NOT_REPORTED').length)
@@ -187,6 +209,10 @@ async function initialize() {
       return
     }
     stores.value = await getStores()
+    const requestedBrandId = queryValue('brandId')
+    if (brandOptions.value.some((brand) => String(brand.id) === requestedBrandId)) {
+      selectedBrandId.value = requestedBrandId
+    }
     selectedStoreId.value = initialStoreId()
     const requestedMonth = queryValue('month')
     if (/^\d{4}-(0[1-9]|1[0-2])$/.test(requestedMonth)) selectedMonth.value = requestedMonth
@@ -196,6 +222,15 @@ async function initialize() {
   } finally {
     loading.value = false
   }
+}
+
+function handleBrandChange(brandId: string) {
+  selectedBrandId.value = brandId
+  selectedStoreId.value = brandId
+    ? selectableStores.value[0]?.id || ''
+    : storeScope.value?.mode === 'ALL'
+      ? ''
+      : accessibleStores.value[0]?.id || ''
 }
 
 async function refreshData() {
@@ -472,8 +507,8 @@ function openReport(report: DailyLossReport) {
 function initialStoreId() {
   if (scope.isStoreManager.value) return scope.boundStoreId.value
   const requested = queryValue('storeId')
-  if (requested && accessibleStores.value.some((store) => store.id === requested)) return requested
-  return canSelectAllStores.value ? '' : accessibleStores.value[0]?.id || ''
+  if (requested && selectableStores.value.some((store) => store.id === requested)) return requested
+  return canSelectAllStores.value ? '' : selectableStores.value[0]?.id || ''
 }
 
 function openRequestedReport(rows: DailyLossReport[]) {
@@ -528,10 +563,7 @@ function currentMonth() {
 
 <template>
   <section class="daily-loss-page">
-    <PageHeader
-      title="每日报损"
-      subtitle="店长每日提交，督导按门店和日期复核；可按当前范围导出本月报损 Excel。"
-    >
+    <PageHeader title="每日报损">
       <template #actions>
         <UiButton :loading="refreshing" @click="refreshData">
           <template #icon><RefreshCw :size="16" /></template>
@@ -545,22 +577,37 @@ function currentMonth() {
 
     <section class="loss-toolbar content-card" aria-label="报损筛选">
       <BusinessScopeBar v-if="scope.isStoreManager.value" />
-      <label v-else class="toolbar-field">
+      <label v-if="!scope.isStoreManager.value" class="toolbar-field toolbar-field--brand">
+        <span>品牌</span>
+        <BrandSelect
+          v-model="selectedBrandId"
+          :brands="brandOptions"
+          :disabled="loading || refreshing"
+          aria-label="品牌"
+          @change="handleBrandChange"
+        />
+      </label>
+      <label v-if="!scope.isStoreManager.value" class="toolbar-field">
         <span>门店</span>
-        <select v-model="selectedStoreId" :disabled="loading || refreshing">
+        <select v-model="selectedStoreId" :disabled="loading || refreshing" aria-label="门店">
           <option v-if="canSelectAllStores" value="">全部门店</option>
           <option v-else value="" disabled>请选择门店</option>
-          <option v-for="store in accessibleStores" :key="store.id" :value="store.id">
+          <option v-for="store in selectableStores" :key="store.id" :value="store.id">
             {{ store.brandName ? `${store.brandName} · ` : '' }}{{ store.name || store.id }}
           </option>
         </select>
       </label>
       <label class="toolbar-field toolbar-field--month">
         <span>月份</span>
-        <input v-model="selectedMonth" type="month" :disabled="loading || refreshing" />
+        <input v-model="selectedMonth" type="month" :disabled="loading || refreshing" aria-label="月份" />
       </label>
+      <div class="toolbar-note" title="页面不录入单价，后端按配置快照计算金额。">
+        <Info :size="16" />
+        <span>单价与金额由后端按配置快照核算，页面不录入单价。</span>
+      </div>
       <UiButton
         v-if="canExport"
+        class="toolbar-export"
         :loading="exporting"
         :disabled="(!effectiveStoreId && !canSelectAllStores) || loading || refreshing"
         @click="exportMonthlyExcel"
@@ -568,10 +615,6 @@ function currentMonth() {
         <template #icon><Download :size="16" /></template>
         {{ exporting ? '正在生成 Excel…' : '导出本月报损 Excel' }}
       </UiButton>
-      <div class="toolbar-note" title="页面不录入单价，后端按配置快照计算金额。">
-        <Info :size="16" />
-        <span>单价与金额由后端按配置快照核算，页面不录入单价。</span>
-      </div>
     </section>
 
     <div class="loss-summary" aria-label="报损汇总">
@@ -852,13 +895,16 @@ function currentMonth() {
 .message--success { color: #185c48; border: 1px solid #bde4d5; background: #f0fbf6; }
 
 .loss-toolbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(150px, .72fr) minmax(210px, 1fr) minmax(176px, .68fr) minmax(230px, 1.15fr) max-content;
   min-height: 64px;
-  align-items: center;
+  align-items: end;
   gap: 12px;
-  padding: 10px 14px;
-  flex-wrap: wrap;
+  padding: 12px 14px;
 }
+
+.loss-toolbar :deep(.business-scope-static),
+.loss-toolbar :deep(.business-scope-error) { grid-column: 1 / -1; }
 
 .toolbar-field {
   display: grid;
@@ -870,8 +916,11 @@ function currentMonth() {
 }
 
 .toolbar-field--month { min-width: 176px; }
+.toolbar-field--brand :deep(.brand-select-wrap) { width: 100%; }
+.toolbar-field--brand :deep(.brand-select-wrap select) { min-width: 0; flex: 1; }
 .toolbar-field select,
-.toolbar-field input {
+.toolbar-field input,
+.toolbar-field :deep(.brand-select-wrap select) {
   width: 100%;
   min-height: 38px;
   padding: 7px 10px;
@@ -895,6 +944,7 @@ function currentMonth() {
 }
 
 .toolbar-note svg { flex: none; color: var(--ds-primary-hover); }
+.toolbar-export { justify-self: end; }
 
 .loss-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .loss-summary article { display: grid; gap: 4px; padding: 15px 16px; border: 1px solid var(--ds-line); border-radius: 8px; background: var(--ds-surface); }
@@ -1326,6 +1376,9 @@ function currentMonth() {
 .image-preview-dialog > img { display: block; max-width: 100%; max-height: calc(100vh - 102px); margin: auto; object-fit: contain; }
 
 @media (max-width: 1080px) {
+  .loss-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .toolbar-note { grid-column: 1 / -1; }
+  .toolbar-export { grid-column: 2; align-self: end; justify-self: end; }
   .line-row { grid-template-columns: minmax(240px, 1.2fr) minmax(160px, .7fr) minmax(220px, 1fr) 42px; }
 }
 
@@ -1385,6 +1438,7 @@ function currentMonth() {
 
 @media (max-width: 430px) {
   .loss-toolbar { grid-template-columns: 1fr; }
+  .toolbar-export { grid-column: 1; justify-self: stretch; }
   .loss-summary { grid-template-columns: 1fr; }
   .picker-grid { grid-template-columns: 1fr; }
   .selected-preview-grid figure { width: 74px; height: 62px; }

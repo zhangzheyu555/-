@@ -13,6 +13,11 @@ public class DeepSeekProperties {
   private boolean enabled = true;
   private String apiKey = "";
   private String baseUrl = "https://api.deepseek.com";
+  /** Direct unit tests are loopback-only by default; deployed environments bind this explicitly. */
+  private String outboundMode = "MOCK";
+  /** QA may call the official provider only for an explicitly approved, question-only pilot. */
+  private boolean externalPilotEnabled;
+  private boolean questionOnly;
   private String model = "deepseek-v4-flash";
   private String fastModel = "deepseek-v4-flash";
   private int maxTokens = 1200;
@@ -26,6 +31,8 @@ public class DeepSeekProperties {
    */
   private Duration analysisTimeout = Duration.ofSeconds(30);
   private int maxRequestsPerMinute = 30;
+  private int maxRequestsPerUserPerMinute = 10;
+  private int maxConcurrentRequests = 2;
   private int circuitFailureThreshold = 3;
   private Duration circuitOpenDuration = Duration.ofSeconds(30);
   private List<String> blockedWords = new ArrayList<>();
@@ -68,6 +75,30 @@ public class DeepSeekProperties {
 
   public void setBaseUrl(String baseUrl) {
     this.baseUrl = trimTrailingSlash(baseUrl);
+  }
+
+  public String getOutboundMode() {
+    return outboundMode;
+  }
+
+  public void setOutboundMode(String outboundMode) {
+    this.outboundMode = outboundMode == null ? "" : outboundMode.trim();
+  }
+
+  public boolean isExternalPilotEnabled() {
+    return externalPilotEnabled;
+  }
+
+  public void setExternalPilotEnabled(boolean externalPilotEnabled) {
+    this.externalPilotEnabled = externalPilotEnabled;
+  }
+
+  public boolean isQuestionOnly() {
+    return questionOnly;
+  }
+
+  public void setQuestionOnly(boolean questionOnly) {
+    this.questionOnly = questionOnly;
   }
 
   public String getModel() {
@@ -142,6 +173,22 @@ public class DeepSeekProperties {
 
   public void setMaxRequestsPerMinute(int maxRequestsPerMinute) {
     this.maxRequestsPerMinute = Math.max(1, maxRequestsPerMinute);
+  }
+
+  public int getMaxRequestsPerUserPerMinute() {
+    return maxRequestsPerUserPerMinute;
+  }
+
+  public void setMaxRequestsPerUserPerMinute(int maxRequestsPerUserPerMinute) {
+    this.maxRequestsPerUserPerMinute = Math.max(1, maxRequestsPerUserPerMinute);
+  }
+
+  public int getMaxConcurrentRequests() {
+    return maxConcurrentRequests;
+  }
+
+  public void setMaxConcurrentRequests(int maxConcurrentRequests) {
+    this.maxConcurrentRequests = Math.max(1, maxConcurrentRequests);
   }
 
   public int getCircuitFailureThreshold() {

@@ -21,7 +21,7 @@ class OperationsBusinessServicePermissionTest {
   private final AccessControlService accessControl = mock(AccessControlService.class);
   private final OperationsBusinessService service = new OperationsBusinessService(repository, accessControl);
   private final AuthUser user = new AuthUser(
-      7L, 1L, "default", "operator", "", "运营", "OPERATIONS", null, true);
+      7L, 1L, "default", "supervisor", "", "督导", "SUPERVISOR", null, true);
 
   @Test
   void inventoryActionsUseReadManageAndReviewPermissions() {

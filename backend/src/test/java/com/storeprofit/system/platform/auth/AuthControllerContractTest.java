@@ -15,6 +15,22 @@ import org.junit.jupiter.api.Test;
 
 class AuthControllerContractTest {
   @Test
+  void initialPasswordChangeUsesOnlyTheRestrictedCredentialPayload() {
+    AuthService authService = mock(AuthService.class);
+    AuthController controller = new AuthController(authService);
+    InitialPasswordChangeRequest request = new InitialPasswordChangeRequest(
+        "test-only-restricted-grant", "TestOnly!ChangedB8", "TestOnly!ChangedB8");
+
+    var response = controller.changeInitialPassword(request);
+
+    assertThat(response.success()).isTrue();
+    verify(authService).changeInitialPassword(request);
+    assertThat(InitialPasswordChangeRequest.class.getRecordComponents())
+        .extracting(component -> component.getName())
+        .containsExactly("credential", "newPassword", "confirmPassword");
+  }
+
+  @Test
   void authMeReturnsSameExpandedSessionContract() {
     AuthService authService = mock(AuthService.class);
     AuthController controller = new AuthController(authService);

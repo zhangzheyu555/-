@@ -29,8 +29,6 @@ import org.slf4j.LoggerFactory;
 @Service
 public class EmployeeService {
   private static final Logger log = LoggerFactory.getLogger(EmployeeService.class);
-  /** 员工初始密码（2026-07-17 与用户确认），首次登录后自行修改。 */
-  static final String INITIAL_PASSWORD = "Emp@12345";
 
   private final EmployeeRepository employeeRepository;
   private final AccessControlService accessControl;
@@ -238,7 +236,11 @@ public class EmployeeService {
         .orElseThrow(() -> new BusinessException("NO_MANAGER",
             "该门店尚未配置店长账号，无法按「店长账号-序号」规则开号", HttpStatus.BAD_REQUEST));
     String username = prefix + "-" + (employeeRepository.maxAccountSeq(user.tenantId(), prefix) + 1);
-    createAuthUser(user.tenantId(), username, employee);
+    if (passwordService == null || authRepository == null) {
+      throw new BusinessException("INTERNAL", "账号服务不可用", HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    String initialPassword = passwordService.generateOneTimePassword();
+    createAuthUser(user.tenantId(), username, employee, initialPassword);
     long authUserId = employeeRepository.userIdByUsername(user.tenantId(), username)
         .orElseThrow(() -> new BusinessException("INTERNAL", "账号创建后查询失败", HttpStatus.INTERNAL_SERVER_ERROR));
     employeeRepository.linkAccount(user.tenantId(), id, authUserId);
@@ -250,7 +252,7 @@ public class EmployeeService {
         employeeAuditState(employee),
         employeeAuditState(employee, employee.status(), Boolean.TRUE)
     );
-    return new EmployeeAccountResponse(id, employee.name(), username, INITIAL_PASSWORD);
+    return new EmployeeAccountResponse(id, employee.name(), username, initialPassword);
   }
 
   /** BOSS 上传《门店人员信息.xlsx》导入；重复导入按（门店+姓名）覆盖更新。 */
@@ -299,12 +301,10 @@ public class EmployeeService {
     return new EmployeeImportReport(created, updated, skipped, createdStores, problems);
   }
 
-  private void createAuthUser(long tenantId, String username, EmployeeResponse employee) {
-    if (passwordService == null || authRepository == null) {
-      throw new BusinessException("INTERNAL", "账号服务不可用", HttpStatus.INTERNAL_SERVER_ERROR);
-    }
-    authRepository.createUser(
-        tenantId, username, passwordService.hash(INITIAL_PASSWORD),
+  private void createAuthUser(
+      long tenantId, String username, EmployeeResponse employee, String initialPassword) {
+    authRepository.createUserRequiringPasswordChange(
+        tenantId, username, passwordService.hash(initialPassword),
         employee.name(), "EMPLOYEE", employee.storeId());
   }
 

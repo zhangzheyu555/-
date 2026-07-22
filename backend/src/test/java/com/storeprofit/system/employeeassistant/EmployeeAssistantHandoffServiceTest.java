@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -44,7 +45,7 @@ class EmployeeAssistantHandoffServiceTest {
     ArgumentCaptor<String> question = ArgumentCaptor.forClass(String.class);
     verify(repository).insertHandoff(eq(1L), anyString(), eq("s1"), question.capture(), eq("GENERAL"), eq(8L), any());
     assertThat(question.getValue()).doesNotContain("13800138000");
-    verify(accessControl).requireStoreAccess(employee(), DataScopeDomains.STORE, "s1", "创建员工助手人工事项");
+    verify(accessControl, never()).requireStoreAccess(employee(), DataScopeDomains.STORE, "s1", "创建员工助手人工事项");
     ArgumentCaptor<AuditLogRequest> audit = ArgumentCaptor.forClass(AuditLogRequest.class);
     verify(auditRepository).writeLog(eq(employee()), audit.capture());
     assertThat(audit.getValue().action()).isEqualTo("employee_assistant.handoff_create");
@@ -57,9 +58,9 @@ class EmployeeAssistantHandoffServiceTest {
     AuditRepository auditRepository = mock(AuditRepository.class);
     EmployeeAssistantHandoffService service = new EmployeeAssistantHandoffService(repository,
         mock(EmployeeAssistantService.class), accessControl, auditRepository);
-    AuthUser operator = new AuthUser(21L, 1L, "测试租户", "operator", "hash", "运营", "OPERATIONS", "s2", true, 1L);
+    AuthUser operator = new AuthUser(21L, 1L, "测试租户", "supervisor", "hash", "督导", "SUPERVISOR", "s2", true, 1L);
     when(repository.findHandoff(1L, "EA-HO-1")).thenReturn(Optional.of(handoff("EA-HO-1", "s1", null)));
-    when(accessControl.canAccessStore(operator, DataScopeDomains.STORE, "s1")).thenReturn(false);
+    when(accessControl.canAccessStore(operator, DataScopeDomains.INSPECTION, "s1")).thenReturn(false);
 
     BusinessException error = catchThrowableOfType(() -> service.claim(operator, "EA-HO-1"), BusinessException.class);
 
@@ -68,8 +69,47 @@ class EmployeeAssistantHandoffServiceTest {
         eq("employee_assistant_handoff"), eq("EA-HO-1"), eq("s1"), anyString());
   }
 
+  @Test
+  void employeeCannotCreateHandoffForAnotherStoreEvenWithAnAccidentalScopeGrant() {
+    EmployeeAssistantKnowledgeRepository repository = mock(EmployeeAssistantKnowledgeRepository.class);
+    EmployeeAssistantService assistant = mock(EmployeeAssistantService.class);
+    AccessControlService accessControl = mock(AccessControlService.class);
+    AuditRepository auditRepository = mock(AuditRepository.class);
+    when(assistant.sanitizeForHandoff("需要人工协助")).thenReturn("需要人工协助");
+    EmployeeAssistantHandoffService service = new EmployeeAssistantHandoffService(repository, assistant, accessControl,
+        auditRepository);
+
+    BusinessException error = catchThrowableOfType(() -> service.create(employee(),
+        new EmployeeAssistantHandoffCreateRequest("需要人工协助", "s2")), BusinessException.class);
+
+    assertThat(error.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+    verify(repository, never()).insertHandoff(anyLong(), anyString(), anyString(), anyString(), anyString(), anyLong(), any());
+    verify(accessControl, never()).requireStoreAccess(employee(), DataScopeDomains.STORE, "s2", "创建员工助手人工事项");
+    verify(auditRepository).writePermissionDenied(eq(employee()), eq("创建员工助手人工事项"),
+        eq("employee_assistant_handoff"), eq(null), eq("s2"), anyString());
+  }
+
+  @Test
+  void feedbackWritesAResultOnlyAuditWithoutPersistingItsFreeTextInTheAuditReason() {
+    EmployeeAssistantKnowledgeRepository repository = mock(EmployeeAssistantKnowledgeRepository.class);
+    AccessControlService accessControl = mock(AccessControlService.class);
+    AuditRepository auditRepository = mock(AuditRepository.class);
+    EmployeeAssistantHandoffService service = new EmployeeAssistantHandoffService(repository,
+        mock(EmployeeAssistantService.class), accessControl, auditRepository);
+    String freeText = "顾客来电详情不得复制到操作日志";
+
+    service.feedback(employee(), new EmployeeAssistantFeedbackRequest("ASSISTANT", null, null, true, freeText));
+
+    verify(accessControl).requireEmployeeAssistantUse(employee());
+    verify(repository).insertFeedback(1L, "ASSISTANT", null, null, true, freeText, 8L);
+    ArgumentCaptor<AuditLogRequest> audit = ArgumentCaptor.forClass(AuditLogRequest.class);
+    verify(auditRepository).writeLog(eq(employee()), audit.capture());
+    assertThat(audit.getValue().action()).isEqualTo("employee_assistant.feedback");
+    assertThat(audit.getValue().reason()).isEqualTo("已提交ASSISTANT反馈").doesNotContain(freeText, "顾客");
+  }
+
   private AuthUser employee() {
-    return new AuthUser(8L, 1L, "测试租户", "employee", "hash", "员工", "STORE_MANAGER", "s1", true, 1L);
+    return new AuthUser(8L, 1L, "测试租户", "employee", "hash", "员工", "EMPLOYEE", "s1", true, 1L);
   }
 
   private EmployeeAssistantKnowledgeRepository.HandoffRow handoff(String id, String storeId, Long handledBy) {

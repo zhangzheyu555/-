@@ -60,7 +60,9 @@ public class WarehousePrintService {
       if (isStoreManager(user)) {
         throw new BusinessException("FORBIDDEN", "店长不能下载包含采购成本的仓库入库单", HttpStatus.FORBIDDEN);
       }
-      accessControl.requireWarehousePurchase(user);
+      // Finance may inspect a scoped purchase inbound document, but it must never receive the
+      // purchase/write capability merely to download that document.
+      accessControl.requireWarehouseRead(user);
       requirePrintFacility(user, warehouseRepository.batchWarehouseId(user.tenantId(), batchId), "下载仓库入库单");
     }
     WarehouseReceiptPrintRow row = warehouseRepository.receiptPrintRow(user.tenantId(), batchId)

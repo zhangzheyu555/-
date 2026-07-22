@@ -22,7 +22,7 @@ class OperationsBusinessControllerCompatibilityTest {
   private final OperationsBusinessService service = mock(OperationsBusinessService.class);
   private final OperationsBusinessController controller = new OperationsBusinessController(authService, service);
   private final AuthUser operator =
-      new AuthUser(7L, 1L, "默认企业", "operator", "", "运营", "OPERATIONS", null, true);
+      new AuthUser(7L, 1L, "默认企业", "supervisor", "", "督导", "SUPERVISOR", null, true);
 
   @Test
   void legacyPaperListIsReadOnlyAndPointsToExamCenter() {

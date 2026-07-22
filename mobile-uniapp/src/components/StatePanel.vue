@@ -45,7 +45,7 @@ defineEmits<{ action: [] }>()
   justify-content: center;
   color: $mobile-green;
   background: $mobile-green-soft;
-  border-radius: 16rpx;
+  border-radius: 30rpx 30rpx 30rpx 10rpx;
   font-size: 32rpx;
   font-weight: 800;
 }
@@ -54,6 +54,6 @@ defineEmits<{ action: [] }>()
 .state-panel--permission .state-panel__mark { color: $mobile-orange; background: $mobile-orange-soft; }
 .state-panel__title { color: $mobile-ink; font-size: 30rpx; font-weight: 700; }
 .state-panel__description { max-width: 560rpx; margin-top: 12rpx; color: $mobile-muted; font-size: 26rpx; line-height: 1.65; }
-.state-panel__action { min-height: 88rpx; margin-top: 28rpx; padding: 0 36rpx; color: #ffffff; background: $mobile-orange; border-radius: 16rpx; font-size: 28rpx; line-height: 88rpx; }
+.state-panel__action { min-height: 88rpx; margin-top: 28rpx; padding: 0 36rpx; color: #ffffff; background: $mobile-green; border-radius: 20rpx; font-size: 28rpx; line-height: 88rpx; }
 .state-panel__action::after { border: 0; }
 </style>

@@ -8,18 +8,30 @@ server:
 
 app:
   environment: QA
+  inspection:
+    detect-url: ${INSPECTION_DETECT_URL:http://127.0.0.1:19090/detect}
+    export-url: ${INSPECTION_EXPORT_URL:http://127.0.0.1:19090/export}
+    outbound-mode: ${INSPECTION_OUTBOUND_MODE:DISABLED}
   seed:
     demo-enabled: false
     legacy-employee-enabled: false
   assistant:
     deepseek:
-      enabled: false
+      enabled: ${DEEPSEEK_ENABLED:false}
+      outbound-mode: ${DEEPSEEK_OUTBOUND_MODE:DISABLED}
+      external-pilot-enabled: ${DEEPSEEK_EXTERNAL_PILOT_ENABLED:false}
+      question-only: ${DEEPSEEK_QUESTION_ONLY:false}
   employee-assistant:
-    provider: ""
+    # QA normal-state evidence uses the deterministic in-process responder. It has no URL,
+    # credential or model dependency and cannot initiate an outbound request.
+    provider: LOCAL
+    outbound-mode: DISABLED
     upstream-url: ""
     api-token: ""
     model-url: ""
     model-api-key: ""
+  qmai:
+    recipe-enabled: false
 
 spring:
   mvc:

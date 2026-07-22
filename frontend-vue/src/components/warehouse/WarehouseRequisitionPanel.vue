@@ -109,7 +109,7 @@ function lineText(row: WarehouseRequisition) {
                     发货出库
                   </button>
                   <button
-                    v-if="canManage && (row.status === 'SUBMITTED' || row.status === 'APPROVED')"
+                    v-if="canManage && row.status === 'SUBMITTED'"
                     class="mini-button"
                     type="button"
                     :disabled="actioningId === row.id"

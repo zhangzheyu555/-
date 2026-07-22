@@ -85,8 +85,8 @@
 - **UI/并发/自动化/状态**：桌面/移动列表与详情；状态变更要求条件更新；SalaryService/Workflow 测试；**已有自动化覆盖**。
 
 ### FIN-06 经营数据导出
-- **路由/API/模块**：`/data-export`；`/api/export/**`；`reporting`、`finance`。
-- **角色**：BOSS、FINANCE 按范围导出；STORE_MANAGER 仅本店允许范围。数据：多店利润、报销和导出请求。
+- **路由/API/模块**：`/export`（桌面管理端实际路由）；`/api/export/**`；`reporting`、`finance`。
+- **角色**：BOSS、FINANCE 按范围导出；STORE_MANAGER 不具备任何经营数据导出权限，即使存在历史或个人 `finance.export` 授权也必须拒绝。数据：多店利润、报销和导出请求。
 - **安全/数据/日志**：跨店导出 403；断言导出内容仅为授权范围；下载/导出写日志。
 - **UI/并发/自动化/状态**：桌面/移动导出状态、错误提示；重复请求不产生异常任务；ExportControllerScopeTest；**已有自动化覆盖**。
 
@@ -94,8 +94,8 @@
 
 ### STORE-01 每日报损
 - **路由/API/模块**：`/daily-loss`；`/api/daily-loss/**`；`dailyloss`、`storage`。
-- **角色**：STORE_MANAGER 本店提交，SUPERVISOR 复核授权店，FINANCE/BOSS 只读；OPERATIONS 禁止负责人流程。数据：两店、active/inactive 品类、QA 图片。
-- **安全/数据/日志**：401/跨店 403；断言同租户店日唯一、BigDecimal 单价快照、附件店铺/报损绑定；提交、复核、照片导出、上传下载、拒绝写日志。
+- **角色**：STORE_MANAGER 本店提交、SUPERVISOR 复核授权店；**日报损查询与月度 Excel 仅 FINANCE/BOSS**，其余四类正式角色即使误配相关权限也必须 403；OPERATIONS 禁止负责人流程。数据：两店、active/inactive 品类、QA 图片。
+- **安全/数据/日志**：查询/导出匿名 401，角色或跨店/跨租户 403；断言同租户店日唯一、BigDecimal 单价快照、附件店铺/报损绑定；提交、复核、导出、上传下载、拒绝写日志。
 - **UI/并发/自动化/状态**：桌面/移动分类选择、缩略图、列表、无刷新按钮；首次保存、草稿覆盖、重复提交、复核竞争要求幂等；DailyLossServiceTest、布局脚本；**已有自动化覆盖**。
 
 ### STORE-02 门店详情与经营结果

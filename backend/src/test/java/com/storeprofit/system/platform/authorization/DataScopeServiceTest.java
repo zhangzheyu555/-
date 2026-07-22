@@ -42,14 +42,14 @@ class DataScopeServiceTest {
   }
 
   @Test
-  void missingAssignmentsUseConservativeLegacyScopeInsteadOfTenantWideAccess() {
-    AuthUser operations = user(3L, "OPERATIONS", null);
+  void supervisorWithoutAssignmentsUsesConservativeScopeInsteadOfTenantWideAccess() {
+    AuthUser supervisor = user(3L, "SUPERVISOR", null);
     when(repository.assignmentsForUser(1L, 3L)).thenReturn(List.of());
     when(authRepository.assignedStoreScope(1L, 3L)).thenReturn(List.of("s2"));
 
-    assertThat(service.hasAllDataScope(operations, DataScopeDomains.INSPECTION)).isFalse();
-    assertThat(service.allowedStoreIds(operations, DataScopeDomains.INSPECTION)).containsExactly("s2");
-    assertThat(service.allowedStoreIds(operations, DataScopeDomains.FINANCE)).isEmpty();
+    assertThat(service.hasAllDataScope(supervisor, DataScopeDomains.INSPECTION)).isFalse();
+    assertThat(service.allowedStoreIds(supervisor, DataScopeDomains.INSPECTION)).containsExactly("s2");
+    assertThat(service.allowedStoreIds(supervisor, DataScopeDomains.FINANCE)).isEmpty();
   }
 
   @Test
@@ -67,7 +67,7 @@ class DataScopeServiceTest {
   }
 
   @Test
-  void supervisorUsesAssignedStoreOrWarehouseScopeForOwnedDomains() {
+  void supervisorUsesAssignedStoreScopeForOperationsDomainsAndRejectsWarehouseScope() {
     AuthUser supervisor = user("SUPERVISOR");
     when(repository.assignmentsForUser(1L, 7L)).thenReturn(List.of(
         new DataScopeAssignmentRow(DataScopeDomains.STORE, DataScopeModes.STORE_LIST, "[\"rg1\"]"),
@@ -82,7 +82,8 @@ class DataScopeServiceTest {
     assertThat(scopes.get(DataScopeDomains.INSPECTION).storeIds()).containsExactly("rg1");
     assertThat(scopes.get(DataScopeDomains.PLATFORM).allowsAllStores()).isFalse();
     assertThat(scopes.get(DataScopeDomains.PLATFORM).storeIds()).isEmpty();
-    assertThat(scopes.get(DataScopeDomains.WAREHOUSE).storeIds()).containsExactly("rg2");
+    assertThat(scopes.get(DataScopeDomains.WAREHOUSE).mode()).isEqualTo(DataScopeModes.NONE);
+    assertThat(scopes.get(DataScopeDomains.WAREHOUSE).storeIds()).isEmpty();
   }
 
   @Test
@@ -96,7 +97,8 @@ class DataScopeServiceTest {
     assertThat(scopes.get(DataScopeDomains.STORE).mode()).isEqualTo(DataScopeModes.STORE_LIST);
     assertThat(scopes.get(DataScopeDomains.STORE).storeIds()).containsExactly("rg1", "rg2");
     assertThat(scopes.get(DataScopeDomains.INSPECTION).storeIds()).containsExactly("rg1", "rg2");
-    assertThat(scopes.get(DataScopeDomains.WAREHOUSE).storeIds()).containsExactly("rg1", "rg2");
+    assertThat(scopes.get(DataScopeDomains.WAREHOUSE).mode()).isEqualTo(DataScopeModes.NONE);
+    assertThat(scopes.get(DataScopeDomains.WAREHOUSE).storeIds()).isEmpty();
     assertThat(scopes.get(DataScopeDomains.EXAM).storeIds()).containsExactly("rg1", "rg2");
     assertThat(scopes.get(DataScopeDomains.PLATFORM).storeIds()).containsExactly("rg1", "rg2");
     assertThat(scopes.values()).noneMatch(DataScope::allowsAllStores);

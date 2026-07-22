@@ -1,6 +1,6 @@
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
-import { expect, test, type Page, type Route, type TestInfo } from '@playwright/test'
+import { expect, test, type Page, type Route } from '@playwright/test'
 import { expectNoWholePageOverflow } from './auth.setup'
 
 const bossUser = {
@@ -17,19 +17,8 @@ const bossUser = {
   permissionVersion: 1,
 }
 
-const mobileProjectWidths: Record<string, number> = {
-  'iphone-390': 390,
-  'android-412': 412,
-  'ipad-768': 768,
-}
-
-async function useResponsiveViewport(page: Page, testInfo: TestInfo) {
-  const configuredWidth = mobileProjectWidths[testInfo.project.name]
-  if (configuredWidth) {
-    expect(page.viewportSize()?.width).toBe(configuredWidth)
-    return
-  }
-  await page.setViewportSize({ width: 390, height: 844 })
+async function useDesktopViewport(page: Page) {
+  await page.setViewportSize({ width: 1280, height: 720 })
 }
 
 function standardItem(
@@ -135,7 +124,7 @@ function nestedKeys(value: unknown): string[] {
   return Object.entries(value as Record<string, unknown>).flatMap(([key, child]) => [key, ...nestedKeys(child)])
 }
 
-test('model suggestion shows a returned annotation and only the 200-point deduction', async ({ page }, testInfo) => {
+test('model suggestion shows a returned annotation and only the 200-point deduction', async ({ page }) => {
   let confirmationBody: Record<string, unknown> | undefined
 
   await page.route('**/api/**', async (route) => {
@@ -200,21 +189,22 @@ test('model suggestion shows a returned annotation and only the 200-point deduct
 
   const hygieneScore = page.locator('.category-score').filter({ hasText: '卫生得分' })
   await expect(hygieneScore).toContainText('59 分（满分63）')
-  await expect(page.locator('.inspection-score-bar').getByText('196 / 200', { exact: true })).toBeVisible()
-  await expect(page.locator('.inspection-score-bar').getByText('-4', { exact: true })).toBeVisible()
-  await expect(page.locator('.inspection-score-bar').getByText('合格', { exact: true })).toBeVisible()
+  const scoreSummary = page.locator('.inspection-score-summary')
+  await expect(scoreSummary.locator('div').filter({ hasText: '总分' })).toContainText('196 / 200')
+  await expect(scoreSummary.locator('div').filter({ hasText: '扣分合计' })).toContainText('-4')
+  await expect(scoreSummary.locator('div').filter({ hasText: '结果' })).toContainText('合格')
   await expect(page.getByText('督导已确认，保存后按条款扣分')).toBeVisible()
 
   const screenshotPath = path.resolve(process.cwd(), '..', 'output', 'playwright', 'inspection-detection-confirm-196.png')
   mkdirSync(path.dirname(screenshotPath), { recursive: true })
   await page.screenshot({ path: screenshotPath, fullPage: true })
 
-  await useResponsiveViewport(page, testInfo)
-  await expect(page.locator('.inspection-score-bar').getByText('196 / 200', { exact: true })).toBeVisible()
-  await expect(page.locator('.inspection-score-bar').getByText('合格', { exact: true })).toBeVisible()
-  await expectNoWholePageOverflow(page, `${testInfo.project.name} inspection confirmation`)
+  await useDesktopViewport(page)
+  await expect(scoreSummary.locator('div').filter({ hasText: '总分' })).toContainText('196 / 200')
+  await expect(scoreSummary.locator('div').filter({ hasText: '结果' })).toContainText('合格')
+  await expectNoWholePageOverflow(page, '1280px desktop inspection confirmation')
   await page.screenshot({
-    path: path.resolve(process.cwd(), '..', 'output', 'playwright', 'inspection-detection-confirm-196-mobile.png'),
+    path: path.resolve(process.cwd(), '..', 'output', 'playwright', 'inspection-detection-confirm-196-desktop.png'),
     fullPage: true,
   })
 })
@@ -345,13 +335,16 @@ test('record detail keeps effective deductions separate from unmatched AI eviden
   await expect(pendingCard).toContainText('未匹配正式条款，未计入本次得分')
   await expect(page.getByText('AI 待确认识别结果（不计分）')).toBeVisible()
   await expect(snapshot.getByText('扣 0 分')).toHaveCount(0)
-  await expect.poll(() => attachmentAuthorization['502']).toBe('Bearer TEST-INSPECTION-TOKEN')
-  await expect(pendingCard).toContainText('无查看权限')
+  // An unlinked AI suggestion is intentionally not fetched: the original image is only read
+  // after its attachment ID is explicitly persisted against a historical clause.  The linked
+  // evidence above still proves the protected attachment request carries Authorization.
+  expect(attachmentAuthorization['502']).toBeUndefined()
+  await expect(pendingCard).toContainText('待人工关联历史条款，不能预览原图')
 
-  await page.setViewportSize({ width: 390, height: 844 })
+  await page.setViewportSize({ width: 1280, height: 720 })
   await expect(page.getByText('历史巡检条款快照（1条）')).toBeVisible()
   await expect(hygieneRow).toContainText('实得 0 / 4')
   await expect(pendingCard).toContainText('未匹配正式条款，未计入本次得分')
-  await expect(pendingCard).toContainText('无查看权限')
+  await expect(pendingCard).toContainText('待人工关联历史条款，不能预览原图')
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true)
 })

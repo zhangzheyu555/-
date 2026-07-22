@@ -104,7 +104,7 @@ class AccountBootstrapRemovalContractTest {
   @Test
   void authControllerExposesOnlyFormalAuthenticationOperations() {
     assertThat(Arrays.stream(AuthController.class.getDeclaredMethods()).map(Method::getName).toList())
-        .containsExactlyInAnyOrder("login", "logout", "me");
+        .containsExactlyInAnyOrder("login", "logout", "me", "changeInitialPassword");
   }
 
   private static Stream<Parameter> parameters(Constructor<?> constructor) {

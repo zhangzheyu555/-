@@ -1,6 +1,9 @@
 package com.storeprofit.system.inspection;
 
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.config.LocalMockOutboundPolicy;
+import com.storeprofit.system.audit.AuditLogRequest;
+import com.storeprofit.system.audit.AuditRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -12,10 +15,13 @@ import com.storeprofit.system.platform.authorization.PermissionCodes;
 import com.storeprofit.system.storage.StorageService;
 import com.storeprofit.system.storage.StorageUploadResponse;
 import java.io.IOException;
+import java.io.ByteArrayInputStream;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.awt.image.BufferedImage;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.http.HttpClient;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -30,13 +36,18 @@ import java.util.Set;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.UUID;
+import java.util.Locale;
+import java.util.Iterator;
+import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.LinkedMultiValueMap;
@@ -59,6 +70,9 @@ public class InspectionService {
   private static final String ACTIVE_CLAUSE_DEDUCTION_POLICY = "ACTIVE_CLAUSE_SCORE_V1";
   /** 标注图仅用于当前浏览器识别结果预览，不能进入巡检记录或 MySQL。 */
   private static final int MAX_TRANSIENT_ANNOTATED_IMAGE_CHARS = 5_000_000;
+  private static final long MAX_DETECTION_IMAGE_BYTES = 10L * 1024 * 1024;
+  private static final int MAX_DETECTION_IMAGE_EDGE = 8192;
+  private static final long MAX_DETECTION_IMAGE_PIXELS = 20_000_000L;
   private final InspectionRecordRepository recordRepository;
   private final InspectionStandardRepository standardRepository;
   private final StorageService storageService;
@@ -68,6 +82,9 @@ public class InspectionService {
   private final RestClient detectClient;
   private final RestClient exportClient;
   private final AccessControlService accessControl;
+  private final AuditRepository auditRepository;
+  private final String runtimeEnvironment;
+  private final String outboundMode;
 
   @Autowired
   public InspectionService(
@@ -77,7 +94,10 @@ public class InspectionService {
       StorageService storageService,
       @Value("${app.inspection.detect-url:http://127.0.0.1:8000/detect}") String detectUrl,
       @Value("${app.inspection.export-url:http://127.0.0.1:8000/export}") String exportUrl,
-      @Value("${app.inspection.timeout:60s}") Duration timeout
+      @Value("${app.inspection.timeout:60s}") Duration timeout,
+      @Value("${app.environment:TEST}") String runtimeEnvironment,
+      @Value("${app.inspection.outbound-mode:LIVE}") String outboundMode,
+      AuditRepository auditRepository
   ) {
     this.recordRepository = recordRepository;
     this.standardRepository = standardRepository;
@@ -86,9 +106,10 @@ public class InspectionService {
     this.exportUrl = exportUrl == null ? "" : exportUrl.trim();
     this.timeout = timeout;
     this.accessControl = accessControl;
-    SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-    factory.setConnectTimeout(Duration.ofSeconds(5));
-    factory.setReadTimeout(timeout);
+    this.auditRepository = auditRepository;
+    this.runtimeEnvironment = runtimeEnvironment == null ? "" : runtimeEnvironment.trim();
+    this.outboundMode = outboundMode == null ? "" : outboundMode.trim();
+    JdkClientHttpRequestFactory factory = requestFactory(timeout);
     this.detectClient = RestClient.builder()
         .baseUrl(this.detectUrl)
         .requestFactory(factory)
@@ -97,6 +118,36 @@ public class InspectionService {
         .baseUrl(this.exportUrl)
         .requestFactory(factory)
         .build();
+  }
+
+  /** Compatibility constructor retained for focused loopback-only tests. */
+  public InspectionService(
+      InspectionRecordRepository recordRepository,
+      AccessControlService accessControl,
+      InspectionStandardRepository standardRepository,
+      StorageService storageService,
+      String detectUrl,
+      String exportUrl,
+      Duration timeout
+  ) {
+    this(recordRepository, accessControl, standardRepository, storageService,
+        detectUrl, exportUrl, timeout, "TEST", "MOCK", null);
+  }
+
+  /** Compatibility constructor retained for loopback health and transport tests. */
+  public InspectionService(
+      InspectionRecordRepository recordRepository,
+      AccessControlService accessControl,
+      InspectionStandardRepository standardRepository,
+      StorageService storageService,
+      String detectUrl,
+      String exportUrl,
+      Duration timeout,
+      String runtimeEnvironment,
+      String outboundMode
+  ) {
+    this(recordRepository, accessControl, standardRepository, storageService,
+        detectUrl, exportUrl, timeout, runtimeEnvironment, outboundMode, null);
   }
 
   /** Compatibility constructor retained for unit tests that do not exercise versioned scoring. */
@@ -180,6 +231,17 @@ public class InspectionService {
           detectUrl,
           exportUrl,
           "卫生识别服务地址配置无效",
+          Map.of()
+      );
+    }
+    if (!outboundAllowed(healthUrl)) {
+      return new InspectionServiceHealthResponse(
+          "OUTBOUND_BLOCKED",
+          false,
+          null,
+          detectUrl,
+          exportUrl,
+          "巡检识别出网未获授权；测试仅允许本机 Mock",
           Map.of()
       );
     }
@@ -1614,6 +1676,7 @@ public class InspectionService {
   }
 
   public ExportFile export(Map<String, Object> payload) {
+    requireOutboundAllowed(exportUrl);
     try {
       return exportClient.post()
           .contentType(MediaType.APPLICATION_JSON)
@@ -1641,9 +1704,10 @@ public class InspectionService {
     }
   }
 
-  public Map<String, Object> detect(AuthUser user, MultipartFile file) {
+  public Map<String, Object> detect(AuthUser user, String storeId, MultipartFile file) {
     requireInspectionManage(user);
-    Map<String, Object> raw = detectRaw(file);
+    String normalizedStoreId = normalizeDetectionStore(user, storeId);
+    Map<String, Object> raw = detectRaw(user, normalizedStoreId, file);
     if (standardRepository == null) {
       return raw;
     }
@@ -1687,7 +1751,7 @@ public class InspectionService {
 
   /** Compatibility entry point for isolated HTTP-client tests. */
   public Map<String, Object> detect(MultipartFile file) {
-    return detectRaw(file);
+    return detectRaw(null, null, file);
   }
 
   public List<Map<String, Object>> detectionSuggestions(
@@ -1838,24 +1902,26 @@ public class InspectionService {
     }
   }
 
-  private Map<String, Object> detectRaw(MultipartFile file) {
+  private Map<String, Object> detectRaw(AuthUser user, String storeId, MultipartFile file) {
     if (file == null || file.isEmpty()) {
       throw new BusinessException("INSPECTION_EMPTY_FILE", "请上传图片文件", HttpStatus.BAD_REQUEST);
     }
-
-    ByteArrayResource resource;
+    requireOutboundAllowed(detectUrl);
+    long startedAt = System.nanoTime();
+    ValidatedDetectionImage image;
     try {
-      byte[] bytes = file.getBytes();
-      String filename = file.getOriginalFilename() == null ? "photo.jpg" : file.getOriginalFilename();
-      resource = new ByteArrayResource(bytes) {
-        @Override
-        public String getFilename() {
-          return filename;
-        }
-      };
-    } catch (IOException ex) {
-      throw new BusinessException("INSPECTION_READ_FAILED", "图片读取失败", HttpStatus.BAD_REQUEST);
+      image = validateDetectionImage(file);
+    } catch (BusinessException ex) {
+      writeDetectionAudit(user, storeId, "FAILED", startedAt, ex.getCode());
+      throw ex;
     }
+
+    ByteArrayResource resource = new ByteArrayResource(image.bytes()) {
+      @Override
+      public String getFilename() {
+        return image.safeFilename();
+      }
+    };
 
     MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
     body.add("file", resource);
@@ -1867,17 +1933,207 @@ public class InspectionService {
           .retrieve()
           .body(new ParameterizedTypeReference<Map<String, Object>>() {});
       if (result == null) {
-        throw new BusinessException("INSPECTION_EMPTY_RESULT", "识别服务返回为空", HttpStatus.BAD_GATEWAY);
+        throw invalidDetectorResponse();
       }
+      Object detections = result.get("detections");
+      if (!(detections instanceof Collection<?>)) {
+        throw invalidDetectorResponse();
+      }
+      writeDetectionAudit(user, storeId, "SUCCESS", startedAt, null);
       return result;
+    } catch (BusinessException ex) {
+      writeDetectionAudit(user, storeId, "FAILED", startedAt, ex.getCode());
+      throw ex;
     } catch (RestClientException ex) {
+      writeDetectionAudit(user, storeId, "FAILED", startedAt, "INSPECTION_SERVICE_UNAVAILABLE");
       throw new BusinessException(
           "INSPECTION_SERVICE_UNAVAILABLE",
-          "卫生识别服务不可用，请确认识别服务已启动",
+          "智能识别暂时不可用，请稍后重试或使用人工巡检录入",
           HttpStatus.BAD_GATEWAY
       );
     }
   }
+
+  private void writeDetectionAudit(
+      AuthUser user,
+      String storeId,
+      String result,
+      long startedAt,
+      String errorCode
+  ) {
+    if (auditRepository == null || user == null) {
+      return;
+    }
+    long elapsedMs = Math.max(0L, (System.nanoTime() - startedAt) / 1_000_000L);
+    String reason = "result=" + result + "; elapsed_ms=" + elapsedMs;
+    if (errorCode != null && !errorCode.isBlank()) {
+      reason += "; error_code=" + safeDetectionErrorCode(errorCode);
+    }
+    auditRepository.writeLog(user, new AuditLogRequest(
+        "inspection_detection_request",
+        "inspection_detection",
+        null,
+        storeId,
+        null,
+        reason,
+        null,
+        null
+    ));
+  }
+
+  private String safeDetectionErrorCode(String errorCode) {
+    return switch (errorCode) {
+      case "INSPECTION_EMPTY_FILE", "INSPECTION_IMAGE_TOO_LARGE", "INSPECTION_IMAGE_TYPE_NOT_ALLOWED",
+          "INSPECTION_IMAGE_TYPE_MISMATCH", "INSPECTION_IMAGE_INVALID", "INSPECTION_IMAGE_DIMENSIONS_INVALID",
+          "INSPECTION_READ_FAILED", "INSPECTION_OUTBOUND_BLOCKED", "INSPECTION_SERVICE_UNAVAILABLE",
+          "INSPECTION_INVALID_RESPONSE" -> errorCode;
+      default -> "INSPECTION_DETECTION_FAILED";
+    };
+  }
+
+  private boolean outboundAllowed(String target) {
+    if ("QA".equalsIgnoreCase(runtimeEnvironment) && !isLiteralQaLoopback(target)) {
+      return false;
+    }
+    return LocalMockOutboundPolicy.isAllowed(runtimeEnvironment, outboundMode, target);
+  }
+
+  private boolean isLiteralQaLoopback(String target) {
+    try {
+      URI uri = URI.create(target == null ? "" : target.trim());
+      return "127.0.0.1".equals(uri.getHost());
+    } catch (IllegalArgumentException ex) {
+      return false;
+    }
+  }
+
+  private void requireOutboundAllowed(String target) {
+    if (outboundAllowed(target)) {
+      return;
+    }
+    throw new BusinessException(
+        "INSPECTION_OUTBOUND_BLOCKED", "巡检识别出网未获授权；测试仅允许本机 Mock", HttpStatus.SERVICE_UNAVAILABLE);
+  }
+
+  private String normalizeDetectionStore(AuthUser user, String storeId) {
+    String normalized = blankToNull(storeId);
+    if (normalized == null) {
+      throw new BusinessException("INSPECTION_STORE_REQUIRED", "请选择巡检门店", HttpStatus.BAD_REQUEST);
+    }
+    requireInspectionStoreAccess(user, normalized, "使用门店图片智能识别");
+    if (recordRepository != null && !recordRepository.storeExists(user.tenantId(), normalized)) {
+      if (auditRepository != null) {
+        auditRepository.writePermissionDenied(
+            user,
+            "使用门店图片智能识别",
+            "STORE",
+            normalized,
+            normalized,
+            "门店不属于当前租户"
+        );
+      }
+      throw new BusinessException("FORBIDDEN", "当前账号无权访问该巡检门店", HttpStatus.FORBIDDEN);
+    }
+    return normalized;
+  }
+
+  private ValidatedDetectionImage validateDetectionImage(MultipartFile file) {
+    if (file.getSize() > MAX_DETECTION_IMAGE_BYTES) {
+      throw new BusinessException(
+          "INSPECTION_IMAGE_TOO_LARGE", "巡检图片不能超过10MB", HttpStatus.PAYLOAD_TOO_LARGE);
+    }
+    String originalName = file.getOriginalFilename() == null ? "" : file.getOriginalFilename().trim();
+    int dot = originalName.lastIndexOf('.');
+    String extension = dot < 0 ? "" : originalName.substring(dot + 1).toLowerCase(Locale.ROOT);
+    String expectedFormat = switch (extension) {
+      case "jpg", "jpeg" -> "JPEG";
+      case "png" -> "PNG";
+      default -> null;
+    };
+    String contentType = file.getContentType() == null
+        ? "" : file.getContentType().split(";", 2)[0].trim().toLowerCase(Locale.ROOT);
+    String declaredFormat = switch (contentType) {
+      case "image/jpeg", "image/jpg", "image/pjpeg" -> "JPEG";
+      case "image/png" -> "PNG";
+      default -> null;
+    };
+    if (expectedFormat == null || declaredFormat == null) {
+      throw new BusinessException(
+          "INSPECTION_IMAGE_TYPE_NOT_ALLOWED", "仅支持 JPG、JPEG 或 PNG 巡检图片", HttpStatus.BAD_REQUEST);
+    }
+    if (!expectedFormat.equals(declaredFormat)) {
+      throw new BusinessException(
+          "INSPECTION_IMAGE_TYPE_MISMATCH", "图片扩展名与声明类型不一致", HttpStatus.BAD_REQUEST);
+    }
+    byte[] bytes;
+    try {
+      bytes = file.getBytes();
+    } catch (IOException ex) {
+      throw new BusinessException("INSPECTION_READ_FAILED", "图片读取失败，请重新选择", HttpStatus.BAD_REQUEST);
+    }
+    if (bytes.length == 0) {
+      throw new BusinessException("INSPECTION_EMPTY_FILE", "请上传图片文件", HttpStatus.BAD_REQUEST);
+    }
+    if (bytes.length > MAX_DETECTION_IMAGE_BYTES) {
+      throw new BusinessException(
+          "INSPECTION_IMAGE_TOO_LARGE", "巡检图片不能超过10MB", HttpStatus.PAYLOAD_TOO_LARGE);
+    }
+
+    ImageReader reader = null;
+    try (ImageInputStream input = ImageIO.createImageInputStream(new ByteArrayInputStream(bytes))) {
+      if (input == null) {
+        throw invalidImage();
+      }
+      Iterator<ImageReader> readers = ImageIO.getImageReaders(input);
+      if (!readers.hasNext()) {
+        throw invalidImage();
+      }
+      reader = readers.next();
+      reader.setInput(input, true, true);
+      String actualFormat = reader.getFormatName().toUpperCase(Locale.ROOT);
+      if ("JPG".equals(actualFormat)) {
+        actualFormat = "JPEG";
+      }
+      if (!expectedFormat.equals(actualFormat)) {
+        throw new BusinessException(
+            "INSPECTION_IMAGE_TYPE_MISMATCH", "图片扩展名与真实内容不一致", HttpStatus.BAD_REQUEST);
+      }
+      int width = reader.getWidth(0);
+      int height = reader.getHeight(0);
+      if (width <= 0 || height <= 0 || width > MAX_DETECTION_IMAGE_EDGE
+          || height > MAX_DETECTION_IMAGE_EDGE || (long) width * height > MAX_DETECTION_IMAGE_PIXELS) {
+        throw new BusinessException(
+            "INSPECTION_IMAGE_DIMENSIONS_INVALID",
+            "巡检图片尺寸过大或无效，请压缩后重试",
+            HttpStatus.PAYLOAD_TOO_LARGE);
+      }
+      BufferedImage decoded = reader.read(0);
+      if (decoded == null || decoded.getWidth() != width || decoded.getHeight() != height) {
+        throw invalidImage();
+      }
+      return new ValidatedDetectionImage(bytes, "JPEG".equals(actualFormat) ? "inspection.jpg" : "inspection.png");
+    } catch (BusinessException ex) {
+      throw ex;
+    } catch (IOException | RuntimeException ex) {
+      throw invalidImage();
+    } finally {
+      if (reader != null) {
+        reader.dispose();
+      }
+    }
+  }
+
+  private BusinessException invalidImage() {
+    return new BusinessException(
+        "INSPECTION_IMAGE_INVALID", "图片已损坏或不是真实可解码图片", HttpStatus.BAD_REQUEST);
+  }
+
+  private BusinessException invalidDetectorResponse() {
+    return new BusinessException(
+        "INSPECTION_INVALID_RESPONSE", "智能识别返回异常，请稍后重试或使用人工巡检录入", HttpStatus.BAD_GATEWAY);
+  }
+
+  private record ValidatedDetectionImage(byte[] bytes, String safeFilename) {}
 
   private CalculatedInspection calculateInspection(
       AuthUser user,
@@ -2646,11 +2902,18 @@ public class InspectionService {
     return value == null || value.isBlank() ? null : value.trim();
   }
 
-  private SimpleClientHttpRequestFactory healthRequestFactory() {
-    SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+  private JdkClientHttpRequestFactory healthRequestFactory() {
     Duration healthTimeout = timeout == null ? Duration.ofSeconds(2) : timeout;
-    factory.setConnectTimeout(healthTimeout);
-    factory.setReadTimeout(healthTimeout);
+    return requestFactory(healthTimeout);
+  }
+
+  private static JdkClientHttpRequestFactory requestFactory(Duration readTimeout) {
+    HttpClient client = HttpClient.newBuilder()
+        .connectTimeout(Duration.ofSeconds(5))
+        .followRedirects(HttpClient.Redirect.NEVER)
+        .build();
+    JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(client);
+    factory.setReadTimeout(readTimeout == null ? Duration.ofSeconds(60) : readTimeout);
     return factory;
   }
 

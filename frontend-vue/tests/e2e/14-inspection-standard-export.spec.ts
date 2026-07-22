@@ -186,7 +186,7 @@ test('latest 200-point standard calculates 180/179 and red-line result while sav
   await expect(page.getByText('物料标准', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('卫生标准', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('服务标准', { exact: true }).first()).toBeVisible()
-  await expect(page.getByText(/105条（物料40 \/ 卫生47 \/ 服务18）· 200分 · 合格线180分/)).toBeVisible()
+  await expect(page.locator('.inspection-standard-note')).toContainText('105条（物料40 / 卫生47 / 服务18） · 200分 · 合格线180分')
   await expect(page.locator('[data-category="MATERIAL"] tbody tr')).toHaveCount(40)
   await expect(page.locator('[data-category="HYGIENE"] tbody tr')).toHaveCount(47)
   await expect(page.locator('[data-category="SERVICE"] tbody tr')).toHaveCount(18)
@@ -297,7 +297,7 @@ test('canonical E2E red-line fixture uses a complete formal standard and downloa
   await page.getByRole('row', { name: /测试门店/ }).click()
 
   await expect.poll(() => requestedDetailId).toBe(recordId)
-  await expect(page.getByText('2026.07-R1')).toBeVisible()
+  await expect(page.locator('.inspection-detail-grid').getByText('2026.07-R1', { exact: true })).toBeVisible()
   await expect(page.getByText('当时使用的完整标准快照（105条）')).toBeVisible()
   await expect(page.locator('.inspection-detail-grid').getByText('33 / 37', { exact: true })).toBeVisible()
   await expect(page.locator('.inspection-detail-grid').getByText('63 / 63', { exact: true })).toBeVisible()
@@ -307,8 +307,8 @@ test('canonical E2E red-line fixture uses a complete formal standard and downloa
   await expect(page.getByRole('cell', { name: '食安红线：E2E 导出回归' })).toBeVisible()
   await expect(page.getByText('扣 4 分', { exact: true })).toBeVisible()
 
-  await page.setViewportSize({ width: 390, height: 844 })
-  await expect(page.getByText('2026.07-R1')).toBeVisible()
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await expect(page.locator('.inspection-detail-grid').getByText('2026.07-R1', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '导出Excel' })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true)
 

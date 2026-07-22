@@ -285,7 +285,7 @@ class MobileApiDatabaseContractTest {
     manager = createScopedUser(
         "mobile-db-manager", "移动契约店长", "STORE_MANAGER", STORE_ONE);
     inspector = createScopedUser(
-        "mobile-db-inspector", "移动契约督导", "OPERATIONS", STORE_ONE);
+        "mobile-db-inspector", "移动契约督导", "SUPERVISOR", STORE_ONE);
   }
 
   private AuthUser createScopedUser(

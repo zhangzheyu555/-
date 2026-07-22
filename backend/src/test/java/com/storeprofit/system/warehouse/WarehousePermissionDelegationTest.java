@@ -29,7 +29,7 @@ class WarehousePermissionDelegationTest {
   @Test
   void readUsesStoreOrCentralPermissionForTheCorrespondingWorkspace() {
     when(repository.items(1L)).thenReturn(List.of());
-    AuthUser storeManager = user("OPERATIONS", "rg1");
+    AuthUser storeManager = user("SUPERVISOR", "rg1");
     AuthUser warehouse = user("WAREHOUSE", null);
     when(accessControl.hasPermission(storeManager, PermissionCodes.WAREHOUSE_CENTRAL_READ)).thenReturn(false);
     when(accessControl.dataScope(storeManager, DataScopeDomains.WAREHOUSE))
@@ -81,7 +81,7 @@ class WarehousePermissionDelegationTest {
 
   @Test
   void storeListScopeRunsOneSqlQueryPerAllowedStoreAndNeverUsesGlobalQuery() {
-    AuthUser delegated = user("OPERATIONS", null);
+    AuthUser delegated = user("SUPERVISOR", null);
     when(accessControl.hasPermission(delegated, PermissionCodes.WAREHOUSE_CENTRAL_READ)).thenReturn(false);
     when(accessControl.dataScope(delegated, DataScopeDomains.WAREHOUSE))
         .thenReturn(new DataScope(DataScopeModes.STORE_LIST, List.of("rg1", "rg2")));
@@ -98,7 +98,7 @@ class WarehousePermissionDelegationTest {
 
   @Test
   void personalStoreReadDenyStopsTheRequestBeforeWarehouseQueries() {
-    AuthUser delegated = user("OPERATIONS", "rg1");
+    AuthUser delegated = user("SUPERVISOR", "rg1");
     RuntimeException denied = new RuntimeException("personal deny");
     when(accessControl.hasPermission(delegated, PermissionCodes.WAREHOUSE_CENTRAL_READ)).thenReturn(false);
     doThrow(denied).when(accessControl).requireWarehouseStoreRead(delegated);
@@ -110,7 +110,7 @@ class WarehousePermissionDelegationTest {
 
   @Test
   void explicitReturnIdOutsideWarehouseScopeReturnsForbidden() {
-    AuthUser delegated = user("OPERATIONS", "rg1");
+    AuthUser delegated = user("SUPERVISOR", "rg1");
     WarehouseReturnResponse otherStore = returnOrder("PSTH-OTHER", "rg2");
     BusinessException denied = new BusinessException(
         "FORBIDDEN",
@@ -134,7 +134,7 @@ class WarehousePermissionDelegationTest {
 
   @Test
   void storeOverviewDoesNotQueryCentralSupplierPurchaseOrBatchData() {
-    AuthUser delegated = user("OPERATIONS", "rg1");
+    AuthUser delegated = user("SUPERVISOR", "rg1");
     when(accessControl.hasPermission(delegated, PermissionCodes.WAREHOUSE_CENTRAL_READ)).thenReturn(false);
     when(accessControl.dataScope(delegated, DataScopeDomains.WAREHOUSE))
         .thenReturn(new DataScope(DataScopeModes.OWN_STORE, List.of("rg1")));

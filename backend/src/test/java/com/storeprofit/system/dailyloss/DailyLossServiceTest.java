@@ -12,10 +12,14 @@ import static org.mockito.Mockito.when;
 import com.storeprofit.system.audit.AuditRepository;
 import com.storeprofit.system.common.BusinessException;
 import com.storeprofit.system.platform.auth.AccessControlService;
+import com.storeprofit.system.platform.auth.AuthRepository;
+import com.storeprofit.system.platform.auth.AuthService;
 import com.storeprofit.system.platform.auth.AuthUser;
+import com.storeprofit.system.platform.authorization.AuthorizationService;
 import com.storeprofit.system.platform.authorization.DataScope;
 import com.storeprofit.system.platform.authorization.DataScopeDomains;
 import com.storeprofit.system.platform.authorization.DataScopeModes;
+import com.storeprofit.system.platform.authorization.DataScopeService;
 import com.storeprofit.system.storage.StorageService;
 import com.storeprofit.system.warehouse.WarehouseRepository;
 import java.math.BigDecimal;
@@ -93,15 +97,15 @@ class DailyLossServiceTest {
   void forgedCrossStoreReadIsDeniedBeforeAttachmentsAreLoaded() {
     DailyLossRepository repository = mock(DailyLossRepository.class);
     AccessControlService access = mock(AccessControlService.class);
-    AuthUser manager = user("STORE_MANAGER", "s1");
-    when(access.dataScope(manager, DataScopeDomains.STORE))
+    AuthUser finance = user("FINANCE", null);
+    when(access.dataScope(finance, DataScopeDomains.FINANCE))
         .thenReturn(new DataScope(DataScopeModes.OWN_STORE, List.of("s1")));
     when(repository.find(1L, "loss-2")).thenReturn(Optional.of(rowForStore("s2", "SUBMITTED")));
     doThrow(new BusinessException("FORBIDDEN", "当前账号没有访问该业务的权限", HttpStatus.FORBIDDEN))
-        .when(access).requireStoreAccess(manager, DataScopeDomains.STORE, "s2", "查看每日报损");
+        .when(access).requireStoreAccess(finance, DataScopeDomains.FINANCE, "s2", "查看每日报损");
 
     BusinessException error = catchThrowableOfType(
-        () -> service(repository, mock(WarehouseRepository.class), access, mock(AuditRepository.class)).get(manager, "loss-2"),
+        () -> service(repository, mock(WarehouseRepository.class), access, mock(AuditRepository.class)).get(finance, "loss-2"),
         BusinessException.class);
 
     assertThat(error.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
@@ -145,9 +149,11 @@ class DailyLossServiceTest {
     AccessControlService access = mock(AccessControlService.class);
     AuthUser manager = user("STORE_MANAGER", "s1");
     AuthUser supervisor = user("SUPERVISOR", null);
+    AuthUser finance = user("FINANCE", null);
     when(access.dataScope(manager, DataScopeDomains.STORE))
         .thenReturn(new DataScope(DataScopeModes.OWN_STORE, List.of("s1")));
     when(access.dataScope(supervisor, DataScopeDomains.STORE)).thenReturn(DataScope.all());
+    when(access.dataScope(finance, DataScopeDomains.FINANCE)).thenReturn(DataScope.all());
     DailyLossService dailyLossService = new DailyLossService(
         repository,
         mock(WarehouseRepository.class),
@@ -176,7 +182,12 @@ class DailyLossServiceTest {
     DailyLossReportResponse submitted = dailyLossService.submitReport(manager, draft.id());
     DailyLossReportResponse reviewed = dailyLossService.reviewReport(
         supervisor, draft.id(), new DailyLossReviewRequest("照片已核对"));
-    DailyLossMonthlyExcelExport export = dailyLossService.exportMonthlyExcel(supervisor, "s1", "2026-07");
+    int reportsBeforeRepeatExport = jdbcTemplate.queryForObject(
+        "select count(*) from daily_loss_report", Integer.class);
+    int detailsBeforeRepeatExport = jdbcTemplate.queryForObject(
+        "select count(*) from daily_loss_record", Integer.class);
+    DailyLossMonthlyExcelExport export = dailyLossService.exportMonthlyExcel(finance, "s1", "2026-07");
+    DailyLossMonthlyExcelExport repeatedExport = dailyLossService.exportMonthlyExcel(finance, "s1", "2026-07");
 
     assertThat(draft.totalAmount()).isEqualByComparingTo("50.14");
     assertThat(draft.details()).extracting(DailyLossReportDetailResponse::amountSnapshot)
@@ -186,6 +197,8 @@ class DailyLossServiceTest {
     assertThat(export.fileName()).isEqualTo("测试门店-2026年07月-每日报损.xlsx");
     assertThat(export.summaryRowCount()).isEqualTo(31);
     assertThat(export.detailRowCount()).isEqualTo(2);
+    assertThat(repeatedExport.summaryRowCount()).isEqualTo(31);
+    assertThat(repeatedExport.detailRowCount()).isEqualTo(2);
     try (XSSFWorkbook workbook = new XSSFWorkbook(new java.io.ByteArrayInputStream(export.content()))) {
       assertThat(workbook.getNumberOfSheets()).isEqualTo(2);
       assertThat(workbook.getSheetName(0)).isEqualTo("每日汇总");
@@ -218,6 +231,12 @@ class DailyLossServiceTest {
     assertThat(jdbcTemplate.queryForList(
         "select action from operation_log order by id", String.class))
         .contains("daily_loss_submit", "daily_loss_review", "daily_loss_export");
+    assertThat(jdbcTemplate.queryForObject("select count(*) from daily_loss_report", Integer.class))
+        .isEqualTo(reportsBeforeRepeatExport);
+    assertThat(jdbcTemplate.queryForObject("select count(*) from daily_loss_record", Integer.class))
+        .isEqualTo(detailsBeforeRepeatExport);
+    assertThat(jdbcTemplate.queryForObject(
+        "select count(*) from operation_log where action = 'daily_loss_export'", Integer.class)).isEqualTo(2);
   }
 
   @Test
@@ -227,10 +246,10 @@ class DailyLossServiceTest {
     createReportSchema(jdbcTemplate);
     DailyLossRepository repository = new DailyLossRepository(jdbcTemplate, new NamedParameterJdbcTemplate(dataSource));
     AccessControlService access = mock(AccessControlService.class);
-    AuthUser supervisor = user("SUPERVISOR", null);
-    when(access.dataScope(supervisor, DataScopeDomains.STORE)).thenReturn(DataScope.all());
+    AuthUser finance = user("FINANCE", null);
+    when(access.dataScope(finance, DataScopeDomains.FINANCE)).thenReturn(DataScope.all());
     DailyLossMonthlyExcelExport export = service(repository, mock(WarehouseRepository.class), access,
-        new AuditRepository(jdbcTemplate)).exportMonthlyExcel(supervisor, null, "2026-08");
+        new AuditRepository(jdbcTemplate)).exportMonthlyExcel(finance, null, "2026-08");
 
     try (XSSFWorkbook workbook = new XSSFWorkbook(new java.io.ByteArrayInputStream(export.content()))) {
       assertThat(workbook.getSheet("每日汇总").getLastRowNum()).isEqualTo(31);
@@ -244,15 +263,15 @@ class DailyLossServiceTest {
   void monthlyExcelExportUsesAuthenticatedTenantAndRejectsCrossStoreRequest() {
     DailyLossRepository repository = mock(DailyLossRepository.class);
     AccessControlService access = mock(AccessControlService.class);
-    AuthUser manager = new AuthUser(8L, 2L, "第二租户", "manager", "hash", "店长", "STORE_MANAGER", "s1", true, 1L);
-    when(access.dataScope(manager, DataScopeDomains.STORE))
+    AuthUser finance = new AuthUser(8L, 2L, "第二租户", "finance", "hash", "财务", "FINANCE", null, true, 1L);
+    when(access.dataScope(finance, DataScopeDomains.FINANCE))
         .thenReturn(new DataScope(DataScopeModes.OWN_STORE, List.of("s1")));
     doThrow(new BusinessException("FORBIDDEN", "当前账号没有访问该业务的权限", HttpStatus.FORBIDDEN))
-        .when(access).requireStoreAccess(manager, DataScopeDomains.STORE, "s2", "导出每日报损");
+        .when(access).requireStoreAccess(finance, DataScopeDomains.FINANCE, "s2", "导出每日报损");
 
     BusinessException error = catchThrowableOfType(
         () -> service(repository, mock(WarehouseRepository.class), access, mock(AuditRepository.class))
-            .exportMonthlyExcel(manager, "s2", "2026-07"),
+            .exportMonthlyExcel(finance, "s2", "2026-07"),
         BusinessException.class);
 
     assertThat(error.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
@@ -282,16 +301,41 @@ class DailyLossServiceTest {
   }
 
   @Test
-  void operationsCannotEnterDailyLossReviewFlow() {
+  void monthlyExcelExportRejectsNonFinanceRolesDespiteMisconfiguredPermissionsBeforeRepositoryAccess() {
+    DailyLossRepository repository = mock(DailyLossRepository.class);
+    AuditRepository audit = mock(AuditRepository.class);
+    AuthorizationService authorization = mock(AuthorizationService.class);
+    AccessControlService access = new AccessControlService(
+        mock(AuthService.class), mock(AuthRepository.class), audit, authorization, mock(DataScopeService.class));
+    DailyLossService dailyLossService = service(repository, mock(WarehouseRepository.class), access, audit);
+
+    for (AuthUser denied : List.of(
+        user("STORE_MANAGER", "s1"), user("SUPERVISOR", null), user("WAREHOUSE", null), user("EMPLOYEE", "s1")
+    )) {
+      when(authorization.hasPermission(denied, com.storeprofit.system.platform.authorization.PermissionCodes.DAILY_LOSS_EXPORT))
+          .thenReturn(true);
+      BusinessException error = catchThrowableOfType(
+          () -> dailyLossService.exportMonthlyExcel(denied, "s1", "2026-07"), BusinessException.class);
+
+      assertThat(error).isNotNull();
+      assertThat(error.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+      assertThat(error.getCode()).isEqualTo("FORBIDDEN");
+    }
+    verify(repository, never()).reportStores(
+        org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void deniedSupervisorReviewStopsBeforeRepositoryAccess() {
     DailyLossRepository repository = mock(DailyLossRepository.class);
     AccessControlService access = mock(AccessControlService.class);
-    AuthUser operations = user("OPERATIONS", null);
+    AuthUser supervisor = user("SUPERVISOR", null);
     doThrow(new BusinessException("FORBIDDEN", "每日报损复核仅限督导或老板", HttpStatus.FORBIDDEN))
-        .when(access).requireDailyLossReview(operations);
+        .when(access).requireDailyLossReview(supervisor);
 
     BusinessException error = catchThrowableOfType(
         () -> service(repository, mock(WarehouseRepository.class), access, mock(AuditRepository.class))
-            .reviewReport(operations, "report-1", new DailyLossReviewRequest("OK")),
+            .reviewReport(supervisor, "report-1", new DailyLossReviewRequest("OK")),
         BusinessException.class);
 
     assertThat(error.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);

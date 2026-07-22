@@ -31,6 +31,75 @@ class DatabaseIdentityValidatorTest {
   }
 
   @Test
+  void acceptsExplicitQaDockerBootstrapWithMappedPortAndContainerAccount() {
+    DatabaseIdentityValidator.validate(
+        "8.4.3",
+        3306,
+        DATABASE,
+        "bootstrap_user@%",
+        List.of(
+            "GRANT USAGE ON *.* TO `bootstrap_user`@`%`",
+            "GRANT SELECT, INSERT ON `ai\\_profit\\_qa\\_r102`.* TO `bootstrap_user`@`%`"),
+        PORT,
+        DATABASE,
+        "bootstrap_user",
+        true);
+  }
+
+  @Test
+  void qaDockerBootstrapStillRejectsNonMysql8AndUnsafeAccountOrGrant() {
+    assertThatThrownBy(() -> DatabaseIdentityValidator.validate(
+        "5.7.44", 3306, DATABASE, "bootstrap_user@%", SCOPED_GRANTS,
+        PORT, DATABASE, "bootstrap_user", true))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("MySQL 8");
+    assertThatThrownBy(() -> DatabaseIdentityValidator.validate(
+        "8.4.3", 3306, DATABASE, "root@%", SCOPED_GRANTS,
+        PORT, DATABASE, "root", true))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("root");
+    assertThatThrownBy(() -> DatabaseIdentityValidator.validate(
+        "8.4.3", 3306, DATABASE, "bootstrap_user@%", SCOPED_GRANTS,
+        PORT, DATABASE, "other_user", true))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("MYSQL_USERNAME");
+    assertThatThrownBy(() -> DatabaseIdentityValidator.validate(
+        "8.4.3", 3306, "other_qa", "bootstrap_user@%", SCOPED_GRANTS,
+        PORT, DATABASE, "bootstrap_user", true))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("approved database");
+    assertThatThrownBy(() -> DatabaseIdentityValidator.validate(
+        "8.4.3", 3306, DATABASE, "bootstrap_user@remote.example", SCOPED_GRANTS,
+        PORT, DATABASE, "bootstrap_user", true))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("local or container host");
+    assertThatThrownBy(() -> DatabaseIdentityValidator.validate(
+        "8.4.3",
+        3306,
+        DATABASE,
+        "bootstrap_user@%",
+        List.of("GRANT ALL ON *.* TO `bootstrap_user`@`%`"),
+        PORT,
+        DATABASE,
+        "bootstrap_user",
+        true))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("global privileges");
+    assertThatThrownBy(() -> DatabaseIdentityValidator.validate(
+        "8.4.3",
+        3306,
+        DATABASE,
+        "bootstrap_user@%",
+        List.of("GRANT SELECT ON `ai\\_profit\\_qa\\_r102`.* TO `bootstrap_user`@`%` WITH GRANT OPTION"),
+        PORT,
+        DATABASE,
+        "bootstrap_user",
+        true))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("GRANT OPTION");
+  }
+
+  @Test
   void rejectsAccountThatDoesNotMatchConfiguredUsername() {
     assertThatThrownBy(() -> DatabaseIdentityValidator.validate(
         "8.0.46",

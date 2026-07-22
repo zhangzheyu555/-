@@ -36,17 +36,32 @@ async function downloadCsv(path: string, params: ProfitRankingExportParams, fall
 export function downloadBlob(blob: Blob, filename: string) {
   const blobUrl = URL.createObjectURL(blob)
   const link = document.createElement('a')
-  link.href = blobUrl
-  link.download = filename
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  URL.revokeObjectURL(blobUrl)
+  try {
+    link.href = blobUrl
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+  } finally {
+    link.remove()
+    URL.revokeObjectURL(blobUrl)
+  }
 }
 
-function decodeFilename(disposition: string) {
+export function downloadCsvRows(rows: ReadonlyArray<ReadonlyArray<unknown>>, filename: string) {
+  const csv = rows
+    .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+    .join('\n')
+  downloadBlob(new Blob([`\ufeff${csv}`], { type: 'text/csv;charset=utf-8' }), filename)
+}
+
+export function decodeFilename(disposition: string) {
   const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
-  if (encoded) return decodeURIComponent(encoded)
   const plain = disposition.match(/filename="?([^";]+)"?/i)?.[1]
-  return plain ? decodeURIComponent(plain) : ''
+  const value = encoded || plain
+  if (!value) return ''
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
 }
