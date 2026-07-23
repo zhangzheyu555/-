@@ -22,6 +22,10 @@ public record ProfitEntryRequest(
     @Digits(integer = 12, fraction = 2, message = "金额格式不正确，最多12位整数和2位小数") @DecimalMin(value = "0", message = "金额不能小于 0") BigDecimal utility,
     @Digits(integer = 12, fraction = 2, message = "金额格式不正确，最多12位整数和2位小数") @DecimalMin(value = "0", message = "金额不能小于 0") BigDecimal property,
     @Digits(integer = 12, fraction = 2, message = "金额格式不正确，最多12位整数和2位小数") @DecimalMin(value = "0", message = "金额不能小于 0") BigDecimal commission,
+    @Digits(integer = 12, fraction = 2, message = "金额格式不正确，最多12位整数和2位小数") @DecimalMin(value = "0", message = "金额不能小于 0") BigDecimal meituan,
+    @Digits(integer = 12, fraction = 2, message = "金额格式不正确，最多12位整数和2位小数") @DecimalMin(value = "0", message = "金额不能小于 0") BigDecimal eleme,
+    @Digits(integer = 12, fraction = 2, message = "金额格式不正确，最多12位整数和2位小数") @DecimalMin(value = "0", message = "金额不能小于 0") BigDecimal douyin,
+    @Digits(integer = 12, fraction = 2, message = "金额格式不正确，最多12位整数和2位小数") @DecimalMin(value = "0", message = "金额不能小于 0") BigDecimal amap,
     @Digits(integer = 12, fraction = 2, message = "金额格式不正确，最多12位整数和2位小数") @DecimalMin(value = "0", message = "金额不能小于 0") BigDecimal promo,
     @Digits(integer = 12, fraction = 2, message = "金额格式不正确，最多12位整数和2位小数") @DecimalMin(value = "0", message = "金额不能小于 0") BigDecimal repair,
     @Digits(integer = 12, fraction = 2, message = "金额格式不正确，最多12位整数和2位小数") @DecimalMin(value = "0", message = "金额不能小于 0") BigDecimal equip,
@@ -29,6 +33,18 @@ public record ProfitEntryRequest(
     String note,
     @NotNull(message = "品牌不能为空") Long brandId
 ) {
+  public ProfitEntryRequest(
+      String storeId, String month, BigDecimal sales, BigDecimal refund, BigDecimal discount,
+      BigDecimal material, BigDecimal packaging, BigDecimal loss, BigDecimal costOther,
+      BigDecimal rent, BigDecimal labor, BigDecimal utility, BigDecimal property,
+      BigDecimal commission, BigDecimal promo, BigDecimal repair, BigDecimal equip,
+      BigDecimal expOther, String note, Long brandId
+  ) {
+    this(storeId, month, sales, refund, discount, material, packaging, loss, costOther,
+        rent, labor, utility, property, commission, null, null, null, null,
+        promo, repair, equip, expOther, note, brandId);
+  }
+
   public ProfitEntryRequest(
       String storeId,
       String month,
@@ -51,6 +67,7 @@ public record ProfitEntryRequest(
       String note
   ) {
     this(storeId, month, sales, refund, discount, material, packaging, loss, costOther,
-        rent, labor, utility, property, commission, promo, repair, equip, expOther, note, null);
+        rent, labor, utility, property, commission, null, null, null, null,
+        promo, repair, equip, expOther, note, null);
   }
 }

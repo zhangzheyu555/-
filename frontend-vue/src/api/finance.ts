@@ -82,6 +82,10 @@ export interface ProfitEntry {
   utility?: number
   property?: number
   commission?: number
+  meituan?: number
+  eleme?: number
+  douyin?: number
+  amap?: number
   promo?: number
   repair?: number
   equip?: number
@@ -142,6 +146,10 @@ export interface ProfitEntryPayload {
   utility: number
   property: number
   commission: number
+  meituan: number
+  eleme: number
+  douyin: number
+  amap: number
   promo: number
   repair: number
   equip: number
