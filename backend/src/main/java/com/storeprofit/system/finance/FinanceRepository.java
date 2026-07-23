@@ -39,7 +39,8 @@ public class FinanceRepository {
         select p.id, p.store_id, s.code as store_code, s.name as store_name, s.brand_id,
                b.name as brand_name, s.area, s.manager, p.month, p.sales, p.refund, p.discount,
                p.material, p.packaging, p.loss, p.cost_other, p.rent, p.labor, p.utility,
-               p.property, p.commission, p.promo, p.repair, p.equip, p.exp_other, p.note
+               p.property, p.commission, p.meituan, p.eleme, p.douyin, p.amap,
+               p.promo, p.repair, p.equip, p.exp_other, p.note
         from profit_entry p
         join store_branch s on s.id = p.store_id and s.tenant_id = p.tenant_id
         left join brand b on b.id = s.brand_id and b.tenant_id = s.tenant_id
@@ -61,7 +62,7 @@ public class FinanceRepository {
     }
     appendStoreScope(sql, params, "p.store_id", dataScope);
     sql.append(" order by p.month desc, net_sort desc, b.sort_order, s.code, s.id");
-    String query = sql.toString().replace("net_sort", "(p.sales - p.refund - p.discount - p.material - p.packaging - p.loss - p.cost_other - p.rent - p.labor - p.utility - p.property - p.commission - p.promo - p.repair - p.equip - p.exp_other)");
+    String query = sql.toString().replace("net_sort", "(p.sales - p.refund - p.discount - p.material - p.packaging - p.loss - p.cost_other - p.rent - p.labor - p.utility - p.property - p.commission - p.meituan - p.eleme - p.douyin - p.amap - p.promo - p.repair - p.equip - p.exp_other)");
     return namedJdbcTemplate.query(query, params, this::mapEntry);
   }
 
@@ -78,10 +79,11 @@ public class FinanceRepository {
     jdbcTemplate.update("""
         insert into profit_entry(
           tenant_id, store_id, month, sales, refund, discount, material, packaging, loss, cost_other,
-          rent, labor, utility, property, commission, promo, repair, equip, exp_other,
+          rent, labor, utility, property, commission, meituan, eleme, douyin, amap,
+          promo, repair, equip, exp_other,
           note, created_by, updated_by, created_at
         )
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
         on duplicate key update
           sales = values(sales),
           refund = values(refund),
@@ -95,6 +97,10 @@ public class FinanceRepository {
           utility = values(utility),
           property = values(property),
           commission = values(commission),
+          meituan = values(meituan),
+          eleme = values(eleme),
+          douyin = values(douyin),
+          amap = values(amap),
           promo = values(promo),
           repair = values(repair),
           equip = values(equip),
@@ -118,6 +124,10 @@ public class FinanceRepository {
         amount(request.utility()),
         amount(request.property()),
         amount(request.commission()),
+        amount(request.meituan()),
+        amount(request.eleme()),
+        amount(request.douyin()),
+        amount(request.amap()),
         amount(request.promo()),
         amount(request.repair()),
         amount(request.equip()),
@@ -222,11 +232,17 @@ public class FinanceRepository {
     BigDecimal utility = amount(rs.getBigDecimal("utility"));
     BigDecimal property = amount(rs.getBigDecimal("property"));
     BigDecimal commission = amount(rs.getBigDecimal("commission"));
+    BigDecimal meituan = amount(rs.getBigDecimal("meituan"));
+    BigDecimal eleme = amount(rs.getBigDecimal("eleme"));
+    BigDecimal douyin = amount(rs.getBigDecimal("douyin"));
+    BigDecimal amap = amount(rs.getBigDecimal("amap"));
     BigDecimal promo = amount(rs.getBigDecimal("promo"));
     BigDecimal repair = amount(rs.getBigDecimal("repair"));
     BigDecimal equip = amount(rs.getBigDecimal("equip"));
     BigDecimal expOther = amount(rs.getBigDecimal("exp_other"));
-    BigDecimal expenseSum = rent.add(labor).add(utility).add(property).add(commission).add(promo).add(repair).add(equip).add(expOther);
+    BigDecimal expenseSum = rent.add(labor).add(utility).add(property).add(commission)
+        .add(meituan).add(eleme).add(douyin).add(amap)
+        .add(promo).add(repair).add(equip).add(expOther);
     BigDecimal net = gross.subtract(expenseSum);
     BigDecimal margin = ratio(net, income);
     return new ProfitEntryResponse(
@@ -256,6 +272,10 @@ public class FinanceRepository {
         utility,
         property,
         commission,
+        meituan,
+        eleme,
+        douyin,
+        amap,
         promo,
         repair,
         equip,

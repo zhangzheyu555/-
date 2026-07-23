@@ -29,6 +29,10 @@ interface ProfitDraft {
   utility: number | null
   property: number | null
   commission: number | null
+  meituan: number | null
+  eleme: number | null
+  douyin: number | null
+  amap: number | null
   promo: number | null
   repair: number | null
   equip: number | null
@@ -62,6 +66,10 @@ const PRIMARY_EXPENSE_FIELDS = [
   { key: 'utility', label: '水电费' },
   { key: 'property', label: '物业费' },
   { key: 'commission', label: '平台佣金' },
+  { key: 'meituan', label: '美团' },
+  { key: 'eleme', label: '饿了么' },
+  { key: 'douyin', label: '抖音' },
+  { key: 'amap', label: '高德' },
   { key: 'promo', label: '推广费' },
 ] satisfies readonly AmountFieldDefinition[]
 
@@ -156,7 +164,7 @@ const calcPreview = computed(() => {
   const income = sales - refund - discount
   const cost = num(draft.value.material) + num(draft.value.packaging) + num(draft.value.loss) + num(draft.value.costOther)
   const gross = income - cost
-  const expense = num(draft.value.rent) + num(draft.value.labor) + num(draft.value.utility) + num(draft.value.property) + num(draft.value.commission) + num(draft.value.promo) + num(draft.value.repair) + num(draft.value.equip) + num(draft.value.expOther)
+  const expense = num(draft.value.rent) + num(draft.value.labor) + num(draft.value.utility) + num(draft.value.property) + num(draft.value.commission) + num(draft.value.meituan) + num(draft.value.eleme) + num(draft.value.douyin) + num(draft.value.amap) + num(draft.value.promo) + num(draft.value.repair) + num(draft.value.equip) + num(draft.value.expOther)
   const net = gross - expense
   return { sales, income, cost, gross, expense, net, margin: income === 0 ? 0 : net / income }
 })
@@ -175,6 +183,10 @@ function createEmptyDraft(): ProfitDraft {
     utility: null,
     property: null,
     commission: null,
+    meituan: null,
+    eleme: null,
+    douyin: null,
+    amap: null,
     promo: null,
     repair: null,
     equip: null,
@@ -291,6 +303,10 @@ function applyEntry(entry?: ProfitEntry) {
       utility: inputValue(entry.utility),
       property: inputValue(entry.property),
       commission: inputValue(entry.commission),
+      meituan: inputValue(entry.meituan),
+      eleme: inputValue(entry.eleme),
+      douyin: inputValue(entry.douyin),
+      amap: inputValue(entry.amap),
       promo: inputValue(entry.promo),
       repair: inputValue(entry.repair),
       equip: inputValue(entry.equip),
@@ -440,6 +456,10 @@ async function save() {
       utility: num(draft.value.utility),
       property: num(draft.value.property),
       commission: num(draft.value.commission),
+      meituan: num(draft.value.meituan),
+      eleme: num(draft.value.eleme),
+      douyin: num(draft.value.douyin),
+      amap: num(draft.value.amap),
       promo: num(draft.value.promo),
       repair: num(draft.value.repair),
       equip: num(draft.value.equip),
