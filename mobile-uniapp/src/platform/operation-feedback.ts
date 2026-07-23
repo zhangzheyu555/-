@@ -11,3 +11,16 @@ export function showOperationFailure(title: string, cause: unknown, fallback?: s
   uni.showModal({ title, content, showCancel: false })
   return content
 }
+
+/** Shows a clear acknowledgement after a user-initiated write succeeds. */
+export function showOperationSuccess(title: string, content = '操作已完成。') {
+  return new Promise<void>((resolve) => {
+    uni.showModal({
+      title,
+      content,
+      showCancel: false,
+      success: () => resolve(),
+      fail: () => resolve(),
+    })
+  })
+}

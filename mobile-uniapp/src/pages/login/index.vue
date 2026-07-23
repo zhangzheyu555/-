@@ -2,7 +2,7 @@
 import { onShow } from '@dcloudio/uni-app'
 import { ref } from 'vue'
 import { useContextStore, useMenuStore, useSessionStore } from '@/stores'
-import { runtimePlatform } from '@/platform'
+import { weChatAuthEnabled } from '@/platform'
 
 const session = useSessionStore()
 const menu = useMenuStore()
@@ -11,7 +11,7 @@ const username = ref('')
 const password = ref('')
 const showPassword = ref(false)
 const errorMessage = ref('')
-const weChatAvailable = runtimePlatform() === 'mp-weixin'
+const weChatAvailable = weChatAuthEnabled()
 
 onShow(async () => {
   if (!session.user && session.token) await session.restore()

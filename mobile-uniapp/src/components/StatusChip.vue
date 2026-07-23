@@ -1,7 +1,7 @@
 <script setup lang="ts">
 withDefaults(defineProps<{
   label: string
-  tone?: 'success' | 'warning' | 'info' | 'neutral'
+  tone?: 'success' | 'warning' | 'info' | 'danger' | 'neutral'
 }>(), { tone: 'neutral' })
 </script>
 
@@ -14,5 +14,6 @@ withDefaults(defineProps<{
 .status-chip--success { color: $mobile-green; background: $mobile-green-soft; }
 .status-chip--warning { color: $mobile-orange; background: $mobile-orange-soft; }
 .status-chip--info { color: $mobile-blue; background: $mobile-blue-soft; }
+.status-chip--danger { color: #963b30; background: #fff0ed; }
 .status-chip--neutral { color: $mobile-muted; background: $mobile-surface-strong; }
 </style>

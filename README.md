@@ -26,6 +26,31 @@
 
 当前推荐部署方式是由 Nginx 托管 `frontend-vue/dist`，`backend/` 仅提供 `/api/**`。旧 HTML 只部署到外置的 `/legacy/` 回退路径，不能作为默认入口或由 Spring Boot 根路径直接提供。
 
+### 本地 Docker 一键部署
+
+源码根目录提供 `docker-compose.dev.yml`，用于本地开发和联调；它会从源码构建 Vue3 前端、Spring Boot 后端和巡检识别服务，并同时启动 MySQL、Redis、PostgreSQL 及本地 Nginx 网关。微信小程序不包含在 Docker 部署中。
+
+前提是已安装 Docker Desktop（Windows/macOS）或 Docker Engine + Compose Plugin（Linux）。在项目根目录执行：
+
+```bash
+docker compose -f docker-compose.dev.yml up -d --build
+```
+
+首次构建会下载 Maven、Node、MySQL、Redis、PostgreSQL 和 Python/YOLO 依赖，耗时会明显更长。全部健康检查通过后访问：
+
+```text
+管理后台：http://127.0.0.1:8088/admin/
+后端健康检查：http://127.0.0.1:8080/api/health
+```
+
+停止服务但保留本地数据：
+
+```bash
+docker compose -f docker-compose.dev.yml down
+```
+
+开发数据库、缓存和附件数据使用独立的 `development-*` Docker volumes；如需清空开发数据并重新初始化，执行 `docker compose -f docker-compose.dev.yml down -v`。默认密码仅用于本机隔离开发容器，可通过 `DEV_MYSQL_*`、`DEV_REDIS_PASSWORD` 和 `DEV_POSTGRES_PASSWORD` 环境变量覆盖，禁止用于服务器端部署。
+
 ## 后端开发
 
 先创建 MySQL 数据库：

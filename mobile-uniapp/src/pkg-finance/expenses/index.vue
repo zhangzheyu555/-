@@ -11,7 +11,7 @@ import {
 } from '@/api/business'
 import ProtectedAttachmentList, { type ProtectedAttachment } from '@/components/ProtectedAttachmentList.vue'
 import { canPerformMobileAction } from '@/permissions'
-import { chooseMedia } from '@/platform'
+import { chooseMedia, showOperationFailure, showOperationSuccess } from '@/platform'
 import { useContextStore, useSessionStore } from '@/stores'
 import type { ExpenseClaim } from '@/types/business'
 
@@ -51,7 +51,9 @@ async function save(submitAfterSave: boolean) {
   const storeId = editingStoreId.value || context.currentStoreId || session.user?.boundStoreId || ''
   const value = Number(amount.value)
   if (!storeId || !/^\d{4}-\d{2}$/.test(month.value) || !Number.isFinite(value) || value <= 0 || !reason.value.trim()) {
-    message.value = '请填写正确月份、金额和报销事由。'
+    const content = '请填写正确月份、金额和报销事由。'
+    message.value = content
+    showOperationFailure('无法保存报销', new Error(content))
     return
   }
   acting.value = editingId.value || 'create'
@@ -60,9 +62,14 @@ async function save(submitAfterSave: boolean) {
     const row = editingId.value ? await updateMobileExpense(editingId.value, payload) : await createMobileExpense(payload)
     for (const file of pendingFiles.value) await uploadMobileExpenseSupplement(row.id, file.path, '报销凭证')
     if (submitAfterSave) await submitMobileExpense(row.id)
-    message.value = submitAfterSave ? '报销已提交审核。' : '报销草稿已保存。'
     resetForm()
     await refresh()
+    await showOperationSuccess(
+      submitAfterSave ? '报销已提交' : '草稿已保存',
+      submitAfterSave
+        ? '报销单已提交审核，可在下方报销记录中查看处理状态。'
+        : '报销草稿已保存，可在下方报销记录中继续编辑或提交。',
+    )
   } catch (cause) { message.value = errorText(cause) }
   finally { acting.value = '' }
 }
@@ -81,7 +88,11 @@ function edit(row: ExpenseClaim) {
 async function submitDraft(row: ExpenseClaim) {
   if (!canCreate.value || !isDraft(row.status) || acting.value) return
   acting.value = row.id
-  try { await submitMobileExpense(row.id); message.value = '报销已提交审核。'; await refresh() }
+  try {
+    await submitMobileExpense(row.id)
+    await refresh()
+    await showOperationSuccess('报销已提交', '报销单已提交审核，可在报销记录中查看处理状态。')
+  }
   catch (cause) { message.value = errorText(cause) }
   finally { acting.value = '' }
 }
@@ -91,7 +102,16 @@ async function act(row: ExpenseClaim, action: 'approve' | 'reject' | 'request-in
   const note = await prompt(action === 'approve' ? '填写审核备注（可留空）' : '请填写处理说明')
   if (note === null) return
   acting.value = row.id
-  try { await reviewMobileExpense(row.id, action, note); await refresh() }
+  try {
+    await reviewMobileExpense(row.id, action, note)
+    await refresh()
+    const feedback = ({
+      approve: ['审核已通过', '该报销单已审核通过。'],
+      reject: ['报销已驳回', '该报销单已驳回，可在报销记录中查看状态。'],
+      'request-info': ['已要求补件', '补件要求已提交，申请人可补充材料。'],
+    } satisfies Record<typeof action, [string, string]>)[action]
+    await showOperationSuccess(feedback[0], feedback[1])
+  }
   catch (cause) { message.value = errorText(cause) }
   finally { acting.value = '' }
 }
@@ -99,11 +119,21 @@ async function act(row: ExpenseClaim, action: 'approve' | 'reject' | 'request-in
 async function supplement(row: ExpenseClaim) {
   if (!canPerformMobileAction(session.user, 'expense.supplement') || acting.value) return
   const note = await prompt('填写补充说明')
-  if (!note) return
+  if (note === null) return
+  if (!note) {
+    const content = '请填写补充说明。'
+    message.value = content
+    showOperationFailure('无法补充材料', new Error(content))
+    return
+  }
   const files = await chooseMedia({ count: 3, source: 'both', kinds: ['image'] })
   if (!files.length) return
   acting.value = row.id
-  try { for (const file of files) await uploadMobileExpenseSupplement(row.id, file.path, note); await refresh() }
+  try {
+    for (const file of files) await uploadMobileExpenseSupplement(row.id, file.path, note)
+    await refresh()
+    await showOperationSuccess('补充材料已提交', '补充说明和凭证已上传，可在报销记录中查看。')
+  }
   catch (cause) { message.value = errorText(cause) }
   finally { acting.value = '' }
 }

@@ -34,7 +34,7 @@ export const MOBILE_ACTION_RULES: Record<MobileAction, ActionRule> = {
   'salary.review': { roles: ['FINANCE'], permission: 'salary.review', scopeDomain: 'SALARY', scopeModes: STORE_SCOPE },
   'salary.pay': { roles: ['FINANCE'], permission: 'salary.pay', scopeDomain: 'SALARY', scopeModes: STORE_SCOPE },
   'dailyLoss.create': { roles: ['STORE_MANAGER'], permission: 'daily_loss.create', scopeDomain: 'WAREHOUSE', scopeModes: WAREHOUSE_SCOPE },
-  'dailyLoss.review': { roles: ['WAREHOUSE', 'SUPERVISOR'], permission: 'daily_loss.review', scopeDomain: 'WAREHOUSE', scopeModes: WAREHOUSE_SCOPE },
+  'dailyLoss.review': { roles: ['SUPERVISOR'], permission: 'daily_loss.review', scopeDomain: 'WAREHOUSE', scopeModes: WAREHOUSE_SCOPE },
   'warehouse.requisition.review': { roles: ['WAREHOUSE'], permission: 'warehouse.requisition.review', scopeDomain: 'WAREHOUSE', scopeModes: WAREHOUSE_SCOPE },
   'warehouse.requisition.ship': { roles: ['WAREHOUSE'], permission: 'warehouse.requisition.process', scopeDomain: 'WAREHOUSE', scopeModes: WAREHOUSE_SCOPE },
   'warehouse.return.review': { roles: ['WAREHOUSE'], permission: 'warehouse.requisition.review', scopeDomain: 'WAREHOUSE', scopeModes: WAREHOUSE_SCOPE },

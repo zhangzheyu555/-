@@ -5,7 +5,7 @@ import AppCard from '@/components/AppCard.vue'
 import StatusChip from '@/components/StatusChip.vue'
 import { getMobileEmployeeProfile } from '@/api/business'
 import { bindWeChat as bindWeChatApi, weChatBindingStatus } from '@/api/auth'
-import { checkVersion, promptVersionUpdate, requestNotification, runtimePlatform } from '@/platform'
+import { checkVersion, promptVersionUpdate, requestNotification, runtimePlatform, weChatAuthEnabled } from '@/platform'
 import { createEdgeSwipeToHomeHandlers } from '@/platform/edgeSwipeHome'
 import { useContextStore, useMenuStore, useSessionStore } from '@/stores'
 import type { EmployeeSelfProfile } from '@/types/business'
@@ -25,12 +25,12 @@ const weChatBindingLoading = ref(false)
 const weChatBindingMessage = ref('')
 const platformLabels = { h5: 'H5 移动网页', 'mp-weixin': '微信小程序', app: '原生 App' }
 const isEmployee = computed(() => session.user?.role === 'EMPLOYEE')
-const isWeChatMiniProgram = runtimePlatform() === 'mp-weixin'
+const isWeChatLoginEnabled = weChatAuthEnabled()
 
 onShow(async () => {
   if (!session.user && !await session.restore()) uni.reLaunch({ url: '/pages/login/index' })
   if (isEmployee.value) await loadEmployeeProfile()
-  if (isWeChatMiniProgram && session.user) await loadWeChatBinding()
+  if (isWeChatLoginEnabled && session.user) await loadWeChatBinding()
 })
 
 async function loadEmployeeProfile(): Promise<void> {
@@ -52,7 +52,7 @@ function formatMoney(value?: number | null): string {
 }
 
 async function loadWeChatBinding(): Promise<void> {
-  if (!isWeChatMiniProgram || weChatBindingLoading.value) return
+  if (!isWeChatLoginEnabled || weChatBindingLoading.value) return
   weChatBindingLoading.value = true
   weChatBindingMessage.value = ''
   try {
@@ -132,7 +132,7 @@ async function logout(): Promise<void> {
       </view>
     </AppCard>
 
-    <AppCard v-if="isWeChatMiniProgram" title="微信一键登录">
+    <AppCard v-if="isWeChatLoginEnabled" title="微信一键登录">
       <view v-if="weChatBindingLoading && !weChatBinding" class="employee-state">正在读取微信绑定状态...</view>
       <view v-else class="wechat-binding">
         <view><text class="wechat-binding__title">{{ weChatBinding?.bound ? '已绑定微信' : '尚未绑定微信' }}</text><text class="wechat-binding__copy">{{ weChatBinding?.configured ? (weChatBinding?.bound ? '下次打开小程序可使用微信一键登录。' : '首次绑定后，下次可直接微信一键登录。') : '管理员尚未配置微信登录，请继续使用账号密码登录。' }}</text></view>

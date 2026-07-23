@@ -6,6 +6,7 @@ export interface MobileMenuItem {
   description: string
   path: string
   tone: MobileMenuTone
+  icon: string
   badge?: string
   desktopOnly?: boolean
 }

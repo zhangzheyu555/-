@@ -12,8 +12,27 @@ const message = ref('')
 const months = ref<string[]>([])
 const selectedMonth = ref('')
 const entries = ref<ProfitEntry[]>([])
+const previousEntry = ref<ProfitEntry | null>(null)
 const storeInfo = ref<StoreInfo | null>(null)
+const monthLoading = ref(false)
+let monthRequestId = 0
 const canRead = computed(() => session.user?.role === 'STORE_MANAGER' && session.hasPermission('finance.profit.read'))
+const selectedEntry = computed(() => entries.value.find((entry) => entry.month === selectedMonth.value) || null)
+const incomeChangeRate = computed(() => {
+  if (!selectedEntry.value || !previousEntry.value || Number(previousEntry.value.income) === 0) return null
+  return (Number(selectedEntry.value.income) - Number(previousEntry.value.income)) / Number(previousEntry.value.income)
+})
+const selectedReminders = computed(() => {
+  const entry = selectedEntry.value
+  if (!entry) return []
+  const reminders: string[] = []
+  if (entry.risk && entry.risk !== '健康') reminders.push(entry.risk)
+  if (Number(entry.costRatio) > 0.55) reminders.push('本月成本占比偏高，请核对原材料和包材使用。')
+  if (incomeChangeRate.value !== null && incomeChangeRate.value < -0.1) {
+    reminders.push('本月营业额比上月下降超过 10%，请关注客流和活动效果。')
+  }
+  return reminders
+})
 
 onShow(() => { void refresh() })
 onPullDownRefresh(async () => { await refresh(); uni.stopPullDownRefresh() })
@@ -26,19 +45,53 @@ async function refresh() {
     workbench.value = await getMobileStoreManagerWorkbench()
     storeInfo.value = (await getMobileStores()).find((store) => store.id === workbench.value?.store.storeId) || null
     months.value = await getMobileFinanceMonths()
-    selectedMonth.value = selectedMonth.value || workbench.value.businessReminder.month || months.value[0] || ''
-    entries.value = await getMobileProfitEntries({ storeId: workbench.value.store.storeId })
+    selectedMonth.value = months.value.includes(selectedMonth.value)
+      ? selectedMonth.value
+      : (workbench.value.businessReminder.month || months.value[0] || '')
+    await loadMonth(selectedMonth.value)
   }
   catch (cause) { message.value = friendlyError(cause) }
   finally { loading.value = false }
 }
 
+async function loadMonth(month: string) {
+  const storeId = workbench.value?.store.storeId
+  if (!storeId || !month) {
+    entries.value = []
+    previousEntry.value = null
+    return
+  }
+  const requestId = ++monthRequestId
+  const previousMonth = [...months.value].filter((candidate) => candidate < month).sort().reverse()[0] || ''
+  monthLoading.value = true
+  entries.value = []
+  previousEntry.value = null
+  try {
+    const [currentRows, previousRows] = await Promise.all([
+      getMobileProfitEntries({ month, storeId }),
+      previousMonth ? getMobileProfitEntries({ month: previousMonth, storeId }) : Promise.resolve([]),
+    ])
+    if (requestId !== monthRequestId) return
+    entries.value = currentRows
+    previousEntry.value = previousRows[0] || null
+  } finally {
+    if (requestId === monthRequestId) monthLoading.value = false
+  }
+}
+
 function money(value: unknown) { const amount = Number(value || 0); return Math.abs(amount) >= 10000 ? `¥${(amount / 10000).toFixed(1)}万` : `¥${amount.toFixed(2)}` }
-function percent(value: unknown) { return `${Number(value || 0).toFixed(1)}%` }
+function percent(value: unknown) { const ratio = Number(value); return Number.isFinite(ratio) ? `${(ratio * 100).toFixed(1)}%` : '—' }
 function openTodos() { uni.switchTab({ url: '/pages/todo/index' }) }
 function openExpense() { uni.navigateTo({ url: '/pkg-finance/expenses/index' }) }
 function openRectification() { uni.navigateTo({ url: '/pkg-inspection/rectification/index' }) }
-function chooseMonth(event: { detail: { value: number | string } }) { selectedMonth.value = months.value[Number(event.detail.value)] || selectedMonth.value }
+async function chooseMonth(event: { detail: { value: number | string } }) {
+  const nextMonth = months.value[Number(event.detail.value)] || selectedMonth.value
+  if (!nextMonth || nextMonth === selectedMonth.value) return
+  selectedMonth.value = nextMonth
+  message.value = ''
+  try { await loadMonth(nextMonth) }
+  catch (cause) { message.value = friendlyError(cause) }
+}
 const visibleEntries = computed(() => entries.value.filter((entry) => !selectedMonth.value || entry.month === selectedMonth.value))
 function friendlyError(cause: unknown) { const status = Number((cause as { status?: number })?.status || 0); return status === 403 ? '当前账号无权查看本店经营结果。' : status === 401 ? '登录已过期，请重新登录。' : '本店经营详情暂时无法加载。' }
 </script>
@@ -49,12 +102,16 @@ function friendlyError(cause: unknown) { const status = Number((cause as { statu
     <view v-if="!canRead" class="state">本页只向具备经营只读权限的店长开放。</view>
     <view v-if="message" class="notice">{{ message }}</view>
     <template v-if="workbench">
-      <view class="store"><text class="store-name">{{ workbench.store.storeName }}</text><text class="copy">{{ workbench.businessReminder.month }} · 数据由正式后端计算</text></view>
+      <view class="store"><text class="store-name">{{ workbench.store.storeName }}</text><text class="copy">{{ selectedMonth || workbench.businessReminder.month }} · 数据由正式后端计算</text></view>
       <view class="section"><text class="section-title">门店资料</text><view class="profile"><text>门店编号：{{ storeInfo?.code || workbench.store.storeId }}</text><text>所属品牌：{{ storeInfo?.brandName || '待补充' }}</text><text>负责人：{{ storeInfo?.manager || '待补充' }}</text><text>门店状态：{{ storeInfo?.status || '待确认' }}</text></view></view>
-      <view v-if="months.length" class="month-picker"><text>查看月份</text><picker :range="months" :value="Math.max(0, months.indexOf(selectedMonth))" @change="chooseMonth"><view>{{ selectedMonth || '选择月份' }} ›</view></picker></view>
-      <view class="hero"><text class="hero-label">本期净利润</text><text :class="['hero-value',{negative:workbench.businessReminder.net<0}]">{{ money(workbench.businessReminder.net) }}</text><text class="hero-copy">营业额 {{ money(workbench.businessReminder.income) }} · 利润率 {{ percent(workbench.businessReminder.margin) }}</text></view>
-      <view class="metrics"><view><text class="metric">{{ percent(workbench.businessReminder.costRatio) }}</text><text class="label">成本占比</text></view><view><text class="metric">{{ percent(workbench.businessReminder.incomeChangeRate) }}</text><text class="label">营收环比</text></view><view><text class="metric">{{ workbench.todayFocus.pendingCount }}</text><text class="label">待处理事项</text></view><view><text class="metric">{{ workbench.todayFocus.pendingReceiptCount }}</text><text class="label">待确认收货</text></view></view>
-      <view v-if="workbench.businessReminder.reminders.length" class="section warning"><text class="section-title">经营提醒</text><text v-for="reminder in workbench.businessReminder.reminders" :key="reminder" class="reminder">{{ reminder }}</text></view>
+      <view v-if="months.length" class="month-picker"><text>查看月份</text><picker :disabled="monthLoading" :range="months" :value="Math.max(0, months.indexOf(selectedMonth))" @change="chooseMonth"><view>{{ monthLoading ? '加载中…' : (selectedMonth || '选择月份') }} ›</view></picker></view>
+      <view v-if="monthLoading" class="state">正在加载 {{ selectedMonth }} 经营数据…</view>
+      <template v-else-if="selectedEntry">
+        <view class="hero"><text class="hero-label">本期净利润</text><text :class="['hero-value',{negative:selectedEntry.net<0}]">{{ money(selectedEntry.net) }}</text><text class="hero-copy">营业额 {{ money(selectedEntry.income) }} · 利润率 {{ percent(selectedEntry.margin) }}</text></view>
+        <view class="metrics"><view><text class="metric">{{ percent(selectedEntry.costRatio) }}</text><text class="label">成本占比</text></view><view><text class="metric">{{ percent(incomeChangeRate) }}</text><text class="label">营收环比</text></view><view><text class="metric">{{ workbench.todayFocus.pendingCount }}</text><text class="label">待处理事项</text></view><view><text class="metric">{{ workbench.todayFocus.pendingReceiptCount }}</text><text class="label">待确认收货</text></view></view>
+        <view v-if="selectedReminders.length" class="section warning"><text class="section-title">经营提醒</text><text v-for="reminder in selectedReminders" :key="reminder" class="reminder">{{ reminder }}</text></view>
+      </template>
+      <view v-else class="state">{{ selectedMonth }} 暂无经营数据。</view>
       <view class="section"><view class="section-head"><text class="section-title">需要我处理</text><button @click="openTodos">全部待办</button></view><text v-if="!workbench.needMyAction.length" class="copy empty">当前没有待处理事项</text><view v-for="item in workbench.needMyAction.slice(0,5)" :key="item.id" class="task" @click="openTodos"><view><text class="task-title">{{ item.title }}</text><text class="copy">{{ item.summary || item.nextActionLabel || '进入待办处理' }}</text></view><text class="priority">P{{ item.priority }}</text></view></view>
       <view class="section"><view class="section-head"><text class="section-title">{{ selectedMonth || '本月' }}经营明细</text><text class="copy">只读</text></view><view v-if="!visibleEntries.length" class="copy empty">该月份暂无经营数据。</view><view v-for="entry in visibleEntries" :key="`${entry.storeId}-${entry.month}`" class="detail-row"><text>实收收入 {{ money(entry.income) }} · 成本 {{ money(entry.costSum) }}</text><text :class="{negative: entry.net < 0}">净利润 {{ money(entry.net) }} · {{ percent(entry.margin) }}</text></view></view>
       <view class="section"><text class="section-title">最新巡检</text><view v-if="!workbench.records?.inspections?.length" class="copy empty">暂无可查看的巡检记录。</view><view v-for="record in workbench.records?.inspections?.slice(0, 1)" :key="record.id" class="detail-row"><text>{{ record.inspectionDate || '巡检日期待确认' }} · {{ record.inspector || '巡检人员' }}</text><text>得分 {{ record.displayScore ?? record.score ?? '—' }} · {{ record.displayResultCode || '待处理' }}</text></view></view>

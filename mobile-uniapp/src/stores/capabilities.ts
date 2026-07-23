@@ -94,7 +94,7 @@ const CAPABILITY_RULES: Record<MobileCapabilityKey, MobileCapabilityRule> = {
     allowedScopeModes: ['ALL', 'STORE_LIST', 'OWN_STORE', 'SELF'],
   },
   dailyLoss: {
-    roles: ['STORE_MANAGER', 'WAREHOUSE', 'SUPERVISOR'],
+    roles: ['STORE_MANAGER', 'SUPERVISOR', 'FINANCE'],
     anyPermission: ['daily_loss.read', 'daily_loss.create', 'daily_loss.review'],
     scopeDomain: 'WAREHOUSE',
     allowedScopeModes: ['ALL', 'WAREHOUSE_LIST', 'STORE_LIST', 'OWN_STORE'],
