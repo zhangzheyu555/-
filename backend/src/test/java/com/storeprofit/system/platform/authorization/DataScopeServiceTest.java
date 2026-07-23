@@ -42,14 +42,15 @@ class DataScopeServiceTest {
   }
 
   @Test
-  void supervisorWithoutAssignmentsUsesConservativeScopeInsteadOfTenantWideAccess() {
+  void supervisorWithoutAssignmentsUsesGlobalStoreScopeRegardlessOfDatabaseScope() {
     AuthUser supervisor = user(3L, "SUPERVISOR", null);
     when(repository.assignmentsForUser(1L, 3L)).thenReturn(List.of());
     when(authRepository.assignedStoreScope(1L, 3L)).thenReturn(List.of("s2"));
 
-    assertThat(service.hasAllDataScope(supervisor, DataScopeDomains.INSPECTION)).isFalse();
-    assertThat(service.allowedStoreIds(supervisor, DataScopeDomains.INSPECTION)).containsExactly("s2");
-    assertThat(service.allowedStoreIds(supervisor, DataScopeDomains.FINANCE)).isEmpty();
+    // Supervisor now has global all-store scope; old per-store bindings are ignored.
+    assertThat(service.hasAllDataScope(supervisor, DataScopeDomains.INSPECTION)).isTrue();
+    assertThat(service.allowedStoreIds(supervisor, DataScopeDomains.INSPECTION)).containsExactly("all");
+    assertThat(service.allowedStoreIds(supervisor, DataScopeDomains.FINANCE)).containsExactly("all");
   }
 
   @Test
@@ -67,7 +68,7 @@ class DataScopeServiceTest {
   }
 
   @Test
-  void supervisorUsesAssignedStoreScopeForOperationsDomainsAndRejectsWarehouseScope() {
+  void supervisorGlobalStoreScopeUsesAllForOperationsDomainsAndIgnoresLegacyPerStoreAssignments() {
     AuthUser supervisor = user("SUPERVISOR");
     when(repository.assignmentsForUser(1L, 7L)).thenReturn(List.of(
         new DataScopeAssignmentRow(DataScopeDomains.STORE, DataScopeModes.STORE_LIST, "[\"rg1\"]"),
@@ -76,32 +77,22 @@ class DataScopeServiceTest {
         new DataScopeAssignmentRow(DataScopeDomains.WAREHOUSE, DataScopeModes.STORE_LIST, "[\"rg2\"]")
     ));
 
+    // Supervisor has global scope — legacy assignment rows are ignored.
     Map<String, DataScope> scopes = service.dataScopes(supervisor);
 
-    assertThat(scopes.get(DataScopeDomains.STORE).storeIds()).containsExactly("rg1");
-    assertThat(scopes.get(DataScopeDomains.INSPECTION).storeIds()).containsExactly("rg1");
-    assertThat(scopes.get(DataScopeDomains.PLATFORM).allowsAllStores()).isFalse();
-    assertThat(scopes.get(DataScopeDomains.PLATFORM).storeIds()).isEmpty();
-    assertThat(scopes.get(DataScopeDomains.WAREHOUSE).mode()).isEqualTo(DataScopeModes.NONE);
-    assertThat(scopes.get(DataScopeDomains.WAREHOUSE).storeIds()).isEmpty();
+    assertThat(scopes.values()).allMatch(DataScope::allowsAllStores);
   }
 
   @Test
-  void supervisorFallbackUsesAssignedStoresOnlyAndNeverAllStores() {
+  void supervisorFallbackReturnsGlobalAllStoreScopeAndNeverPerStoreList() {
     AuthUser supervisor = user("SUPERVISOR");
     when(repository.assignmentsForUser(1L, 7L)).thenReturn(List.of());
     when(authRepository.assignedStoreScope(1L, 7L)).thenReturn(List.of("rg1", "rg2"));
 
     Map<String, DataScope> scopes = service.dataScopes(supervisor);
 
-    assertThat(scopes.get(DataScopeDomains.STORE).mode()).isEqualTo(DataScopeModes.STORE_LIST);
-    assertThat(scopes.get(DataScopeDomains.STORE).storeIds()).containsExactly("rg1", "rg2");
-    assertThat(scopes.get(DataScopeDomains.INSPECTION).storeIds()).containsExactly("rg1", "rg2");
-    assertThat(scopes.get(DataScopeDomains.WAREHOUSE).mode()).isEqualTo(DataScopeModes.NONE);
-    assertThat(scopes.get(DataScopeDomains.WAREHOUSE).storeIds()).isEmpty();
-    assertThat(scopes.get(DataScopeDomains.EXAM).storeIds()).containsExactly("rg1", "rg2");
-    assertThat(scopes.get(DataScopeDomains.PLATFORM).storeIds()).containsExactly("rg1", "rg2");
-    assertThat(scopes.values()).noneMatch(DataScope::allowsAllStores);
+    // Supervisor now has global all-store scope.
+    assertThat(scopes.values()).allMatch(DataScope::allowsAllStores);
   }
 
   private AuthUser user(long id, String role, String storeId) {

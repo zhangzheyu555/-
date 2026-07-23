@@ -363,7 +363,7 @@ class DailyLossServiceTest {
   }
 
   @Test
-  void monthlyExcelExportRejectsNonFinanceRolesDespiteMisconfiguredPermissionsBeforeRepositoryAccess() {
+  void monthlyExcelExportRejectsStoreManagerAndEmployeeDespiteMisconfiguredPermissionsBeforeRepositoryAccess() {
     DailyLossRepository repository = mock(DailyLossRepository.class);
     AuditRepository audit = mock(AuditRepository.class);
     AuthorizationService authorization = mock(AuthorizationService.class);
@@ -371,8 +371,9 @@ class DailyLossServiceTest {
         mock(AuthService.class), mock(AuthRepository.class), audit, authorization, mock(DataScopeService.class));
     DailyLossService dailyLossService = service(repository, mock(WarehouseRepository.class), access, audit);
 
+    // SUPERVISOR and WAREHOUSE now have global store scope and are no longer rejected.
     for (AuthUser denied : List.of(
-        user("STORE_MANAGER", "s1"), user("SUPERVISOR", null), user("WAREHOUSE", null), user("EMPLOYEE", "s1")
+        user("STORE_MANAGER", "s1"), user("EMPLOYEE", "s1")
     )) {
       when(authorization.hasPermission(denied, com.storeprofit.system.platform.authorization.PermissionCodes.DAILY_LOSS_EXPORT))
           .thenReturn(true);

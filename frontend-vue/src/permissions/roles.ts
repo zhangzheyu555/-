@@ -1,5 +1,8 @@
 export const BOSS_ROLE = 'BOSS'
 
+/** Roles that always have full store scope regardless of database assignments. */
+export const GLOBAL_STORE_ROLES = ['BOSS', 'FINANCE', 'SUPERVISOR', 'WAREHOUSE'] as const
+
 export function normalizeRoleCode(role?: string) {
   const value = String(role || '').trim().toUpperCase()
   const aliases: Record<string, string> = {
@@ -15,6 +18,11 @@ export function normalizeRoleCode(role?: string) {
 
 export function isBossRole(role?: string) {
   return normalizeRoleCode(role) === BOSS_ROLE
+}
+
+/** Returns true when the role always grants access to every store in the tenant. */
+export function isGlobalStoreRole(role?: string) {
+  return (GLOBAL_STORE_ROLES as readonly string[]).includes(normalizeRoleCode(role))
 }
 
 export function isLearnerRole(role?: string) {

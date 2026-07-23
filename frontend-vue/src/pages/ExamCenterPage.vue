@@ -825,8 +825,8 @@ onBeforeUnmount(() => {
             <div class="section-bar"><div><h2>资料清单</h2></div><button v-if="canManage" class="button primary" @click="openMaterial()"><Plus :size="15" />新增资料</button></div>
             <div class="data-table">
               <div class="table-head material-cols"><span>资料</span><span>分类</span><span>学习人数</span><span>状态</span><span>操作</span></div>
-              <div v-for="item in materials" :key="item.id" class="table-row material-cols">
-                <div><b>{{ item.title }}</b><small>{{ item.materialCode }}</small></div><span>{{ item.category }}</span><span>{{ item.learnedCount }} 人</span><i :class="item.enabled ? 'ok' : 'muted'">{{ item.enabled ? '启用' : '停用' }}</i><button v-if="canManage" class="text-button" @click="openMaterial(item)">编辑</button><span v-else>-</span>
+              <div v-for="item in materials" :key="item.id" class="table-row material-cols interactive-row" role="button" tabindex="0" @click="openMaterial(item)" @keydown.enter="openMaterial(item)" @keydown.space.prevent="openMaterial(item)">
+                <div><b>{{ item.title }}</b><small>{{ item.materialCode }}</small></div><span>{{ item.category }}</span><span>{{ item.learnedCount }} 人</span><i :class="item.enabled ? 'ok' : 'muted'">{{ item.enabled ? '启用' : '停用' }}</i><button v-if="canManage" class="text-button" @click.stop="openMaterial(item)">编辑</button><span v-else>查看</span>
               </div>
               <div v-if="!materials.length" class="empty">暂无学习资料。</div>
             </div>
@@ -837,7 +837,7 @@ onBeforeUnmount(() => {
             <div class="filter-row"><SearchInput v-model="questionKeyword" class="question-search" placeholder="搜索题目编号或题干" aria-label="搜索考试题库" /><select v-model="questionCategoryId"><option :value="undefined">全部分类</option><option v-for="item in categories" :key="item.id" :value="item.id">{{ item.categoryName }}</option></select></div>
             <div class="data-table">
               <div class="table-head question-cols"><span>题目</span><span>分类</span><span>题型</span><span>难度</span><span>分值</span><span>使用</span><span>操作</span></div>
-              <div v-for="item in visibleQuestionBank" :key="item.id" class="table-row question-cols"><div><b>{{ item.questionText }}</b><small>{{ item.questionCode }}</small></div><span>{{ item.categoryName || '未分类' }}</span><span>{{ questionTypeLabel(item.questionType) }}</span><span>{{ difficultyLabel(item.difficulty) }}</span><span>{{ item.defaultScore }}</span><span>{{ item.usedCount }} 次</span><button v-if="canManage" class="text-button" @click="openQuestion(item)">编辑</button><span v-else>-</span></div>
+              <div v-for="item in visibleQuestionBank" :key="item.id" class="table-row question-cols interactive-row" role="button" tabindex="0" @click="openQuestion(item)" @keydown.enter="openQuestion(item)" @keydown.space.prevent="openQuestion(item)"><div><b>{{ item.questionText }}</b><small>{{ item.questionCode }}</small></div><span>{{ item.categoryName || '未分类' }}</span><span>{{ questionTypeLabel(item.questionType) }}</span><span>{{ difficultyLabel(item.difficulty) }}</span><span>{{ item.defaultScore }}</span><span>{{ item.usedCount }} 次</span><button v-if="canManage" class="text-button" @click.stop="openQuestion(item)">编辑</button><span v-else>查看</span></div>
               <div v-if="!visibleQuestionBank.length" class="empty">暂无符合条件的题目。</div>
             </div>
           </section>
@@ -849,7 +849,7 @@ onBeforeUnmount(() => {
 
           <section v-else-if="activeView === 'papers'" class="workspace-section">
             <div class="section-bar"><div><h2>试卷列表</h2><span>从题库选题，形成可发布试卷</span></div><button v-if="canManage" class="button primary" @click="openCreatePaper"><Plus :size="15" />新建试卷</button></div>
-            <div class="data-table"><div class="table-head paper-cols"><span>试卷</span><span>题数</span><span>通过分</span><span>状态</span><span>操作</span></div><div v-for="item in papers" :key="item.id" class="table-row paper-cols"><div><b>{{ item.paperName }}</b><small>{{ item.paperCode }}</small></div><span>{{ item.questionCount }} 题</span><span>{{ item.passScore }} 分</span><i :class="item.enabled ? 'ok' : 'muted'">{{ item.enabled ? '启用' : '停用' }}</i><button v-if="canManage" class="text-button" @click="openEditPaper(item.id)">编辑组卷</button><span v-else>查看</span></div><div v-if="!papers.length" class="empty">暂无试卷。</div></div>
+            <div class="data-table"><div class="table-head paper-cols"><span>试卷</span><span>题数</span><span>通过分</span><span>状态</span><span>操作</span></div><div v-for="item in papers" :key="item.id" class="table-row paper-cols interactive-row" role="button" tabindex="0" @click="openEditPaper(item.id)" @keydown.enter="openEditPaper(item.id)" @keydown.space.prevent="openEditPaper(item.id)"><div><b>{{ item.paperName }}</b><small>{{ item.paperCode }}</small></div><span>{{ item.questionCount }} 题</span><span>{{ item.passScore }} 分</span><i :class="item.enabled ? 'ok' : 'muted'">{{ item.enabled ? '启用' : '停用' }}</i><button v-if="canManage" class="text-button" @click.stop="openEditPaper(item.id)">编辑组卷</button><span v-else>查看</span></div><div v-if="!papers.length" class="empty">暂无试卷。</div></div>
           </section>
 
           <section v-else-if="activeView === 'campaigns'" class="workspace-section">
@@ -1148,6 +1148,21 @@ onBeforeUnmount(() => {
     min-width: 0;
     min-height: 44px;
   }
+}
+
+.interactive-row {
+  cursor: pointer;
+}
+
+.interactive-row:hover {
+  background: #f7faf9;
+}
+
+.interactive-row:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid #76bdb8;
+  outline-offset: -2px;
 }
 
 @media (max-width: 640px) {
