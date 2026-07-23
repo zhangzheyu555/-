@@ -43,7 +43,7 @@ spring:
     table: flyway_schema_history
   servlet:
     multipart:
-      max-file-size: 20MB
+      max-file-size: 50MB
       max-request-size: 65MB
 
 app:

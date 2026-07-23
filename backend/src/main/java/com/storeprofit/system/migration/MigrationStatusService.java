@@ -461,6 +461,7 @@ public class MigrationStatusService {
         brandId,
         textOrNull(store, "area"),
         textOrNull(store, "manager"),
+        textOrNull(store, "managerPhone", "manager_phone"),
         textOrNull(store, "openDate", "open_date"),
         textOrNull(store, "status"),
         textOrNull(store, "note"),

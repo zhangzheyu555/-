@@ -59,6 +59,14 @@ public class DailyLossController {
     return ApiResponse.ok(dailyLossService.reports(user(authorization), storeId, month));
   }
 
+  @GetMapping("/monthly-archive")
+  public ApiResponse<DailyLossMonthlyArchiveResponse> monthlyArchive(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @RequestParam String month
+  ) {
+    return ApiResponse.ok(dailyLossService.monthlyArchive(user(authorization), month));
+  }
+
   @GetMapping("/reports/today")
   public ApiResponse<DailyLossReportResponse> today(
       @RequestHeader(value = "Authorization", required = false) String authorization

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
+import { Search } from 'lucide-vue-next'
 import WarehousePrintButtons from './WarehousePrintButtons.vue'
 import type {
   WarehouseItem,
@@ -39,6 +40,17 @@ const form = reactive({
 })
 
 const enabledItems = computed(() => props.items.filter((item) => item.active !== false))
+const itemSearch = ref('')
+const filteredItems = computed(() => {
+  const keyword = itemSearch.value.trim().toLocaleLowerCase('zh-CN')
+  if (!keyword) return enabledItems.value
+  return enabledItems.value.filter((item) => [
+    item.name,
+    item.code,
+    item.unit,
+    item.stockUnit,
+  ].some((value) => String(value || '').toLocaleLowerCase('zh-CN').includes(keyword)))
+})
 const selectedItem = computed(() => enabledItems.value.find((item) => item.id === Number(form.itemId)))
 const clientRequestId = ref('')
 const submittedActionId = ref('')
@@ -148,14 +160,21 @@ function qty(value: number | undefined, unit?: string) {
             </option>
           </select>
         </label>
-        <label>
-          商品
-          <select v-model.number="form.itemId" required>
+        <label class="item-select-field">
+          <span>商品</span>
+          <span class="item-search-control">
+            <Search :size="15" aria-hidden="true" />
+            <input v-model="itemSearch" type="search" aria-label="搜索商品" placeholder="搜索名称、编码或单位" autocomplete="off" />
+          </span>
+          <select v-model.number="form.itemId" aria-label="商品" required>
             <option :value="0" disabled>请选择商品</option>
-            <option v-for="item in enabledItems" :key="item.id" :value="item.id">
+            <option v-for="item in filteredItems" :key="item.id" :value="item.id">
               {{ item.name }} · 当前 {{ qty(item.stockQuantity, item.unit) }}
             </option>
           </select>
+          <small v-if="itemSearch" class="item-search-result">
+            {{ filteredItems.length ? `找到 ${filteredItems.length} 个商品` : '没有匹配的商品' }}
+          </small>
         </label>
         <label>
           采购数量
@@ -368,6 +387,34 @@ function qty(value: number | undefined, unit?: string) {
 
 .wide {
   grid-column: 1 / -1;
+}
+
+.item-select-field {
+  align-content: start;
+}
+
+.item-search-control {
+  position: relative;
+  display: block;
+}
+
+.item-search-control svg {
+  position: absolute;
+  top: 50%;
+  left: 9px;
+  z-index: 1;
+  color: var(--color-text-secondary, #607573);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.form-grid .item-search-control input {
+  padding-left: 31px;
+}
+
+.item-search-result {
+  color: var(--color-text-secondary, #607573);
+  font-size: 12px;
 }
 
 @media (max-width: 1000px) {

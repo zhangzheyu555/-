@@ -312,6 +312,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
           <div><dt>所属品牌</dt><dd><BrandBadge :brand-name="selectedStore.brandName || '-'" /></dd></div>
           <div><dt>所属区域</dt><dd :class="{ 'is-placeholder': !selectedStore.area }">{{ selectedStore.area || '待补充' }}</dd></div>
           <div><dt>负责人</dt><dd :class="{ 'is-placeholder': !selectedStore.manager }">{{ selectedStore.manager || '待补充' }}</dd></div>
+          <div><dt>联系电话</dt><dd :class="{ 'is-placeholder': !selectedStore.managerPhone }">{{ selectedStore.managerPhone || '待补充' }}</dd></div>
           <div><dt>联系方式</dt><dd class="is-placeholder">待补充</dd></div>
           <div><dt>开业日期</dt><dd :class="{ 'is-placeholder': !selectedStore.openDate }">{{ selectedStore.openDate || '待补充' }}</dd></div>
           <div><dt>门店状态</dt><dd><span class="status-badge" :class="statusTone(selectedStore.status)">{{ statusText(selectedStore.status) }}</span></dd></div>

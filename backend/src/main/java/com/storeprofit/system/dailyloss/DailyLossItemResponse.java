@@ -12,16 +12,18 @@ public record DailyLossItemResponse(
     String categoryCode,
     String categoryName,
     String unit,
+    String pricingUnit,
+    BigDecimal quantityPerPricingUnit,
     BigDecimal unitPrice,
     boolean active
 ) {
   public DailyLossItemResponse(long id, String code, String name, String category, String stockUnit,
       BigDecimal unitPrice) {
-    this(id, code, name, category, category, category, stockUnit, unitPrice, true);
+    this(id, code, name, category, category, category, stockUnit, stockUnit, BigDecimal.ONE, unitPrice, true);
   }
 
   public DailyLossItemResponse(long id, String code, String name, String stockUnit, BigDecimal unitPrice) {
-    this(id, code, name, null, null, null, stockUnit, unitPrice, true);
+    this(id, code, name, null, null, null, stockUnit, stockUnit, BigDecimal.ONE, unitPrice, true);
   }
 
   @JsonProperty("code")

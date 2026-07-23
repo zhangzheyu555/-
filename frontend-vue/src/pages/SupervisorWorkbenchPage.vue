@@ -231,6 +231,39 @@ const summary = computed(() => {
   return { total, monthCount, averageScore, invalidScoreCount, redlineCount }
 })
 
+/**
+ * 督导巡店的固定经营规则：每个营业门店每自然周至少完成 2 次巡检。
+ * 周一为统计起点；门店状态和巡检记录均来自后端，页面只做展示汇总。
+ */
+const weeklyInspectionTarget = computed(() => {
+  const today = new Date()
+  const mondayOffset = (today.getDay() + 6) % 7
+  const weekStart = new Date(today)
+  weekStart.setDate(today.getDate() - mondayOffset)
+  weekStart.setHours(0, 0, 0, 0)
+  const weekEnd = new Date(weekStart)
+  weekEnd.setDate(weekStart.getDate() + 6)
+  const formatDate = (date: Date) => {
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
+  const start = formatDate(weekStart)
+  const end = formatDate(weekEnd)
+  const activeStores = stores.value.filter((store) => (store.status || '营业中') === '营业中')
+  const visitCountByStore = new Map<string, number>()
+  records.value
+    .filter((record) => record.inspectionDate >= start && record.inspectionDate <= end)
+    .forEach((record) => visitCountByStore.set(record.storeId, (visitCountByStore.get(record.storeId) || 0) + 1))
+  const completed = Array.from(visitCountByStore.values()).reduce((sum, count) => sum + Math.min(count, 2), 0)
+  const required = activeStores.length * 2
+  const pendingStoreNames = activeStores
+    .filter((store) => (visitCountByStore.get(store.id) || 0) < 2)
+    .map((store) => store.name)
+  return { start, end, activeStoreCount: activeStores.length, completed, required, remaining: Math.max(required - completed, 0), pendingStoreNames }
+})
+
 const selectedRecord = computed(() => {
   if (!selectedRecordId.value) return null
   return detailRecord.value && String(detailRecord.value.id) === selectedRecordId.value
@@ -1673,6 +1706,17 @@ onUnmounted(() => {
     <div v-if="actionMessage" class="success-box">{{ actionMessage }}</div>
 
     <div v-if="activeTab === 'records'" class="inspection-records-view">
+      <section class="content-card weekly-inspection-target" aria-label="本周巡店目标">
+        <div>
+          <p class="eyebrow">本周巡店目标（{{ weeklyInspectionTarget.start }} 至 {{ weeklyInspectionTarget.end }}）</p>
+          <h3>每家营业门店每周巡检 2 次</h3>
+          <p>{{ weeklyInspectionTarget.activeStoreCount }} 家营业门店，已完成 {{ weeklyInspectionTarget.completed }} / {{ weeklyInspectionTarget.required }} 次，还需 {{ weeklyInspectionTarget.remaining }} 次。</p>
+        </div>
+        <p v-if="weeklyInspectionTarget.pendingStoreNames.length" class="weekly-inspection-pending">
+          未达标：{{ weeklyInspectionTarget.pendingStoreNames.join('、') }}
+        </p>
+        <p v-else class="weekly-inspection-complete">本周所有营业门店均已达标</p>
+      </section>
       <InspectionRecordMetrics
         :total="summary.total"
         :month-count="summary.monthCount"
@@ -2898,6 +2942,22 @@ onUnmounted(() => {
   border-top: 0;
 }
 
+.weekly-inspection-target {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, .7fr);
+  gap: 18px;
+  align-items: center;
+  margin-bottom: 16px;
+  border-color: color-mix(in srgb, var(--primary) 22%, var(--border));
+}
+
+.weekly-inspection-target h3,
+.weekly-inspection-target p { margin: 0; }
+.weekly-inspection-target h3 { margin: 4px 0 7px; }
+.weekly-inspection-target > div > p:not(.eyebrow) { color: var(--muted); }
+.weekly-inspection-pending { color: #a75a12; font-weight: 700; line-height: 1.6; }
+.weekly-inspection-complete { color: #14775d; font-weight: 700; }
+
 .standard-group-head {
   margin-bottom: 0;
 }
@@ -2924,6 +2984,8 @@ onUnmounted(() => {
   .inspection-standard-category-audit {
     grid-template-columns: 1fr;
   }
+
+  .weekly-inspection-target { grid-template-columns: 1fr; }
 
   .inspection-filter-row {
     align-items: stretch;

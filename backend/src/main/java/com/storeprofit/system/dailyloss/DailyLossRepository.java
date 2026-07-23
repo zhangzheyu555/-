@@ -32,7 +32,8 @@ public class DailyLossRepository {
         select config.id, config.item_code, config.item_name, config.category,
                category.id as warehouse_category_id,
                category.name as warehouse_category_name,
-               config.unit, config.unit_price, config.active
+               config.unit, config.pricing_unit, config.quantity_per_pricing_unit,
+               config.unit_price, config.active
         from loss_item_config config
         left join warehouse_item_category category
           on category.tenant_id = config.tenant_id
@@ -53,6 +54,8 @@ public class DailyLossRepository {
               dailyLossCategoryCode(warehouseCategoryId, sourceCategory),
               dailyLossCategoryName(warehouseCategoryName, sourceCategory),
               rs.getString("unit"),
+              rs.getString("pricing_unit"),
+              rs.getBigDecimal("quantity_per_pricing_unit"),
               rs.getBigDecimal("unit_price"),
               rs.getBoolean("active"));
         }, tenantId);
@@ -69,7 +72,8 @@ public class DailyLossRepository {
 
   public Optional<LossItemConfigRow> activeItemConfig(long tenantId, long itemConfigId) {
     return jdbcTemplate.query("""
-        select id, item_code, item_name, category, unit, unit_price
+        select id, item_code, item_name, category, unit, pricing_unit,
+               quantity_per_pricing_unit, unit_price
         from loss_item_config
         where tenant_id = ? and id = ? and active = 1
         """, (rs, rowNum) -> new LossItemConfigRow(
@@ -78,6 +82,8 @@ public class DailyLossRepository {
             rs.getString("item_name"),
             rs.getString("category"),
             rs.getString("unit"),
+            rs.getString("pricing_unit"),
+            rs.getBigDecimal("quantity_per_pricing_unit"),
             rs.getBigDecimal("unit_price")),
         tenantId, itemConfigId).stream().findFirst();
   }
@@ -86,6 +92,33 @@ public class DailyLossRepository {
     Integer count = jdbcTemplate.queryForObject(
         "select count(*) from store_branch where tenant_id = ? and id = ?", Integer.class, tenantId, storeId);
     return count != null && count > 0;
+  }
+
+  public Optional<MonthlyArchiveRow> monthlyArchive(long tenantId, YearMonth month) {
+    return jdbcTemplate.query("""
+        select loss_month, source_sheet, source_title,
+               declared_total_loss_amount, detail_total_loss_amount,
+               declared_supplier_compensation_amount, declared_store_borne_amount,
+               calculated_store_borne_amount, declared_borne_difference, detail_loss_difference,
+               store_count, item_count, reconciliation_status, source_note
+        from daily_loss_monthly_archive
+        where tenant_id = ? and loss_month = ?
+        """, (rs, rowNum) -> new MonthlyArchiveRow(
+            rs.getString("loss_month"),
+            rs.getString("source_sheet"),
+            rs.getString("source_title"),
+            rs.getBigDecimal("declared_total_loss_amount"),
+            rs.getBigDecimal("detail_total_loss_amount"),
+            rs.getBigDecimal("declared_supplier_compensation_amount"),
+            rs.getBigDecimal("declared_store_borne_amount"),
+            rs.getBigDecimal("calculated_store_borne_amount"),
+            rs.getBigDecimal("declared_borne_difference"),
+            rs.getBigDecimal("detail_loss_difference"),
+            rs.getInt("store_count"),
+            rs.getInt("item_count"),
+            rs.getString("reconciliation_status"),
+            rs.getString("source_note")),
+        tenantId, month.toString()).stream().findFirst();
   }
 
   public void insert(long tenantId, String id, DailyLossCreateRequest request, LossItemRow item,
@@ -115,7 +148,8 @@ public class DailyLossRepository {
     return jdbcTemplate.query("""
         select r.id, r.store_id, s.code as store_code, s.name as store_name, r.loss_date,
                r.status, r.submitted_by, submitter.display_name as submitted_by_name, r.submitted_at,
-               r.reviewed_by, reviewer.display_name as reviewed_by_name, r.reviewed_at, r.review_note
+               r.reviewed_by, reviewer.display_name as reviewed_by_name, r.reviewed_at, r.review_note,
+               r.supplier_compensation_amount
         from daily_loss_report r
         join store_branch s on s.tenant_id = r.tenant_id and s.id = r.store_id
         left join auth_user submitter on submitter.tenant_id = r.tenant_id and submitter.id = r.submitted_by
@@ -186,6 +220,7 @@ public class DailyLossRepository {
       LocalDate lossDate,
       LossItemConfigRow item,
       BigDecimal quantity,
+      BigDecimal pricedQuantity,
       BigDecimal unitPrice,
       BigDecimal amount,
       String reason,
@@ -194,11 +229,21 @@ public class DailyLossRepository {
     jdbcTemplate.update("""
         insert into daily_loss_record(
           id, report_id, tenant_id, store_id, loss_date, item_id, item_config_id,
-          item_code, item_name, stock_unit, loss_quantity, unit_price_snapshot,
-          amount_snapshot, loss_reason, status, submitted_by, submitted_at
-        ) values (?, ?, ?, ?, ?, null, ?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', ?, current_timestamp)
+          item_code, item_name, stock_unit, pricing_unit_snapshot,
+          quantity_per_pricing_unit_snapshot, loss_quantity, priced_quantity_snapshot,
+          unit_price_snapshot, amount_snapshot, loss_reason, status, submitted_by, submitted_at
+        ) values (?, ?, ?, ?, ?, null, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', ?, current_timestamp)
         """, id, reportId, tenantId, storeId, lossDate, item.id(), item.itemCode(), item.itemName(),
-        item.unit(), quantity, unitPrice, amount, reason, actorId);
+        item.unit(), item.pricingUnit(), item.quantityPerPricingUnit(), quantity, pricedQuantity,
+        unitPrice, amount, reason, actorId);
+  }
+
+  public void updateSupplierCompensation(long tenantId, String reportId, BigDecimal amount) {
+    jdbcTemplate.update("""
+        update daily_loss_report
+        set supplier_compensation_amount = ?, updated_at = current_timestamp
+        where tenant_id = ? and id = ?
+        """, amount, tenantId, reportId);
   }
 
   public void touchReportDraft(long tenantId, String reportId) {
@@ -246,7 +291,8 @@ public class DailyLossRepository {
     return jdbcTemplate.query("""
         select r.id, r.item_config_id, r.item_code, r.item_name,
                coalesce(wc.name, c.category, '每日报损') as category,
-               r.stock_unit, r.loss_quantity, r.unit_price_snapshot,
+               r.stock_unit, r.pricing_unit_snapshot, r.quantity_per_pricing_unit_snapshot,
+               r.loss_quantity, r.priced_quantity_snapshot, r.unit_price_snapshot,
                r.amount_snapshot, r.loss_reason
         from daily_loss_record r
         left join loss_item_config c on c.tenant_id = r.tenant_id and c.id = r.item_config_id
@@ -260,7 +306,10 @@ public class DailyLossRepository {
             rs.getString("item_name"),
             rs.getString("category"),
             rs.getString("stock_unit"),
+            rs.getString("pricing_unit_snapshot"),
+            rs.getBigDecimal("quantity_per_pricing_unit_snapshot"),
             rs.getBigDecimal("loss_quantity"),
+            rs.getBigDecimal("priced_quantity_snapshot"),
             rs.getBigDecimal("unit_price_snapshot"),
             rs.getBigDecimal("amount_snapshot"),
             rs.getString("loss_reason")),
@@ -288,9 +337,11 @@ public class DailyLossRepository {
                report.loss_date, report.status, report.submitted_by,
                submitter.display_name as submitted_by_name, report.submitted_at,
                report.reviewed_by, reviewer.display_name as reviewed_by_name, report.reviewed_at,
-               report.review_note, detail.item_code, detail.item_name,
+               report.review_note, report.supplier_compensation_amount, detail.item_code, detail.item_name,
                coalesce(category.name, config.category, '每日报损') as category,
-               detail.loss_quantity, detail.stock_unit, detail.unit_price_snapshot,
+               detail.loss_quantity, detail.stock_unit, detail.pricing_unit_snapshot,
+               detail.quantity_per_pricing_unit_snapshot, detail.priced_quantity_snapshot,
+               detail.unit_price_snapshot,
                detail.amount_snapshot, detail.loss_reason
         from daily_loss_record detail
         join daily_loss_report report on report.tenant_id = detail.tenant_id and report.id = detail.report_id
@@ -326,8 +377,12 @@ public class DailyLossRepository {
         rs.getString("category"),
         rs.getBigDecimal("loss_quantity"),
         rs.getString("stock_unit"),
+        rs.getString("pricing_unit_snapshot"),
+        rs.getBigDecimal("quantity_per_pricing_unit_snapshot"),
+        rs.getBigDecimal("priced_quantity_snapshot"),
         rs.getBigDecimal("unit_price_snapshot"),
         rs.getBigDecimal("amount_snapshot"),
+        rs.getBigDecimal("supplier_compensation_amount"),
         rs.getString("loss_reason"),
         rs.getString("submitted_by_name"),
         rs.getObject("submitted_at", LocalDateTime.class),
@@ -443,7 +498,8 @@ public class DailyLossRepository {
     return """
         select r.id, r.store_id, s.code as store_code, s.name as store_name, r.loss_date,
                r.status, r.submitted_by, submitter.display_name as submitted_by_name, r.submitted_at,
-               r.reviewed_by, reviewer.display_name as reviewed_by_name, r.reviewed_at, r.review_note
+               r.reviewed_by, reviewer.display_name as reviewed_by_name, r.reviewed_at, r.review_note,
+               r.supplier_compensation_amount
         from daily_loss_report r
         join store_branch s on s.tenant_id = r.tenant_id and s.id = r.store_id
         left join auth_user submitter on submitter.tenant_id = r.tenant_id and submitter.id = r.submitted_by
@@ -465,7 +521,8 @@ public class DailyLossRepository {
         rs.getObject("reviewed_by", Long.class),
         rs.getString("reviewed_by_name"),
         rs.getObject("reviewed_at", LocalDateTime.class),
-        rs.getString("review_note"));
+        rs.getString("review_note"),
+        rs.getBigDecimal("supplier_compensation_amount"));
   }
 
   private void appendStoreScope(StringBuilder sql, MapSqlParameterSource params, DataScope scope) {
@@ -517,17 +574,30 @@ public class DailyLossRepository {
   }
 
   public record LossItemRow(long id, String code, String name, String stockUnit, BigDecimal unitPrice) {}
+
+  public record MonthlyArchiveRow(
+      String month, String sourceSheet, String sourceTitle,
+      BigDecimal declaredTotalLossAmount, BigDecimal detailTotalLossAmount,
+      BigDecimal supplierCompensationAmount, BigDecimal declaredStoreBorneAmount,
+      BigDecimal calculatedStoreBorneAmount, BigDecimal declaredBorneDifference,
+      BigDecimal detailLossDifference, int storeCount, int itemCount,
+      String reconciliationStatus, String sourceNote
+  ) {}
   public record LossItemConfigRow(long id, String itemCode, String itemName, String category, String unit,
+                                  String pricingUnit, BigDecimal quantityPerPricingUnit,
                                   BigDecimal unitPrice) {}
   public record ReportStoreRow(String id, String code, String name) {}
   public record DailyLossReportRow(String id, String storeId, String storeCode, String storeName, LocalDate lossDate,
                                    String status, Long submittedBy, String submittedByName,
                                    LocalDateTime submittedAt, Long reviewedBy, String reviewedByName,
-                                   LocalDateTime reviewedAt, String reviewNote) {}
+                                   LocalDateTime reviewedAt, String reviewNote,
+                                   BigDecimal supplierCompensationAmount) {}
   public record MonthlyExportDetailRow(
       String reportId, String storeId, String storeCode, String storeName, LocalDate lossDate, String status,
       String itemCode, String itemName, String category, BigDecimal lossQuantity, String unit,
-      BigDecimal unitPrice, BigDecimal amount, String lossReason, String submittedByName,
+      String pricingUnit, BigDecimal quantityPerPricingUnit, BigDecimal pricedQuantity,
+      BigDecimal unitPrice, BigDecimal amount, BigDecimal supplierCompensationAmount,
+      String lossReason, String submittedByName,
       LocalDateTime submittedAt, String reviewedByName, LocalDateTime reviewedAt, String reviewNote
   ) {}
   public record LockedLossRow(String id, String storeId, long itemId, BigDecimal lossQuantity, String lossReason,

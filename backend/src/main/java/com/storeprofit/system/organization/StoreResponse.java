@@ -8,6 +8,7 @@ public record StoreResponse(
     String brandName,
     String area,
     String manager,
+    String managerPhone,
     String openDate,
     String status,
     String note,
@@ -27,7 +28,7 @@ public record StoreResponse(
       String status,
       String note
   ) {
-    this(id, code, name, brandId, brandName, area, manager, openDate, status, note,
+    this(id, code, name, brandId, brandName, area, manager, null, openDate, status, note,
         null, null, null);
   }
 }

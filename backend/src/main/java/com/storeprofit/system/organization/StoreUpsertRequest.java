@@ -10,6 +10,7 @@ public record StoreUpsertRequest(
     @NotNull Long brandId,
     String area,
     String manager,
+    String managerPhone,
     String openDate,
     String status,
     String note,
@@ -27,6 +28,6 @@ public record StoreUpsertRequest(
       String status,
       String note
   ) {
-    this(id, code, name, brandId, area, manager, openDate, status, note, null, null);
+    this(id, code, name, brandId, area, manager, null, openDate, status, note, null, null);
   }
 }

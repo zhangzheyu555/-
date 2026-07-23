@@ -12,6 +12,8 @@ export interface DailyLossItem {
   categoryCode?: string
   categoryName?: string
   stockUnit?: string
+  pricingUnit?: string
+  quantityPerPricingUnit?: number
   unitPrice?: number
   active?: boolean
 }
@@ -54,7 +56,10 @@ export interface DailyLossReportDetail {
   itemName: string
   category?: string
   unit?: string
+  pricingUnit?: string
+  quantityPerPricingUnit?: number
   lossQuantity: number
+  pricedQuantity?: number
   unitPriceSnapshot?: number
   amountSnapshot?: number
   lossReason?: string
@@ -71,6 +76,8 @@ export interface DailyLossReport {
   statusLabel?: string
   reported: boolean
   totalAmount?: number
+  supplierCompensationAmount?: number
+  storeBorneAmount?: number
   detailCount?: number
   attachmentCount?: number
   submittedByName?: string
@@ -80,6 +87,23 @@ export interface DailyLossReport {
   reviewNote?: string
   details?: DailyLossReportDetail[]
   attachments?: DailyLossAttachment[]
+}
+
+export interface DailyLossMonthlyArchive {
+  month: string
+  sourceSheet: string
+  sourceTitle: string
+  declaredTotalLossAmount: number
+  detailTotalLossAmount: number
+  supplierCompensationAmount: number
+  declaredStoreBorneAmount: number
+  calculatedStoreBorneAmount: number
+  declaredBorneDifference: number
+  detailLossDifference: number
+  storeCount: number
+  itemCount: number
+  reconciliationStatus: 'MATCHED' | 'SOURCE_VARIANCE'
+  sourceNote?: string
 }
 
 export interface DailyLossReportLinePayload {
@@ -92,6 +116,7 @@ export interface DailyLossReportSaveRequest {
   storeId: string
   lossDate: string
   details: DailyLossReportLinePayload[]
+  supplierCompensationAmount?: number
 }
 
 export interface DailyLossRecordQuery {
@@ -139,6 +164,8 @@ function normalizeDailyLossItem(item: DailyLossItem): DailyLossItem {
     name: item.name || itemName,
     category: item.category || categoryName,
     stockUnit: item.stockUnit || unit,
+    pricingUnit: item.pricingUnit || unit,
+    quantityPerPricingUnit: item.quantityPerPricingUnit || 1,
     active: item.active ?? true,
   }
 }
@@ -156,6 +183,10 @@ export function getDailyLossReports(query: Pick<DailyLossRecordQuery, 'storeId' 
     storeId: query.storeId,
     month: query.month,
   }))
+}
+
+export function getDailyLossMonthlyArchive(month: string) {
+  return apiGet<DailyLossMonthlyArchive | null>(queryUrl('/api/daily-loss/monthly-archive', { month }))
 }
 
 export function getTodayDailyLossReport() {

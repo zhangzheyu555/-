@@ -134,6 +134,28 @@ class DailyLossServiceTest {
   }
 
   @Test
+  void supervisorCanReadAuditedHistoricalMonthlyArchive() {
+    DailyLossRepository repository = mock(DailyLossRepository.class);
+    AccessControlService access = mock(AccessControlService.class);
+    AuthUser supervisor = user("SUPERVISOR", null);
+    when(repository.monthlyArchive(1L, java.time.YearMonth.of(2025, 12)))
+        .thenReturn(Optional.of(new DailyLossRepository.MonthlyArchiveRow(
+            "2025-12", "12月份", "店铺12月份损耗表",
+            new BigDecimal("10663.204760"), new BigDecimal("11028.204760"),
+            new BigDecimal("7831.000000"), new BigDecimal("2832.204760"),
+            new BigDecimal("2832.204760"), BigDecimal.ZERO, new BigDecimal("365.000000"),
+            16, 17, "SOURCE_VARIANCE", "detail_loss_difference=365.000000")));
+
+    DailyLossMonthlyArchiveResponse response = service(
+        repository, mock(WarehouseRepository.class), access, mock(AuditRepository.class))
+        .monthlyArchive(supervisor, "2025-12");
+
+    assertThat(response.declaredTotalLossAmount()).isEqualByComparingTo("10663.204760");
+    assertThat(response.reconciliationStatus()).isEqualTo("SOURCE_VARIANCE");
+    verify(access).requireDailyLossReview(supervisor);
+  }
+
+  @Test
   void reportWorkflowExportsMonthlyExcelWithMissingDatesNumericCellsAndNoAttachments() throws Exception {
     DriverManagerDataSource dataSource = new DriverManagerDataSource(
         "jdbc:h2:mem:" + UUID.randomUUID() + ";MODE=MySQL;NON_KEYWORDS=MONTH;DB_CLOSE_DELAY=-1",
@@ -168,7 +190,8 @@ class DailyLossServiceTest {
         List.of(
             new DailyLossReportLineRequest(1L, new BigDecimal("10.0000"), "=恶意公式"),
             new DailyLossReportLineRequest(2L, new BigDecimal("2"), "整颗报损")
-        )
+        ),
+        new BigDecimal("10.00")
     ));
     jdbcTemplate.update("""
         insert into warehouse_attachment(
@@ -190,6 +213,8 @@ class DailyLossServiceTest {
     DailyLossMonthlyExcelExport repeatedExport = dailyLossService.exportMonthlyExcel(finance, "s1", "2026-07");
 
     assertThat(draft.totalAmount()).isEqualByComparingTo("50.14");
+    assertThat(draft.supplierCompensationAmount()).isEqualByComparingTo("10.00");
+    assertThat(draft.storeBorneAmount()).isEqualByComparingTo("40.14");
     assertThat(draft.details()).extracting(DailyLossReportDetailResponse::amountSnapshot)
         .containsExactlyInAnyOrder(new BigDecimal("0.14"), new BigDecimal("50.00"));
     assertThat(submitted.status()).isEqualTo("SUBMITTED");
@@ -200,15 +225,24 @@ class DailyLossServiceTest {
     assertThat(repeatedExport.summaryRowCount()).isEqualTo(31);
     assertThat(repeatedExport.detailRowCount()).isEqualTo(2);
     try (XSSFWorkbook workbook = new XSSFWorkbook(new java.io.ByteArrayInputStream(export.content()))) {
-      assertThat(workbook.getNumberOfSheets()).isEqualTo(2);
-      assertThat(workbook.getSheetName(0)).isEqualTo("每日汇总");
-      assertThat(workbook.getSheetName(1)).isEqualTo("报损明细");
+      assertThat(workbook.getNumberOfSheets()).isEqualTo(3);
+      assertThat(workbook.getSheetName(0)).isEqualTo("7月份");
+      assertThat(workbook.getSheetName(1)).isEqualTo("每日汇总");
+      assertThat(workbook.getSheetName(2)).isEqualTo("报损明细");
       assertThat(workbook.getAllPictures()).isEmpty();
       assertThat(workbook.getSheetAt(0).getDrawingPatriarch()).isNull();
       assertThat(workbook.getSheetAt(1).getDrawingPatriarch()).isNull();
+      assertThat(workbook.getSheetAt(2).getDrawingPatriarch()).isNull();
 
+      var matrix = workbook.getSheet("7月份");
       var summary = workbook.getSheet("每日汇总");
       var details = workbook.getSheet("报损明细");
+      assertThat(matrix.getRow(0).getCell(0).getStringCellValue()).isEqualTo("7月份店铺损耗表");
+      assertThat(matrix.getRow(1).getCell(2).getStringCellValue()).isEqualTo("苹果汁\n单位：克");
+      assertThat(matrix.getRow(4).getCell(2).getNumericCellValue()).isEqualTo(0.02D);
+      assertThat(matrix.getRow(5).getCell(2).getNumericCellValue()).isEqualTo(7D);
+      assertThat(matrix.getRow(7).getCell(1).getNumericCellValue()).isEqualTo(10D);
+      assertThat(matrix.getRow(8).getCell(1).getNumericCellValue()).isEqualTo(40.14D);
       assertThat(summary.getLastRowNum()).isEqualTo(31);
       assertThat(summary.getPaneInformation().isFreezePane()).isTrue();
       assertThat(summary.getCTWorksheet().isSetAutoFilter()).isTrue();
@@ -219,14 +253,14 @@ class DailyLossServiceTest {
       assertThat(summary.getRow(14).getCell(5).getCellStyle().getDataFormatString()).contains("#,##0.00");
       assertThat(details.getLastRowNum()).isEqualTo(2);
       assertThat(details.getRow(1).getCell(6).getCellType()).isEqualTo(CellType.NUMERIC);
-      assertThat(details.getRow(1).getCell(9).getCellType()).isEqualTo(CellType.NUMERIC);
+      assertThat(details.getRow(1).getCell(12).getCellType()).isEqualTo(CellType.NUMERIC);
       var formulaRow = java.util.stream.IntStream.rangeClosed(1, details.getLastRowNum())
           .mapToObj(details::getRow)
           .filter(row -> "苹果汁".equals(row.getCell(4).getStringCellValue()))
           .findFirst()
           .orElseThrow();
-      assertThat(formulaRow.getCell(10).getStringCellValue()).isEqualTo("'=恶意公式");
-      assertThat(formulaRow.getCell(10).getStringCellValue()).doesNotContain("photo.jpg", "/api/storage", ".zip");
+      assertThat(formulaRow.getCell(13).getStringCellValue()).isEqualTo("'=恶意公式");
+      assertThat(formulaRow.getCell(13).getStringCellValue()).doesNotContain("photo.jpg", "/api/storage", ".zip");
     }
     assertThat(jdbcTemplate.queryForList(
         "select action from operation_log order by id", String.class))
@@ -254,9 +288,37 @@ class DailyLossServiceTest {
     try (XSSFWorkbook workbook = new XSSFWorkbook(new java.io.ByteArrayInputStream(export.content()))) {
       assertThat(workbook.getSheet("每日汇总").getLastRowNum()).isEqualTo(31);
       assertThat(workbook.getSheet("报损明细").getLastRowNum()).isZero();
-      assertThat(workbook.getSheet("每日汇总").getRow(1).getCell(6).getStringCellValue()).isEqualTo("未报");
+      assertThat(workbook.getSheet("每日汇总").getRow(1).getCell(8).getStringCellValue()).isEqualTo("未报");
       assertThat(workbook.getSheet("每日汇总").getRow(1).getCell(5).getNumericCellValue()).isZero();
     }
+  }
+
+  @Test
+  void zeroPricedWarehouseSupplyIsAValidLossItem() {
+    DriverManagerDataSource dataSource = reportDataSource();
+    JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
+    createReportSchema(jdbcTemplate);
+    jdbcTemplate.update("update loss_item_config set unit_price = 0 where id = 1");
+    DailyLossRepository repository = new DailyLossRepository(
+        jdbcTemplate, new NamedParameterJdbcTemplate(dataSource));
+    AccessControlService access = mock(AccessControlService.class);
+    AuthUser manager = user("STORE_MANAGER", "s1");
+    when(access.dataScope(manager, DataScopeDomains.STORE))
+        .thenReturn(new DataScope(DataScopeModes.OWN_STORE, List.of("s1")));
+
+    DailyLossReportResponse report = service(
+        repository, mock(WarehouseRepository.class), access, new AuditRepository(jdbcTemplate))
+        .saveReport(manager, new DailyLossReportSaveRequest(
+            "s1", LocalDate.of(2026, 7, 15),
+            List.of(new DailyLossReportLineRequest(1L, new BigDecimal("500"), "日常报损")),
+            BigDecimal.ZERO));
+
+    assertThat(report.totalAmount()).isEqualByComparingTo(BigDecimal.ZERO);
+    assertThat(report.storeBorneAmount()).isEqualByComparingTo(BigDecimal.ZERO);
+    assertThat(report.details()).singleElement().satisfies(detail -> {
+      assertThat(detail.unitPriceSnapshot()).isEqualByComparingTo(BigDecimal.ZERO);
+      assertThat(detail.amountSnapshot()).isEqualByComparingTo(BigDecimal.ZERO);
+    });
   }
 
   @Test
@@ -494,6 +556,8 @@ class DailyLossServiceTest {
           category varchar(120),
           warehouse_category_id bigint,
           unit varchar(20) not null,
+          pricing_unit varchar(20) not null,
+          quantity_per_pricing_unit decimal(14,4) not null,
           unit_price decimal(14,4) not null,
           source_sheet varchar(80),
           active tinyint not null default 1
@@ -511,6 +575,7 @@ class DailyLossServiceTest {
           reviewed_by bigint,
           reviewed_at timestamp,
           review_note varchar(500),
+          supplier_compensation_amount decimal(14,2) not null default 0,
           created_at timestamp default current_timestamp,
           updated_at timestamp
         )
@@ -527,7 +592,10 @@ class DailyLossServiceTest {
           item_code varchar(80),
           item_name varchar(160),
           stock_unit varchar(20),
+          pricing_unit_snapshot varchar(20),
+          quantity_per_pricing_unit_snapshot decimal(14,4),
           loss_quantity decimal(14,4),
+          priced_quantity_snapshot decimal(14,4),
           unit_price_snapshot decimal(14,4),
           amount_snapshot decimal(14,2),
           loss_reason varchar(500),
@@ -576,10 +644,11 @@ class DailyLossServiceTest {
     jdbcTemplate.update("insert into auth_user(id, tenant_id, display_name) values (7, 1, '测试人员')");
     jdbcTemplate.update("""
         insert into loss_item_config(
-          id, tenant_id, item_code, item_name, category, unit, unit_price, source_sheet, active
+          id, tenant_id, item_code, item_name, category, unit, pricing_unit,
+          quantity_per_pricing_unit, unit_price, source_sheet, active
         ) values
-          (1, 1, 'daily-apple-juice', '苹果汁', '每日报损表', '克', 0.0140, '每日报损表', 1),
-          (2, 1, 'fruit-pineapple', '凤梨', '水果检查表', '个', 25.0000, '水果检查表', 1)
+          (1, 1, 'daily-apple-juice', '苹果汁', '每日报损表', '克', '斤', 500, 7.0000, '每日报损表', 1),
+          (2, 1, 'fruit-pineapple', '凤梨', '水果检查表', '个', '个', 1, 25.0000, '水果检查表', 1)
         """);
   }
 

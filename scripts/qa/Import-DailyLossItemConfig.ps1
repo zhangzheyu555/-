@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
   [string]$ExcelPath = '',
+  [string]$Sheet = '',
   [long]$TenantId = 1,
   [string]$OutSql = '',
   [switch]$DryRun,
@@ -61,7 +62,11 @@ if (-not $python) {
   throw 'Python is required to parse the Excel file.'
 }
 
-& $python $generator --xlsx $ExcelPath --tenant-id $TenantId --out $OutSql
+$generatorArgs = @($generator, '--xlsx', $ExcelPath, '--tenant-id', $TenantId, '--out', $OutSql)
+if ($Sheet) {
+  $generatorArgs += @('--sheet', $Sheet)
+}
+& $python @generatorArgs
 if ($LASTEXITCODE -ne 0) {
   throw 'Excel loss item config extraction failed.'
 }
@@ -107,7 +112,7 @@ if ($mysql) {
       --database=$env:MYSQL_DATABASE `
       --user=$env:MYSQL_USERNAME `
       --default-character-set=utf8mb4 `
-      --execute="select count(*) as active_count from loss_item_config where tenant_id = $TenantId and active = 1; select item_name, unit, unit_price from loss_item_config where tenant_id = $TenantId and active = 1 order by source_sheet, category, item_code, id limit 10;"
+      --execute="select count(*) as active_count from loss_item_config where tenant_id = $TenantId and active = 1; select item_name, unit, pricing_unit, quantity_per_pricing_unit, unit_price from loss_item_config where tenant_id = $TenantId and active = 1 order by source_sheet, category, item_code, id limit 10;"
     if ($LASTEXITCODE -ne 0) {
       throw 'mysql client failed to verify loss item config rows.'
     }
@@ -165,11 +170,12 @@ public class DailyLossSqlApply {
         }
       }
       try (ResultSet rows = statement.executeQuery(
-          "select item_name, unit, unit_price from loss_item_config"
+          "select item_name, unit, pricing_unit, quantity_per_pricing_unit, unit_price from loss_item_config"
               + " where tenant_id = " + tenantId + " and active = 1"
               + " order by source_sheet, category, item_code, id limit 10")) {
         while (rows.next()) {
-          System.out.println(rows.getString(1) + "\t" + rows.getString(2) + "\t" + rows.getBigDecimal(3));
+          System.out.println(rows.getString(1) + "\t" + rows.getString(2) + "\t" + rows.getString(3)
+              + "\t" + rows.getBigDecimal(4) + "\t" + rows.getBigDecimal(5));
         }
       }
     }
