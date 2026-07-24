@@ -9,11 +9,15 @@ import org.springframework.core.io.ClassPathResource;
 
 class InspectionRestrictedPilotConfigurationTest {
   @Test
-  void qaYoloIsDefaultDeniedAndCanOnlyBeConfiguredThroughServerEnvironment() {
+  void qaYoloKeepsExternalOutboundDeniedAndUsesAnExplicitInternalServiceSwitch() {
     Properties application = properties("application.yml");
     Properties qa = properties("application-qa.yml");
 
-    assertThat(application).doesNotContainKey("app.inspection.outbound-mode");
+    assertThat(application)
+        .doesNotContainKey("app.inspection.outbound-mode")
+        .containsEntry(
+            "app.inspection.internal-service-enabled",
+            "${INSPECTION_INTERNAL_SERVICE_ENABLED:false}");
     assertThat(qa)
         .containsEntry("app.inspection.detect-url", "${INSPECTION_DETECT_URL:http://127.0.0.1:19090/detect}")
         .containsEntry("app.inspection.export-url", "${INSPECTION_EXPORT_URL:http://127.0.0.1:19090/export}")

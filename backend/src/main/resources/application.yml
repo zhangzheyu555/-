@@ -59,6 +59,7 @@ app:
     detect-url: ${INSPECTION_DETECT_URL:http://127.0.0.1:8000/detect}
     export-url: ${INSPECTION_EXPORT_URL:http://127.0.0.1:8000/export}
     timeout: ${INSPECTION_TIMEOUT:60s}
+    internal-service-enabled: ${INSPECTION_INTERNAL_SERVICE_ENABLED:false}
   eleme:
     app-key: ${ELEME_APP_KEY:}
     app-secret: ${ELEME_APP_SECRET:}

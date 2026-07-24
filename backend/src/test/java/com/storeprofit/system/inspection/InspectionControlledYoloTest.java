@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.imageio.ImageIO;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -95,6 +96,46 @@ class InspectionControlledYoloTest {
       assertThat(calls).hasValue(1);
       verify(records).storeExists(1L, STORE_ID);
       verifyNoMoreInteractions(records);
+    } finally {
+      server.stop(0);
+    }
+  }
+
+  @Test
+  void detectorRequestUsesHttp11AndAnExplicitMultipartFilePart() throws Exception {
+    AtomicReference<String> protocol = new AtomicReference<>();
+    AtomicReference<String> contentType = new AtomicReference<>();
+    AtomicReference<String> upgrade = new AtomicReference<>();
+    AtomicReference<String> requestBody = new AtomicReference<>();
+    HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    server.createContext("/detect", exchange -> {
+      protocol.set(exchange.getProtocol());
+      contentType.set(exchange.getRequestHeaders().getFirst("Content-Type"));
+      upgrade.set(exchange.getRequestHeaders().getFirst("Upgrade"));
+      requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.ISO_8859_1));
+      byte[] response = "{\"detections\":[]}".getBytes(StandardCharsets.UTF_8);
+      exchange.getResponseHeaders().add("Content-Type", "application/json");
+      exchange.sendResponseHeaders(200, response.length);
+      exchange.getResponseBody().write(response);
+      exchange.close();
+    });
+    server.start();
+    try {
+      InspectionService service = service(recordsWithStore(), null, server, Duration.ofMillis(500), null);
+
+      service.detect(
+          SUPERVISOR,
+          STORE_ID,
+          imageFile("private-name.png", "image/png", png(), png().length));
+
+      assertThat(protocol).hasValue("HTTP/1.1");
+      assertThat(upgrade).hasValue(null);
+      assertThat(contentType.get()).startsWith("multipart/form-data;boundary=");
+      assertThat(requestBody.get())
+          .contains("name=\"file\"")
+          .contains("filename=\"inspection.png\"")
+          .contains("Content-Type: image/png")
+          .doesNotContain("private-name.png");
     } finally {
       server.stop(0);
     }
