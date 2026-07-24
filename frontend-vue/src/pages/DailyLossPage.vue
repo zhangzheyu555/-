@@ -363,7 +363,15 @@ function setPickerCategory(code: string) {
   pickerCategory.value = code
 }
 
+function isPickerItemSelected(item: DailyLossItem) {
+  const itemId = String(item.id)
+  return lines.value.some((line, index) => (
+    index !== pickerLineIndex.value && line.itemConfigId === itemId
+  ))
+}
+
 function selectPickerItem(item: DailyLossItem) {
+  if (isPickerItemSelected(item)) return
   const line = lines.value[pickerLineIndex.value]
   if (!line) return
   line.itemConfigId = String(item.id)
@@ -381,12 +389,18 @@ function handlePickerKeydown(event: KeyboardEvent) {
   const rows = pickerItems.value
   if (!rows.length) return
   event.preventDefault()
-  if (event.key === 'ArrowDown') {
-    pickerActiveIndex.value = (pickerActiveIndex.value + 1) % rows.length
-  } else if (event.key === 'ArrowUp') {
-    pickerActiveIndex.value = (pickerActiveIndex.value - 1 + rows.length) % rows.length
-  } else {
-    selectPickerItem(rows[pickerActiveIndex.value])
+  if (event.key === 'Enter') {
+    const activeItem = rows[pickerActiveIndex.value]
+    if (activeItem) selectPickerItem(activeItem)
+    return
+  }
+  const direction = event.key === 'ArrowDown' ? 1 : -1
+  for (let offset = 1; offset <= rows.length; offset += 1) {
+    const index = (pickerActiveIndex.value + direction * offset + rows.length) % rows.length
+    if (!isPickerItemSelected(rows[index])) {
+      pickerActiveIndex.value = index
+      return
+    }
   }
 }
 
@@ -916,15 +930,18 @@ function currentMonth() {
             :key="item.id"
             type="button"
             class="picker-card"
-            :class="{ active: pickerActiveIndex === index }"
+            :class="{ active: pickerActiveIndex === index, selected: isPickerItemSelected(item) }"
+            :disabled="isPickerItemSelected(item)"
             role="option"
             :aria-selected="pickerActiveIndex === index"
+            :aria-disabled="isPickerItemSelected(item)"
             @mouseenter="pickerActiveIndex = index"
             @click="selectPickerItem(item)"
           >
             <b>{{ itemLabel(item) }}</b>
             <strong class="picker-card-price">{{ itemPriceLabel(item) }}</strong>
             <small>{{ itemCategoryName(item) }}</small>
+            <small v-if="isPickerItemSelected(item)" class="picker-card-selected">已选择</small>
           </button>
         </div>
         <div v-else class="empty-state">没有匹配的报损品类，请调整搜索词或分类。</div>
@@ -1550,6 +1567,19 @@ function currentMonth() {
   background: #f7fcfb;
 }
 
+.picker-card.selected,
+.picker-card.selected:hover {
+  cursor: not-allowed;
+  border-color: var(--ds-line);
+  background: var(--ds-surface-muted);
+  opacity: .5;
+}
+
+.picker-card.selected b,
+.picker-card.selected .picker-card-price {
+  color: var(--ds-muted);
+}
+
 .picker-card b {
   display: block;
   overflow: visible;
@@ -1569,6 +1599,7 @@ function currentMonth() {
 }
 
 .picker-card small { color: var(--ds-muted); font-size: 12px; }
+.picker-card .picker-card-selected { font-weight: 700; }
 .detail-body { display: grid; gap: 16px; overflow: auto; }
 .detail-body section { display: grid; gap: 8px; }
 .detail-list--dialog span { border-radius: 6px; }
