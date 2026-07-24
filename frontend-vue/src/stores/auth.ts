@@ -7,8 +7,11 @@ import { normalizeRoleCode, roleName } from '../permissions/roles'
 const TOKEN_KEY = 'ai_profit_vue_token'
 const USER_KEY = 'ai_profit_vue_user'
 const LOGIN_TIMEOUT_MS = 15000
+const SESSION_REFRESH_THROTTLE_MS = 30_000
 export const AUTH_SESSION_INVALIDATED_EVENT = 'ai-profit:auth-session-invalidated'
 let sessionInvalidationBound = false
+let sessionRefreshStartedAt = 0
+let sessionRefreshPromise: Promise<boolean> | null = null
 
 export function getStoredToken() {
   return localStorage.getItem(TOKEN_KEY) || ''
@@ -204,12 +207,49 @@ export const useAuthStore = defineStore('auth', {
       window.addEventListener(AUTH_SESSION_INVALIDATED_EVENT, () => {
         this.invalidateSession()
       })
+      const refreshVisibleSession = () => {
+        if (document.visibilityState === 'visible') void this.refreshCurrentSession()
+      }
+      window.addEventListener('focus', refreshVisibleSession)
+      document.addEventListener('visibilitychange', refreshVisibleSession)
     },
     invalidateSession() {
       this.token = ''
       this.user = null
       this.sessionValidated = true
+      sessionRefreshStartedAt = 0
       clearStoredAuth()
+    },
+    async refreshCurrentSession() {
+      if (!this.token || !this.user || !this.sessionValidated) return this.isLoggedIn
+      if (sessionRefreshPromise) return sessionRefreshPromise
+
+      const now = Date.now()
+      if (now - sessionRefreshStartedAt < SESSION_REFRESH_THROTTLE_MS) return true
+      sessionRefreshStartedAt = now
+      const expectedToken = this.token
+      const expectedPermissionVersion = this.user.permissionVersion
+
+      sessionRefreshPromise = (async () => {
+        try {
+          const normalizedUser = normalizeStoredUser(await currentSessionApi(), true)
+          if (!normalizedUser || this.token !== expectedToken || !this.user) return false
+          if (normalizedUser.permissionVersion !== expectedPermissionVersion) {
+            this.invalidateSession()
+            return false
+          }
+          this.user = normalizedUser
+          localStorage.setItem(USER_KEY, JSON.stringify(normalizedUser))
+          return true
+        } catch {
+          // A 401 is handled centrally and invalidates the session. Transient network failures
+          // must not sign out an otherwise valid user merely because the window regained focus.
+          return false
+        } finally {
+          sessionRefreshPromise = null
+        }
+      })()
+      return sessionRefreshPromise
     },
     async validateStoredSession() {
       if (this.sessionValidated) return this.isLoggedIn

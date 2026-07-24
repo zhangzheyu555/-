@@ -23,7 +23,7 @@ public final class AdminBootstrapCommand {
   public static final String COMMAND_ARGUMENT = "--admin-bootstrap";
   public static final String ENABLED_ENVIRONMENT = "APP_BOOTSTRAP_ADMIN_ENABLED";
   static final String QA_DOCKER_IDENTITY_ENVIRONMENT = "APP_BOOTSTRAP_ADMIN_QA_DOCKER";
-  static final int EXPECTED_FLYWAY_VERSION = 102;
+  static final int EXPECTED_FLYWAY_VERSION = 104;
   static final Set<Integer> EXPECTED_FLYWAY_VERSIONS = java.util.stream.IntStream
       .rangeClosed(1, EXPECTED_FLYWAY_VERSION)
       .boxed()

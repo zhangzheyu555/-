@@ -40,6 +40,7 @@ public record WarehouseItemResponse(
     String itemDescription,
     int sortOrder,
     String itemAttributes,
-    List<WarehouseItemDepartmentResponse> departments
+    List<WarehouseItemDepartmentResponse> departments,
+    WarehouseItemRequisitionPolicyResponse requisitionPolicy
 ) {
 }

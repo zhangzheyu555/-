@@ -1,7 +1,6 @@
 package com.storeprofit.system.knowledgebase;
 
 import java.sql.PreparedStatement;
-import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -30,7 +29,7 @@ public class KnowledgeBaseRepository {
             source_content, visibility, status, parsed_char_count, chunk_count, created_by,
             created_at, updated_at
           ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, current_timestamp, current_timestamp)
-          """, Statement.RETURN_GENERATED_KEYS);
+          """, new String[] {"id"});
       statement.setLong(1, tenantId);
       statement.setString(2, insert.title());
       statement.setString(3, insert.category());
@@ -81,9 +80,75 @@ public class KnowledgeBaseRepository {
         this::mapDocument, tenantId);
   }
 
+  public List<DocumentRow> availablePublishedDocuments(
+      long tenantId,
+      String roleCode,
+      Collection<String> storeIds,
+      boolean allStoreScope,
+      boolean unrestricted,
+      int limit
+  ) {
+    StringBuilder sql = new StringBuilder(documentSelect())
+        .append(" where tenant_id = ? and status = 'PUBLISHED'");
+    ArrayList<Object> args = new ArrayList<>();
+    args.add(tenantId);
+    if (!unrestricted) {
+      sql.append("""
+           and (
+             visibility = 'TENANT'
+             or (
+               visibility = 'ROLE'
+               and exists (
+                 select 1 from knowledge_base_document_role_scope role_scope
+                 where role_scope.document_id = knowledge_base_document.id
+                   and role_scope.role_code = ?
+               )
+             )
+          """);
+      args.add(roleCode);
+      if (allStoreScope) {
+        sql.append(" or visibility = 'STORE'");
+      } else if (storeIds != null && !storeIds.isEmpty()) {
+        sql.append("""
+             or (
+               visibility = 'STORE'
+               and exists (
+                 select 1 from knowledge_base_document_store_scope store_scope
+                 where store_scope.document_id = knowledge_base_document.id
+                   and store_scope.store_id in (
+            """);
+        sql.append(String.join(",", java.util.Collections.nCopies(storeIds.size(), "?")));
+        sql.append(")))");
+        args.addAll(storeIds);
+      }
+      sql.append(")");
+    }
+    sql.append(" order by published_at desc, id desc limit ")
+        .append(Math.max(1, Math.min(500, limit)));
+    return jdbcTemplate.query(sql.toString(), this::mapDocument, args.toArray());
+  }
+
   public Optional<DocumentRow> findDocument(long tenantId, long id) {
     return jdbcTemplate.query(documentSelect() + " where tenant_id = ? and id = ?", this::mapDocument, tenantId, id)
         .stream().findFirst();
+  }
+
+  public boolean documentExistsOutsideTenant(long tenantId, long id) {
+    Integer count = jdbcTemplate.queryForObject(
+        "select count(*) from knowledge_base_document where id = ? and tenant_id <> ?",
+        Integer.class,
+        id,
+        tenantId);
+    return count != null && count > 0;
+  }
+
+  public boolean storeExistsOutsideTenant(long tenantId, String storeId) {
+    Integer count = jdbcTemplate.queryForObject(
+        "select count(*) from store_branch where id = ? and tenant_id <> ?",
+        Integer.class,
+        storeId,
+        tenantId);
+    return count != null && count > 0;
   }
 
   public Optional<DocumentContentRow> findDocumentContent(long tenantId, long id) {

@@ -368,6 +368,7 @@ const transferRecords = (warehouseId: number) => {
 
 interface RequestLog {
   urls: string[]
+  itemBodies: Record<string, unknown>[]
   requisitionBody: Record<string, unknown> | null
   requisitionReviewBodies: Record<string, unknown>[]
   requisitionShipCount: number
@@ -379,6 +380,7 @@ interface RequestLog {
 async function prepare(page: Page, session: typeof baseSession) {
   const log: RequestLog = {
     urls: [],
+    itemBodies: [],
     requisitionBody: null,
     requisitionReviewBodies: [],
     requisitionShipCount: 0,
@@ -429,7 +431,28 @@ async function fulfillApi(route: Route, session: typeof baseSession, log: Reques
     const warehouseId = Number(url.searchParams.get('warehouseId') || 1)
     return route.fulfill(ok(transferRecords(warehouseId)))
   }
-  if (path === '/api/warehouse/item-categories' || path === '/api/warehouse/returns') return route.fulfill(ok([]))
+  if (path === '/api/warehouse/item-categories') {
+    return route.fulfill(ok([{ id: 1, name: '耗材', sortOrder: 1, enabled: true, children: [] }]))
+  }
+  if (path === '/api/warehouse/items/requisition-scope-context') {
+    return route.fulfill(ok({
+      activeStoreCount: 3,
+      regions: [
+        { code: 'JINGZHOU', name: '荆州区域' },
+        { code: 'SHANDONG', name: '山东区域' },
+      ],
+      stores: [
+        { id: 'rg1', name: '荆州之星店', regionCode: 'JINGZHOU' },
+        { id: 'bw1', name: '滨江万达店', regionCode: 'SHANDONG' },
+        { id: 'xnm1', name: '西南商圈店', regionCode: 'SHANDONG' },
+      ],
+    }))
+  }
+  if (path === '/api/warehouse/items' && request.method() === 'POST') {
+    log.itemBodies.push(request.postDataJSON())
+    return route.fulfill(ok(null))
+  }
+  if (path === '/api/warehouse/returns') return route.fulfill(ok([]))
   if (path === `/api/warehouse/requisitions/${shortageRequisition.id}/review` && request.method() === 'POST') {
     log.requisitionReviewBodies.push(request.postDataJSON())
     return route.fulfill(ok(null))
@@ -444,9 +467,9 @@ async function fulfillApi(route: Route, session: typeof baseSession, log: Reques
   }
   if (path === '/api/stores') {
     return route.fulfill(ok([
-      { id: 'rg1', name: '荆州之星店', brandName: '茹菓', status: 'ACTIVE' },
-      { id: 'bw1', name: '滨江万达店', brandName: '百味鸡', status: 'ACTIVE' },
-      { id: 'xnm1', name: '西南商圈店', brandName: '小柠檬', status: 'ACTIVE' },
+      { id: 'rg1', name: '荆州之星店', brandName: '茹菓', status: 'ACTIVE', regionCode: 'JINGZHOU' },
+      { id: 'bw1', name: '滨江万达店', brandName: '百味鸡', status: 'ACTIVE', regionCode: 'SHANDONG' },
+      { id: 'xnm1', name: '西南商圈店', brandName: '小柠檬', status: 'ACTIVE', regionCode: 'SHANDONG' },
     ]))
   }
   if (path === '/api/users') {
@@ -576,6 +599,65 @@ test('central warehouse without pending work falls back to proactive allocation 
   await expect(page.getByRole('link', { name: '向分仓配货', exact: true })).toBeVisible()
   await expect(page.getByText('当前没有需要优先处理的事项。', { exact: true })).toBeVisible()
   await expect(page.getByRole('link', { name: /处理 .*笔调拨/ })).toHaveCount(0)
+  expect(log.consoleErrors).toEqual([])
+})
+
+test('item editor requires explicit scope, confirms all stores, and submits region-store union', async ({ page }) => {
+  const log = await prepare(page, baseSession)
+  await page.goto('/warehouse/items')
+
+  await page.getByRole('button', { name: '新增物料', exact: true }).click()
+  let editor = page.getByRole('dialog', { name: '新增物料档案' })
+  await editor.getByLabel('物品名称').fill('全门店测试物料')
+  await editor.getByLabel('编号').fill('SCOPE-ALL')
+  await editor.getByLabel('类别').selectOption('1')
+  await expect(editor.getByRole('button', { name: '保存物料' })).toBeDisabled()
+  await expect(editor.getByText('请选择全部门店或指定区域、指定门店。')).toBeVisible()
+
+  await editor.getByRole('radio', { name: /全部门店/ }).check()
+  await expect(editor.locator('.scope-coverage')).toContainText('当前将覆盖 3 家营业门店')
+  await editor.getByRole('button', { name: '保存物料' }).click()
+
+  const allStoresConfirmation = page.getByRole('alertdialog', { name: '确认允许全部门店叫货？' })
+  await expect(allStoresConfirmation).toContainText('当前 3 家营业门店')
+  await allStoresConfirmation.getByRole('button', { name: '确认全部门店并保存' }).click()
+  await expect.poll(() => log.itemBodies.length).toBe(1)
+  expect(log.itemBodies[0]).toMatchObject({
+    code: 'SCOPE-ALL',
+    requisitionPolicy: {
+      scopeMode: 'ALL',
+      regionCodes: [],
+      storeIds: [],
+    },
+  })
+
+  await page.getByRole('button', { name: '新增物料', exact: true }).click()
+  editor = page.getByRole('dialog', { name: '新增物料档案' })
+  await editor.getByLabel('物品名称').fill('区域门店并集测试物料')
+  await editor.getByLabel('编号').fill('SCOPE-UNION')
+  await editor.getByLabel('类别').selectOption('1')
+  await editor.getByRole('radio', { name: /指定区域/ }).check()
+  await editor.getByRole('checkbox', { name: '山东区域 SHANDONG', exact: true }).check()
+  await expect(editor.locator('.scope-coverage')).toContainText('当前将覆盖 2 家营业门店')
+  await editor.getByRole('checkbox', { name: /荆州之星店/ }).check()
+  await expect(editor.locator('.scope-coverage')).toContainText('当前将覆盖 3 家营业门店')
+  await editor.getByLabel('活动名称（选填）').fill('山东联动活动')
+  await editor.getByLabel('生效开始时间（选填）').fill('2026-07-24T08:00')
+  await editor.getByLabel('生效结束时间（选填）').fill('2026-08-24T23:00')
+  await editor.getByRole('button', { name: '保存物料' }).click()
+
+  await expect.poll(() => log.itemBodies.length).toBe(2)
+  expect(log.itemBodies[1]).toMatchObject({
+    code: 'SCOPE-UNION',
+    requisitionPolicy: {
+      scopeMode: 'SELECTED',
+      regionCodes: ['SHANDONG'],
+      storeIds: ['rg1'],
+      campaignName: '山东联动活动',
+      startsAt: '2026-07-24T08:00',
+      endsAt: '2026-08-24T23:00',
+    },
+  })
   expect(log.consoleErrors).toEqual([])
 })
 
@@ -858,23 +940,15 @@ test('warehouse shortage controls remain usable without whole-page overflow on m
   expect(log.consoleErrors).toEqual([])
 })
 
-test('boss assigns warehouse range with warehouseIds instead of storeIds', async ({ page }) => {
+test('warehouse role keeps its tenant-wide warehouse scope read-only', async ({ page }) => {
   const log = await prepare(page, baseSession)
   await page.goto('/users')
   await page.getByRole('button', { name: '配置 warehouse_admin 的账号授权' }).click()
-  await expect(page.getByLabel('仓库数据范围')).toHaveValue('WAREHOUSE_LIST')
-  const warehousePicker = page.getByLabel('指定仓库范围')
-  await warehousePicker.getByText('山东分仓 · 区域分仓').click()
+  await expect(page.getByLabel('仓库数据范围')).toHaveValue('ALL')
+  await expect(page.getByLabel('仓库数据范围')).toBeDisabled()
+  await expect(page.getByLabel('指定仓库范围')).toHaveCount(0)
   await page.screenshot({ path: '../output/playwright/warehouse-permission-scope.png', fullPage: true })
-  await page.getByRole('button', { name: '保存账号授权' }).click()
-  await expect.poll(() => log.accessProfileBody).not.toBeNull()
-  const scopes = (log.accessProfileBody?.dataScopes || []) as Array<Record<string, unknown>>
-  const warehouseScope = scopes.find((scope) => scope.domainCode === 'WAREHOUSE')
-  expect(warehouseScope).toMatchObject({
-    mode: 'WAREHOUSE_LIST',
-    storeIds: [],
-    warehouseIds: ['1', '2'],
-  })
+  expect(log.accessProfileBody).toBeNull()
   expect(log.consoleErrors).toEqual([])
 })
 

@@ -84,6 +84,29 @@ class DataScopeServiceTest {
   }
 
   @Test
+  void configuredScopeStillHonorsAnExplicitSupervisorStoreList() {
+    AuthUser supervisor = user("SUPERVISOR");
+    when(repository.assignmentsForUser(1L, 7L)).thenReturn(List.of(
+        new DataScopeAssignmentRow(DataScopeDomains.STORE, DataScopeModes.STORE_LIST, "[\"rg1\",\"rg2\"]"),
+        new DataScopeAssignmentRow(DataScopeDomains.INSPECTION, DataScopeModes.STORE_LIST, "[\"rg1\"]")
+    ));
+
+    assertThat(service.configuredScope(supervisor, DataScopeDomains.STORE))
+        .isEqualTo(new DataScope(DataScopeModes.STORE_LIST, List.of("rg1", "rg2")));
+  }
+
+  @Test
+  void configuredScopeRejectsLegacySupervisorAllAssignment() {
+    AuthUser supervisor = user("SUPERVISOR");
+    when(repository.assignmentsForUser(1L, 7L)).thenReturn(List.of(
+        new DataScopeAssignmentRow(DataScopeDomains.STORE, DataScopeModes.ALL, null)
+    ));
+
+    assertThat(service.configuredScope(supervisor, DataScopeDomains.STORE))
+        .isEqualTo(DataScope.none());
+  }
+
+  @Test
   void supervisorFallbackReturnsGlobalAllStoreScopeAndNeverPerStoreList() {
     AuthUser supervisor = user("SUPERVISOR");
     when(repository.assignmentsForUser(1L, 7L)).thenReturn(List.of());

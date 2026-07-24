@@ -3,6 +3,7 @@ package com.storeprofit.system.dailyloss;
 import com.storeprofit.system.audit.AuditLogRequest;
 import com.storeprofit.system.audit.AuditRepository;
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.organization.StoreBusinessGuard;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
 import com.storeprofit.system.platform.authorization.DataScope;
@@ -33,6 +34,7 @@ import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.util.CellRangeAddress;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.http.HttpStatus;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -53,6 +55,24 @@ public class DailyLossService {
   private final StorageService storageService;
   private final AccessControlService accessControl;
   private final AuditRepository auditRepository;
+  private final StoreBusinessGuard storeBusinessGuard;
+
+  @Autowired
+  public DailyLossService(
+      DailyLossRepository repository,
+      WarehouseRepository warehouseRepository,
+      StorageService storageService,
+      AccessControlService accessControl,
+      AuditRepository auditRepository,
+      StoreBusinessGuard storeBusinessGuard
+  ) {
+    this.repository = repository;
+    this.warehouseRepository = warehouseRepository;
+    this.storageService = storageService;
+    this.accessControl = accessControl;
+    this.auditRepository = auditRepository;
+    this.storeBusinessGuard = storeBusinessGuard;
+  }
 
   public DailyLossService(
       DailyLossRepository repository,
@@ -61,11 +81,7 @@ public class DailyLossService {
       AccessControlService accessControl,
       AuditRepository auditRepository
   ) {
-    this.repository = repository;
-    this.warehouseRepository = warehouseRepository;
-    this.storageService = storageService;
-    this.accessControl = accessControl;
-    this.auditRepository = auditRepository;
+    this(repository, warehouseRepository, storageService, accessControl, auditRepository, null);
   }
 
   @Transactional(readOnly = true)
@@ -179,6 +195,7 @@ public class DailyLossService {
     }
     String storeId = requiredText(request.storeId(), "请选择门店");
     requireStoreScope(user, storeId, "提交每日报损");
+    requireActiveStoreForNewBusiness(user, storeId);
     if (!repository.storeExists(user.tenantId(), storeId)) {
       throw new BusinessException("DAILY_LOSS_STORE_NOT_FOUND", "报损门店不存在", HttpStatus.NOT_FOUND);
     }
@@ -385,6 +402,7 @@ public class DailyLossService {
     }
     String storeId = requiredText(request.storeId(), "请选择门店");
     requireStoreScope(user, storeId, "提交每日报损");
+    requireActiveStoreForNewBusiness(user, storeId);
     if (!repository.storeExists(user.tenantId(), storeId)) {
       throw new BusinessException("DAILY_LOSS_STORE_NOT_FOUND", "报损门店不存在", HttpStatus.NOT_FOUND);
     }
@@ -478,6 +496,12 @@ public class DailyLossService {
 
   private void requireStoreScope(AuthUser user, String storeId, String action) {
     accessControl.requireStoreAccess(user, dailyLossDataScopeDomain(user), storeId, action);
+  }
+
+  private void requireActiveStoreForNewBusiness(AuthUser user, String storeId) {
+    if (storeBusinessGuard != null) {
+      storeBusinessGuard.requireActive(user, storeId, "报损单");
+    }
   }
 
   private DataScope dailyLossScope(AuthUser user) {

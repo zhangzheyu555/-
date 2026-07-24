@@ -11,6 +11,7 @@ import WarehouseMaterialEditor from '../components/warehouse/WarehouseMaterialEd
 import WarehouseMovementPanel from '../components/warehouse/WarehouseMovementPanel.vue'
 import WarehousePurchaseReceivePanel from '../components/warehouse/WarehousePurchaseReceivePanel.vue'
 import WarehouseRequisitionPanel from '../components/warehouse/WarehouseRequisitionPanel.vue'
+import WarehouseRequisitionSummaryExport from '../components/warehouse/WarehouseRequisitionSummaryExport.vue'
 import WarehouseReturnPanel from '../components/warehouse/WarehouseReturnPanel.vue'
 import WarehouseStatCards from '../components/warehouse/WarehouseStatCards.vue'
 import WarehouseNetworkOverview from '../components/warehouse/WarehouseNetworkOverview.vue'
@@ -19,10 +20,12 @@ import { useWarehouseStore, type WarehouseTab } from '../stores/warehouse'
 import { useAuthStore } from '../stores/auth'
 import { PERMISSIONS } from '../permissions/permissions'
 import { getStores, type StoreInfo } from '../api/operations'
+import { getWarehouseItemRequisitionScopeContext } from '../api/warehouse'
 import type {
   WarehouseInfo,
   WarehouseItem,
   WarehouseItemPayload,
+  WarehouseItemRequisitionScopeContext,
   WarehousePurchaseOrderCreatePayload,
   WarehousePurchaseOrderReceivePayload,
   WarehouseTransferCreatePayload,
@@ -59,6 +62,8 @@ const confirmationNote = ref('')
 const confirmationBusy = ref(false)
 const requisitionStores = ref<StoreInfo[]>([])
 const requisitionStoresAttempted = ref(false)
+const itemScopeContext = ref<WarehouseItemRequisitionScopeContext | null>(null)
+const itemScopeContextAttempted = ref(false)
 
 const overview = computed(() => warehouse.overview)
 const items = computed(() => overview.value?.items || [])
@@ -74,6 +79,19 @@ const movements = computed(() => overview.value?.movements || [])
 const returns = computed(() => warehouse.returns || [])
 const alerts = computed(() => overview.value?.alerts || [])
 const accessibleWarehouses = computed(() => warehouse.warehouses.filter((row) => row.enabled !== false))
+const itemScopeRegions = computed(() => {
+  const regions = new Map<string, string>()
+  for (const region of itemScopeContext.value?.regions || []) {
+    const code = region.code?.trim().toUpperCase()
+    if (code) regions.set(code, region.name?.trim() || code)
+  }
+  for (const facility of accessibleWarehouses.value) {
+    const code = facility.regionCode?.trim().toUpperCase()
+    if (!code || regions.has(code)) continue
+    regions.set(code, code === 'JINGZHOU' ? '荆州区域' : (code === 'SHANDONG' ? '山东区域' : facility.name))
+  }
+  return Array.from(regions, ([code, name]) => ({ code, name }))
+})
 const selectedWarehouse = computed(() => accessibleWarehouses.value.find((row) => String(row.id) === String(warehouse.selectedWarehouseId)) || null)
 const centralWarehouse = computed(() => accessibleWarehouses.value.find((row) => row.type === 'CENTRAL') || null)
 const isBoss = computed(() => auth.role === 'BOSS')
@@ -104,6 +122,10 @@ const canProcessRequisition = computed(() => (
   isBoss.value
   || hasPermission(PERMISSIONS.WAREHOUSE_REQUISITION_PROCESS)
   || hasPermission(PERMISSIONS.WAREHOUSE_REQUISITION_REVIEW)
+))
+const canExportRequisitionSummary = computed(() => (
+  hasPermission(PERMISSIONS.WAREHOUSE_READ)
+  || hasPermission(PERMISSIONS.WAREHOUSE_CENTRAL_READ)
 ))
 const showWarehouseSwitcher = computed(() => accessibleWarehouses.value.length > 1 && currentTab() !== 'overview')
 const warehouseDetailSection = computed(() => String(route.meta.warehouseSection || 'inventory'))
@@ -367,6 +389,16 @@ async function ensureRequisitionStoresLoaded() {
   }
 }
 
+async function ensureItemScopeContextLoaded() {
+  if (itemScopeContextAttempted.value) return
+  itemScopeContextAttempted.value = true
+  try {
+    itemScopeContext.value = await getWarehouseItemRequisitionScopeContext()
+  } catch {
+    itemScopeContext.value = null
+  }
+}
+
 async function setTab(tab: WarehouseTab) {
   try {
     await router.push(
@@ -487,12 +519,14 @@ function statusClass(severity: string) {
   return severity === 'RISK' ? 'risk' : 'warn'
 }
 
-function openCreateItem() {
+async function openCreateItem() {
+  await ensureItemScopeContextLoaded()
   editorItem.value = null
   editorOpen.value = true
 }
 
-function openEditItem(item: WarehouseItem) {
+async function openEditItem(item: WarehouseItem) {
+  await ensureItemScopeContextLoaded()
   editorItem.value = item
   editorOpen.value = true
 }
@@ -893,22 +927,32 @@ watch(
       @cancel="requestTransferAction('cancel-transfer', $event)"
     />
 
-    <WarehouseRequisitionPanel
+    <section
       v-else-if="currentTab() === 'requisitions'"
-      :requisitions="requisitions"
-      :items="items"
-      :stores="requisitionStores"
-      :actioning-id="warehouse.actioningId"
-      :downloading-id="warehouse.downloadingId"
-      :can-manage="canProcessRequisition"
-      @approve="approveRequisition"
-      @fulfill-available="fulfillAvailableRequisition"
-      @mark-backorder="markBackorderRequisition"
-      @wait-replenishment="waitReplenishmentRequisition"
-      @reject="rejectRequisition"
-      @ship="shipRequisition"
-      @download-delivery="downloadDelivery"
-    />
+      class="section-stack"
+    >
+      <WarehouseRequisitionSummaryExport
+        v-if="canExportRequisitionSummary"
+        :warehouse-id="selectedWarehouse?.id"
+        :stores="requisitionStores"
+        :items="items"
+      />
+      <WarehouseRequisitionPanel
+        :requisitions="requisitions"
+        :items="items"
+        :stores="requisitionStores"
+        :actioning-id="warehouse.actioningId"
+        :downloading-id="warehouse.downloadingId"
+        :can-manage="canProcessRequisition"
+        @approve="approveRequisition"
+        @fulfill-available="fulfillAvailableRequisition"
+        @mark-backorder="markBackorderRequisition"
+        @wait-replenishment="waitReplenishmentRequisition"
+        @reject="rejectRequisition"
+        @ship="shipRequisition"
+        @download-delivery="downloadDelivery"
+      />
+    </section>
 
     <WarehousePurchaseReceivePanel
       v-else-if="currentTab() === 'purchase' && selectedWarehouse?.type === 'CENTRAL' && canPurchase"
@@ -990,6 +1034,9 @@ watch(
       v-if="editorOpen"
       :item="editorItem"
       :categories="warehouse.categories"
+      :stores="itemScopeContext?.stores || []"
+      :regions="itemScopeRegions"
+      :scope-context-available="Boolean(itemScopeContext)"
       :saving="warehouse.actioningId.startsWith('item:')"
       @close="editorOpen = false"
       @save="saveItem"

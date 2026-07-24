@@ -755,6 +755,77 @@ public class AccessControlService {
         "督导只能管理本人数据范围内的门店资料");
   }
 
+  /**
+   * Uses the account's persisted STORE assignment rather than the supervisor compatibility
+   * shortcut that grants global scope to other operational modules.
+   */
+  public DataScope knowledgeBaseManagementStoreScope(AuthUser user) {
+    if (isBoss(user)) {
+      return DataScope.all();
+    }
+    if (!hasAnyRole(user, "SUPERVISOR")) {
+      return DataScope.none();
+    }
+    return configuredKnowledgeBaseSupervisorScope(user);
+  }
+
+  /**
+   * Resolves STORE visibility for every knowledge-base read path. Supervisors deliberately use
+   * their persisted STORE_LIST instead of the legacy role-wide ALL shortcut; other roles retain
+   * their existing operational data scope and direct store binding.
+   */
+  public DataScope knowledgeBaseReadStoreScope(AuthUser user) {
+    if (isBoss(user)) {
+      return DataScope.all();
+    }
+    if (hasAnyRole(user, "SUPERVISOR")) {
+      return configuredKnowledgeBaseSupervisorScope(user);
+    }
+    DataScope scope = dataScope(user, DataScopeDomains.STORE);
+    if (scope.allowsAllStores()) {
+      return DataScope.all();
+    }
+    LinkedHashSet<String> storeIds = new LinkedHashSet<>(scope.storeIds());
+    if (user != null && user.storeId() != null && !user.storeId().isBlank()) {
+      storeIds.add(user.storeId().trim());
+    }
+    return storeIds.isEmpty()
+        ? DataScope.none()
+        : new DataScope(DataScopeModes.STORE_LIST, storeIds.stream().sorted().toList());
+  }
+
+  private DataScope configuredKnowledgeBaseSupervisorScope(AuthUser user) {
+    if (dataScopeService != null) {
+      DataScope configured = dataScopeService.configuredScope(user, DataScopeDomains.STORE);
+      return DataScopeModes.STORE_LIST.equals(configured.mode()) ? configured : DataScope.none();
+    }
+    LinkedHashSet<String> storeIds = new LinkedHashSet<>();
+    if (user.storeId() != null && !user.storeId().isBlank()) {
+      storeIds.add(user.storeId().trim());
+    }
+    storeIds.addAll(authRepository.assignedStoreScope(user.tenantId(), user.id()));
+    return storeIds.isEmpty()
+        ? DataScope.none()
+        : new DataScope(DataScopeModes.STORE_LIST, storeIds.stream().sorted().toList());
+  }
+
+  public boolean canManageKnowledgeBaseStore(AuthUser user, String storeId) {
+    return knowledgeBaseManagementStoreScope(user).allowsStore(storeId);
+  }
+
+  public void requireKnowledgeBaseStoreAccess(AuthUser user, String storeId) {
+    if (canManageKnowledgeBaseStore(user, storeId)) {
+      return;
+    }
+    deny(user, "设置知识库资料门店范围", "STORE", storeId, storeId,
+        "门店不在当前账号配置的知识库管理范围内");
+  }
+
+  public void rejectKnowledgeBaseCrossTenantStore(AuthUser user, String storeId) {
+    deny(user, "设置知识库资料门店范围", "STORE", storeId, storeId,
+        "不能引用其他企业的门店");
+  }
+
   /** Records a single auditable refusal when a document fails row-level visibility checks. */
   public void requireKnowledgeBaseDocumentRead(AuthUser user, boolean allowed, long documentId) {
     requireKnowledgeBaseSearch(user);

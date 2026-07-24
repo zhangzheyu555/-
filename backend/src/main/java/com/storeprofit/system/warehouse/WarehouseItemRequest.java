@@ -32,6 +32,7 @@ public record WarehouseItemRequest(
     Integer sortOrder,
     String itemAttributes,
     Boolean active,
-    List<WarehouseItemDepartmentRequest> departments
+    List<WarehouseItemDepartmentRequest> departments,
+    WarehouseItemRequisitionPolicyRequest requisitionPolicy
 ) {
 }

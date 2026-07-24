@@ -3,11 +3,14 @@ package com.storeprofit.system.expense;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.organization.StoreBusinessGuard;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
 import com.storeprofit.system.platform.authorization.DataScope;
@@ -33,6 +36,34 @@ class ExpenseServiceTest {
   private JdbcTemplate jdbcTemplate;
   private ExpenseService service;
   private ExpenseRepository repository;
+
+  @Test
+  void inactiveStoreCannotCreateANewExpenseClaimThroughTheService() {
+    ExpenseRepository expenseRepository = mock(ExpenseRepository.class);
+    StoreBusinessGuard guard = mock(StoreBusinessGuard.class);
+    AuthUser manager = storeManager();
+    doThrow(new BusinessException(
+        "STORE_INACTIVE_NEW_BUSINESS_FORBIDDEN",
+        "门店已停用，不能创建新的费用单",
+        org.springframework.http.HttpStatus.CONFLICT
+    )).when(guard).requireActive(manager, "s1", "费用单");
+    ExpenseService guarded = new ExpenseService(
+        expenseRepository, null, null, null, null, null, guard);
+
+    assertThatThrownBy(() -> guarded.save(
+        manager, null, request("s1", "2026-05", "128.50")))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode())
+            .isEqualTo("STORE_INACTIVE_NEW_BUSINESS_FORBIDDEN"));
+
+    verify(expenseRepository, never()).upsert(
+        org.mockito.ArgumentMatchers.anyLong(),
+        org.mockito.ArgumentMatchers.anyString(),
+        org.mockito.ArgumentMatchers.any(),
+        org.mockito.ArgumentMatchers.anyString(),
+        org.mockito.ArgumentMatchers.any()
+    );
+  }
 
   @BeforeEach
   void setUp() {

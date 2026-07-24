@@ -23,14 +23,15 @@ public class WarehouseRepository {
   private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
   private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
   private final JdbcTemplate jdbcTemplate;
+  private volatile Boolean requisitionPolicyTablesAvailable;
 
   public WarehouseRepository(JdbcTemplate jdbcTemplate) {
     this.jdbcTemplate = jdbcTemplate;
   }
 
   public List<WarehouseItemResponse> items(long tenantId) {
-    return jdbcTemplate.query("""
-        select i.id, i.code, i.name, i.category_id, coalesce(c.name, i.category) as category_name,
+    List<WarehouseItemResponse> rows = jdbcTemplate.query("""
+        select i.tenant_id, i.id, i.code, i.name, i.category_id, coalesce(c.name, i.category) as category_name,
                i.category, i.image_url, i.unit, i.purchase_unit, i.stock_unit, i.ingredient_unit,
                i.unit_conversion_text, i.spec, i.warehouse_location, i.unit_price, i.shelf_life_days,
                i.cups_per_unit, i.daily_usage_estimate, i.min_stock_days, i.max_stock_days,
@@ -42,7 +43,7 @@ public class WarehouseRepository {
         left join warehouse_item_category c on c.tenant_id = i.tenant_id and c.id = i.category_id
         left join warehouse_stock_batch b on b.tenant_id = i.tenant_id and b.item_id = i.id
         where i.tenant_id = ?
-        group by i.id, i.code, i.name, i.category_id, c.name, i.category, i.image_url, i.unit,
+        group by i.tenant_id, i.id, i.code, i.name, i.category_id, c.name, i.category, i.image_url, i.unit,
                  i.purchase_unit, i.stock_unit, i.ingredient_unit, i.unit_conversion_text,
                  i.spec, i.warehouse_location, i.unit_price, i.shelf_life_days, i.cups_per_unit,
                  i.daily_usage_estimate, i.min_stock_days, i.max_stock_days, i.min_stock_quantity,
@@ -50,6 +51,7 @@ public class WarehouseRepository {
                  i.item_attributes
         order by i.active desc, i.sort_order, category_name, i.code
         """, this::mapItem, tenantId);
+    return withItemRequisitionPolicies(tenantId, rows);
   }
 
   public Optional<WarehouseItemResponse> item(long tenantId, long itemId) {
@@ -148,6 +150,216 @@ public class WarehouseRepository {
         itemId
     );
     return count != null && count > 0;
+  }
+
+  public boolean itemAvailableForStoreRequisition(long tenantId, long itemId, String storeId) {
+    if (!requisitionPolicyTablesAvailable()) {
+      return itemExists(tenantId, itemId);
+    }
+    Boolean available = jdbcTemplate.query("""
+        select case
+          when policy.item_id is null then true
+          when policy.starts_at is not null and current_timestamp < policy.starts_at then false
+          when policy.ends_at is not null and current_timestamp > policy.ends_at then false
+          when policy.scope_mode = 'ALL' then true
+          when policy.scope_mode = 'SELECTED' and exists (
+            select 1
+            from warehouse_item_requisition_target target
+            where target.tenant_id = item.tenant_id
+              and target.item_id = item.id
+              and (
+                (target.target_type = 'STORE' and target.target_value = ?)
+                or (
+                  target.target_type = 'REGION'
+                  and target.target_value = coalesce((
+                    select upper(store.region_code)
+                    from store_branch store
+                    where store.tenant_id = item.tenant_id and store.id = ?
+                    limit 1
+                  ), '')
+                )
+              )
+          ) then true
+          else false
+        end as available
+        from warehouse_item item
+        left join warehouse_item_requisition_policy policy
+          on policy.tenant_id = item.tenant_id and policy.item_id = item.id
+        where item.tenant_id = ? and item.id = ?
+        """, (rs, rowNum) -> rs.getBoolean("available"),
+        storeId, storeId, tenantId, itemId)
+        .stream()
+        .findFirst()
+        .orElse(false);
+    return Boolean.TRUE.equals(available);
+  }
+
+  public List<Long> itemIdsAvailableForStoreRequisition(long tenantId, String storeId) {
+    if (!requisitionPolicyTablesAvailable()) {
+      return jdbcTemplate.queryForList(
+          "select id from warehouse_item where tenant_id = ?",
+          Long.class,
+          tenantId
+      );
+    }
+    return jdbcTemplate.queryForList("""
+        select item.id
+        from warehouse_item item
+        left join warehouse_item_requisition_policy policy
+          on policy.tenant_id = item.tenant_id and policy.item_id = item.id
+        where item.tenant_id = ?
+          and (
+            policy.item_id is null
+            or (
+              (policy.starts_at is null or current_timestamp >= policy.starts_at)
+              and (policy.ends_at is null or current_timestamp <= policy.ends_at)
+              and (
+                policy.scope_mode = 'ALL'
+                or (
+                  policy.scope_mode = 'SELECTED'
+                  and exists (
+                    select 1
+                    from warehouse_item_requisition_target target
+                    where target.tenant_id = item.tenant_id
+                      and target.item_id = item.id
+                      and (
+                        (target.target_type = 'STORE' and target.target_value = ?)
+                        or (
+                          target.target_type = 'REGION'
+                          and target.target_value = coalesce((
+                            select upper(store.region_code)
+                            from store_branch store
+                            where store.tenant_id = item.tenant_id and store.id = ?
+                            limit 1
+                          ), '')
+                        )
+                      )
+                  )
+                )
+              )
+            )
+          )
+        """, Long.class, tenantId, storeId, storeId);
+  }
+
+  public WarehouseItemRequisitionPolicyResponse itemRequisitionPolicy(long tenantId, long itemId) {
+    if (!requisitionPolicyTablesAvailable()) {
+      return WarehouseItemRequisitionPolicyResponse.legacyAllStores();
+    }
+    return jdbcTemplate.query("""
+        select scope_mode, campaign_name, starts_at, ends_at
+        from warehouse_item_requisition_policy
+        where tenant_id = ? and item_id = ?
+        """, (rs, rowNum) -> new WarehouseItemRequisitionPolicyResponse(
+        rs.getString("scope_mode"),
+        itemRequisitionTargets(tenantId, itemId, "REGION"),
+        itemRequisitionTargets(tenantId, itemId, "STORE"),
+        rs.getString("campaign_name"),
+        rs.getObject("starts_at", LocalDateTime.class),
+        rs.getObject("ends_at", LocalDateTime.class),
+        true
+    ), tenantId, itemId).stream().findFirst()
+        .orElseGet(WarehouseItemRequisitionPolicyResponse::legacyAllStores);
+  }
+
+  public void replaceItemRequisitionPolicy(
+      long tenantId,
+      long itemId,
+      WarehouseItemRequisitionPolicyRequest policy,
+      Long updatedBy
+  ) {
+    jdbcTemplate.update("""
+        insert into warehouse_item_requisition_policy(
+          tenant_id, item_id, scope_mode, campaign_name, starts_at, ends_at, updated_by,
+          created_at, updated_at
+        )
+        values (?, ?, ?, ?, ?, ?, ?, current_timestamp, current_timestamp)
+        on duplicate key update
+          scope_mode = values(scope_mode),
+          campaign_name = values(campaign_name),
+          starts_at = values(starts_at),
+          ends_at = values(ends_at),
+          updated_by = values(updated_by),
+          updated_at = current_timestamp
+        """,
+        tenantId,
+        itemId,
+        policy.scopeMode(),
+        blankToNull(policy.campaignName()),
+        policy.startsAt(),
+        policy.endsAt(),
+        updatedBy
+    );
+    jdbcTemplate.update(
+        "delete from warehouse_item_requisition_target where tenant_id = ? and item_id = ?",
+        tenantId,
+        itemId
+    );
+    insertItemRequisitionTargets(tenantId, itemId, "REGION", policy.regionCodes());
+    insertItemRequisitionTargets(tenantId, itemId, "STORE", policy.storeIds());
+  }
+
+  public boolean activeStoreExists(long tenantId, String storeId) {
+    Integer count = jdbcTemplate.queryForObject("""
+        select count(*)
+        from store_branch
+        where tenant_id = ? and id = ?
+          and (status is null or trim(status) = '' or upper(status) = 'ACTIVE' or status = '营业中')
+        """, Integer.class, tenantId, storeId);
+    return count != null && count > 0;
+  }
+
+  public boolean requisitionRegionExists(long tenantId, String regionCode) {
+    Integer storeCount = jdbcTemplate.queryForObject("""
+        select count(*) from store_branch
+        where tenant_id = ? and upper(region_code) = ?
+        """, Integer.class, tenantId, regionCode);
+    if (storeCount != null && storeCount > 0) {
+      return true;
+    }
+    if (!hasColumn("warehouse_facility", "region_code")) {
+      return false;
+    }
+    Integer warehouseCount = jdbcTemplate.queryForObject("""
+        select count(*) from warehouse_facility
+        where tenant_id = ? and upper(region_code) = ?
+        """, Integer.class, tenantId, regionCode);
+    return warehouseCount != null && warehouseCount > 0;
+  }
+
+  public List<WarehouseItemRequisitionScopeContextResponse.StoreOption> activeRequisitionStores(long tenantId) {
+    return jdbcTemplate.query("""
+        select id, name, upper(region_code) as region_code
+        from store_branch
+        where tenant_id = ?
+          and (status is null or trim(status) = '' or upper(status) = 'ACTIVE' or status = '营业中')
+        order by id
+        """, (rs, rowNum) -> new WarehouseItemRequisitionScopeContextResponse.StoreOption(
+        rs.getString("id"),
+        rs.getString("name"),
+        rs.getString("region_code")
+    ), tenantId);
+  }
+
+  public List<String> requisitionRegionCodes(long tenantId) {
+    ArrayList<String> regionCodes = new ArrayList<>();
+    if (hasColumn("warehouse_facility", "region_code")) {
+      regionCodes.addAll(jdbcTemplate.queryForList("""
+          select distinct upper(region_code)
+          from warehouse_facility
+          where tenant_id = ? and enabled = 1 and region_code is not null and trim(region_code) <> ''
+          """, String.class, tenantId));
+    }
+    for (String regionCode : jdbcTemplate.queryForList("""
+        select distinct upper(region_code)
+        from store_branch
+        where tenant_id = ? and region_code is not null and trim(region_code) <> ''
+        """, String.class, tenantId)) {
+      if (!regionCodes.contains(regionCode)) {
+        regionCodes.add(regionCode);
+      }
+    }
+    return regionCodes.stream().sorted().toList();
   }
 
   public long upsertItem(long tenantId, WarehouseItemRequest request) {
@@ -436,8 +648,8 @@ public class WarehouseRepository {
   }
 
   public List<WarehouseItemResponse> items(long tenantId, long warehouseId) {
-    return jdbcTemplate.query("""
-        select i.id, i.code, i.name, i.category_id, coalesce(c.name, i.category) as category_name,
+    List<WarehouseItemResponse> rows = jdbcTemplate.query("""
+        select i.tenant_id, i.id, i.code, i.name, i.category_id, coalesce(c.name, i.category) as category_name,
                i.category, i.image_url, i.unit, i.purchase_unit, i.stock_unit, i.ingredient_unit,
                i.unit_conversion_text, i.spec, i.warehouse_location, i.unit_price, i.shelf_life_days,
                i.cups_per_unit, i.daily_usage_estimate, i.min_stock_days, i.max_stock_days,
@@ -454,7 +666,7 @@ public class WarehouseRepository {
         left join warehouse_stock_batch b
           on b.tenant_id = i.tenant_id and b.item_id = i.id and b.warehouse_id = ?
         where i.tenant_id = ?
-        group by i.id, i.code, i.name, i.category_id, c.name, i.category, i.image_url, i.unit,
+        group by i.tenant_id, i.id, i.code, i.name, i.category_id, c.name, i.category, i.image_url, i.unit,
                  i.purchase_unit, i.stock_unit, i.ingredient_unit, i.unit_conversion_text,
                  i.spec, i.warehouse_location, i.unit_price, i.shelf_life_days, i.cups_per_unit,
                  i.daily_usage_estimate, i.min_stock_days, i.max_stock_days,
@@ -464,6 +676,7 @@ public class WarehouseRepository {
                  inv.on_hand_quantity, inv.reserved_quantity
         order by i.active desc, i.sort_order, category_name, i.code
         """, this::mapItem, warehouseId, warehouseId, tenantId);
+    return withItemRequisitionPolicies(tenantId, rows);
   }
 
   public Optional<WarehouseItemResponse> item(long tenantId, long itemId, long warehouseId) {
@@ -808,6 +1021,143 @@ public class WarehouseRepository {
     return requisitions(tenantId, storeId, null);
   }
 
+  public List<WarehouseRequisitionSummaryDailyRow> requisitionSummaryDaily(
+      long tenantId,
+      LocalDate startDate,
+      LocalDate endDate,
+      List<String> storeIds,
+      List<Long> productIds
+  ) {
+    return requisitionSummaryDaily(
+        tenantId,
+        startDate,
+        endDate,
+        storeIds,
+        productIds,
+        null
+    );
+  }
+
+  public List<WarehouseRequisitionSummaryDailyRow> requisitionSummaryDaily(
+      long tenantId,
+      LocalDate startDate,
+      LocalDate endDate,
+      List<String> storeIds,
+      List<Long> productIds,
+      Long warehouseId
+  ) {
+    boolean facilityAware = hasColumn("store_requisition", "supply_warehouse_id");
+    StringBuilder sql = new StringBuilder("""
+        select r.store_id, s.name as store_name, l.item_id as product_id,
+               i.name as product_name, cast(r.submitted_at as date) as order_date,
+               i.unit,
+               sum(l.requested_quantity) as ordered_quantity,
+               sum(l.requested_quantity * l.unit_price) as ordered_amount
+        from store_requisition r
+        join store_requisition_line l
+          on l.tenant_id = r.tenant_id and l.requisition_id = r.id
+        join store_branch s
+          on s.tenant_id = r.tenant_id and s.id = r.store_id
+        join warehouse_item i
+          on i.tenant_id = l.tenant_id and i.id = l.item_id
+        where r.tenant_id = ?
+          and r.submitted_at >= ?
+          and r.submitted_at < ?
+          and upper(coalesce(r.status, '')) <> 'REJECTED'
+        """);
+    ArrayList<Object> parameters = new ArrayList<>();
+    parameters.add(tenantId);
+    parameters.add(startDate.atStartOfDay());
+    parameters.add(endDate.plusDays(1).atStartOfDay());
+    appendInFilter(sql, parameters, "r.store_id", storeIds);
+    appendInFilter(sql, parameters, "l.item_id", productIds);
+    if (facilityAware && warehouseId != null) {
+      sql.append(" and r.supply_warehouse_id = ?\n");
+      parameters.add(warehouseId);
+    }
+    sql.append("""
+        group by r.store_id, s.name, l.item_id, i.name, cast(r.submitted_at as date), i.unit
+        order by r.store_id, l.item_id, order_date
+        """);
+    return jdbcTemplate.query(
+        sql.toString(),
+        (rs, rowNum) -> new WarehouseRequisitionSummaryDailyRow(
+            rs.getString("store_id"),
+            rs.getString("store_name"),
+            rs.getLong("product_id"),
+            rs.getString("product_name"),
+            rs.getObject("order_date", LocalDate.class),
+            rs.getString("unit"),
+            amount(rs.getBigDecimal("ordered_quantity")),
+            amount(rs.getBigDecimal("ordered_amount"))
+        ),
+        parameters.toArray()
+    );
+  }
+
+  public List<RequisitionSummaryStoreDimension> requisitionSummaryStores(
+      long tenantId,
+      List<String> storeIds,
+      Long warehouseId
+  ) {
+    boolean statusAware = hasColumn("store_branch", "status");
+    boolean facilityAware = hasColumn("store_branch", "supply_warehouse_id");
+    StringBuilder sql = new StringBuilder("""
+        select id, name
+        from store_branch
+        where tenant_id = ?
+        """);
+    ArrayList<Object> parameters = new ArrayList<>();
+    parameters.add(tenantId);
+    appendInFilter(sql, parameters, "id", storeIds);
+    if ((storeIds == null || storeIds.isEmpty()) && statusAware) {
+      sql.append("""
+           and (status is null or trim(status) = '' or upper(status) = 'ACTIVE' or status = '营业中')
+          """);
+    }
+    if (facilityAware && warehouseId != null) {
+      sql.append(" and supply_warehouse_id = ?\n");
+      parameters.add(warehouseId);
+    }
+    sql.append(" order by id");
+    return jdbcTemplate.query(
+        sql.toString(),
+        (rs, rowNum) -> new RequisitionSummaryStoreDimension(
+            rs.getString("id"),
+            rs.getString("name")
+        ),
+        parameters.toArray()
+    );
+  }
+
+  public List<RequisitionSummaryProductDimension> requisitionSummaryProducts(
+      long tenantId,
+      List<Long> productIds
+  ) {
+    boolean activeAware = hasColumn("warehouse_item", "active");
+    StringBuilder sql = new StringBuilder("""
+        select id, name, unit
+        from warehouse_item
+        where tenant_id = ?
+        """);
+    ArrayList<Object> parameters = new ArrayList<>();
+    parameters.add(tenantId);
+    appendInFilter(sql, parameters, "id", productIds);
+    if ((productIds == null || productIds.isEmpty()) && activeAware) {
+      sql.append(" and active = 1\n");
+    }
+    sql.append(" order by id");
+    return jdbcTemplate.query(
+        sql.toString(),
+        (rs, rowNum) -> new RequisitionSummaryProductDimension(
+            rs.getLong("id"),
+            rs.getString("name"),
+            rs.getString("unit")
+        ),
+        parameters.toArray()
+    );
+  }
+
   public List<WarehouseRequisitionResponse> requisitions(long tenantId, String storeId, Long warehouseId) {
     boolean facilityAware = hasColumn("store_requisition", "supply_warehouse_id");
     String sql = """
@@ -840,6 +1190,26 @@ public class WarehouseRepository {
       rows.add(requisitionResponse(tenantId, header));
     }
     return rows;
+  }
+
+  private void appendInFilter(
+      StringBuilder sql,
+      List<Object> parameters,
+      String column,
+      List<?> values
+  ) {
+    if (values == null || values.isEmpty()) {
+      return;
+    }
+    sql.append(" and ").append(column).append(" in (");
+    for (int index = 0; index < values.size(); index++) {
+      if (index > 0) {
+        sql.append(", ");
+      }
+      sql.append("?");
+      parameters.add(values.get(index));
+    }
+    sql.append(")\n");
   }
 
   public Optional<WarehouseRequisitionResponse> requisition(long tenantId, String requisitionId) {
@@ -1487,6 +1857,26 @@ public class WarehouseRepository {
         insert into operation_log(tenant_id, operator_id, operator_name, action, target_type, target_id, store_id, reason, created_at)
         values (?, ?, ?, ?, 'warehouse', ?, ?, ?, current_timestamp)
         """, tenantId, operatorId, operatorName, action, targetId, storeId, reason);
+  }
+
+  public void logAction(
+      long tenantId,
+      Long operatorId,
+      String operatorName,
+      String action,
+      String targetId,
+      String storeId,
+      String reason,
+      String beforeJson,
+      String afterJson
+  ) {
+    jdbcTemplate.update("""
+        insert into operation_log(
+          tenant_id, operator_id, operator_name, action, target_type, target_id,
+          store_id, reason, before_json, after_json, created_at
+        )
+        values (?, ?, ?, ?, 'warehouse_item', ?, ?, ?, ?, ?, current_timestamp)
+        """, tenantId, operatorId, operatorName, action, targetId, storeId, reason, beforeJson, afterJson);
   }
 
   public void insertTodoAction(
@@ -2143,8 +2533,136 @@ public class WarehouseRepository {
         rs.getString("item_description"),
         rs.getInt("sort_order"),
         rs.getString("item_attributes"),
-        itemDepartments(rs.getLong("id"))
+        itemDepartments(rs.getLong("id")),
+        WarehouseItemRequisitionPolicyResponse.legacyAllStores()
     );
+  }
+
+  private List<WarehouseItemResponse> withItemRequisitionPolicies(
+      long tenantId,
+      List<WarehouseItemResponse> items
+  ) {
+    if (items.isEmpty() || !requisitionPolicyTablesAvailable()) {
+      return items;
+    }
+    Map<Long, ItemRequisitionPolicyRow> policies = new HashMap<>();
+    jdbcTemplate.query("""
+        select item_id, scope_mode, campaign_name, starts_at, ends_at
+        from warehouse_item_requisition_policy
+        where tenant_id = ?
+        """, rs -> {
+      long itemId = rs.getLong("item_id");
+      policies.put(itemId, new ItemRequisitionPolicyRow(
+          rs.getString("scope_mode"),
+          rs.getString("campaign_name"),
+          rs.getObject("starts_at", LocalDateTime.class),
+          rs.getObject("ends_at", LocalDateTime.class)
+      ));
+    }, tenantId);
+    if (policies.isEmpty()) {
+      return items;
+    }
+    Map<Long, List<String>> regions = new HashMap<>();
+    Map<Long, List<String>> stores = new HashMap<>();
+    jdbcTemplate.query("""
+        select item_id, target_type, target_value
+        from warehouse_item_requisition_target
+        where tenant_id = ?
+        order by item_id, target_type, target_value
+        """, rs -> {
+      Map<Long, List<String>> targets = "REGION".equals(rs.getString("target_type")) ? regions : stores;
+      targets.computeIfAbsent(rs.getLong("item_id"), ignored -> new ArrayList<>())
+          .add(rs.getString("target_value"));
+    }, tenantId);
+    return items.stream().map(item -> {
+      ItemRequisitionPolicyRow row = policies.get(item.id());
+      if (row == null) {
+        return item;
+      }
+      return withItemRequisitionPolicy(item, new WarehouseItemRequisitionPolicyResponse(
+          row.scopeMode(),
+          List.copyOf(regions.getOrDefault(item.id(), List.of())),
+          List.copyOf(stores.getOrDefault(item.id(), List.of())),
+          row.campaignName(),
+          row.startsAt(),
+          row.endsAt(),
+          true
+      ));
+    }).toList();
+  }
+
+  private WarehouseItemResponse withItemRequisitionPolicy(
+      WarehouseItemResponse item,
+      WarehouseItemRequisitionPolicyResponse policy
+  ) {
+    return new WarehouseItemResponse(
+        item.id(),
+        item.code(),
+        item.name(),
+        item.categoryId(),
+        item.categoryName(),
+        item.category(),
+        item.imageUrl(),
+        item.unit(),
+        item.purchaseUnit(),
+        item.stockUnit(),
+        item.ingredientUnit(),
+        item.unitConversionText(),
+        item.spec(),
+        item.warehouseLocation(),
+        item.unitPrice(),
+        item.shelfLifeDays(),
+        item.cupsPerUnit(),
+        item.dailyUsageEstimate(),
+        item.minStockDays(),
+        item.maxStockDays(),
+        item.minStockQuantity(),
+        item.alertEnabled(),
+        item.expiryAlertDays(),
+        item.active(),
+        item.stockQuantity(),
+        item.storeStockQuantity(),
+        item.warehouseAvailableQuantity(),
+        item.stockValue(),
+        item.daysAvailable(),
+        item.nearestExpiryDate(),
+        item.stockStatus(),
+        item.alertLevel(),
+        item.alertText(),
+        item.itemDescription(),
+        item.sortOrder(),
+        item.itemAttributes(),
+        item.departments(),
+        policy
+    );
+  }
+
+  private List<String> itemRequisitionTargets(long tenantId, long itemId, String targetType) {
+    return jdbcTemplate.queryForList("""
+        select target_value
+        from warehouse_item_requisition_target
+        where tenant_id = ? and item_id = ? and target_type = ?
+        order by target_value
+        """, String.class, tenantId, itemId, targetType);
+  }
+
+  private void insertItemRequisitionTargets(
+      long tenantId,
+      long itemId,
+      String targetType,
+      List<String> targetValues
+  ) {
+    if (targetValues == null) {
+      return;
+    }
+    for (String targetValue : targetValues) {
+      jdbcTemplate.update("""
+          insert into warehouse_item_requisition_target(
+            tenant_id, item_id, target_type, target_value, created_at
+          )
+          values (?, ?, ?, ?, current_timestamp)
+          """, tenantId, itemId, targetType, targetValue);
+    }
   }
 
   private List<WarehouseItemDepartmentResponse> itemDepartments(long itemId) {
@@ -2624,6 +3142,17 @@ public class WarehouseRepository {
     return hasColumn(tableName, "warehouse_id");
   }
 
+  private boolean requisitionPolicyTablesAvailable() {
+    Boolean cached = requisitionPolicyTablesAvailable;
+    if (cached != null) {
+      return cached;
+    }
+    boolean available = hasColumn("warehouse_item_requisition_policy", "scope_mode")
+        && hasColumn("warehouse_item_requisition_target", "target_type");
+    requisitionPolicyTablesAvailable = available;
+    return available;
+  }
+
   private boolean hasColumn(String tableName, String columnName) {
     try {
       jdbcTemplate.queryForList("select " + columnName + " from " + tableName + " where 1 = 0");
@@ -2643,6 +3172,14 @@ public class WarehouseRepository {
 
   private int positiveInt(Integer value, int fallback) {
     return value == null || value <= 0 ? fallback : value;
+  }
+
+  private record ItemRequisitionPolicyRow(
+      String scopeMode,
+      String campaignName,
+      LocalDateTime startsAt,
+      LocalDateTime endsAt
+  ) {
   }
 
   private record WarehouseRequisitionHeaderRow(
@@ -2737,6 +3274,12 @@ public class WarehouseRepository {
   }
 
   public record WarehouseFacilitySnapshot(long id, String code, String name) {
+  }
+
+  public record RequisitionSummaryStoreDimension(String id, String name) {
+  }
+
+  public record RequisitionSummaryProductDimension(long id, String name, String unit) {
   }
 
   private record AlertInfo(String level, String text) {

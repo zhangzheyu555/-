@@ -1,14 +1,30 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ImagePlus, Plus, Trash2, X } from 'lucide-vue-next'
-import type { WarehouseItem, WarehouseItemCategory, WarehouseItemDepartment, WarehouseItemPayload } from '../../api/warehouse'
+import type {
+  WarehouseItem,
+  WarehouseItemCategory,
+  WarehouseItemDepartment,
+  WarehouseItemPayload,
+  WarehouseItemRequisitionScopeStore,
+  WarehouseItemRequisitionScopeMode,
+} from '../../api/warehouse'
+import ActionConfirmDialog from '../ui/ActionConfirmDialog.vue'
 import ModalFooter from '../ui/ModalFooter.vue'
 import UiButton from '../ui/UiButton.vue'
 import UnsavedChangesDialog from '../ui/UnsavedChangesDialog.vue'
 
+interface RegionOption {
+  code: string
+  name: string
+}
+
 const props = defineProps<{
   item: WarehouseItem | null
   categories: WarehouseItemCategory[]
+  stores: WarehouseItemRequisitionScopeStore[]
+  regions: RegionOption[]
+  scopeContextAvailable: boolean
   saving: boolean
 }>()
 
@@ -38,6 +54,12 @@ interface MaterialForm {
   itemAttributes: string
   active: boolean
   departments: WarehouseItemDepartment[]
+  requisitionScopeMode: '' | WarehouseItemRequisitionScopeMode
+  requisitionRegionCodes: string[]
+  requisitionStoreIds: string[]
+  campaignName: string
+  startsAt: string
+  endsAt: string
 }
 
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -45,9 +67,51 @@ const imageError = ref('')
 const form = reactive<MaterialForm>(emptyForm())
 const openingSnapshot = ref('')
 const unsavedDialogOpen = ref(false)
+const allStoresConfirmationOpen = ref(false)
+const allStoresConfirmationNote = ref('')
+const pendingPayload = ref<WarehouseItemPayload | null>(null)
 
 const categoryOptions = computed(() => flattenCategories(props.categories))
 const dirty = computed(() => Boolean(openingSnapshot.value) && snapshotForm() !== openingSnapshot.value)
+const activeStores = computed(() => props.stores)
+const regionOptions = computed<RegionOption[]>(() => {
+  const options = new Map<string, string>()
+  for (const region of props.regions) {
+    if (region.code?.trim()) options.set(region.code.trim().toUpperCase(), region.name?.trim() || regionLabel(region.code))
+  }
+  for (const store of activeStores.value) {
+    if (store.regionCode?.trim()) {
+      const code = store.regionCode.trim().toUpperCase()
+      if (!options.has(code)) options.set(code, regionLabel(code))
+    }
+  }
+  return Array.from(options, ([code, name]) => ({ code, name }))
+})
+const affectedStoreCount = computed(() => {
+  if (form.requisitionScopeMode === 'ALL') return activeStores.value.length
+  if (form.requisitionScopeMode !== 'SELECTED') return 0
+  const selectedRegions = new Set(form.requisitionRegionCodes)
+  const selectedStores = new Set(form.requisitionStoreIds)
+  return activeStores.value.filter((store) => (
+    selectedStores.has(store.id)
+    || Boolean(store.regionCode && selectedRegions.has(store.regionCode.toUpperCase()))
+  )).length
+})
+const scopeValidationMessage = computed(() => {
+  if (!props.scopeContextAvailable) return '未能读取门店叫货范围，请关闭后重试。'
+  if (!form.requisitionScopeMode) return '请选择全部门店或指定区域、指定门店。'
+  if (
+    form.requisitionScopeMode === 'SELECTED'
+    && !form.requisitionRegionCodes.length
+    && !form.requisitionStoreIds.length
+  ) return '指定范围时，请至少选择一个区域或门店。'
+  if (form.startsAt && form.endsAt && form.startsAt >= form.endsAt) return '活动结束时间必须晚于开始时间。'
+  return ''
+})
+const canSubmit = computed(() => (
+  Boolean(form.code.trim() && form.name.trim() && form.categoryId)
+  && !scopeValidationMessage.value
+))
 
 watch(
   () => props.item,
@@ -56,6 +120,8 @@ watch(
     imageError.value = ''
     openingSnapshot.value = snapshotForm()
     unsavedDialogOpen.value = false
+    allStoresConfirmationOpen.value = false
+    pendingPayload.value = null
   },
   { immediate: true },
 )
@@ -83,12 +149,14 @@ function discardChanges() {
 }
 
 function handleEscape(event: KeyboardEvent) {
-  if (event.key !== 'Escape' || unsavedDialogOpen.value) return
+  if (event.key !== 'Escape' || unsavedDialogOpen.value || allStoresConfirmationOpen.value) return
   event.preventDefault()
   requestClose()
 }
 
 function emptyForm(item: WarehouseItem | null = null): MaterialForm {
+  const policy = item?.requisitionPolicy
+  const configured = policy?.configured === true
   return {
     id: item?.id,
     code: item?.code || '',
@@ -110,6 +178,12 @@ function emptyForm(item: WarehouseItem | null = null): MaterialForm {
     itemAttributes: item?.itemAttributes || '',
     active: item?.active !== false,
     departments: (item?.departments || []).map((department) => ({ ...department })),
+    requisitionScopeMode: configured ? policy.scopeMode : '',
+    requisitionRegionCodes: configured ? [...(policy.regionCodes || [])] : [],
+    requisitionStoreIds: configured ? [...(policy.storeIds || [])] : [],
+    campaignName: configured ? policy.campaignName || '' : '',
+    startsAt: configured ? dateTimeInputValue(policy.startsAt) : '',
+    endsAt: configured ? dateTimeInputValue(policy.endsAt) : '',
   }
 }
 
@@ -174,9 +248,20 @@ function removeDepartment(index: number) {
   form.departments.splice(index, 1)
 }
 
-function submit() {
-  if (!form.code.trim() || !form.name.trim() || !form.categoryId) return
-  emit('save', {
+function dateTimeInputValue(value: string | undefined) {
+  return value ? value.slice(0, 16) : ''
+}
+
+function regionLabel(code: string) {
+  const normalized = code.trim().toUpperCase()
+  if (normalized === 'JINGZHOU') return '荆州区域'
+  if (normalized === 'SHANDONG') return '山东区域'
+  return normalized
+}
+
+function buildPayload(): WarehouseItemPayload | null {
+  if (!canSubmit.value || !form.requisitionScopeMode) return null
+  return {
     id: form.id,
     code: form.code.trim(),
     name: form.name.trim(),
@@ -207,7 +292,40 @@ function submit() {
         purchaseMethod: department.purchaseMethod?.trim() || undefined,
         supplierName: department.supplierName?.trim() || undefined,
       })),
-  })
+    requisitionPolicy: {
+      scopeMode: form.requisitionScopeMode,
+      regionCodes: form.requisitionScopeMode === 'SELECTED' ? [...form.requisitionRegionCodes] : [],
+      storeIds: form.requisitionScopeMode === 'SELECTED' ? [...form.requisitionStoreIds] : [],
+      campaignName: form.campaignName.trim() || undefined,
+      startsAt: form.startsAt || undefined,
+      endsAt: form.endsAt || undefined,
+    },
+  }
+}
+
+function submit() {
+  const payload = buildPayload()
+  if (!payload) return
+  if (payload.requisitionPolicy.scopeMode === 'ALL') {
+    pendingPayload.value = payload
+    allStoresConfirmationOpen.value = true
+    return
+  }
+  emit('save', payload)
+}
+
+function cancelAllStoresConfirmation() {
+  if (props.saving) return
+  allStoresConfirmationOpen.value = false
+  pendingPayload.value = null
+}
+
+function confirmAllStores() {
+  if (!pendingPayload.value || props.saving) return
+  const payload = pendingPayload.value
+  allStoresConfirmationOpen.value = false
+  pendingPayload.value = null
+  emit('save', payload)
 }
 </script>
 
@@ -331,6 +449,81 @@ function submit() {
             </div>
           </div>
 
+          <div class="editor-section-title requisition-scope-title">
+            <span>商品可叫货范围</span>
+            <small>必选；指定区域和指定门店按并集生效</small>
+          </div>
+          <section class="requisition-scope-panel" aria-labelledby="requisition-scope-heading">
+            <h3 id="requisition-scope-heading" class="visually-hidden">选择商品可叫货范围</h3>
+            <p
+              v-if="item && item.requisitionPolicy?.configured !== true"
+              class="legacy-scope-note"
+            >
+              此商品为历史商品，当前仍兼容为全部门店可叫货；本次编辑必须重新明确范围后才能保存。
+            </p>
+
+            <fieldset class="scope-mode-options">
+              <legend>可叫货范围（必选）</legend>
+              <label class="scope-mode-card" :class="{ selected: form.requisitionScopeMode === 'ALL' }">
+                <input v-model="form.requisitionScopeMode" type="radio" value="ALL" />
+                <span>
+                  <strong>全部门店</strong>
+                  <small>当前覆盖 {{ activeStores.length }} 家营业门店，后续新增门店也自动覆盖</small>
+                </span>
+              </label>
+              <label class="scope-mode-card" :class="{ selected: form.requisitionScopeMode === 'SELECTED' }">
+                <input v-model="form.requisitionScopeMode" type="radio" value="SELECTED" />
+                <span>
+                  <strong>指定区域 / 指定门店</strong>
+                  <small>可同时选择，满足任意一项的门店即可叫货</small>
+                </span>
+              </label>
+            </fieldset>
+
+            <div v-if="form.requisitionScopeMode === 'SELECTED'" class="scope-target-grid">
+              <fieldset class="scope-target-list">
+                <legend>指定区域（可多选）</legend>
+                <label v-for="region in regionOptions" :key="region.code">
+                  <input v-model="form.requisitionRegionCodes" type="checkbox" :value="region.code" />
+                  <span>{{ region.name }}</span>
+                  <small>{{ region.code }}</small>
+                </label>
+                <p v-if="!regionOptions.length" class="scope-empty">暂无可选区域，请先配置仓库区域。</p>
+              </fieldset>
+
+              <fieldset class="scope-target-list store-target-list">
+                <legend>指定门店（可多选）</legend>
+                <label v-for="store in activeStores" :key="store.id">
+                  <input v-model="form.requisitionStoreIds" type="checkbox" :value="store.id" />
+                  <span>{{ store.name }}</span>
+                  <small>{{ store.regionCode ? regionLabel(store.regionCode) : '未配置区域' }}</small>
+                </label>
+                <p v-if="!activeStores.length" class="scope-empty">暂无营业中的门店。</p>
+              </fieldset>
+            </div>
+
+            <div v-if="form.requisitionScopeMode" class="scope-coverage" aria-live="polite">
+              当前将覆盖 <strong>{{ affectedStoreCount }}</strong> 家营业门店
+              <span v-if="form.requisitionScopeMode === 'ALL'">（保存时需要再次确认）</span>
+            </div>
+
+            <div class="campaign-grid">
+              <label>
+                活动名称（选填）
+                <input v-model="form.campaignName" maxlength="160" placeholder="例如 山东新店开业活动" />
+              </label>
+              <label>
+                生效开始时间（选填）
+                <input v-model="form.startsAt" type="datetime-local" />
+              </label>
+              <label>
+                生效结束时间（选填）
+                <input v-model="form.endsAt" type="datetime-local" />
+              </label>
+            </div>
+            <p v-if="scopeValidationMessage" class="scope-error" role="alert">{{ scopeValidationMessage }}</p>
+          </section>
+
           <div class="editor-section-title departments-title">
             <span>适用部门</span>
             <button class="mini-button primary" type="button" @click="addDepartment">
@@ -376,7 +569,7 @@ function submit() {
           <UiButton
             variant="primary"
             type="submit"
-            :disabled="!form.code.trim() || !form.name.trim() || !form.categoryId"
+            :disabled="!canSubmit"
             :loading="saving"
           >保存物料</UiButton>
         </ModalFooter>
@@ -391,6 +584,17 @@ function submit() {
     message="关闭后，本次物料资料、图片和适用部门调整将不会保留。"
     @keep-editing="unsavedDialogOpen = false"
     @discard="discardChanges"
+  />
+
+  <ActionConfirmDialog
+    v-model="allStoresConfirmationNote"
+    :open="allStoresConfirmationOpen"
+    title="确认允许全部门店叫货？"
+    :message="`该商品将覆盖当前 ${activeStores.length} 家营业门店，未来新增门店也会自动获得叫货权限。确认后保存本次配置。`"
+    confirm-label="确认全部门店并保存"
+    :busy="saving"
+    @cancel="cancelAllStoresConfirmation"
+    @confirm="confirmAllStores"
   />
 </template>
 
@@ -621,6 +825,168 @@ textarea:focus {
   box-shadow: 0 0 0 3px rgba(118, 189, 184, 0.18);
 }
 
+.requisition-scope-title {
+  margin-top: 26px;
+}
+
+.requisition-scope-panel {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid #dce9e7;
+  border-radius: 8px;
+  background: #f9fcfb;
+}
+
+.legacy-scope-note,
+.scope-error,
+.scope-empty {
+  margin: 0;
+}
+
+.legacy-scope-note {
+  padding: 10px 12px;
+  border-left: 3px solid #c68726;
+  background: #fff8e8;
+  color: #765111;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.scope-mode-options,
+.scope-target-list {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.scope-mode-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.scope-mode-options > legend,
+.scope-target-list > legend {
+  width: 100%;
+  margin-bottom: 8px;
+  color: #526765;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.scope-mode-card {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  min-width: 0;
+  padding: 13px 14px;
+  border: 1px solid #c8d8d6;
+  border-radius: 7px;
+  background: #fff;
+  color: #283f3d;
+  cursor: pointer;
+}
+
+.scope-mode-card.selected {
+  border-color: #2f7772;
+  box-shadow: 0 0 0 2px rgba(47, 119, 114, .12);
+}
+
+.scope-mode-card input,
+.scope-target-list input {
+  width: auto;
+  min-height: 0;
+  margin-top: 3px;
+}
+
+.scope-mode-card > span {
+  display: grid;
+  gap: 3px;
+}
+
+.scope-mode-card strong {
+  font-size: 14px;
+}
+
+.scope-mode-card small,
+.scope-target-list small {
+  color: #6b7e7c;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.scope-target-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.scope-target-list {
+  max-height: 240px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid #dce9e7;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.scope-target-list > label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: start;
+  padding: 8px 4px;
+  border-bottom: 1px solid #edf3f2;
+  color: #334d4b;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.scope-target-list > label:last-of-type {
+  border-bottom: 0;
+}
+
+.scope-empty {
+  padding: 8px 4px;
+  color: #718280;
+  font-size: 13px;
+}
+
+.scope-coverage {
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: #eaf6f4;
+  color: #285d59;
+  font-size: 13px;
+}
+
+.scope-coverage strong {
+  font-size: 16px;
+}
+
+.campaign-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.campaign-grid label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: #526765;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.scope-error {
+  color: var(--bad);
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .departments-title {
   margin-top: 26px;
   margin-bottom: 12px;
@@ -731,7 +1097,10 @@ textarea:focus {
   }
 
   .basic-info-grid,
-  .material-form-grid {
+  .material-form-grid,
+  .scope-mode-options,
+  .scope-target-grid,
+  .campaign-grid {
     grid-template-columns: 1fr;
   }
 

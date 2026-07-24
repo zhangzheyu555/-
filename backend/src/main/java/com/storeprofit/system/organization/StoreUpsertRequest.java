@@ -1,12 +1,11 @@
 package com.storeprofit.system.organization;
 
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
 public record StoreUpsertRequest(
-    @NotBlank String id,
+    String id,
     String code,
-    @NotBlank String name,
+    String name,
     @NotNull Long brandId,
     String area,
     String manager,
@@ -15,7 +14,10 @@ public record StoreUpsertRequest(
     String status,
     String note,
     String regionCode,
-    Long supplyWarehouseId
+    Long supplyWarehouseId,
+    String managerEmployeeId,
+    String costAccountStoreId,
+    Long version
 ) {
   public StoreUpsertRequest(
       String id,
@@ -28,6 +30,25 @@ public record StoreUpsertRequest(
       String status,
       String note
   ) {
-    this(id, code, name, brandId, area, manager, null, openDate, status, note, null, null);
+    this(id, code, name, brandId, area, manager, null, openDate, status, note, null, null,
+        null, null, null);
+  }
+
+  public StoreUpsertRequest(
+      String id,
+      String code,
+      String name,
+      Long brandId,
+      String area,
+      String manager,
+      String managerPhone,
+      String openDate,
+      String status,
+      String note,
+      String regionCode,
+      Long supplyWarehouseId
+  ) {
+    this(id, code, name, brandId, area, manager, managerPhone, openDate, status, note,
+        regionCode, supplyWarehouseId, null, null, null);
   }
 }
