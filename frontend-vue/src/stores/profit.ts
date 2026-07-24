@@ -3,6 +3,8 @@ import { getProfitDashboard, type ProfitBrand, type ProfitDashboard, type Profit
 
 interface ProfitState {
   dashboard: ProfitDashboard | null
+  /** Entries across all brands (same month + store scope), used by brand cards. */
+  allBrandEntries: ProfitEntry[]
   month: string
   brandId: string
   storeId: string
@@ -27,6 +29,7 @@ const emptySummary: ProfitSummary = {
 export const useProfitStore = defineStore('profit', {
   state: (): ProfitState => ({
     dashboard: null,
+    allBrandEntries: [],
     month: '',
     brandId: '',
     storeId: '',
@@ -88,13 +91,24 @@ export const useProfitStore = defineStore('profit', {
       this.loading = true
       this.error = ''
       try {
-        const data = await getProfitDashboard({
+        const filterParams = {
           month: this.month || undefined,
           brandId: this.brandId || undefined,
           storeId: this.storeId || undefined,
-        })
+        }
+        // Fetch both the filtered dashboard and the all-brand entries in parallel.
+        // When no brandId is set the two calls are identical; skip the duplicate.
+        const allBrandPromise = this.brandId
+          ? getProfitDashboard({ month: filterParams.month, storeId: filterParams.storeId })
+          : null
+        const [data, allBrandData] = await Promise.all([
+          getProfitDashboard(filterParams),
+          allBrandPromise,
+        ])
         if (requestSerial !== this.requestSerial) return
         this.dashboard = data
+        this.allBrandEntries = allBrandData?.entries
+          ?? (this.brandId ? [] : data.entries)
         this.month = data.summary?.month || this.month || data.months?.[0] || ''
       } catch (error) {
         if (requestSerial !== this.requestSerial) return

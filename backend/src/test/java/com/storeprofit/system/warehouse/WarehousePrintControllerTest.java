@@ -22,13 +22,16 @@ class WarehousePrintControllerTest {
   void receiptPrintEndpointReturnsPdfAttachment() {
     byte[] pdf = new byte[] {'%', 'P', 'D', 'F'};
     when(authService.requireUser("Bearer token")).thenReturn(warehouse);
-    when(printService.receiptPdf(warehouse, 7L)).thenReturn(new WarehousePrintDocument("入库单-20260708-桃子-B908850.pdf", pdf));
+    when(printService.receiptPdf(warehouse, 7L)).thenReturn(
+        new WarehousePrintDocument("入库单-RKD260708557452919.pdf", pdf)
+    );
 
     ResponseEntity<byte[]> response = controller.printReceipt("Bearer token", 7L);
 
     assertThat(response.getHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_PDF);
     assertThat(response.getHeaders().getContentDisposition().isAttachment()).isTrue();
-    assertThat(response.getHeaders().getContentDisposition().getFilename()).isEqualTo("入库单-20260708-桃子-B908850.pdf");
+    assertThat(response.getHeaders().getContentDisposition().getFilename())
+        .isEqualTo("入库单-RKD260708557452919.pdf");
     assertThat(response.getBody()).isSameAs(pdf);
     verify(printService).receiptPdf(warehouse, 7L);
   }
@@ -37,13 +40,16 @@ class WarehousePrintControllerTest {
   void deliveryPrintEndpointReturnsPdfAttachment() {
     byte[] pdf = new byte[] {'%', 'P', 'D', 'F'};
     when(authService.requireUser("Bearer token")).thenReturn(warehouse);
-    when(printService.deliveryPdf(warehouse, "REQ1")).thenReturn(new WarehousePrintDocument("出库单-20260708-日广店-REQ1.pdf", pdf));
+    when(printService.deliveryPdf(warehouse, "REQ1")).thenReturn(
+        new WarehousePrintDocument("配送单-PSD260708242206633.pdf", pdf)
+    );
 
     ResponseEntity<byte[]> response = controller.printDelivery("Bearer token", "REQ1");
 
     assertThat(response.getHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_PDF);
     assertThat(response.getHeaders().getContentDisposition().isAttachment()).isTrue();
-    assertThat(response.getHeaders().getContentDisposition().getFilename()).isEqualTo("出库单-20260708-日广店-REQ1.pdf");
+    assertThat(response.getHeaders().getContentDisposition().getFilename())
+        .isEqualTo("配送单-PSD260708242206633.pdf");
     assertThat(response.getBody()).isSameAs(pdf);
     verify(printService).deliveryPdf(warehouse, "REQ1");
   }
@@ -52,13 +58,16 @@ class WarehousePrintControllerTest {
   void returnPrintEndpointReturnsPdfAttachment() {
     byte[] pdf = new byte[] {'%', 'P', 'D', 'F'};
     when(authService.requireUser("Bearer token")).thenReturn(warehouse);
-    when(printService.returnPdf(warehouse, "PSTH1")).thenReturn(new WarehousePrintDocument("配送退货单-20260708-PSTH1.pdf", pdf));
+    when(printService.returnPdf(warehouse, "PSTH1")).thenReturn(
+        new WarehousePrintDocument("配送退货单-PSTH260707882937764.pdf", pdf)
+    );
 
     ResponseEntity<byte[]> response = controller.printReturn("Bearer token", "PSTH1");
 
     assertThat(response.getHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_PDF);
     assertThat(response.getHeaders().getContentDisposition().isAttachment()).isTrue();
-    assertThat(response.getHeaders().getContentDisposition().getFilename()).isEqualTo("配送退货单-20260708-PSTH1.pdf");
+    assertThat(response.getHeaders().getContentDisposition().getFilename())
+        .isEqualTo("配送退货单-PSTH260707882937764.pdf");
     assertThat(response.getBody()).isSameAs(pdf);
     verify(printService).returnPdf(warehouse, "PSTH1");
   }

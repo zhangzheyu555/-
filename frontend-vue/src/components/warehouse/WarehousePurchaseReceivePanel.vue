@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { Search } from 'lucide-vue-next'
-import WarehousePrintButtons from './WarehousePrintButtons.vue'
 import type {
   WarehouseItem,
   WarehousePurchaseOrder,
@@ -259,49 +258,6 @@ function qty(value: number | undefined, unit?: string) {
         </article>
       </div>
       <div v-else class="empty-cell">暂无采购单。</div>
-    </div>
-
-    <div class="content-card" :class="{ 'records-only': props.mode === 'records' || !props.canManage }">
-      <div class="table-heading">
-        <div>
-          <h3>入库记录</h3>
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>时间</th>
-              <th>商品</th>
-              <th>入库仓</th>
-              <th>批次</th>
-              <th>数量</th>
-              <th>单价</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="batch in batches.slice(0, 12)" :key="batch.id">
-              <td>{{ batch.receivedDate || batch.createdAt || '-' }}</td>
-              <td>{{ batch.itemName }}</td>
-              <td>{{ batch.warehouseName || warehouseName || '荆州总仓' }}</td>
-              <td>{{ batch.batchNo }}</td>
-              <td>{{ qty(batch.quantity, batch.unit) }}</td>
-              <td>{{ money(batch.unitCost) }}</td>
-              <td>
-                <WarehousePrintButtons
-                  label="下载入库单"
-                  :disabled="downloadingId.includes(`/receipts/${batch.id}`)"
-                  @download="emit('downloadReceipt', batch.id, batch.itemName, batch.batchNo)"
-                />
-              </td>
-            </tr>
-            <tr v-if="!batches.length">
-              <td colspan="7" class="empty-cell">暂无入库记录。</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
     </div>
   </div>
 </template>

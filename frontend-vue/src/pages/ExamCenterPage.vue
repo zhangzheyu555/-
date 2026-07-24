@@ -504,7 +504,7 @@ async function completeReview() {
     await submitExamReview(reviewDetail.value.task.attemptId, { reviewNote: reviewDetail.value.reviewNote, answers: reviewDetail.value.answers.map((item) => ({ answerId: item.answerId, awardedScore: Number(item.awardedScore), comment: item.reviewComment })) })
     closeReviewNow()
     success.value = '阅卷已完成，成绩已更新。'
-    await Promise.all([loadReviews(), loadResults(), loadAll()])
+    await loadAll()
   } catch (reason) { error.value = displayError(reason, '阅卷提交失败。') } finally { saving.value = false }
 }
 

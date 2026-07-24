@@ -17,3 +17,9 @@ defineEmits<{
     <Download :size="14" />
   </button>
 </template>
+
+<style scoped>
+.mini-button {
+  white-space: nowrap;
+}
+</style>

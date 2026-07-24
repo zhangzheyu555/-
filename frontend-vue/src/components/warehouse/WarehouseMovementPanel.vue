@@ -8,7 +8,7 @@ defineProps<{
 }>()
 
 const emit = defineEmits<{
-  downloadMovement: [movementId: number, itemName: string]
+  downloadMovement: [movementId: number, itemName: string, movementType: string]
   downloadDelivery: [requisitionId: string]
 }>()
 
@@ -20,8 +20,12 @@ function sourceLabel(row: WarehouseStockMovement) {
   if (row.sourceType === 'REQUISITION') return '门店叫货发货'
   if (row.sourceType === 'RETURN_RECEIVE') return '配送退货入库'
   if (row.sourceType?.includes('TRANSFER')) return '仓间调拨'
-  if (row.sourceType?.includes('RECEIVE')) return '采购到货入库'
+  if (row.sourceType?.includes('RECEIVE') || row.sourceType === 'PURCHASE_ORDER') return '采购入库'
   return row.sourceType || '库存流水'
+}
+
+function documentLabel(row: WarehouseStockMovement) {
+  return row.movementType === 'IN' ? '下载入库单' : '下载流水单'
 }
 </script>
 
@@ -62,9 +66,9 @@ function sourceLabel(row: WarehouseStockMovement) {
             <td>
               <div class="row-actions">
                 <WarehousePrintButtons
-                  label="下载流水单"
+                  :label="documentLabel(row)"
                   :disabled="downloadingId.includes(`/movements/${row.id}`)"
-                  @download="emit('downloadMovement', row.id, row.itemName)"
+                  @download="emit('downloadMovement', row.id, row.itemName, row.movementType)"
                 />
                 <WarehousePrintButtons
                   v-if="row.sourceType === 'REQUISITION' && row.sourceId"

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { Minus, Plus, Send, Trash2 } from 'lucide-vue-next'
+import { AlertTriangle, CheckCircle2, Minus, Plus, Send, Trash2 } from 'lucide-vue-next'
 import type { WarehouseItem } from '../../api/warehouse'
 
 const props = defineProps<{
@@ -30,6 +30,7 @@ const wasSubmitting = ref(false)
 const initializedItemId = ref(0)
 
 const selectedItem = computed(() => props.items.find((item) => item.id === selectedItemId.value))
+const shortageCount = computed(() => lines.filter((line) => stockState(line).tone !== 'ok').length)
 
 watch(
   () => props.submitting,
@@ -119,6 +120,31 @@ function qty(value: number | undefined, unit?: string) {
   return `${Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}${unit ? ` ${unit}` : ''}`
 }
 
+function stockState(line: DraftLine) {
+  const item = itemFor(line)
+  const unit = item?.stockUnit || item?.unit
+  const requested = Math.max(0, Number(line.requestedQuantity || 0))
+  const available = Math.max(0, Number(item?.warehouseAvailableQuantity || 0))
+  const expected = Math.min(requested, available)
+  const shortage = Math.max(0, requested - expected)
+  if (available <= 0) {
+    return {
+      tone: 'out',
+      text: `当前无库存 · 缺货 ${qty(shortage, unit)} · 可提交缺货申请`,
+    }
+  }
+  if (shortage > 0) {
+    return {
+      tone: 'partial',
+      text: `部分不足 · 预计可发 ${qty(expected, unit)} · 缺货 ${qty(shortage, unit)}`,
+    }
+  }
+  return {
+    tone: 'ok',
+    text: `库存充足 · 预计可发 ${qty(requested, unit)}`,
+  }
+}
+
 defineExpose({ addItem })
 </script>
 
@@ -159,6 +185,7 @@ defineExpose({ addItem })
           <div>
             <b>{{ itemFor(line)?.name || '已删除物料' }}</b>
             <small class="line-stock-hint">{{ itemFor(line)?.code }} · 供货仓可配 {{ qty(itemFor(line)?.warehouseAvailableQuantity, itemFor(line)?.stockUnit || itemFor(line)?.unit) }}</small>
+            <small class="stock-state" :class="stockState(line).tone">{{ stockState(line).text }}</small>
           </div>
           <div class="quantity-editor">
             <span class="quantity-label">叫货数量</span>
@@ -174,6 +201,15 @@ defineExpose({ addItem })
           <button class="icon-button danger" type="button" title="删除物料" :aria-label="`删除 ${itemFor(line)?.name || '物料'}`" @click="removeLine(index)"><Trash2 :size="16" /></button>
       </div>
       <div v-if="!lines.length" class="empty-state compact">请先添加需要叫货的物料。</div>
+    </div>
+
+    <div v-if="lines.length" class="stock-summary" :class="{ shortage: shortageCount > 0 }">
+      <AlertTriangle v-if="shortageCount > 0" :size="17" />
+      <CheckCircle2 v-else :size="17" />
+      <span v-if="shortageCount > 0">
+        {{ shortageCount }} 项存在缺货，可继续提交；仓库将明确已发数量和待补数量。
+      </span>
+      <span v-else>当前物料库存充足，预计可正常发货。</span>
     </div>
 
     <label class="form-note">
@@ -254,6 +290,46 @@ input {
 
 .requisition-line small {
   color: var(--muted);
+}
+
+.requisition-line .stock-state {
+  font-weight: 600;
+}
+
+.stock-state.ok {
+  color: var(--ok);
+}
+
+.stock-state.partial {
+  color: #9a6700;
+}
+
+.stock-state.out {
+  color: var(--bad);
+}
+
+.stock-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #bfe3d2;
+  border-radius: 6px;
+  background: #f0faf5;
+  color: #236b4b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.stock-summary.shortage {
+  border-color: #ead7a2;
+  background: #fff9e8;
+  color: #805d08;
+}
+
+.stock-summary svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
 }
 
 .quantity-label,

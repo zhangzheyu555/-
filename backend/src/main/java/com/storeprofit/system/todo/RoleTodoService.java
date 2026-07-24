@@ -117,8 +117,8 @@ public class RoleTodoService {
           user, normalized.storeId(), DataScopeDomains.WAREHOUSE);
       Set<String> escalatedTodoIds = openSourceTodoIds(user.tenantId(), RoleTodoAudience.WAREHOUSE);
       List<String> warehouseStatuses = RoleTodoAudience.STORE_MANAGER.equals(audience)
-          ? List.of("SHIPPED")
-          : List.of("SUBMITTED", "APPROVED");
+          ? List.of("SHIPPED", "PARTIALLY_SHIPPED")
+          : List.of("SUBMITTED", "APPROVED", "BACKORDERED", "WAITING_REPLENISHMENT");
       scopedItems.addAll(queryStoreRows(warehouseScope, storeId -> roleTodoRepository.pendingWarehouseRequisitions(
           user.tenantId(), effectiveBrandId, storeId, warehouseStatuses, normalized.limit())).stream()
           .map(row -> applyCompletion(warehouseItem(row, updatedAt, escalatedTodoIds, audience), completedActions, bossResolvedSourceTodoIds))
@@ -541,11 +541,12 @@ public class RoleTodoService {
       Set<String> escalatedTodoIds,
       RoleTodoAudience audience
   ) {
-    String todoId = RoleTodoAudience.STORE_MANAGER.equals(audience) && "SHIPPED".equals(row.status())
+    boolean pendingStoreReceipt = List.of("SHIPPED", "PARTIALLY_SHIPPED").contains(row.status());
+    String todoId = RoleTodoAudience.STORE_MANAGER.equals(audience) && pendingStoreReceipt
         ? "store-receipt-" + row.id()
         : "warehouse-" + row.id();
     String month = monthFromDateTime(row.submittedAt());
-    if (RoleTodoAudience.STORE_MANAGER.equals(audience) && "SHIPPED".equals(row.status())) {
+    if (RoleTodoAudience.STORE_MANAGER.equals(audience) && pendingStoreReceipt) {
       return new RoleTodoItemResponse(
           todoId,
           "\u5f85\u786e\u8ba4\u6536\u8d27\uff1a\u4ed3\u5e93\u5df2\u53d1\u8d27\uff0c\u8bf7\u786e\u8ba4\u672c\u5e97\u6536\u8d27",
@@ -574,19 +575,22 @@ public class RoleTodoService {
     }
     String processStatus = switch (row.status()) {
       case "APPROVED" -> "\u5f85\u4ed3\u5e93\u53d1\u8d27";
+      case "BACKORDERED" -> "缺货待处理";
+      case "WAITING_REPLENISHMENT" -> "待补货";
+      case "PARTIALLY_SHIPPED" -> "部分发货，待门店收货";
       case "SHIPPED" -> "\u5f85\u95e8\u5e97\u6536\u8d27";
       case "RECEIVED" -> "\u5df2\u6536\u8d27";
       case "REJECTED" -> "\u5df2\u9a73\u56de";
       case "TODO_DONE" -> "\u5df2\u5904\u7406";
       default -> "\u5f85\u4ed3\u5e93\u5ba1\u6838";
     };
-    String ownerName = "SHIPPED".equals(row.status()) ? "\u5e97\u957f" : "\u4ed3\u5e93\u7ba1\u7406\u5458";
+    String ownerName = pendingStoreReceipt ? "\u5e97\u957f" : "\u4ed3\u5e93\u7ba1\u7406\u5458";
     return new RoleTodoItemResponse(
         todoId,
         "\u95e8\u5e97\u53eb\u8d27\u5f85\u5904\u7406\uff1a" + display(row.storeName(), row.storeId()),
         "\u53eb\u8d27\u5355\u91d1\u989d " + money(row.totalAmount()) + "\uff0c\u5f53\u524d\u72b6\u6001\u4e3a " + processStatus + "\u3002",
         "PENDING",
-        "SHIPPED".equals(row.status()) ? 76 : ("APPROVED".equals(row.status()) ? 72 : 68),
+        pendingStoreReceipt ? 76 : ("APPROVED".equals(row.status()) ? 72 : 68),
         row.brandName(),
         row.storeId(),
         row.storeName(),

@@ -112,6 +112,12 @@ const noPendingCentralSession = {
   displayName: '无待办总仓管理员',
 }
 
+const requisitionProcessorSession = {
+  ...warehouseAdminSession,
+  id: 31,
+  displayName: '叫货处理仓管',
+}
+
 const storeSession = {
   ...baseSession,
   id: 21,
@@ -132,14 +138,62 @@ const storeSession = {
   defaultWorkspace: '/store',
 }
 
-const overview = (warehouseId = 1) => ({
+const shortageRequisition = {
+  id: 'REQ-SHORTAGE-001',
+  storeId: 'rg1',
+  storeName: '荆州之星店',
+  warehouseId: 1,
+  warehouseName: '荆州总仓',
+  status: 'SUBMITTED',
+  statusLabel: '待仓库处理',
+  totalAmount: 250,
+  note: '门店周末备货',
+  submittedAt: '2026-07-24 09:00',
+  lines: [{
+    id: 91,
+    itemId: 11,
+    itemName: '鲜牛奶',
+    requestedQuantity: 5,
+    approvedQuantity: 0,
+    shippedQuantity: 0,
+    unitPrice: 50,
+    amount: 250,
+    unit: '箱',
+  }],
+}
+
+const availableRequisition = {
+  id: 'REQ-AVAILABLE-002',
+  storeId: 'bw1',
+  storeName: '滨江万达店',
+  warehouseId: 1,
+  warehouseName: '荆州总仓',
+  status: 'SUBMITTED',
+  statusLabel: '待仓库处理',
+  totalAmount: 50,
+  note: '日常补货',
+  submittedAt: '2026-07-20 15:30',
+  lines: [{
+    id: 92,
+    itemId: 11,
+    itemName: '鲜牛奶',
+    requestedQuantity: 1,
+    approvedQuantity: 0,
+    shippedQuantity: 0,
+    unitPrice: 50,
+    amount: 50,
+    unit: '箱',
+  }],
+}
+
+const overview = (warehouseId = 1, includeShortageRequisition = false) => ({
   warehouse: warehouses.find((row) => row.id === warehouseId),
   summary: {
     itemCount: 1,
     lowStockCount: 0,
     expiringCount: 0,
     overstockCount: 0,
-    pendingRequisitionCount: 0,
+    pendingRequisitionCount: includeShortageRequisition ? 2 : 0,
     pendingReceiptCount: 0,
     pendingPurchaseCount: 0,
     stockValue: warehouseId === 1 ? 1200 : 0,
@@ -153,14 +207,14 @@ const overview = (warehouseId = 1) => ({
     unit: '箱',
     stockQuantity: warehouseId === 1 ? 20 : 0,
     storeStockQuantity: 2,
-    warehouseAvailableQuantity: 18,
+    warehouseAvailableQuantity: includeShortageRequisition ? 3 : 18,
     unitPrice: 50,
     stockStatus: '正常',
     alertLevel: 'NORMAL',
     alertText: '',
     active: true,
   }],
-  requisitions: [],
+  requisitions: includeShortageRequisition ? [availableRequisition, shortageRequisition] : [],
   stockBatches: [],
   movements: [],
 })
@@ -315,13 +369,23 @@ const transferRecords = (warehouseId: number) => {
 interface RequestLog {
   urls: string[]
   requisitionBody: Record<string, unknown> | null
+  requisitionReviewBodies: Record<string, unknown>[]
+  requisitionShipCount: number
   transferBody: Record<string, unknown> | null
   accessProfileBody: Record<string, unknown> | null
   consoleErrors: string[]
 }
 
 async function prepare(page: Page, session: typeof baseSession) {
-  const log: RequestLog = { urls: [], requisitionBody: null, transferBody: null, accessProfileBody: null, consoleErrors: [] }
+  const log: RequestLog = {
+    urls: [],
+    requisitionBody: null,
+    requisitionReviewBodies: [],
+    requisitionShipCount: 0,
+    transferBody: null,
+    accessProfileBody: null,
+    consoleErrors: [],
+  }
   page.on('console', (message) => {
     if (message.type() === 'error') log.consoleErrors.push(message.text())
   })
@@ -351,7 +415,7 @@ async function fulfillApi(route: Route, session: typeof baseSession, log: Reques
   }
   if (path === '/api/warehouse/overview') {
     const warehouseId = Number(url.searchParams.get('warehouseId') || (session.role === 'STORE_MANAGER' ? 1 : 1))
-    return route.fulfill(ok(overview(warehouseId)))
+    return route.fulfill(ok(overview(warehouseId, session.id === requisitionProcessorSession.id)))
   }
   if (path === '/api/warehouse/transfers/context') {
     const warehouseId = Number(url.searchParams.get('warehouseId') || 1)
@@ -366,12 +430,24 @@ async function fulfillApi(route: Route, session: typeof baseSession, log: Reques
     return route.fulfill(ok(transferRecords(warehouseId)))
   }
   if (path === '/api/warehouse/item-categories' || path === '/api/warehouse/returns') return route.fulfill(ok([]))
+  if (path === `/api/warehouse/requisitions/${shortageRequisition.id}/review` && request.method() === 'POST') {
+    log.requisitionReviewBodies.push(request.postDataJSON())
+    return route.fulfill(ok(null))
+  }
+  if (path === `/api/warehouse/requisitions/${shortageRequisition.id}/ship` && request.method() === 'POST') {
+    log.requisitionShipCount += 1
+    return route.fulfill(ok(null))
+  }
   if (path === '/api/warehouse/requisitions' && request.method() === 'POST') {
     log.requisitionBody = request.postDataJSON()
     return route.fulfill(ok({ id: 'REQ-1', status: 'SUBMITTED', lines: [] }))
   }
   if (path === '/api/stores') {
-    return route.fulfill(ok([{ id: 'rg1', name: '荆州之星店', brandName: '茹菓', status: 'ACTIVE' }]))
+    return route.fulfill(ok([
+      { id: 'rg1', name: '荆州之星店', brandName: '茹菓', status: 'ACTIVE' },
+      { id: 'bw1', name: '滨江万达店', brandName: '百味鸡', status: 'ACTIVE' },
+      { id: 'xnm1', name: '西南商圈店', brandName: '小柠檬', status: 'ACTIVE' },
+    ]))
   }
   if (path === '/api/users') {
     return route.fulfill(ok([{
@@ -559,6 +635,41 @@ test('multi-warehouse admin switches by scoped warehouse id and ignores query ta
   expect(log.consoleErrors).toEqual([])
 })
 
+test('regional warehouse requisition link preserves the selected warehouse context', async ({ page }) => {
+  const log = await prepare(page, warehouseAdminSession)
+  await page.goto('/warehouse/detail/2')
+
+  await expect(page.getByLabel('当前仓库')).toHaveValue('2')
+  await expect(page.getByRole('heading', { name: '山东分仓', exact: true })).toBeVisible()
+  await page.getByRole('link', { name: '门店叫货', exact: true }).click()
+
+  await expect.poll(() => new URL(page.url()).pathname).toBe('/warehouse/requests')
+  await expect.poll(() => new URL(page.url()).searchParams.get('warehouseId')).toBe('2')
+  await expect(page.getByLabel('当前仓库')).toHaveValue('2')
+  await expect(page.getByRole('heading', { name: '山东分仓', exact: true })).toBeVisible()
+
+  await page.reload()
+  await expect.poll(() => new URL(page.url()).searchParams.get('warehouseId')).toBe('2')
+  await expect(page.getByLabel('当前仓库')).toHaveValue('2')
+  await expect(page.getByRole('heading', { name: '山东分仓', exact: true })).toBeVisible()
+  await expect.poll(() => log.urls.some((raw) => {
+    const requestUrl = new URL(raw)
+    return requestUrl.pathname === '/api/warehouse/overview'
+      && requestUrl.searchParams.get('warehouseId') === '2'
+  })).toBe(true)
+
+  const warehouseSelector = page.getByLabel('当前仓库')
+  await warehouseSelector.selectOption('1')
+  await expect.poll(() => new URL(page.url()).pathname).toBe('/warehouse/requests')
+  await expect.poll(() => new URL(page.url()).searchParams.get('warehouseId')).toBe('1')
+  await expect(page.getByRole('heading', { name: '荆州总仓', exact: true })).toBeVisible()
+
+  await warehouseSelector.selectOption('2')
+  await expect.poll(() => new URL(page.url()).searchParams.get('warehouseId')).toBe('2')
+  await expect(page.getByRole('heading', { name: '山东分仓', exact: true })).toBeVisible()
+  expect(log.consoleErrors).toEqual([])
+})
+
 test('transfer workbench keeps its route while switching warehouse context and reloads real workbench data', async ({ page }) => {
   const log = await prepare(page, warehouseAdminSession)
   await page.goto('/warehouse/transfers?warehouseId=1')
@@ -649,6 +760,101 @@ test('store manager sees a read-only supply warehouse and requisition does not s
   await expect.poll(() => log.requisitionBody).not.toBeNull()
   expect(log.requisitionBody).not.toHaveProperty('warehouseId')
   expect(log.requisitionBody).not.toHaveProperty('storeId')
+  expect(log.consoleErrors).toEqual([])
+})
+
+test('warehouse handles insufficient stock with explicit available, shortage and partial shipment actions', async ({ page }) => {
+  const log = await prepare(page, requisitionProcessorSession)
+  await page.goto('/warehouse/requests?warehouseId=1')
+
+  const requisitionRow = page.locator('tbody tr').filter({ hasText: shortageRequisition.id }).first()
+  await expect(requisitionRow).toBeVisible()
+  await expect(requisitionRow).toContainText('鲜牛奶 申请 5 箱 / 已发 0 箱')
+  await expect(requisitionRow).toContainText('鲜牛奶缺货 2 箱')
+  for (const action of ['按可用库存发货', '标记缺货', '等补货后再发', '驳回']) {
+    await expect(requisitionRow.getByRole('button', { name: action, exact: true })).toBeVisible()
+  }
+  await expect(requisitionRow.getByRole('button', { name: '审核通过', exact: true })).toHaveCount(0)
+
+  await requisitionRow.getByRole('button', { name: '查看明细', exact: true }).click()
+  const detail = page.locator('.detail-line').filter({ hasText: '鲜牛奶' })
+  await expect(detail).toContainText('申请：5 箱')
+  await expect(detail).toContainText('待发：5 箱')
+  await expect(detail).toContainText('当前可发：3 箱')
+  await expect(detail).toContainText('已发：0 箱')
+  await expect(detail).toContainText('缺货：2 箱')
+
+  await requisitionRow.getByRole('button', { name: '按可用库存发货', exact: true }).click()
+  const dialog = page.getByRole('alertdialog', { name: '按可用库存发货' })
+  await expect(dialog).toContainText('只扣减实际发出数量，未发数量转为缺货待处理')
+  await dialog.getByRole('button', { name: '确认部分发货', exact: true }).click()
+
+  await expect.poll(() => log.requisitionReviewBodies.length).toBe(1)
+  expect(log.requisitionReviewBodies[0]).toMatchObject({
+    approved: true,
+    handlingMode: 'AVAILABLE_ONLY',
+    lines: [{ itemId: 11, approvedQuantity: 5 }],
+  })
+  await expect.poll(() => log.requisitionShipCount).toBe(1)
+  await page.screenshot({ path: '../output/playwright/warehouse-requisition-shortage-desktop.png', fullPage: true })
+  expect(log.consoleErrors).toEqual([])
+})
+
+test('warehouse requisition filters list each store and apply the selected submission date', async ({ page }) => {
+  const log = await prepare(page, requisitionProcessorSession)
+  await page.goto('/warehouse/requests?warehouseId=1')
+
+  const panel = page.locator('.content-card').filter({ hasText: '门店叫货待处理' })
+  await expect(panel).toHaveCount(1)
+  const storeFilter = panel.getByRole('combobox', { name: '叫货门店', exact: true })
+  const dateFilter = panel.getByLabel('提交日期', { exact: true })
+
+  await expect(storeFilter.getByRole('option', { name: '全部门店', exact: true })).toHaveCount(1)
+  await expect(storeFilter.getByRole('option', { name: '荆州之星店', exact: true })).toHaveCount(1)
+  await expect(storeFilter.getByRole('option', { name: '滨江万达店', exact: true })).toHaveCount(1)
+  await expect(storeFilter.getByRole('option', { name: '西南商圈店', exact: true })).toHaveCount(1)
+
+  await storeFilter.selectOption('bw1')
+  await expect(panel.getByRole('row').filter({ hasText: availableRequisition.id })).toBeVisible()
+  await expect(panel.getByRole('row').filter({ hasText: shortageRequisition.id })).toHaveCount(0)
+
+  await dateFilter.fill('2026-07-24')
+  await expect(panel).toContainText('没有符合筛选条件的叫货单')
+
+  await storeFilter.selectOption('')
+  await expect(panel.getByRole('row').filter({ hasText: shortageRequisition.id })).toBeVisible()
+  await expect(panel.getByRole('row').filter({ hasText: availableRequisition.id })).toHaveCount(0)
+
+  await dateFilter.fill('')
+  await expect(panel.getByRole('row').filter({ hasText: shortageRequisition.id })).toBeVisible()
+  await expect(panel.getByRole('row').filter({ hasText: availableRequisition.id })).toBeVisible()
+  expect(log.consoleErrors).toEqual([])
+})
+
+test('warehouse shortage controls remain usable without whole-page overflow on mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  const log = await prepare(page, requisitionProcessorSession)
+  await page.goto('/warehouse/requests?warehouseId=1')
+
+  const requisitionRow = page.locator('tbody tr').filter({ hasText: shortageRequisition.id }).first()
+  await expect(requisitionRow).toBeVisible()
+  const availableButton = requisitionRow.getByRole('button', { name: '按可用库存发货', exact: true })
+  await expect(availableButton).toBeVisible()
+  await expect(requisitionRow.getByRole('button', { name: '等补货后再发', exact: true })).toBeVisible()
+  await availableButton.scrollIntoViewIfNeeded()
+  for (const action of ['按可用库存发货', '标记缺货', '等补货后再发', '驳回']) {
+    const box = await requisitionRow.getByRole('button', { name: action, exact: true }).boundingBox()
+    expect(box?.x).toBeGreaterThanOrEqual(0)
+    expect((box?.x || 0) + (box?.width || 0)).toBeLessThanOrEqual(390)
+    expect(box?.height).toBeGreaterThanOrEqual(44)
+  }
+  const viewport = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }))
+  expect(viewport.scrollWidth).toBeLessThanOrEqual(viewport.clientWidth + 1)
+  await page.screenshot({ path: '../output/playwright/warehouse-requisition-shortage-mobile.png', fullPage: true })
+  await requisitionRow.screenshot({ path: '../output/playwright/warehouse-requisition-shortage-mobile-card.png' })
   expect(log.consoleErrors).toEqual([])
 })
 

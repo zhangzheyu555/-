@@ -56,8 +56,8 @@ services:
       MYSQL_HOST: mysql
       MYSQL_PORT: 3306
       MYSQL_DATABASE: ${MYSQL_DATABASE:-store_profit_qa}
-      MYSQL_USERNAME: ${MYSQL_APP_USER:-store_profit_app}
-      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:-store_profit_app}
+      MYSQL_USERNAME: ${MYSQL_USERNAME:-${MYSQL_APP_USER:-store_profit_app}}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-${MYSQL_APP_PASSWORD:-store_profit_app}}
       MYSQL_ALLOW_PUBLIC_KEY_RETRIEVAL: ${MYSQL_ALLOW_PUBLIC_KEY_RETRIEVAL:-true}
       SPRING_DATA_REDIS_HOST: redis
       SPRING_DATA_REDIS_PORT: 6379
@@ -70,11 +70,26 @@ services:
       APP_BOOTSTRAP_DEFAULT_USERS_PASSWORD: ${APP_BOOTSTRAP_DEFAULT_USERS_PASSWORD:-}
       APP_BOOTSTRAP_STORE_MANAGER_ACCOUNTS_ENABLED: ${APP_BOOTSTRAP_STORE_MANAGER_ACCOUNTS_ENABLED:-false}
       APP_BOOTSTRAP_STORE_MANAGER_PASSWORD: ${APP_BOOTSTRAP_STORE_MANAGER_PASSWORD:-}
+      # 门店经营助手（DeepSeek）。APP_ENV=PRODUCTION 且 OUTBOUND_MODE=LIVE 时即可真实出网；
+      # 若 APP_ENV=QA 需另外显式开启 DEEPSEEK_EXTERNAL_PILOT_ENABLED=true 与 DEEPSEEK_QUESTION_ONLY=true。
       DEEPSEEK_ENABLED: ${DEEPSEEK_ENABLED:-false}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_OUTBOUND_MODE: ${DEEPSEEK_OUTBOUND_MODE:-LIVE}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      DEEPSEEK_FAST_MODEL: ${DEEPSEEK_FAST_MODEL:-deepseek-chat}
+      # 员工服务助手：MODEL 模式独立接入 DeepSeek（绝不复用上面的 DEEPSEEK_* 变量）。
+      # ASSISTANT_RUNTIME_SECURED 必须为 true，否则后端视为未通过安全启动器注入而拒绝就绪。
+      EMPLOYEE_ASSISTANT_PROVIDER: ${EMPLOYEE_ASSISTANT_PROVIDER:-}
+      EMPLOYEE_ASSISTANT_MODEL_URL: ${EMPLOYEE_ASSISTANT_MODEL_URL:-https://api.deepseek.com}
+      EMPLOYEE_ASSISTANT_MODEL_API_KEY: ${EMPLOYEE_ASSISTANT_MODEL_API_KEY:-}
+      EMPLOYEE_ASSISTANT_MODEL_NAME: ${EMPLOYEE_ASSISTANT_MODEL_NAME:-deepseek-chat}
+      EMPLOYEE_ASSISTANT_OUTBOUND_MODE: ${EMPLOYEE_ASSISTANT_OUTBOUND_MODE:-LIVE}
+      ASSISTANT_RUNTIME_SECURED: ${ASSISTANT_RUNTIME_SECURED:-false}
       APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS:-http://localhost:*,http://127.0.0.1:*}
       TZ: Asia/Shanghai
     ports:
-      - "${BACKEND_BIND_IP:-127.0.0.1}:${BACKEND_PORT:-8080}:8080"
+      - "${BACKEND_BIND_IP:-127.0.0.1}:${BACKEND_PORT:-${SERVER_PORT:-8080}}:8080"
     volumes:
       - backend-expense-supplements:/app/expense-supplements
     depends_on:
@@ -116,15 +131,15 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-store_profit_root}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-store_profit_qa}
-      MYSQL_USER: ${MYSQL_APP_USER:-store_profit_app}
-      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:-store_profit_app}
+      MYSQL_USER: ${MYSQL_USERNAME:-${MYSQL_APP_USER:-store_profit_app}}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-${MYSQL_APP_PASSWORD:-store_profit_app}}
       TZ: Asia/Shanghai
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
       - --default-time-zone=+08:00
     ports:
-      - "${MYSQL_BIND_IP:-127.0.0.1}:${MYSQL_HOST_PORT:-3306}:3306"
+      - "${MYSQL_BIND_IP:-127.0.0.1}:${MYSQL_HOST_PORT:-${MYSQL_PORT:-3306}}:3306"
     volumes:
       - mysql-data:/var/lib/mysql
       - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro

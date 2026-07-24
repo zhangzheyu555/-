@@ -24,7 +24,7 @@ function lineText(row: WarehouseRequisition) {
     <div class="table-heading">
       <div>
         <h3>待确认收货</h3>
-        <span>仓库已发货后，店长在这里确认本店已收到商品。</span>
+        <span>部分发货也可确认本次收货，未发数量会继续保留为待补货。</span>
       </div>
     </div>
     <div class="pending-receipt-card-list" aria-label="待确认收货列表">

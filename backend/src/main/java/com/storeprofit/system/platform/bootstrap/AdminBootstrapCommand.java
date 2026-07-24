@@ -23,7 +23,11 @@ public final class AdminBootstrapCommand {
   public static final String COMMAND_ARGUMENT = "--admin-bootstrap";
   public static final String ENABLED_ENVIRONMENT = "APP_BOOTSTRAP_ADMIN_ENABLED";
   static final String QA_DOCKER_IDENTITY_ENVIRONMENT = "APP_BOOTSTRAP_ADMIN_QA_DOCKER";
-  static final int EXPECTED_FLYWAY_VERSION = 92;
+  static final int EXPECTED_FLYWAY_VERSION = 96;
+  static final Set<Integer> EXPECTED_FLYWAY_VERSIONS = java.util.stream.Stream.concat(
+          java.util.stream.IntStream.rangeClosed(1, 90).boxed(),
+          java.util.stream.Stream.of(93, 94, 95, 96))
+      .collect(java.util.stream.Collectors.toUnmodifiableSet());
 
   private final PasswordService passwordService;
   private final ConnectionFactory connectionFactory;
@@ -311,9 +315,13 @@ public final class AdminBootstrapCommand {
              """)) {
       while (rows.next()) {
         String versionText = rows.getString("version");
-        if (!rows.getBoolean("success")
-            || versionText == null
-            || !versionText.matches("[1-9][0-9]*")) {
+        if (!rows.getBoolean("success")) {
+          throw new IllegalStateException("Flyway history is incomplete");
+        }
+        if (versionText == null) {
+          continue;
+        }
+        if (!versionText.matches("[1-9][0-9]*")) {
           throw new IllegalStateException("Flyway history is incomplete");
         }
         int version;
@@ -327,13 +335,8 @@ public final class AdminBootstrapCommand {
         }
       }
     }
-    if (versions.size() != EXPECTED_FLYWAY_VERSION) {
+    if (!versions.equals(EXPECTED_FLYWAY_VERSIONS)) {
       throw new IllegalStateException("Flyway history does not match the candidate");
-    }
-    for (int version = 1; version <= EXPECTED_FLYWAY_VERSION; version++) {
-      if (!versions.contains(version)) {
-        throw new IllegalStateException("Flyway history does not match the candidate");
-      }
     }
   }
 

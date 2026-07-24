@@ -32,9 +32,9 @@ function backendProxy(target: string) {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  // 本项目本机后端的受控运行端口为 18081。仍允许维护环境用
+  // 本项目本机 QA 后端的受控运行端口为 18080。仍允许维护环境用
   // VITE_BACKEND_PROXY_TARGET 覆盖，避免未加载 .env.local 时悄悄转发到旧的 8080。
-  const backendTarget = env.VITE_BACKEND_PROXY_TARGET || 'http://127.0.0.1:18081'
+  const backendTarget = env.VITE_BACKEND_PROXY_TARGET || 'http://127.0.0.1:18080'
   return {
     // The gateway mounts the desktop app at /admin/.  Keep Vite's asset base
     // aligned with Vue Router's BASE_URL so a deployed page never renders an
