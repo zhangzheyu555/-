@@ -248,6 +248,56 @@ test('latest 200-point standard calculates 180/179 and red-line result while sav
   expect(photosJson).toContain('"attachmentId":501')
 })
 
+test('manual review appears before the clause list and clause search filters all supported text fields', async ({ page }) => {
+  await mockInspectionApi(page)
+  await seedSession(page)
+  await page.goto('/operations/inspection/tasks')
+
+  const search = page.getByRole('searchbox', { name: '搜索检查条款' })
+  await expect(search).toBeVisible()
+  await expect(page.getByText('共 105 条', { exact: true })).toBeVisible()
+
+  const manualReviewComesFirst = await page.evaluate(() => {
+    const clauseSearch = document.querySelector('.inspection-clause-search')
+    const reviewCards = [
+      document.querySelector('.inspection-deduction-card'),
+      document.querySelector('.inspection-add-card'),
+      document.querySelector('.inspection-note-card'),
+    ]
+    return Boolean(clauseSearch) && reviewCards.every((card) => (
+      Boolean(card) && Boolean(card?.compareDocumentPosition(clauseSearch as Node) & Node.DOCUMENT_POSITION_FOLLOWING)
+    ))
+  })
+  expect(manualReviewComesFirst).toBe(true)
+
+  await search.fill('S-01 判定说明')
+  await expect(page.locator('[data-category="MATERIAL"]')).toHaveCount(0)
+  await expect(page.locator('[data-category="HYGIENE"]')).toHaveCount(0)
+  await expect(page.locator('[data-category="SERVICE"] tbody tr')).toHaveCount(1)
+  await expect(page.getByText('找到 1 / 105 条', { exact: true })).toBeVisible()
+
+  await search.fill('卫生')
+  await expect(page.locator('[data-category="MATERIAL"]')).toHaveCount(0)
+  await expect(page.locator('[data-category="HYGIENE"] tbody tr')).toHaveCount(47)
+  await expect(page.locator('[data-category="SERVICE"]')).toHaveCount(0)
+
+  await search.fill('评分规则 100 分')
+  await expect(page.locator('[data-category="SERVICE"] tbody tr')).toHaveCount(1)
+  await expect(page.locator('[data-category="SERVICE"]').getByText('产品核对', { exact: true })).toBeVisible()
+
+  await search.fill('现场检查并保留证据')
+  await expect(page.getByText('找到 105 / 105 条', { exact: true })).toBeVisible()
+
+  await search.fill('不存在的检查项')
+  await expect(page.getByText('未找到包含“不存在的检查项”的检查项，请更换关键词或清空搜索。')).toBeVisible()
+
+  await page.getByRole('button', { name: '清空搜索' }).click()
+  await expect(search).toHaveValue('')
+  await expect(page.locator('[data-category="MATERIAL"] tbody tr')).toHaveCount(40)
+  await expect(page.locator('[data-category="HYGIENE"] tbody tr')).toHaveCount(47)
+  await expect(page.locator('[data-category="SERVICE"] tbody tr')).toHaveCount(18)
+})
+
 test('canonical E2E red-line fixture uses a complete formal standard and downloads xlsx with an authenticated request', async ({ page }) => {
   let requestedDetailId = ''
   let exportAuthorization = ''

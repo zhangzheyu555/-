@@ -1935,24 +1935,6 @@ onUnmounted(() => {
         @save="submitRecord"
       />
 
-      <InspectionClauseEditor
-        :groups="globalStandard.groups"
-        :category-scores="categoryScores"
-        :photos="draft.photos"
-        :standard-ready="standardReady"
-        :items-for-category="draftItemsForCategory"
-        :safe-number="safeNumber"
-        :risk-label="riskLabel"
-        :item-deduction="itemDeduction"
-        :item-needs-rectification="itemNeedsRectification"
-        :item-photo-selected="itemPhotoSelected"
-        :item-after-photo-selected="itemAfterPhotoSelected"
-        @toggle-redline="toggleRedLineIssue"
-        @normalize-score="normalizeItemScore"
-        @toggle-photo="toggleItemPhoto"
-        @toggle-after-photo="toggleAfterPhoto"
-      />
-
       <InspectionDeductionRecords
         :rows="draftRows"
         :safe-number="safeNumber"
@@ -1978,6 +1960,24 @@ onUnmounted(() => {
         @update:note="draft.note = $event"
         @reset="resetDraft"
         @save="submitRecord"
+      />
+
+      <InspectionClauseEditor
+        :groups="globalStandard.groups"
+        :category-scores="categoryScores"
+        :photos="draft.photos"
+        :standard-ready="standardReady"
+        :items-for-category="draftItemsForCategory"
+        :safe-number="safeNumber"
+        :risk-label="riskLabel"
+        :item-deduction="itemDeduction"
+        :item-needs-rectification="itemNeedsRectification"
+        :item-photo-selected="itemPhotoSelected"
+        :item-after-photo-selected="itemAfterPhotoSelected"
+        @toggle-redline="toggleRedLineIssue"
+        @normalize-score="normalizeItemScore"
+        @toggle-photo="toggleItemPhoto"
+        @toggle-after-photo="toggleAfterPhoto"
       />
 
     </div>
