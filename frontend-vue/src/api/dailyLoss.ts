@@ -63,6 +63,7 @@ export interface DailyLossReportDetail {
   unitPriceSnapshot?: number
   amountSnapshot?: number
   lossReason?: string
+  inventoryDeducted?: boolean
 }
 
 export interface DailyLossReport {
@@ -80,6 +81,9 @@ export interface DailyLossReport {
   storeBorneAmount?: number
   detailCount?: number
   attachmentCount?: number
+  inventoryDeductedCount?: number
+  inventoryDeducted?: boolean
+  inventoryStatusLabel?: string
   submittedByName?: string
   submittedAt?: string
   reviewedByName?: string

@@ -463,8 +463,6 @@ public class UserManagementService {
               || Set.of(
                   PermissionCodes.SYSTEM_USER_MANAGE,
                   PermissionCodes.STORE_MANAGE,
-                  PermissionCodes.EMPLOYEE_READ,
-                  PermissionCodes.EMPLOYEE_MANAGE,
                   PermissionCodes.FINANCE_PROFIT_WRITE,
                   PermissionCodes.FINANCE_PROFIT_IMPORT,
                   PermissionCodes.FINANCE_PROFIT_DELETE,
@@ -478,7 +476,7 @@ public class UserManagementService {
                   PermissionCodes.EMPLOYEE_ASSISTANT_HANDOFF_MANAGE).contains(permissionCode))) {
         throw new BusinessException(
             "SUPERVISOR_PERMISSION_BOUNDARY",
-            "督导不能获得仓库中心、员工档案、门店经营助手、员工服务助手、财务写入、工资、账号权限或门店管理权限",
+            "督导不能获得仓库中心、门店经营助手、员工服务助手、财务写入、工资、账号权限或门店管理权限",
             HttpStatus.BAD_REQUEST);
       }
       if ("EMPLOYEE".equals(targetRole)

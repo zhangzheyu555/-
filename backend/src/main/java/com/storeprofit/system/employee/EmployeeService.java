@@ -333,8 +333,38 @@ public class EmployeeService {
         || request.storeId() == null || request.storeId().isBlank()) {
       throw new BusinessException("BAD_REQUEST", "门店与姓名必填", HttpStatus.BAD_REQUEST);
     }
+    String phone = blankToNull(request.phone());
+    if (phone != null && !phone.matches("^\\d{11}$")) {
+      throw new BusinessException("EMPLOYEE_PHONE_INVALID", "电话号码必须是11位数字", HttpStatus.BAD_REQUEST);
+    }
+    String idCardNo = blankToNull(request.idCardNo());
+    if (idCardNo != null && !idCardNo.toUpperCase(java.util.Locale.ROOT).matches("^\\d{17}[\\dX]$")) {
+      throw new BusinessException(
+          "EMPLOYEE_ID_CARD_INVALID", "身份证号码必须是18位，最后一位可以是数字或X", HttpStatus.BAD_REQUEST);
+    }
+    String birthday = blankToNull(request.birthday());
+    if (birthday != null) {
+      java.util.regex.Matcher matcher = java.util.regex.Pattern
+          .compile("^(\\d{1,2})月(\\d{1,2})日$")
+          .matcher(birthday);
+      if (!matcher.matches() || !validMonthDay(matcher)) {
+        throw new BusinessException(
+            "EMPLOYEE_BIRTHDAY_INVALID", "生日请按“4月14日”格式填写", HttpStatus.BAD_REQUEST);
+      }
+    }
     if (!employeeRepository.storeExists(tenantId, request.storeId())) {
       throw new BusinessException("BAD_REQUEST", "门店不存在：" + request.storeId(), HttpStatus.BAD_REQUEST);
+    }
+  }
+
+  private boolean validMonthDay(java.util.regex.Matcher matcher) {
+    try {
+      int month = Integer.parseInt(matcher.group(1));
+      int day = Integer.parseInt(matcher.group(2));
+      java.time.MonthDay.of(month, day);
+      return true;
+    } catch (RuntimeException exception) {
+      return false;
     }
   }
 

@@ -113,10 +113,16 @@ const healthProblemCount = computed(() =>
   rows.value.filter((r) => (!statusFilter.value || r.status === statusFilter.value)
     && healthState(r).level === 'danger').length)
 
+function isRuguoBrand(name?: string) {
+  const normalized = String(name || '').replace(/\s+/g, '').replace(/奶茶|品牌/g, '')
+  return ['茹菓', '茹果', '如果'].includes(normalized)
+}
+
 const storeOptions = computed(() => {
   const seen = new Map<string, string>()
-  for (const s of stores.value) seen.set(s.id, s.name)
-  for (const r of rows.value) if (!seen.has(r.storeId)) seen.set(r.storeId, r.storeName || r.storeId)
+  for (const s of stores.value) {
+    if (isRuguoBrand(s.brandName)) seen.set(s.id, s.name)
+  }
   return [...seen.entries()].map(([id, name]) => ({ id, name }))
 })
 
@@ -151,6 +157,14 @@ const emptyForm = (): EmployeeUpsert => ({
   hourlyRate: null,
 })
 
+const POSITION_OPTIONS = ['店长', '领班', '训练员', '营业员', '实习', '兼职', '长期兼职', '水果阿姨', '长期阿姨', '办公室']
+const positionOptions = computed(() => {
+  const options = [...POSITION_OPTIONS]
+  const current = String(form.position || '').trim()
+  if (current && !options.includes(current)) options.push(current)
+  return options
+})
+
 /* ---------- 时薪选择栏（兼职/实习/长期阿姨适用；空=默认：实习兼职15、阿姨18） ---------- */
 const HOURLY_RATE_OPTIONS = [12, 13, 15, 18, 20]
 const hourlyMode = ref('')
@@ -169,6 +183,23 @@ const form = reactive<EmployeeUpsert>(emptyForm())
 const saving = ref(false)
 const dialogError = ref('')
 
+function normalizeBirthdayInput(value?: string) {
+  const raw = String(value || '').trim()
+  const parts = raw.match(/^(?:\d{4}[.\-/年])?(\d{1,2})[.\-/月](\d{1,2})日?$/)
+  return parts ? `${Number(parts[1])}月${Number(parts[2])}日` : raw
+}
+
+function onPhoneInput(event: Event) {
+  form.phone = (event.target as HTMLInputElement).value.replace(/\D/g, '').slice(0, 11)
+}
+
+function onIdCardInput(event: Event) {
+  form.idCardNo = (event.target as HTMLInputElement).value
+    .toUpperCase()
+    .replace(/[^0-9X]/g, '')
+    .slice(0, 18)
+}
+
 function openCreate() {
   Object.assign(form, emptyForm())
   editingId.value = ''
@@ -180,7 +211,7 @@ function openEdit(row: EmployeeRecord) {
   Object.assign(form, emptyForm(), {
     storeId: row.storeId, name: row.name, phone: row.phone, position: row.position,
     employmentType: row.employmentType || '全职', status: row.status || '在职',
-    hireDate: row.hireDate, birthday: row.birthday, idCardNo: row.idCardNo,
+    hireDate: row.hireDate, birthday: normalizeBirthdayInput(row.birthday), idCardNo: row.idCardNo,
     healthCertIssueDate: row.healthCertIssueDate, healthCertExpireDate: row.healthCertExpireDate,
     contractSignText: row.contractSignText, regularDate: row.regularDate,
     trainerDate: row.trainerDate, shiftLeaderDate: row.shiftLeaderDate,
@@ -196,6 +227,23 @@ async function save() {
     dialogError.value = '门店与姓名必填。'
     return
   }
+  if (form.phone && !/^\d{11}$/.test(form.phone)) {
+    dialogError.value = '电话号码必须是11位数字。'
+    return
+  }
+  if (form.idCardNo && !/^\d{17}[\dX]$/.test(form.idCardNo.toUpperCase())) {
+    dialogError.value = '身份证号码必须是18位，最后一位可以是数字或X。'
+    return
+  }
+  const birthday = normalizeBirthdayInput(form.birthday)
+  const birthdayMatch = birthday.match(/^(\d{1,2})月(\d{1,2})日$/)
+  if (birthday && (!birthdayMatch
+    || Number(birthdayMatch[1]) < 1 || Number(birthdayMatch[1]) > 12
+    || Number(birthdayMatch[2]) < 1 || Number(birthdayMatch[2]) > new Date(2024, Number(birthdayMatch[1]), 0).getDate())) {
+    dialogError.value = '生日请按“4月14日”格式填写。'
+    return
+  }
+  form.birthday = birthday
   saving.value = true
   dialogError.value = ''
   try {
@@ -272,10 +320,6 @@ async function batchOpenAccounts() {
 function copyAccounts() {
   const text = accountResults.value.map((r) => `${r.employeeName}\t${r.username}\t${r.initialPassword}`).join('\n')
   navigator.clipboard?.writeText(`姓名\t账号\t初始密码\n${text}`)
-}
-function closeAccountDialog() {
-  accountDialogOpen.value = false
-  accountResults.value = []
 }
 
 /* ---------- 导入 / 导出 ---------- */
@@ -418,14 +462,14 @@ function exportCsv() {
       </p>
     </div>
 
-    <!-- 新增/编辑弹窗 -->
-    <div v-if="dialogOpen" class="modal-mask" @click.self="dialogOpen = false">
-      <div class="modal-box">
+    <!-- 新增/编辑右侧抽屉 -->
+    <div v-if="dialogOpen" class="staff-drawer-mask" @click.self="dialogOpen = false">
+      <aside class="staff-drawer" role="dialog" aria-modal="true" :aria-label="editingId ? '编辑员工档案' : '新增员工'">
         <header class="modal-head">
           <h3>{{ editingId ? '编辑员工档案' : '新增员工' }}</h3>
-          <button class="icon-btn" @click="dialogOpen = false">✕</button>
+          <button class="icon-btn" aria-label="关闭员工档案面板" @click="dialogOpen = false">✕</button>
         </header>
-        <div class="modal-body form-grid">
+        <div class="staff-drawer-body form-grid">
           <label>门店 *
             <select v-model="form.storeId" :disabled="!!editingId">
               <option value="" disabled>请选择门店</option>
@@ -433,7 +477,12 @@ function exportCsv() {
             </select>
           </label>
           <label>姓名 *<input v-model="form.name" type="text" :disabled="!!editingId" /></label>
-          <label>职位<input v-model="form.position" type="text" placeholder="店员/训练员/领班/店长" /></label>
+          <label>职位
+            <select v-model="form.position">
+              <option value="" disabled>请选择职位</option>
+              <option v-for="position in positionOptions" :key="position" :value="position">{{ position }}</option>
+            </select>
+          </label>
           <label>用工类型
             <select v-model="form.employmentType">
               <option value="全职">全职</option>
@@ -444,7 +493,7 @@ function exportCsv() {
           <label>时薪（兼职/实习/阿姨适用）
             <span class="hourly-row">
               <select v-model="hourlyMode" @change="onHourlyModeChange">
-                <option value="">默认（实习兼职15、阿姨18）</option>
+                <option value="">默认（实习15、兼职13、长期兼职/水果阿姨18；个人配置优先）</option>
                 <option v-for="r in HOURLY_RATE_OPTIONS" :key="r" :value="String(r)">{{ r }} 元/时</option>
                 <option value="custom">自定义…</option>
               </select>
@@ -452,10 +501,18 @@ function exportCsv() {
                 min="0" step="0.5" placeholder="元/时" class="hourly-custom" />
             </span>
           </label>
-          <label>电话<input v-model="form.phone" type="text" /></label>
-          <label>身份证号<input v-model="form.idCardNo" type="text" /></label>
+          <label>电话
+            <input :value="form.phone" type="text" inputmode="numeric" maxlength="11"
+              placeholder="请输入11位手机号码" @input="onPhoneInput" />
+          </label>
+          <label>身份证号
+            <input :value="form.idCardNo" type="text" inputmode="text" maxlength="18"
+              placeholder="请输入18位身份证号码" @input="onIdCardInput" />
+          </label>
           <label>入职日期<input v-model="form.hireDate" type="date" /></label>
-          <label>生日（月.日）<input v-model="form.birthday" type="text" placeholder="如 4.14" /></label>
+          <label>生日（月日）
+            <input v-model="form.birthday" type="text" inputmode="numeric" maxlength="6" placeholder="如 4月14日" />
+          </label>
           <label>健康证办理日期<input v-model="form.healthCertIssueDate" type="date" /></label>
           <label>健康证到期日期<input v-model="form.healthCertExpireDate" type="date" /></label>
           <label>转正时间<input v-model="form.regularDate" type="date" /></label>
@@ -466,19 +523,19 @@ function exportCsv() {
           <label>备注<input v-model="form.remark" type="text" /></label>
           <p v-if="dialogError" class="msg error">{{ dialogError }}</p>
         </div>
-        <footer class="modal-foot">
+        <footer class="staff-drawer-foot">
           <button class="btn ghost" @click="dialogOpen = false">取消</button>
           <button class="btn primary" :disabled="saving" @click="save">{{ saving ? '保存中…' : '保存' }}</button>
         </footer>
-      </div>
+      </aside>
     </div>
 
     <!-- 开号结果弹窗 -->
-    <div v-if="accountDialogOpen" class="modal-mask" @click.self="closeAccountDialog">
+    <div v-if="accountDialogOpen" class="modal-mask" @click.self="accountDialogOpen = false">
       <div class="modal-box">
         <header class="modal-head">
           <h3>账号已创建（初始密码只显示这一次）</h3>
-          <button class="icon-btn" @click="closeAccountDialog">✕</button>
+          <button class="icon-btn" @click="accountDialogOpen = false">✕</button>
         </header>
         <div class="modal-body">
           <table class="staff-table">
@@ -489,11 +546,11 @@ function exportCsv() {
               </tr>
             </tbody>
           </table>
-          <p class="msg muted">请复制后转交店长发给员工，首次登录必须修改密码。</p>
+          <p class="msg muted">请复制后转交店长发给员工，首次登录后应尽快修改密码。</p>
         </div>
         <footer class="modal-foot">
           <button class="btn ghost" @click="copyAccounts">复制全部</button>
-          <button class="btn primary" @click="closeAccountDialog">关闭</button>
+          <button class="btn primary" @click="accountDialogOpen = false">关闭</button>
         </footer>
       </div>
     </div>
@@ -663,5 +720,58 @@ tr.birthday-soon-row td.birthday-soon {
 
 .hourly-custom {
   width: 90px;
+}
+
+.staff-drawer-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(15, 23, 42, 0.38);
+}
+
+.staff-drawer {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(600px, calc(100vw - 24px));
+  height: 100%;
+  background: #fff;
+  box-shadow: -16px 0 40px rgba(15, 23, 42, 0.2);
+  animation: staff-drawer-enter 180ms ease-out;
+}
+
+.staff-drawer .modal-head {
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.staff-drawer-body {
+  padding: 18px 20px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.staff-drawer-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid #e5e7eb;
+  background: #fff;
+}
+
+@keyframes staff-drawer-enter {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@media (max-width: 640px) {
+  .staff-drawer {
+    width: 100vw;
+  }
+
+  .staff-drawer-body.form-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

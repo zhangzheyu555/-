@@ -15,6 +15,7 @@ public record DailyLossReportDetailResponse(
     BigDecimal pricedQuantity,
     BigDecimal unitPriceSnapshot,
     BigDecimal amountSnapshot,
-    String lossReason
+    String lossReason,
+    boolean inventoryDeducted
 ) {
 }

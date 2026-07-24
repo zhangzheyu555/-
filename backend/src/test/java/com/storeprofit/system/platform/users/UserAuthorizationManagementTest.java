@@ -72,6 +72,7 @@ class UserAuthorizationManagementTest {
         catalogEntry(PermissionCodes.EXAM_MANAGE),
         catalogEntry(PermissionCodes.WAREHOUSE_READ),
         catalogEntry(PermissionCodes.EMPLOYEE_READ),
+        catalogEntry(PermissionCodes.EMPLOYEE_MANAGE),
         catalogEntry(PermissionCodes.ASSISTANT_USE),
         catalogEntry(PermissionCodes.EMPLOYEE_ASSISTANT_USE),
         catalogEntry(PermissionCodes.DAILY_LOSS_READ)
@@ -265,13 +266,12 @@ class UserAuthorizationManagementTest {
   }
 
   @Test
-  void supervisorCannotReceiveWarehouseEmployeeProfileOrAssistantPermission() {
+  void supervisorCannotReceiveWarehouseOrAssistantPermission() {
     AuthUser supervisor = user(11L, "supervisor-boundary", "SUPERVISOR", null, 2L);
     stubAuthorizationSnapshot(supervisor);
 
     for (String permissionCode : List.of(
         PermissionCodes.WAREHOUSE_READ,
-        PermissionCodes.EMPLOYEE_READ,
         PermissionCodes.ASSISTANT_USE,
         PermissionCodes.EMPLOYEE_ASSISTANT_USE)) {
       assertThatThrownBy(() -> service.updateAuthorization(
