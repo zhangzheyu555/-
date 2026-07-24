@@ -55,6 +55,13 @@ public class KnowledgeBaseController {
     return ApiResponse.ok(knowledgeBaseService.listDocuments(user(authorization)));
   }
 
+  @GetMapping("/documents/available")
+  public ApiResponse<List<KnowledgeBaseAvailableDocumentResponse>> availableDocuments(
+      @RequestHeader(value = "Authorization", required = false) String authorization
+  ) {
+    return ApiResponse.ok(knowledgeBaseService.availableDocuments(user(authorization)));
+  }
+
   @PostMapping(value = "/documents", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
   public ApiResponse<KnowledgeBaseDocumentResponse> upload(
       @RequestHeader(value = "Authorization", required = false) String authorization,
@@ -67,11 +74,12 @@ public class KnowledgeBaseController {
       @RequestParam(required = false) Long topicId,
       @RequestParam(required = false) String topicName,
       @RequestParam(required = false) String relationType,
-      @RequestParam(required = false) Long predecessorDocumentId
+      @RequestParam(required = false) Long predecessorDocumentId,
+      @RequestParam(defaultValue = "false") boolean publishNow
   ) {
     return ApiResponse.ok(knowledgeBaseService.upload(
         user(authorization), file, title, category, visibility, roleScopes, storeScopes,
-        topicId, topicName, relationType, predecessorDocumentId));
+        topicId, topicName, relationType, predecessorDocumentId, publishNow));
   }
 
   @PostMapping("/documents/{id}/publish")

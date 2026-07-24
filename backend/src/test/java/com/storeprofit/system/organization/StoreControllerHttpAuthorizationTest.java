@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -32,10 +33,14 @@ class StoreControllerHttpAuthorizationTest {
         "name":"一店",
         "brandId":1,
         "area":"荆州",
-        "manager":"店长",
+        "managerEmployeeId":"e1",
+        "managerPhone":"13800138000",
         "openDate":"2026-01-01",
         "status":"营业中",
-        "note":""
+        "note":"",
+        "regionCode":"JINGZHOU",
+        "costAccountStoreId":"rg1",
+        "version":0
       }
       """;
 
@@ -82,10 +87,18 @@ class StoreControllerHttpAuthorizationTest {
   void bossCanWriteStoreThroughTheControllerAndRealServiceFallback() throws Exception {
     AuthUser boss = user("BOSS", null);
     StoreUpsertRequest request = new StoreUpsertRequest(
-        "rg1", "RG1", "一店", 1L, "荆州", "店长", "2026-01-01", "营业中", "");
+        "rg1", "RG1", "一店", 1L, "荆州", "店长", "13800138000",
+        "2026-01-01", "营业中", "", "JINGZHOU", null, "e1", "rg1", 0L);
+    StoreResponse saved = new StoreResponse(
+        "rg1", "RG1", "一店", 1L, "如果", "荆州", "店长", "13800138000",
+        "2026-01-01", "营业中", "", "JINGZHOU", null, null,
+        "e1", "rg1", "一店", 0L);
     when(authService.requireUser("Bearer boss-token")).thenReturn(boss);
-    when(repository.store(1L, "rg1")).thenReturn(Optional.empty());
+    when(repository.store(1L, "rg1")).thenReturn(Optional.empty(), Optional.of(saved));
     when(repository.brandExists(1L, 1L)).thenReturn(true);
+    when(repository.manager(1L, "e1")).thenReturn(Optional.of(
+        new OrganizationRepository.ManagerReference(
+            "e1", "店长", "13800138000", "rg1", "一店", "在职")));
 
     mockMvc.perform(post("/api/stores")
             .header("Authorization", "Bearer boss-token")
@@ -96,26 +109,45 @@ class StoreControllerHttpAuthorizationTest {
         .andExpect(jsonPath("$.success").value(true))
         .andExpect(jsonPath("$.code").value("OK"));
 
-    verify(repository).upsertStore(1L, request);
+    verify(repository).insertStore(1L, request, null);
   }
 
   @Test
-  void bossCanDeleteStoreThroughTheControllerAndRealServiceFallback() throws Exception {
+  void knowledgeBaseScopeQueryUsesTheDedicatedStoreOptionBoundary() throws Exception {
+    AuthUser supervisor = user("SUPERVISOR", null);
+    OrganizationService organizationService = mock(OrganizationService.class);
+    MockMvc scopedMockMvc = MockMvcBuilders.standaloneSetup(
+            new StoreController(authService, organizationService))
+        .setControllerAdvice(new GlobalExceptionHandler())
+        .addFilters(new RequestIdFilter())
+        .build();
+    when(authService.requireUser("Bearer supervisor-token")).thenReturn(supervisor);
+    when(organizationService.knowledgeBaseStores(supervisor)).thenReturn(java.util.List.of());
+
+    scopedMockMvc.perform(get("/api/stores")
+            .param("knowledgeBaseScope", "true")
+            .header("Authorization", "Bearer supervisor-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.success").value(true));
+
+    verify(organizationService).knowledgeBaseStores(supervisor);
+    verifyNoInteractions(repository);
+  }
+
+  @Test
+  void bossCannotPhysicallyDeleteStoreThroughTheController() throws Exception {
     AuthUser boss = user("BOSS", null);
     when(authService.requireUser("Bearer boss-token")).thenReturn(boss);
     when(repository.store(1L, "rg1")).thenReturn(Optional.of(new StoreResponse(
         "rg1", "RG1", "一店", 1L, "如果", "荆州", "店长", "2026-01-01", "停用", "")));
-    when(repository.deleteStore(1L, "rg1")).thenReturn(1);
-
     mockMvc.perform(delete("/api/stores/rg1")
             .header("Authorization", "Bearer boss-token"))
-        .andExpect(status().isOk())
+        .andExpect(status().isConflict())
         .andExpect(header().exists("X-Request-Id"))
-        .andExpect(jsonPath("$.success").value(true))
-        .andExpect(jsonPath("$.code").value("OK"));
+        .andExpect(jsonPath("$.success").value(false))
+        .andExpect(jsonPath("$.code").value("STORE_DELETE_DISABLED"));
 
-    verify(repository).storeHasLinkedData(1L, "rg1");
-    verify(repository).deleteStore(1L, "rg1");
+    verify(repository, org.mockito.Mockito.never()).deleteStore(1L, "rg1");
   }
 
   @Test

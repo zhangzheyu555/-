@@ -101,7 +101,7 @@ function chooseFile(event: Event) {
   if (selected && !form.value.title.trim()) form.value.title = selected.name.replace(/\.[^.]+$/, '')
 }
 
-async function upload() {
+async function upload(publishNow = false) {
   error.value = ''
   success.value = ''
   if (!file.value) {
@@ -144,8 +144,11 @@ async function upload() {
       predecessorDocumentId: form.value.topicMode === 'EXISTING'
         ? form.value.predecessorDocumentId ?? undefined
         : undefined,
+      publishNow,
     })
-    success.value = `已归入“${document.topicName}”第 ${document.versionNo} 版，并完成 ${document.chunkCount} 段索引，请确认后发布。`
+    success.value = publishNow || document.status === 'PUBLISHED'
+      ? `已归入“${document.topicName}”第 ${document.versionNo} 版并发布，符合范围的账号现在可以查看。`
+      : `已归入“${document.topicName}”第 ${document.versionNo} 版，并完成 ${document.chunkCount} 段索引，请确认后发布。`
     resetForm()
     await loadRecords()
   } catch (reason) {

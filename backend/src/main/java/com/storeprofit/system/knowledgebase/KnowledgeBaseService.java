@@ -6,7 +6,7 @@ import com.storeprofit.system.common.BusinessException;
 import com.storeprofit.system.organization.OrganizationRepository;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
-import com.storeprofit.system.platform.authorization.DataScopeDomains;
+import com.storeprofit.system.platform.authorization.DataScope;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -70,6 +70,31 @@ public class KnowledgeBaseService {
         .toList();
   }
 
+  @Transactional(readOnly = true)
+  public List<KnowledgeBaseAvailableDocumentResponse> availableDocuments(AuthUser user) {
+    accessControl.requireKnowledgeBaseSearch(user);
+    DataScope storeScope = accessControl.knowledgeBaseReadStoreScope(user);
+    LinkedHashSet<String> allowedStores = new LinkedHashSet<>(storeScope.storeIds());
+    boolean unrestricted = AccessControlService.isBoss(user);
+    return repository.availablePublishedDocuments(
+            user.tenantId(),
+            AccessControlService.canonicalRole(user.role()),
+            allowedStores,
+            storeScope.allowsAllStores(),
+            unrestricted,
+            500)
+        .stream()
+        .map(document -> new KnowledgeBaseAvailableDocumentResponse(
+            document.id(),
+            document.title(),
+            document.category(),
+            document.originalFileName(),
+            document.fileSize(),
+            document.publishedAt(),
+            document.updatedAt()))
+        .toList();
+  }
+
   @Transactional
   public KnowledgeBaseDocumentResponse upload(
       AuthUser user,
@@ -83,6 +108,25 @@ public class KnowledgeBaseService {
       String topicName,
       String relationType,
       Long predecessorDocumentId
+  ) {
+    return upload(user, file, title, category, visibility, roleScopes, storeScopes,
+        topicId, topicName, relationType, predecessorDocumentId, false);
+  }
+
+  @Transactional
+  public KnowledgeBaseDocumentResponse upload(
+      AuthUser user,
+      MultipartFile file,
+      String title,
+      String category,
+      String visibility,
+      List<String> roleScopes,
+      List<String> storeScopes,
+      Long topicId,
+      String topicName,
+      String relationType,
+      Long predecessorDocumentId,
+      boolean publishNow
   ) {
     accessControl.requireKnowledgeBaseManage(user);
     KnowledgeDocumentParser.ParsedDocument parsed = parser.parse(file);
@@ -101,22 +145,23 @@ public class KnowledgeBaseService {
           chunk.sourceLocator(), chunk.content(), sha256(chunk.content().getBytes(StandardCharsets.UTF_8)),
           embeddingService.embed(chunk.content())));
     }
+    long id;
     try {
-      long id = repository.insertDocument(user.tenantId(), new KnowledgeBaseRepository.DocumentInsert(
+      id = repository.insertDocument(user.tenantId(), new KnowledgeBaseRepository.DocumentInsert(
           topic.id(), versionNo, relation.type(), relation.predecessorDocumentId(),
           normalizedTitle, normalizedCategory, parsed.fileName(), parsed.contentType(), sha256(parsed.sourceContent()),
           parsed.sourceContent(), normalizedScope.visibility(), parsedChars, chunks.size(), user.id()));
-      repository.insertRoleScopes(id, normalizedScope.roles());
-      repository.insertStoreScopes(id, normalizedScope.stores());
-      repository.insertChunks(user.tenantId(), id, List.copyOf(chunks));
-      repository.touchTopic(user.tenantId(), topic.id());
-      KnowledgeBaseRepository.DocumentRow saved = requiredDocument(user, id);
-      audit(user, "knowledge_base.document_upload", saved,
-          "已归入主题“" + topic.name() + "”第" + versionNo + "版并完成本地向量索引，共" + chunks.size() + "段");
-      return response(saved);
     } catch (DataIntegrityViolationException ex) {
       throw new BusinessException("KNOWLEDGE_BASE_DOCUMENT_DUPLICATE", "相同文件已存在，请不要重复上传", HttpStatus.CONFLICT);
     }
+    repository.insertRoleScopes(id, normalizedScope.roles());
+    repository.insertStoreScopes(id, normalizedScope.stores());
+    repository.insertChunks(user.tenantId(), id, List.copyOf(chunks));
+    repository.touchTopic(user.tenantId(), topic.id());
+    KnowledgeBaseRepository.DocumentRow saved = requiredDocument(user, id);
+    audit(user, "knowledge_base.document_upload", saved,
+          "已归入主题“" + topic.name() + "”第" + versionNo + "版并完成本地向量索引，共" + chunks.size() + "段");
+    return publishNow ? publishDraft(user, saved) : response(saved);
   }
 
   @Transactional
@@ -125,6 +170,13 @@ public class KnowledgeBaseService {
     KnowledgeBaseRepository.DocumentRow document = requiredDocument(user, id);
     Scope scope = scope(document);
     requireManageDocument(user, document, scope);
+    return publishDraft(user, document);
+  }
+
+  private KnowledgeBaseDocumentResponse publishDraft(
+      AuthUser user,
+      KnowledgeBaseRepository.DocumentRow document
+  ) {
     if (!"DRAFT".equals(document.status())) {
       throw new BusinessException("KNOWLEDGE_BASE_DOCUMENT_NOT_DRAFT", "仅草稿资料可以发布", HttpStatus.CONFLICT);
     }
@@ -143,7 +195,7 @@ public class KnowledgeBaseService {
             "KNOWLEDGE_BASE_PREDECESSOR_NOT_PUBLISHED", "被替代资料不是同一主题的已发布版本", HttpStatus.CONFLICT);
       }
     }
-    if (repository.publish(user.tenantId(), id, user.id()) == 0) {
+    if (repository.publish(user.tenantId(), document.id(), user.id()) == 0) {
       throw new BusinessException("KNOWLEDGE_BASE_DOCUMENT_CONFLICT", "资料状态已变化，请刷新后重试", HttpStatus.CONFLICT);
     }
     if (predecessor != null
@@ -152,7 +204,7 @@ public class KnowledgeBaseService {
           "KNOWLEDGE_BASE_PREDECESSOR_CONFLICT", "被替代资料状态已变化，请刷新后重试", HttpStatus.CONFLICT);
     }
     repository.touchTopic(user.tenantId(), document.topicId());
-    KnowledgeBaseRepository.DocumentRow published = requiredDocument(user, id);
+    KnowledgeBaseRepository.DocumentRow published = requiredDocument(user, document.id());
     String reason = predecessor == null
         ? "已发布知识库资料"
         : "已发布知识库资料，并自动下架被替代的第" + predecessor.versionNo() + "版（资料编号"
@@ -200,7 +252,7 @@ public class KnowledgeBaseService {
     Map<Long, Scope> scopes = new HashMap<>();
     Map<String, ScoredChunk> integrated = new HashMap<>();
     repository.publishedChunks(user.tenantId()).stream()
-        .filter(chunk -> visibleTo(user, chunk.documentId(), chunk.visibility(), scopes))
+        .filter(chunk -> visibleTo(user, chunk.documentId(), chunk.visibility(), scopes, accessControl.knowledgeBaseReadStoreScope(user)))
         .map(chunk -> scoreChunk(chunk, queryEmbedding, tokens, normalizedQuery))
         .filter(item -> item.score() >= MINIMUM_SCORE)
         .forEach(item -> integrated.merge(
@@ -247,13 +299,16 @@ public class KnowledgeBaseService {
   // A successful source-file download is auditable, so this cannot use a read-only JDBC transaction.
   @Transactional
   public DownloadedDocument download(AuthUser user, long id) {
-    KnowledgeBaseRepository.DocumentContentRow content = repository.findDocumentContent(user.tenantId(), id)
-        .orElseThrow(() -> new BusinessException("KNOWLEDGE_BASE_DOCUMENT_NOT_FOUND", "知识库资料不存在", HttpStatus.NOT_FOUND));
-    KnowledgeBaseRepository.DocumentRow document = content.document();
+    KnowledgeBaseRepository.DocumentRow document = requiredDocument(user, id);
     Scope scope = scope(document);
     boolean manageable = accessControl.hasPermission(user, "knowledge_base.manage") && canManageDocument(user, document, scope);
-    boolean readable = "PUBLISHED".equals(document.status()) && visibleTo(user, document.id(), document.visibility(), Map.of(document.id(), scope));
+    DataScope storeScope = accessControl.knowledgeBaseReadStoreScope(user);
+    boolean readable = "PUBLISHED".equals(document.status())
+        && visibleTo(user, document.id(), document.visibility(), Map.of(document.id(), scope), storeScope);
     accessControl.requireKnowledgeBaseDocumentRead(user, manageable || readable, id);
+    KnowledgeBaseRepository.DocumentContentRow content = repository.findDocumentContent(user.tenantId(), id)
+        .orElseThrow(() -> new BusinessException(
+            "KNOWLEDGE_BASE_DOCUMENT_NOT_FOUND", "知识库资料不存在", HttpStatus.NOT_FOUND));
     audit(user, "knowledge_base.document_download", document, "已下载知识库原始资料");
     return new DownloadedDocument(document.originalFileName(), document.contentType(), document.fileSize(), content.sourceContent());
   }
@@ -281,9 +336,12 @@ public class KnowledgeBaseService {
     }
     for (String storeId : stores) {
       if (organizationRepository.store(user.tenantId(), storeId).isEmpty()) {
+        if (repository.storeExistsOutsideTenant(user.tenantId(), storeId)) {
+          accessControl.rejectKnowledgeBaseCrossTenantStore(user, storeId);
+        }
         throw KnowledgeBaseErrors.badRequest("KNOWLEDGE_BASE_STORE_NOT_FOUND", "指定门店不存在或不属于当前企业");
       }
-      accessControl.requireStoreAccess(user, DataScopeDomains.STORE, storeId, "设置知识库资料门店范围");
+      accessControl.requireKnowledgeBaseStoreAccess(user, storeId);
     }
     return new Scope(normalizedVisibility, List.of(), stores);
   }
@@ -373,7 +431,7 @@ public class KnowledgeBaseService {
       accessControl.requireKnowledgeBaseTenantWideManage(user);
     }
     for (String storeId : scope.stores()) {
-      accessControl.requireStoreAccess(user, DataScopeDomains.STORE, storeId, "管理知识库资料");
+      accessControl.requireKnowledgeBaseStoreAccess(user, storeId);
     }
     throw new BusinessException("FORBIDDEN", "当前账号没有管理该资料的权限", HttpStatus.FORBIDDEN);
   }
@@ -382,10 +440,16 @@ public class KnowledgeBaseService {
     if (AccessControlService.isBoss(user)) return true;
     if (!AccessControlService.hasAnyRole(user, "SUPERVISOR") || !"STORE".equals(scope.visibility())) return false;
     return !scope.stores().isEmpty() && scope.stores().stream()
-        .allMatch(storeId -> accessControl.canAccessStore(user, DataScopeDomains.STORE, storeId));
+        .allMatch(storeId -> accessControl.canManageKnowledgeBaseStore(user, storeId));
   }
 
-  private boolean visibleTo(AuthUser user, long documentId, String visibility, Map<Long, Scope> knownScopes) {
+  private boolean visibleTo(
+      AuthUser user,
+      long documentId,
+      String visibility,
+      Map<Long, Scope> knownScopes,
+      DataScope storeScope
+  ) {
     if ("TENANT".equals(visibility)) return true;
     Scope scope = knownScopes.get(documentId);
     if (scope == null) {
@@ -397,9 +461,8 @@ public class KnowledgeBaseService {
       return scope.roles().contains(AccessControlService.canonicalRole(user.role()));
     }
     if (!"STORE".equals(scope.visibility())) return false;
-    Set<String> allowedStores = new LinkedHashSet<>(accessControl.allowedStoreIds(user, DataScopeDomains.STORE));
-    if (user.storeId() != null && !user.storeId().isBlank()) allowedStores.add(user.storeId().trim());
-    return allowedStores.contains("all") || scope.stores().stream().anyMatch(allowedStores::contains);
+    return storeScope.allowsAllStores()
+        || scope.stores().stream().anyMatch(storeScope.storeIds()::contains);
   }
 
   private Scope scope(KnowledgeBaseRepository.DocumentRow document) {
@@ -408,8 +471,17 @@ public class KnowledgeBaseService {
 
   private KnowledgeBaseRepository.DocumentRow requiredDocument(AuthUser user, long id) {
     if (id <= 0) throw KnowledgeBaseErrors.badRequest("KNOWLEDGE_BASE_DOCUMENT_ID_INVALID", "资料编号不正确");
-    return repository.findDocument(user.tenantId(), id)
-        .orElseThrow(() -> new BusinessException("KNOWLEDGE_BASE_DOCUMENT_NOT_FOUND", "知识库资料不存在", HttpStatus.NOT_FOUND));
+    return repository.findDocument(user.tenantId(), id).orElseGet(() -> {
+      denyCrossTenantDocumentIfPresent(user, id);
+      throw new BusinessException(
+          "KNOWLEDGE_BASE_DOCUMENT_NOT_FOUND", "知识库资料不存在", HttpStatus.NOT_FOUND);
+    });
+  }
+
+  private void denyCrossTenantDocumentIfPresent(AuthUser user, long id) {
+    if (repository.documentExistsOutsideTenant(user.tenantId(), id)) {
+      accessControl.requireKnowledgeBaseDocumentRead(user, false, id);
+    }
   }
 
   private List<String> normalizeRoles(List<String> values) {

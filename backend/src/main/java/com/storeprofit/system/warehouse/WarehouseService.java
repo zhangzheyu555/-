@@ -1,6 +1,9 @@
 package com.storeprofit.system.warehouse;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.organization.StoreBusinessGuard;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
 import com.storeprofit.system.platform.authorization.AuthorizationService;
@@ -11,6 +14,8 @@ import com.storeprofit.system.platform.authorization.DataScopeDomains;
 import com.storeprofit.system.platform.authorization.DataScopeModes;
 import com.storeprofit.system.platform.authorization.PermissionCodes;
 import com.storeprofit.system.warehouse.WarehouseRepository.ReturnSourceMovementRow;
+import com.storeprofit.system.warehouse.WarehouseRepository.RequisitionSummaryProductDimension;
+import com.storeprofit.system.warehouse.WarehouseRepository.RequisitionSummaryStoreDimension;
 import com.storeprofit.system.warehouse.WarehouseRepository.WarehouseFacilitySnapshot;
 import com.storeprofit.system.warehouse.WarehouseTopologyRepository.BatchRow;
 import com.storeprofit.system.warehouse.WarehouseTopologyRepository.FacilityRow;
@@ -20,11 +25,17 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.TemporalAdjusters;
+import java.time.temporal.ChronoUnit;
+import java.time.temporal.WeekFields;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -40,6 +51,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class WarehouseService {
   private static final DateTimeFormatter RETURN_NO_TIME = DateTimeFormatter.ofPattern("yyMMddHHmmss");
+  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper().findAndRegisterModules();
   private static final Set<String> REQUISITION_PENDING_STATUSES = Set.of(
       "SUBMITTED",
       "APPROVED",
@@ -51,16 +63,25 @@ public class WarehouseService {
       "BACKORDERED",
       "WAITING_REPLENISHMENT"
   );
+  private static final long MAX_REQUISITION_SUMMARY_ROWS = 50_000L;
   private final WarehouseRepository warehouseRepository;
   private final AccessControlService accessControl;
   private final BusinessScopeResolver businessScopeResolver;
   private final WarehouseTopologyService topologyService;
   private final WarehouseTopologyRepository topologyRepository;
+  private final StoreBusinessGuard storeBusinessGuard;
 
   private record WarehouseReadScope(
       boolean central,
       boolean allStores,
       List<String> storeIds
+  ) {
+  }
+
+  private record RequisitionSummaryKey(
+      String storeId,
+      Long productId,
+      LocalDate periodStart
   ) {
   }
 
@@ -79,13 +100,25 @@ public class WarehouseService {
       AccessControlService accessControl,
       BusinessScopeResolver businessScopeResolver,
       WarehouseTopologyService topologyService,
-      WarehouseTopologyRepository topologyRepository
+      WarehouseTopologyRepository topologyRepository,
+      StoreBusinessGuard storeBusinessGuard
   ) {
     this.warehouseRepository = warehouseRepository;
     this.accessControl = accessControl;
     this.businessScopeResolver = businessScopeResolver;
     this.topologyService = topologyService;
     this.topologyRepository = topologyRepository;
+    this.storeBusinessGuard = storeBusinessGuard;
+  }
+
+  public WarehouseService(
+      WarehouseRepository warehouseRepository,
+      AccessControlService accessControl,
+      BusinessScopeResolver businessScopeResolver,
+      WarehouseTopologyService topologyService,
+      WarehouseTopologyRepository topologyRepository
+  ) {
+    this(warehouseRepository, accessControl, businessScopeResolver, topologyService, topologyRepository, null);
   }
 
   public WarehouseService(
@@ -93,19 +126,19 @@ public class WarehouseService {
       AccessControlService accessControl,
       BusinessScopeResolver businessScopeResolver
   ) {
-    this(warehouseRepository, accessControl, businessScopeResolver, null, null);
+    this(warehouseRepository, accessControl, businessScopeResolver, null, null, null);
   }
 
   public WarehouseService(
       WarehouseRepository warehouseRepository,
       AccessControlService accessControl
   ) {
-    this(warehouseRepository, accessControl, null, null, null);
+    this(warehouseRepository, accessControl, null, null, null, null);
   }
 
   /** Compatibility constructor retained for isolated service tests. */
   public WarehouseService(WarehouseRepository warehouseRepository) {
-    this(warehouseRepository, null, null, null, null);
+    this(warehouseRepository, null, null, null, null, null);
   }
 
   public WarehouseOverviewResponse overview(AuthUser user) {
@@ -235,7 +268,16 @@ public class WarehouseService {
       FacilityRow facility = topologyService.defaultVisibleFacility(user);
       WarehouseItemResponse row = warehouseRepository.item(user.tenantId(), itemId, facility.id())
           .orElseThrow(() -> new BusinessException("ITEM_NOT_FOUND", "商品不存在", HttpStatus.NOT_FOUND));
-      return isStoreManager(user) ? safeItems(List.of(row), user.tenantId(), List.of(user.storeId())).getFirst() : row;
+      if (!isStoreManager(user)) {
+        return row;
+      }
+      return safeItems(List.of(row), user.tenantId(), List.of(user.storeId())).stream()
+          .findFirst()
+          .orElseThrow(() -> new BusinessException(
+              "ITEM_NOT_FOUND",
+              "商品不存在或当前门店不可叫货",
+              HttpStatus.NOT_FOUND
+          ));
     }
     WarehouseReadScope readScope = requireWarehouseRead(user);
     WarehouseItemResponse item = warehouseRepository.item(user.tenantId(), itemId)
@@ -243,7 +285,16 @@ public class WarehouseService {
     if (!readScope.central() && !item.active()) {
       throw new BusinessException("ITEM_NOT_FOUND", "商品不存在或已停用", HttpStatus.NOT_FOUND);
     }
-    return readScope.central() ? item : safeItems(List.of(item), user.tenantId(), readScope.storeIds()).get(0);
+    if (readScope.central()) {
+      return item;
+    }
+    return safeItems(List.of(item), user.tenantId(), readScope.storeIds()).stream()
+        .findFirst()
+        .orElseThrow(() -> new BusinessException(
+            "ITEM_NOT_FOUND",
+            "商品不存在或当前门店不可叫货",
+            HttpStatus.NOT_FOUND
+        ));
   }
 
   public List<WarehouseItemCategoryResponse> itemCategories(AuthUser user) {
@@ -255,9 +306,31 @@ public class WarehouseService {
     return categoryTree(warehouseRepository.itemCategories(user.tenantId()));
   }
 
+  public WarehouseItemRequisitionScopeContextResponse itemRequisitionScopeContext(AuthUser user) {
+    requireWarehouseConfigure(user);
+    List<WarehouseItemRequisitionScopeContextResponse.StoreOption> stores =
+        warehouseRepository.activeRequisitionStores(user.tenantId());
+    List<WarehouseItemRequisitionScopeContextResponse.RegionOption> regions =
+        warehouseRepository.requisitionRegionCodes(user.tenantId()).stream()
+            .map(code -> new WarehouseItemRequisitionScopeContextResponse.RegionOption(
+                code,
+                switch (code) {
+                  case "JINGZHOU" -> "荆州区域";
+                  case "SHANDONG" -> "山东区域";
+                  default -> code;
+                }
+            ))
+            .toList();
+    return new WarehouseItemRequisitionScopeContextResponse(stores.size(), regions, stores);
+  }
+
   @Transactional
   public void saveItem(AuthUser user, WarehouseItemRequest request) {
     requireWarehouseConfigure(user);
+    WarehouseItemRequisitionPolicyRequest policy = normalizeItemRequisitionPolicy(
+        user.tenantId(),
+        request.requisitionPolicy()
+    );
     if (request.id() != null && !warehouseRepository.itemExists(user.tenantId(), request.id())) {
       throw new BusinessException("ITEM_NOT_FOUND", "商品不存在", HttpStatus.BAD_REQUEST);
     }
@@ -268,9 +341,24 @@ public class WarehouseService {
       throw new BusinessException("CATEGORY_DISABLED", "商品类别不存在或已停用", HttpStatus.BAD_REQUEST);
     }
     validateItemImage(request.imageUrl());
+    WarehouseItemRequisitionPolicyResponse beforePolicy = request.id() == null
+        ? WarehouseItemRequisitionPolicyResponse.legacyAllStores()
+        : warehouseRepository.itemRequisitionPolicy(user.tenantId(), request.id());
     long itemId = warehouseRepository.upsertItem(user.tenantId(), request);
     warehouseRepository.replaceItemDepartments(user.tenantId(), itemId, request.departments());
-    warehouseRepository.logAction(user.tenantId(), user.id(), user.displayName(), "保存物料", request.code(), null, request.name());
+    warehouseRepository.replaceItemRequisitionPolicy(user.tenantId(), itemId, policy, user.id());
+    WarehouseItemRequisitionPolicyResponse afterPolicy = configuredPolicy(policy);
+    warehouseRepository.logAction(
+        user.tenantId(),
+        user.id(),
+        user.displayName(),
+        "保存物料",
+        request.code(),
+        null,
+        request.name(),
+        policyJson(beforePolicy),
+        policyJson(afterPolicy)
+    );
   }
 
   @Transactional
@@ -448,6 +536,368 @@ public class WarehouseService {
     return readScope.central() ? requisitions : safeRequisitions(requisitions);
   }
 
+  @Transactional
+  public WarehouseRequisitionSummaryExport exportRequisitionSummary(
+      AuthUser user,
+      WarehouseRequisitionSummaryExportRequest request
+  ) {
+    if (request == null || request.startDate() == null || request.endDate() == null) {
+      throw new BusinessException(
+          "REQUISITION_SUMMARY_DATE_REQUIRED",
+          "请选择完整的统计日期范围",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+    if (request.startDate().isAfter(request.endDate())) {
+      throw new BusinessException(
+          "REQUISITION_SUMMARY_DATE_INVALID",
+          "开始日期不能晚于结束日期",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+    WarehouseReadScope readScope = requireWarehouseRead(user);
+    List<String> requestedStores = normalizeStoreIds(request.storeIds());
+    if (!readScope.central() && !readScope.allStores()) {
+      List<String> unauthorized = requestedStores.stream()
+          .filter(storeId -> !readScope.storeIds().contains(storeId))
+          .toList();
+      if (!unauthorized.isEmpty()) {
+        throw new BusinessException(
+            "REQUISITION_SUMMARY_STORE_FORBIDDEN",
+            "所选门店超出当前账号的数据范围：" + String.join("、", unauthorized),
+            HttpStatus.FORBIDDEN
+        );
+      }
+      if (requestedStores.isEmpty()) {
+        requestedStores = readScope.storeIds();
+      }
+    }
+    if (!readScope.central()) {
+      throw new BusinessException(
+          "REQUISITION_SUMMARY_EXPORT_FORBIDDEN",
+          "当前账号无权导出叫货金额汇总",
+          HttpStatus.FORBIDDEN
+      );
+    }
+    Long warehouseId = null;
+    if (topologyService != null) {
+      FacilityRow facility = request.warehouseId() == null
+          ? topologyService.defaultVisibleFacility(user)
+          : topologyService.requireVisibleFacility(
+              user,
+              request.warehouseId(),
+              "导出叫货汇总报表"
+          );
+      warehouseId = facility.id();
+      validateSummaryStoresForWarehouse(
+          user.tenantId(),
+          requestedStores,
+          warehouseId
+      );
+    }
+    List<Long> productIds = normalizeProductIds(request.productIds());
+    WarehouseRequisitionSummaryPeriodType periodType = summaryPeriodType(request.periodType());
+    validateSummaryGroupBy(request.groupBy());
+    List<WarehouseRequisitionSummaryDailyRow> dailyRows =
+        warehouseRepository.requisitionSummaryDaily(
+            user.tenantId(),
+            request.startDate(),
+            request.endDate(),
+            requestedStores,
+            productIds,
+            warehouseId
+        );
+    List<WarehouseRequisitionSummaryRow> rows = summarizeRequisitions(dailyRows, periodType);
+    if (Boolean.TRUE.equals(request.includeZeroRows())) {
+      rows = includeZeroRequisitionSummaryRows(
+          user.tenantId(),
+          request.startDate(),
+          request.endDate(),
+          requestedStores,
+          productIds,
+          warehouseId,
+          periodType,
+          rows
+      );
+    }
+    byte[] content = WarehouseRequisitionSummaryExcelWriter.write(rows);
+    String range = request.startDate().format(DateTimeFormatter.BASIC_ISO_DATE)
+        + "_" + request.endDate().format(DateTimeFormatter.BASIC_ISO_DATE);
+    warehouseRepository.logAction(
+        user.tenantId(),
+        user.id(),
+        user.displayName(),
+        "导出叫货汇总报表",
+        range,
+        requestedStores.size() == 1 ? requestedStores.getFirst() : null,
+        "仓库：" + (warehouseId == null ? "兼容模式" : warehouseId)
+            + "；周期：" + periodType
+            + "；包含零量行：" + Boolean.TRUE.equals(request.includeZeroRows())
+            + "；汇总行数：" + rows.size()
+    );
+    return new WarehouseRequisitionSummaryExport(
+        content,
+        "requisition_report_汇总_门店-物料-周期_" + range + ".xlsx",
+        rows.size()
+    );
+  }
+
+  private void validateSummaryStoresForWarehouse(
+      long tenantId,
+      List<String> requestedStores,
+      long warehouseId
+  ) {
+    if (requestedStores.isEmpty()) {
+      return;
+    }
+    List<String> unauthorized = requestedStores.stream()
+        .filter(storeId -> topologyRepository == null
+            || !topologyRepository.storeSupplyWarehouse(tenantId, storeId)
+                .map(StoreSupplyRow::warehouse)
+                .map(warehouse -> warehouse != null && warehouse.id() == warehouseId)
+                .orElse(false))
+        .toList();
+    if (!unauthorized.isEmpty()) {
+      throw new BusinessException(
+          "REQUISITION_SUMMARY_STORE_FORBIDDEN",
+          "所选门店不属于当前仓库数据范围：" + String.join("、", unauthorized),
+          HttpStatus.FORBIDDEN
+      );
+    }
+  }
+
+  private List<String> normalizeStoreIds(List<String> values) {
+    if (values == null || values.isEmpty()) {
+      return List.of();
+    }
+    return values.stream()
+        .filter(Objects::nonNull)
+        .map(String::trim)
+        .filter(value -> !value.isBlank())
+        .distinct()
+        .toList();
+  }
+
+  private List<Long> normalizeProductIds(List<Long> values) {
+    if (values == null || values.isEmpty()) {
+      return List.of();
+    }
+    List<Long> normalized = values.stream()
+        .filter(Objects::nonNull)
+        .filter(value -> value > 0)
+        .distinct()
+        .toList();
+    if (normalized.size() != values.stream().filter(Objects::nonNull).distinct().count()) {
+      throw new BusinessException(
+          "REQUISITION_SUMMARY_PRODUCT_INVALID",
+          "物料筛选参数不正确",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+    return normalized;
+  }
+
+  private WarehouseRequisitionSummaryPeriodType summaryPeriodType(String value) {
+    String normalized = value == null || value.isBlank() ? "MONTH" : value.trim().toUpperCase();
+    try {
+      return WarehouseRequisitionSummaryPeriodType.valueOf(normalized);
+    } catch (IllegalArgumentException exception) {
+      throw new BusinessException(
+          "REQUISITION_SUMMARY_PERIOD_INVALID",
+          "周期粒度仅支持日报、周报或月报",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+  }
+
+  private void validateSummaryGroupBy(List<String> values) {
+    if (values == null || values.isEmpty()) {
+      return;
+    }
+    Set<String> normalized = values.stream()
+        .filter(Objects::nonNull)
+        .map(value -> value.trim().toLowerCase())
+        .filter(value -> !value.isBlank())
+        .collect(Collectors.toSet());
+    if (!normalized.equals(Set.of("store", "product", "period"))) {
+      throw new BusinessException(
+          "REQUISITION_SUMMARY_GROUP_INVALID",
+          "叫货汇总固定按门店、物料和周期组合统计",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+  }
+
+  private List<WarehouseRequisitionSummaryRow> summarizeRequisitions(
+      List<WarehouseRequisitionSummaryDailyRow> dailyRows,
+      WarehouseRequisitionSummaryPeriodType periodType
+  ) {
+    LinkedHashMap<RequisitionSummaryKey, WarehouseRequisitionSummaryRow> summaries =
+        new LinkedHashMap<>();
+    for (WarehouseRequisitionSummaryDailyRow daily : dailyRows) {
+      LocalDate periodStart = summaryPeriodStart(daily.orderDate(), periodType);
+      LocalDate periodEnd = summaryPeriodEnd(periodStart, periodType);
+      RequisitionSummaryKey key = new RequisitionSummaryKey(
+          daily.storeId(), daily.productId(), periodStart);
+      WarehouseRequisitionSummaryRow existing = summaries.get(key);
+      BigDecimal quantity = existing == null
+          ? amount(daily.orderedQuantity())
+          : existing.orderedQuantity().add(amount(daily.orderedQuantity()));
+      BigDecimal total = existing == null
+          ? amount(daily.orderedAmount())
+          : existing.orderedAmount().add(amount(daily.orderedAmount()));
+      summaries.put(key, new WarehouseRequisitionSummaryRow(
+          daily.storeId(),
+          daily.storeName(),
+          daily.productId(),
+          daily.productName(),
+          periodStart,
+          periodEnd,
+          summaryPeriodLabel(periodStart, periodType),
+          daily.unit(),
+          quantity.setScale(2, RoundingMode.HALF_UP),
+          total.setScale(2, RoundingMode.HALF_UP)
+      ));
+    }
+    return summaries.values().stream()
+        .sorted(Comparator
+            .comparing(WarehouseRequisitionSummaryRow::storeId)
+            .thenComparing(WarehouseRequisitionSummaryRow::productId)
+            .thenComparing(WarehouseRequisitionSummaryRow::periodStart))
+        .toList();
+  }
+
+  private List<WarehouseRequisitionSummaryRow> includeZeroRequisitionSummaryRows(
+      long tenantId,
+      LocalDate startDate,
+      LocalDate endDate,
+      List<String> storeIds,
+      List<Long> productIds,
+      Long warehouseId,
+      WarehouseRequisitionSummaryPeriodType periodType,
+      List<WarehouseRequisitionSummaryRow> actualRows
+  ) {
+    List<RequisitionSummaryStoreDimension> stores =
+        warehouseRepository.requisitionSummaryStores(tenantId, storeIds, warehouseId);
+    List<RequisitionSummaryProductDimension> products =
+        warehouseRepository.requisitionSummaryProducts(tenantId, productIds);
+    if (stores.isEmpty() || products.isEmpty()) {
+      return actualRows;
+    }
+
+    LocalDate firstPeriod = summaryPeriodStart(startDate, periodType);
+    LocalDate lastPeriod = summaryPeriodStart(endDate, periodType);
+    long periodCount = switch (periodType) {
+      case DAY -> ChronoUnit.DAYS.between(firstPeriod, lastPeriod) + 1;
+      case WEEK -> ChronoUnit.WEEKS.between(firstPeriod, lastPeriod) + 1;
+      case MONTH -> ChronoUnit.MONTHS.between(
+          YearMonth.from(firstPeriod),
+          YearMonth.from(lastPeriod)
+      ) + 1;
+    };
+    long dimensionCount = (long) stores.size() * products.size();
+    if (periodCount > MAX_REQUISITION_SUMMARY_ROWS
+        || dimensionCount > MAX_REQUISITION_SUMMARY_ROWS
+        || dimensionCount > MAX_REQUISITION_SUMMARY_ROWS / periodCount) {
+      throw new BusinessException(
+          "REQUISITION_SUMMARY_ZERO_ROWS_LIMIT",
+          "包含零量行后的组合超过 50000 行，请缩小日期范围或筛选门店、物料",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+
+    LinkedHashMap<RequisitionSummaryKey, WarehouseRequisitionSummaryRow> rows =
+        new LinkedHashMap<>();
+    for (WarehouseRequisitionSummaryRow actual : actualRows) {
+      rows.put(new RequisitionSummaryKey(
+          actual.storeId(),
+          actual.productId(),
+          actual.periodStart()
+      ), actual);
+    }
+    for (RequisitionSummaryStoreDimension store : stores) {
+      for (RequisitionSummaryProductDimension product : products) {
+        for (LocalDate periodStart = firstPeriod;
+             !periodStart.isAfter(lastPeriod);
+             periodStart = nextSummaryPeriod(periodStart, periodType)) {
+          RequisitionSummaryKey key = new RequisitionSummaryKey(
+              store.id(),
+              product.id(),
+              periodStart
+          );
+          rows.putIfAbsent(key, new WarehouseRequisitionSummaryRow(
+              store.id(),
+              store.name(),
+              product.id(),
+              product.name(),
+              periodStart,
+              summaryPeriodEnd(periodStart, periodType),
+              summaryPeriodLabel(periodStart, periodType),
+              product.unit(),
+              BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP),
+              BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
+          ));
+        }
+      }
+    }
+    return rows.values().stream()
+        .sorted(Comparator
+            .comparing(WarehouseRequisitionSummaryRow::storeId)
+            .thenComparing(WarehouseRequisitionSummaryRow::productId)
+            .thenComparing(WarehouseRequisitionSummaryRow::periodStart))
+        .toList();
+  }
+
+  private LocalDate nextSummaryPeriod(
+      LocalDate periodStart,
+      WarehouseRequisitionSummaryPeriodType periodType
+  ) {
+    return switch (periodType) {
+      case DAY -> periodStart.plusDays(1);
+      case WEEK -> periodStart.plusWeeks(1);
+      case MONTH -> periodStart.plusMonths(1);
+    };
+  }
+
+  private LocalDate summaryPeriodStart(
+      LocalDate date,
+      WarehouseRequisitionSummaryPeriodType periodType
+  ) {
+    return switch (periodType) {
+      case DAY -> date;
+      case WEEK -> date.with(TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY));
+      case MONTH -> YearMonth.from(date).atDay(1);
+    };
+  }
+
+  private LocalDate summaryPeriodEnd(
+      LocalDate periodStart,
+      WarehouseRequisitionSummaryPeriodType periodType
+  ) {
+    return switch (periodType) {
+      case DAY -> periodStart;
+      case WEEK -> periodStart.plusDays(6);
+      case MONTH -> YearMonth.from(periodStart).atEndOfMonth();
+    };
+  }
+
+  private String summaryPeriodLabel(
+      LocalDate periodStart,
+      WarehouseRequisitionSummaryPeriodType periodType
+  ) {
+    return switch (periodType) {
+      case DAY -> periodStart.format(DateTimeFormatter.ofPattern("yyyy年MM月dd日"));
+      case WEEK -> {
+        WeekFields iso = WeekFields.ISO;
+        yield "%d年第%02d周".formatted(
+            periodStart.get(iso.weekBasedYear()),
+            periodStart.get(iso.weekOfWeekBasedYear())
+        );
+      }
+      case MONTH -> periodStart.format(DateTimeFormatter.ofPattern("yyyy年MM月"));
+    };
+  }
+
   public List<WarehouseStockMovementResponse> movements(AuthUser user) {
     if (topologyService != null) {
       FacilityRow facility = topologyService.defaultVisibleFacility(user);
@@ -506,6 +956,7 @@ public class WarehouseService {
       throw new BusinessException("BAD_RETURN_STORE", "退货门店必须与原叫货单门店一致", HttpStatus.BAD_REQUEST);
     }
     String storeId = requisition.storeId();
+    requireActiveStoreForNewBusiness(user, storeId, "配送退货单");
     if (!warehouseRepository.storeExists(user.tenantId(), storeId)) {
       throw new BusinessException("STORE_NOT_FOUND", "退货门店不存在", HttpStatus.BAD_REQUEST);
     }
@@ -789,6 +1240,7 @@ public class WarehouseService {
   public WarehouseRequisitionResponse createRequisition(AuthUser user, WarehouseRequisitionRequest request) {
     requireStoreRequisitionCreate(user);
     String storeId = normalizeStoreForSubmit(user, request.storeId());
+    requireActiveStoreForNewBusiness(user, storeId, "叫货单");
     if (!warehouseRepository.storeExists(user.tenantId(), storeId)) {
       throw new BusinessException("STORE_NOT_FOUND", "门店不存在", HttpStatus.BAD_REQUEST);
     }
@@ -822,6 +1274,13 @@ public class WarehouseService {
       WarehouseItemResponse item = items.get(line.itemId());
       if (item == null || !item.active()) {
         throw new BusinessException("ITEM_NOT_FOUND", "叫货物料不存在或已停用", HttpStatus.BAD_REQUEST);
+      }
+      if (!warehouseRepository.itemAvailableForStoreRequisition(user.tenantId(), item.id(), storeId)) {
+        throw new BusinessException(
+            "ITEM_NOT_AVAILABLE_FOR_STORE",
+            "当前门店不可叫货「" + item.name() + "」，该商品不在本店可叫货范围内或活动不在有效期",
+            HttpStatus.FORBIDDEN
+        );
       }
       BigDecimal quantity = positive(line.requestedQuantity(), "叫货数量");
       String warning = warningForOrder(item, quantity);
@@ -1640,8 +2099,13 @@ public class WarehouseService {
       warehouseRepository.storeInventoryQuantities(tenantId, storeId)
           .forEach((itemId, quantity) -> storeStocks.merge(itemId, amount(quantity), BigDecimal::add));
     }
+    Set<Long> availableItemIds = storeIds.stream()
+        .filter(storeId -> storeId != null && !storeId.isBlank())
+        .flatMap(storeId -> warehouseRepository.itemIdsAvailableForStoreRequisition(tenantId, storeId).stream())
+        .collect(Collectors.toSet());
     return items.stream()
         .filter(WarehouseItemResponse::active)
+        .filter(item -> availableItemIds.contains(item.id()))
         .map(item -> {
           BigDecimal storeStock = amount(storeStocks.get(item.id()));
           BigDecimal warehouseAvailable = amount(item.warehouseAvailableQuantity() == null ? item.stockQuantity() : item.warehouseAvailableQuantity());
@@ -1684,7 +2148,8 @@ public class WarehouseService {
               item.itemDescription(),
               item.sortOrder(),
               item.itemAttributes(),
-              List.of()
+              List.of(),
+              null
           );
         })
         .toList();
@@ -1888,6 +2353,12 @@ public class WarehouseService {
     return storeId;
   }
 
+  private void requireActiveStoreForNewBusiness(AuthUser user, String storeId, String documentLabel) {
+    if (storeBusinessGuard != null) {
+      storeBusinessGuard.requireActive(user, storeId, documentLabel);
+    }
+  }
+
   private boolean categoryWouldCreateCycle(long tenantId, long categoryId, long parentId) {
     Map<Long, Long> parents = new HashMap<>();
     for (WarehouseItemCategoryResponse category : warehouseRepository.itemCategories(tenantId)) {
@@ -1930,6 +2401,122 @@ public class WarehouseService {
     return topologyRepository.facility(user.tenantId(), warehouseId)
         .orElseThrow(() -> new BusinessException(
             "WAREHOUSE_NOT_FOUND", "退货单供货仓不存在", HttpStatus.CONFLICT));
+  }
+
+  private WarehouseItemRequisitionPolicyRequest normalizeItemRequisitionPolicy(
+      long tenantId,
+      WarehouseItemRequisitionPolicyRequest request
+  ) {
+    if (request == null || request.scopeMode() == null || request.scopeMode().isBlank()) {
+      throw new BusinessException(
+          "REQUISITION_SCOPE_REQUIRED",
+          "请选择商品可叫货范围",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+    String scopeMode = request.scopeMode().trim().toUpperCase();
+    if (!Set.of("ALL", "SELECTED").contains(scopeMode)) {
+      throw new BusinessException(
+          "REQUISITION_SCOPE_INVALID",
+          "叫货范围仅支持全部门店或指定区域、指定门店",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+    List<String> regionCodes = normalizeScopeValues(request.regionCodes(), true);
+    List<String> storeIds = normalizeScopeValues(request.storeIds(), false);
+    if ("ALL".equals(scopeMode)) {
+      regionCodes = List.of();
+      storeIds = List.of();
+    } else if (regionCodes.isEmpty() && storeIds.isEmpty()) {
+      throw new BusinessException(
+          "REQUISITION_SCOPE_TARGET_REQUIRED",
+          "指定范围时请至少选择一个区域或门店",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+    for (String regionCode : regionCodes) {
+      if (!warehouseRepository.requisitionRegionExists(tenantId, regionCode)) {
+        throw new BusinessException(
+            "REQUISITION_REGION_INVALID",
+            "指定区域不存在：" + regionCode,
+            HttpStatus.BAD_REQUEST
+        );
+      }
+    }
+    for (String storeId : storeIds) {
+      if (!warehouseRepository.activeStoreExists(tenantId, storeId)) {
+        throw new BusinessException(
+            "REQUISITION_STORE_INVALID",
+            "指定门店不存在或未营业：" + storeId,
+            HttpStatus.BAD_REQUEST
+        );
+      }
+    }
+    String campaignName = request.campaignName() == null ? null : request.campaignName().trim();
+    if (campaignName != null && campaignName.isBlank()) {
+      campaignName = null;
+    }
+    if (campaignName != null && campaignName.length() > 160) {
+      throw new BusinessException(
+          "REQUISITION_CAMPAIGN_TOO_LONG",
+          "活动名称不能超过160个字符",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+    if (request.startsAt() != null
+        && request.endsAt() != null
+        && !request.startsAt().isBefore(request.endsAt())) {
+      throw new BusinessException(
+          "REQUISITION_TIME_RANGE_INVALID",
+          "活动结束时间必须晚于开始时间",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+    return new WarehouseItemRequisitionPolicyRequest(
+        scopeMode,
+        regionCodes,
+        storeIds,
+        campaignName,
+        request.startsAt(),
+        request.endsAt()
+    );
+  }
+
+  private List<String> normalizeScopeValues(List<String> values, boolean uppercase) {
+    if (values == null || values.isEmpty()) {
+      return List.of();
+    }
+    LinkedHashSet<String> normalized = new LinkedHashSet<>();
+    for (String value : values) {
+      if (value == null || value.isBlank()) {
+        continue;
+      }
+      String item = value.trim();
+      normalized.add(uppercase ? item.toUpperCase() : item);
+    }
+    return List.copyOf(normalized);
+  }
+
+  private WarehouseItemRequisitionPolicyResponse configuredPolicy(
+      WarehouseItemRequisitionPolicyRequest policy
+  ) {
+    return new WarehouseItemRequisitionPolicyResponse(
+        policy.scopeMode(),
+        policy.regionCodes(),
+        policy.storeIds(),
+        policy.campaignName(),
+        policy.startsAt(),
+        policy.endsAt(),
+        true
+    );
+  }
+
+  private String policyJson(WarehouseItemRequisitionPolicyResponse policy) {
+    try {
+      return OBJECT_MAPPER.writeValueAsString(policy);
+    } catch (JsonProcessingException error) {
+      throw new IllegalStateException("商品叫货范围审计数据序列化失败", error);
+    }
   }
 
   private void validateItemImage(String value) {

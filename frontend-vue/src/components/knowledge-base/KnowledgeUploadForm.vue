@@ -14,7 +14,7 @@ const props = defineProps<{
 const model = defineModel<KnowledgeBaseUploadFormModel>({ required: true })
 const emit = defineEmits<{
   chooseFile: [event: Event]
-  submit: []
+  submit: [publishNow: boolean]
 }>()
 
 const roles = [
@@ -56,7 +56,7 @@ watch(() => model.value.topicId, () => {
 </script>
 
 <template>
-  <form class="upload-panel" @submit.prevent="emit('submit')">
+  <form class="upload-panel" @submit.prevent="emit('submit', false)">
     <div class="section-title">
       <FileUp :size="20" aria-hidden="true" />
       <div>
@@ -133,9 +133,14 @@ watch(() => model.value.topicId, () => {
       <input v-model.trim="model.storeScopesText" maxlength="1000" placeholder="多个门店用逗号隔开">
     </label>
 
-    <button class="primary-button" type="submit" :disabled="saving">
-      <FileUp :size="17" />{{ saving ? '正在建立索引…' : '上传并建立索引' }}
-    </button>
+    <div class="upload-actions">
+      <button class="primary-button" type="submit" :disabled="saving" @click.prevent="emit('submit', false)">
+        <FileUp :size="17" />{{ saving ? '正在保存草稿…' : '仅保存草稿' }}
+      </button>
+      <button class="publish-button" type="button" :disabled="saving" @click="emit('submit', true)">
+        <FileUp :size="17" />{{ saving ? '正在上传并发布…' : '上传并发布' }}
+      </button>
+    </div>
   </form>
 </template>
 
@@ -153,7 +158,9 @@ watch(() => model.value.topicId, () => {
 .segmented-field label, .check-option { display: inline-flex; align-items: center; gap: 6px; color: var(--ds-text, #183434); font-size: 13px; }
 .segmented-field input, .check-option input { width: 15px; min-height: 15px; padding: 0; }
 .scope-help { margin: -4px 0 0; color: var(--ds-muted, #607576); font-size: 12px; }
-.primary-button { display: inline-flex; min-height: 42px; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--ds-primary, #126c68); border-radius: 8px; background: var(--ds-primary, #126c68); color: #fff; font: inherit; font-weight: 800; cursor: pointer; }
-.primary-button:disabled { cursor: not-allowed; opacity: .55; }
-@media (max-width: 620px) { .upload-panel { padding: 15px; } }
+.upload-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 9px; }
+.primary-button { display: inline-flex; min-height: 42px; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--ds-line, #dbe8e6); border-radius: 8px; background: #fff; color: var(--ds-primary, #126c68); font: inherit; font-weight: 800; cursor: pointer; }
+.publish-button { display: inline-flex; min-height: 42px; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--ds-primary, #126c68); border-radius: 8px; background: var(--ds-primary, #126c68); color: #fff; font: inherit; font-weight: 800; cursor: pointer; }
+.primary-button:disabled, .publish-button:disabled { cursor: not-allowed; opacity: .55; }
+@media (max-width: 620px) { .upload-panel { padding: 15px; } .upload-actions { grid-template-columns: 1fr; } }
 </style>

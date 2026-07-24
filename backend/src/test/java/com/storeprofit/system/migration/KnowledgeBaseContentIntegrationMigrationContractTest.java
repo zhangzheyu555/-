@@ -10,9 +10,9 @@ import org.springframework.core.io.ClassPathResource;
 class KnowledgeBaseContentIntegrationMigrationContractTest {
 
   @Test
-  void v103AddsTopicsVersionsAndDocumentRelationshipsInOneMigration() throws IOException {
+  void v105AddsTopicsVersionsAndDocumentRelationshipsInOneMigration() throws IOException {
     ClassPathResource migration =
-        new ClassPathResource("db/migration/V103__knowledge_base_content_integration.sql");
+        new ClassPathResource("db/migration/V105__knowledge_base_content_integration.sql");
 
     assertThat(migration.exists()).isTrue();
     String sql = migration.getContentAsString(StandardCharsets.UTF_8).toLowerCase();

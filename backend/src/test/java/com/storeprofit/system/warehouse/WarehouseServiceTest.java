@@ -5,15 +5,19 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
 
+import com.storeprofit.system.audit.AuditRepository;
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.organization.StoreBusinessGuard;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
 import java.math.BigDecimal;
 import java.sql.Date;
 import java.text.SimpleDateFormat;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -128,6 +132,311 @@ class WarehouseServiceTest {
         .findFirst()
         .orElseThrow();
     assertThat(received.statusLabel()).isEqualTo("门店已收货");
+  }
+
+  @Test
+  void inactiveStoreKeepsHistoricalRequisitionsButCannotCreateANewOne() {
+    WarehouseRequisitionRequest request = new WarehouseRequisitionRequest(
+        "rg1",
+        List.of(new WarehouseRequisitionLineRequest(1L, new BigDecimal("1"), "历史叫货")),
+        "停用前创建"
+    );
+    WarehouseRequisitionResponse historical = service.createRequisition(storeManager(), request);
+    jdbcTemplate.update("update store_branch set status = '停用' where tenant_id = 1 and id = 'rg1'");
+    WarehouseService guarded = new WarehouseService(
+        new WarehouseRepository(jdbcTemplate),
+        null,
+        null,
+        null,
+        null,
+        new StoreBusinessGuard(jdbcTemplate, mock(AuditRepository.class))
+    );
+
+    assertThat(guarded.requisitions(storeManager()))
+        .extracting(WarehouseRequisitionResponse::id)
+        .contains(historical.id());
+    assertThatThrownBy(() -> guarded.createRequisition(storeManager(), request))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode())
+            .isEqualTo("STORE_INACTIVE_NEW_BUSINESS_FORBIDDEN"));
+  }
+
+  @Test
+  void storeManagerCannotBypassSelectedStoreScopeWhenSubmittingRequisition() {
+    jdbcTemplate.update("""
+        insert into warehouse_item_requisition_policy(
+          tenant_id, item_id, scope_mode, campaign_name, starts_at, ends_at, updated_by
+        ) values (1, 1, 'SELECTED', '指定门店活动', null, null, 2)
+        """);
+    jdbcTemplate.update("""
+        insert into warehouse_item_requisition_target(
+          tenant_id, item_id, target_type, target_value
+        ) values (1, 1, 'STORE', 'other-store')
+        """);
+
+    assertThatThrownBy(() -> service.createRequisition(
+        storeManager(),
+        new WarehouseRequisitionRequest(
+            "rg1",
+            List.of(new WarehouseRequisitionLineRequest(1L, BigDecimal.ONE, "尝试绕过前端限制")),
+            "不在活动范围内"
+        )
+    ))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> {
+          BusinessException businessError = (BusinessException) error;
+          assertThat(businessError.getCode()).isEqualTo("ITEM_NOT_AVAILABLE_FOR_STORE");
+          assertThat(businessError.getStatus()).isEqualTo(org.springframework.http.HttpStatus.FORBIDDEN);
+          assertThat(businessError.getMessage()).contains("当前门店不可叫货");
+        });
+  }
+
+  @Test
+  void storeManagerOnlySeesItemsAvailableToOwnStore() {
+    jdbcTemplate.update("""
+        insert into warehouse_item_requisition_policy(
+          tenant_id, item_id, scope_mode, campaign_name, starts_at, ends_at, updated_by
+        ) values (1, 1, 'SELECTED', '山东限定活动', null, null, 2)
+        """);
+    jdbcTemplate.update("""
+        insert into warehouse_item_requisition_target(
+          tenant_id, item_id, target_type, target_value
+        ) values (1, 1, 'REGION', 'SHANDONG')
+        """);
+
+    assertThat(service.items(storeManager()))
+        .extracting(WarehouseItemResponse::code)
+        .doesNotContain("MILK");
+    WarehouseItemResponse visibleItem = service.items(otherStoreManager()).stream()
+        .filter(item -> "MILK".equals(item.code()))
+        .findFirst()
+        .orElseThrow();
+    assertThat(visibleItem.requisitionPolicy()).isNull();
+    assertThatThrownBy(() -> service.item(storeManager(), 1L))
+        .isInstanceOfSatisfying(BusinessException.class, error -> {
+          assertThat(error.getCode()).isEqualTo("ITEM_NOT_FOUND");
+          assertThat(error.getMessage()).contains("当前门店不可叫货");
+        });
+  }
+
+  @Test
+  void savingItemRequiresAnExplicitRequisitionScope() {
+    assertThatThrownBy(() -> service.saveItem(
+        warehouseManager(),
+        itemRequest("NO-SCOPE", "未选择叫货范围", null)
+    ))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> {
+          BusinessException businessError = (BusinessException) error;
+          assertThat(businessError.getCode()).isEqualTo("REQUISITION_SCOPE_REQUIRED");
+          assertThat(businessError.getMessage()).contains("请选择商品可叫货范围");
+        });
+  }
+
+  @Test
+  void warehouseManagerCanReadScopeConfigurationContextButStoreManagerCannot() {
+    WarehouseItemRequisitionScopeContextResponse context =
+        service.itemRequisitionScopeContext(warehouseManager());
+
+    assertThat(context.activeStoreCount()).isEqualTo(2);
+    assertThat(context.regions())
+        .extracting(WarehouseItemRequisitionScopeContextResponse.RegionOption::code)
+        .containsExactlyInAnyOrder("JINGZHOU", "SHANDONG");
+    assertThat(context.stores())
+        .extracting(WarehouseItemRequisitionScopeContextResponse.StoreOption::id)
+        .containsExactly("other-store", "rg1");
+
+    assertForbidden(() -> service.itemRequisitionScopeContext(storeManager()));
+  }
+
+  @Test
+  void savingSelectedScopePersistsRegionStoreUnionAndAuditSnapshots() {
+    service.saveItem(warehouseManager(), itemRequest("SUMMER-CUP", "夏季活动杯", allStoresPolicy()));
+    WarehouseItemResponse created = service.items(warehouseManager()).stream()
+        .filter(item -> "SUMMER-CUP".equals(item.code()))
+        .findFirst()
+        .orElseThrow();
+
+    WarehouseItemRequisitionPolicyRequest selectedPolicy = new WarehouseItemRequisitionPolicyRequest(
+        "SELECTED",
+        List.of("shandong", "SHANDONG"),
+        List.of("rg1", "rg1"),
+        "夏季限定",
+        LocalDateTime.of(2026, 7, 20, 8, 0),
+        LocalDateTime.of(2026, 8, 20, 23, 0)
+    );
+    service.saveItem(
+        warehouseManager(),
+        itemRequest(created.id(), "SUMMER-CUP", "夏季活动杯", selectedPolicy)
+    );
+
+    assertThat(jdbcTemplate.queryForObject("""
+        select scope_mode from warehouse_item_requisition_policy
+        where tenant_id = 1 and item_id = ?
+        """, String.class, created.id())).isEqualTo("SELECTED");
+    assertThat(jdbcTemplate.queryForList("""
+        select concat(target_type, ':', target_value)
+        from warehouse_item_requisition_target
+        where tenant_id = 1 and item_id = ?
+        order by target_type, target_value
+        """, String.class, created.id()))
+        .containsExactly("REGION:SHANDONG", "STORE:rg1");
+
+    WarehouseItemRequisitionPolicyResponse response = service.item(warehouseManager(), created.id()).requisitionPolicy();
+    assertThat(response.configured()).isTrue();
+    assertThat(response.scopeMode()).isEqualTo("SELECTED");
+    assertThat(response.regionCodes()).containsExactly("SHANDONG");
+    assertThat(response.storeIds()).containsExactly("rg1");
+    assertThat(response.campaignName()).isEqualTo("夏季限定");
+
+    Map<String, Object> audit = jdbcTemplate.queryForMap("""
+        select before_json, after_json
+        from operation_log
+        where tenant_id = 1 and target_id = 'SUMMER-CUP'
+        order by id desc
+        limit 1
+        """);
+    assertThat(audit.get("before_json").toString()).contains("\"scopeMode\":\"ALL\"");
+    assertThat(audit.get("after_json").toString())
+        .contains("\"scopeMode\":\"SELECTED\"", "\"SHANDONG\"", "\"rg1\"", "夏季限定");
+  }
+
+  @Test
+  void regionAndStoreTargetsUseUnionAndCampaignWindowControlsNewOrders() {
+    WarehouseItemRequisitionPolicyRequest futurePolicy = new WarehouseItemRequisitionPolicyRequest(
+        "SELECTED",
+        List.of("SHANDONG"),
+        List.of("rg1"),
+        "尚未开始的活动",
+        LocalDateTime.now().plusDays(2),
+        LocalDateTime.now().plusDays(5)
+    );
+    service.saveItem(warehouseManager(), itemRequest(1L, "MILK", "鲜奶", futurePolicy));
+
+    assertThat(service.items(storeManager()))
+        .extracting(WarehouseItemResponse::code)
+        .doesNotContain("MILK");
+    assertThat(service.items(otherStoreManager()))
+        .extracting(WarehouseItemResponse::code)
+        .doesNotContain("MILK");
+
+    WarehouseItemRequisitionPolicyRequest activePolicy = new WarehouseItemRequisitionPolicyRequest(
+        "SELECTED",
+        List.of("SHANDONG"),
+        List.of("rg1"),
+        "进行中的活动",
+        LocalDateTime.now().minusDays(2),
+        LocalDateTime.now().plusDays(2)
+    );
+    service.saveItem(warehouseManager(), itemRequest(1L, "MILK", "鲜奶", activePolicy));
+
+    assertThat(service.items(storeManager()))
+        .extracting(WarehouseItemResponse::code)
+        .contains("MILK");
+    assertThat(service.items(otherStoreManager()))
+        .extracting(WarehouseItemResponse::code)
+        .contains("MILK");
+
+    WarehouseItemRequisitionPolicyRequest endedPolicy = new WarehouseItemRequisitionPolicyRequest(
+        "ALL",
+        List.of(),
+        List.of(),
+        "已经结束的活动",
+        LocalDateTime.now().minusDays(5),
+        LocalDateTime.now().minusDays(2)
+    );
+    service.saveItem(warehouseManager(), itemRequest(1L, "MILK", "鲜奶", endedPolicy));
+
+    assertThat(service.items(storeManager()))
+        .extracting(WarehouseItemResponse::code)
+        .doesNotContain("MILK");
+    assertThat(service.items(otherStoreManager()))
+        .extracting(WarehouseItemResponse::code)
+        .doesNotContain("MILK");
+  }
+
+  @Test
+  void scopeChangesDoNotCancelExistingPendingRequisitions() {
+    WarehouseRequisitionResponse existing = service.createRequisition(
+        storeManager(),
+        new WarehouseRequisitionRequest(
+            "rg1",
+            List.of(new WarehouseRequisitionLineRequest(1L, BigDecimal.ONE, "历史待处理单")),
+            "变更范围前已提交"
+        )
+    );
+
+    service.saveItem(
+        warehouseManager(),
+        itemRequest(
+            1L,
+            "MILK",
+            "鲜奶",
+            new WarehouseItemRequisitionPolicyRequest(
+                "SELECTED",
+                List.of(),
+                List.of("other-store"),
+                "调整后的范围",
+                null,
+                null
+            )
+        )
+    );
+
+    assertThat(service.requisitions(storeManager()))
+        .extracting(WarehouseRequisitionResponse::id)
+        .contains(existing.id());
+    service.review(
+        warehouseManager(),
+        existing.id(),
+        new WarehouseRequisitionReviewRequest(true, List.of(), "历史单继续处理")
+    );
+    assertThat(service.requisitions(storeManager()).stream()
+        .filter(requisition -> existing.id().equals(requisition.id()))
+        .findFirst()
+        .orElseThrow()
+        .status()).isEqualTo("APPROVED");
+
+    assertThatThrownBy(() -> service.createRequisition(
+        storeManager(),
+        new WarehouseRequisitionRequest(
+            "rg1",
+            List.of(new WarehouseRequisitionLineRequest(1L, BigDecimal.ONE, "范围变更后的新单")),
+            "应被后端拒绝"
+        )
+    ))
+        .isInstanceOfSatisfying(BusinessException.class, error ->
+            assertThat(error.getCode()).isEqualTo("ITEM_NOT_AVAILABLE_FOR_STORE"));
+  }
+
+  @Test
+  void selectedScopeRequiresAtLeastOneValidRegionOrStoreAndValidTimeRange() {
+    assertThatThrownBy(() -> service.saveItem(
+        warehouseManager(),
+        itemRequest(
+            "EMPTY-SCOPE",
+            "空范围",
+            new WarehouseItemRequisitionPolicyRequest("SELECTED", List.of(), List.of(), null, null, null)
+        )
+    )).isInstanceOfSatisfying(BusinessException.class, error ->
+        assertThat(error.getCode()).isEqualTo("REQUISITION_SCOPE_TARGET_REQUIRED"));
+
+    assertThatThrownBy(() -> service.saveItem(
+        warehouseManager(),
+        itemRequest(
+            "BAD-TIME",
+            "错误时间",
+            new WarehouseItemRequisitionPolicyRequest(
+                "ALL",
+                List.of(),
+                List.of(),
+                null,
+                LocalDateTime.now().plusDays(1),
+                LocalDateTime.now()
+            )
+        )
+    )).isInstanceOfSatisfying(BusinessException.class, error ->
+        assertThat(error.getCode()).isEqualTo("REQUISITION_TIME_RANGE_INVALID"));
   }
 
   @Test
@@ -689,7 +998,8 @@ class WarehouseServiceTest {
             593,
             "水果",
             true,
-            List.of(new WarehouseItemDepartmentRequest("采购部", "CG", "总部", "自购", "果蔬供应商"))
+            List.of(new WarehouseItemDepartmentRequest("采购部", "CG", "总部", "自购", "果蔬供应商")),
+            allStoresPolicy()
         )
     );
 
@@ -895,7 +1205,8 @@ class WarehouseServiceTest {
             null,
             null,
             true,
-            List.of()
+            List.of(),
+            allStoresPolicy()
         )
     );
 
@@ -1171,8 +1482,25 @@ class WarehouseServiceTest {
   }
 
   private WarehouseItemRequest itemRequest(String code, String name) {
+    return itemRequest(code, name, allStoresPolicy());
+  }
+
+  private WarehouseItemRequest itemRequest(
+      String code,
+      String name,
+      WarehouseItemRequisitionPolicyRequest requisitionPolicy
+  ) {
+    return itemRequest(null, code, name, requisitionPolicy);
+  }
+
+  private WarehouseItemRequest itemRequest(
+      Long id,
+      String code,
+      String name,
+      WarehouseItemRequisitionPolicyRequest requisitionPolicy
+  ) {
     return new WarehouseItemRequest(
-        null,
+        id,
         code,
         name,
         1L,
@@ -1198,8 +1526,13 @@ class WarehouseServiceTest {
         593,
         null,
         true,
-        List.of()
+        List.of(),
+        requisitionPolicy
     );
+  }
+
+  private WarehouseItemRequisitionPolicyRequest allStoresPolicy() {
+    return new WarehouseItemRequisitionPolicyRequest("ALL", List.of(), List.of(), null, null, null);
   }
 
   private AuthUser warehouseManager() {
@@ -1230,7 +1563,9 @@ class WarehouseServiceTest {
         create table store_branch (
           id varchar(64) primary key,
           tenant_id bigint not null,
-          name varchar(160) not null
+          name varchar(160) not null,
+          status varchar(40) not null default '营业中',
+          region_code varchar(40)
         )
         """);
     jdbcTemplate.execute("""
@@ -1312,6 +1647,31 @@ class WarehouseServiceTest {
           supplier_name varchar(160),
           created_at timestamp not null default current_timestamp,
           updated_at timestamp null
+        )
+        """);
+    jdbcTemplate.execute("""
+        create table warehouse_item_requisition_policy (
+          tenant_id bigint not null,
+          item_id bigint not null,
+          scope_mode varchar(24) not null,
+          campaign_name varchar(160),
+          starts_at timestamp null,
+          ends_at timestamp null,
+          updated_by bigint,
+          created_at timestamp not null default current_timestamp,
+          updated_at timestamp null,
+          primary key (tenant_id, item_id)
+        )
+        """);
+    jdbcTemplate.execute("""
+        create table warehouse_item_requisition_target (
+          id bigint auto_increment primary key,
+          tenant_id bigint not null,
+          item_id bigint not null,
+          target_type varchar(24) not null,
+          target_value varchar(64) not null,
+          created_at timestamp not null default current_timestamp,
+          unique (tenant_id, item_id, target_type, target_value)
         )
         """);
     jdbcTemplate.execute("""
@@ -1460,13 +1820,18 @@ class WarehouseServiceTest {
           uploaded_at timestamp default current_timestamp
         )
         """);
-    jdbcTemplate.execute("create table operation_log(id bigint auto_increment primary key, tenant_id bigint, operator_id bigint, operator_name varchar(120), action varchar(80), target_type varchar(80), target_id varchar(120), store_id varchar(64), reason varchar(255), created_at timestamp default current_timestamp)");
+    jdbcTemplate.execute("create table operation_log(id bigint auto_increment primary key, tenant_id bigint, operator_id bigint, operator_name varchar(120), action varchar(80), target_type varchar(80), target_id varchar(120), store_id varchar(64), before_json clob, after_json clob, reason varchar(255), created_at timestamp default current_timestamp)");
     jdbcTemplate.execute("create table todo_action(id varchar(120) primary key, tenant_id bigint not null, todo_id varchar(160) not null, action_type varchar(40) not null, status varchar(40) not null, note text not null, actor_user_id bigint null, actor_name varchar(120) null, actor_role varchar(40) not null, created_at timestamp default current_timestamp)");
   }
 
   private void seedData() {
     jdbcTemplate.update("insert into auth_user(id, tenant_id, display_name) values (2, 1, '仓库管理员'), (3, 1, '店长'), (4, 1, '其他门店店长')");
-    jdbcTemplate.update("insert into store_branch(id, tenant_id, name) values ('rg1', 1, '日广店'), ('other-store', 1, '其他门店')");
+    jdbcTemplate.update("""
+        insert into store_branch(id, tenant_id, name, status, region_code)
+        values
+          ('rg1', 1, '日广店', '营业中', 'JINGZHOU'),
+          ('other-store', 1, '其他门店', '营业中', 'SHANDONG')
+        """);
     jdbcTemplate.update("""
         insert into warehouse_facility(id, tenant_id, code, name, warehouse_type, enabled)
         values (1, 1, 'JZ-CENTRAL', '荆州总仓', 'CENTRAL', 1)

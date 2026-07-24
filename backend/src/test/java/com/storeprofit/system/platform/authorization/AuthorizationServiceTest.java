@@ -35,6 +35,21 @@ class AuthorizationServiceTest {
   }
 
   @Test
+  void personalDenyRemovesKnowledgeSearchFromTheEffectiveSessionPermissions() {
+    AuthUser finance = user(18L, "FINANCE");
+    when(repository.roleTemplatePermissions(1L, "FINANCE"))
+        .thenReturn(Set.of(PermissionCodes.KNOWLEDGE_BASE_SEARCH));
+    when(repository.enabledPermissionCodes()).thenReturn(Set.of(PermissionCodes.KNOWLEDGE_BASE_SEARCH));
+    when(repository.userOverrides(1L, 18L)).thenReturn(List.of(
+        new UserPermissionOverride(PermissionCodes.KNOWLEDGE_BASE_SEARCH, PermissionEffect.DENY)
+    ));
+
+    assertThat(service.effectivePermissions(finance))
+        .doesNotContain(PermissionCodes.KNOWLEDGE_BASE_SEARCH);
+    assertThat(service.hasPermission(finance, PermissionCodes.KNOWLEDGE_BASE_SEARCH)).isFalse();
+  }
+
+  @Test
   void bossKeepsStablePermissionsWhenCatalogIsEmptyAndOwnsEveryPermissionCheck() {
     AuthUser boss = user(1L, "BOSS");
     when(repository.enabledPermissionCodes()).thenReturn(Set.of());

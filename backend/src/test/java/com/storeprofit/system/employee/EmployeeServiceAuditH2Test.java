@@ -64,7 +64,7 @@ class EmployeeServiceAuditH2Test {
     assertThat(auditPayload)
         .contains("\"status\"")
         .contains("\"accountLinked\"")
-        .doesNotContain("13800138000", "110101199001011234", account.initialPassword(),
+        .doesNotContain("13800138000", "11010119900101123X", account.initialPassword(),
             "审计员工", "3500");
     assertThat(fixture.jdbc().queryForObject(
         "select status from employee where tenant_id = ? and id = ?", String.class, TENANT_ID, created.id()))
@@ -247,7 +247,7 @@ class EmployeeServiceAuditH2Test {
   private EmployeeUpsertRequest requestFor(String storeId, String name, String status, String position) {
     return new EmployeeUpsertRequest(
         storeId, name, "13800138000", position, "全职", status, "2026-07-01", "7月21日",
-        "110101199001011234", "2026-01-01", "2027-01-01", "健康证", "2026-08-01",
+        "11010119900101123X", "2026-01-01", "2027-01-01", "健康证", "2026-08-01",
         null, null, null, "审计测试备注", BigDecimal.valueOf(18));
   }
 

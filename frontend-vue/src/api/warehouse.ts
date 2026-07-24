@@ -81,6 +81,45 @@ export interface WarehouseItem {
   sortOrder?: number
   itemAttributes?: string
   departments?: WarehouseItemDepartment[]
+  requisitionPolicy?: WarehouseItemRequisitionPolicy
+}
+
+export type WarehouseItemRequisitionScopeMode = 'ALL' | 'SELECTED'
+
+export interface WarehouseItemRequisitionPolicy {
+  scopeMode: WarehouseItemRequisitionScopeMode
+  regionCodes: string[]
+  storeIds: string[]
+  campaignName?: string
+  startsAt?: string
+  endsAt?: string
+  configured: boolean
+}
+
+export interface WarehouseItemRequisitionPolicyPayload {
+  scopeMode: WarehouseItemRequisitionScopeMode
+  regionCodes: string[]
+  storeIds: string[]
+  campaignName?: string
+  startsAt?: string
+  endsAt?: string
+}
+
+export interface WarehouseItemRequisitionScopeRegion {
+  code: string
+  name: string
+}
+
+export interface WarehouseItemRequisitionScopeStore {
+  id: string
+  name: string
+  regionCode?: string
+}
+
+export interface WarehouseItemRequisitionScopeContext {
+  activeStoreCount: number
+  regions: WarehouseItemRequisitionScopeRegion[]
+  stores: WarehouseItemRequisitionScopeStore[]
 }
 
 export interface WarehouseItemDepartment {
@@ -120,6 +159,7 @@ export interface WarehouseItemPayload {
   itemAttributes?: string
   active?: boolean
   departments?: WarehouseItemDepartment[]
+  requisitionPolicy: WarehouseItemRequisitionPolicyPayload
 }
 
 export interface WarehouseRequisitionLine {
@@ -158,6 +198,20 @@ export type WarehouseRequisitionHandlingMode =
   | 'AVAILABLE_ONLY'
   | 'MARK_BACKORDER'
   | 'WAIT_REPLENISHMENT'
+
+export type WarehouseRequisitionSummaryPeriodType = 'DAY' | 'WEEK' | 'MONTH'
+export type WarehouseRequisitionSummaryGroupDimension = 'store' | 'product' | 'period'
+
+export interface WarehouseRequisitionSummaryExportPayload {
+  warehouseId?: string | number
+  startDate: string
+  endDate: string
+  storeIds: string[]
+  productIds: number[]
+  periodType: WarehouseRequisitionSummaryPeriodType
+  includeZeroRows: boolean
+  groupBy: WarehouseRequisitionSummaryGroupDimension[]
+}
 
 export interface WarehouseOverview {
   warehouse?: WarehouseInfo
@@ -553,6 +607,10 @@ export function getWarehouseItemCategories() {
   return apiGet<WarehouseItemCategory[]>('/api/warehouse/item-categories')
 }
 
+export function getWarehouseItemRequisitionScopeContext() {
+  return apiGet<WarehouseItemRequisitionScopeContext>('/api/warehouse/items/requisition-scope-context')
+}
+
 export function saveWarehouseItem(payload: WarehouseItemPayload) {
   return apiPost<void, WarehouseItemPayload>('/api/warehouse/items', payload)
 }
@@ -577,6 +635,19 @@ export function deleteWarehouseItemCategory(categoryId: number) {
 
 export function createWarehouseRequisition(payload: WarehouseRequisitionCreatePayload) {
   return apiPost<WarehouseRequisition, WarehouseRequisitionCreatePayload>('/api/warehouse/requisitions', payload)
+}
+
+export async function downloadWarehouseRequisitionSummary(
+  payload: WarehouseRequisitionSummaryExportPayload,
+  fallbackName: string,
+) {
+  const response = await http.post<Blob>('/api/warehouse/requests/export-summary', payload, {
+    responseType: 'blob',
+  })
+  const disposition = String(response.headers['content-disposition'] || '')
+  const filename = decodeFilename(disposition) || fallbackName
+  downloadBlob(response.data, filename)
+  return filename
 }
 
 export function receiveWarehouseRequisition(requisitionId: string, note?: string) {

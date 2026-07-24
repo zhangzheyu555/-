@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -17,10 +18,12 @@ import com.storeprofit.system.organization.StoreResponse;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
 import com.storeprofit.system.platform.authorization.DataScopeDomains;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockMultipartFile;
 
 class KnowledgeBaseServiceTest {
@@ -150,6 +153,50 @@ class KnowledgeBaseServiceTest {
         .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
     verify(repository, never()).publish(1L, 31L, 2L);
     verify(repository, never()).archivePublishedPredecessor(1L, 30L);
+  }
+
+  @Test
+  void supervisorCannotManageAStoreDocumentOutsideTheConfiguredKnowledgeScope() {
+    AuthUser supervisor = new AuthUser(
+        10L, 1L, "测试企业", "supervisor", "", "督导", "SUPERVISOR", null, true);
+    doNothing().when(accessControl).requireKnowledgeBaseManage(supervisor);
+    when(repository.listDocuments(1L)).thenReturn(List.of(
+        new KnowledgeBaseRepository.DocumentRow(
+            20L, 1L, 0L, "越权门店资料", 1, "ORIGINAL", null, "越权门店资料", "门店运营",
+            "outside.txt", "text/plain", 12L, "a".repeat(64), "STORE", "DRAFT", 12, 1, 10L, null,
+            java.time.LocalDateTime.now(), java.time.LocalDateTime.now(), null)
+    ));
+    when(repository.roleScopes(20L)).thenReturn(List.of());
+    when(repository.storeScopes(20L)).thenReturn(List.of("outside-store"));
+    when(accessControl.canManageKnowledgeBaseStore(supervisor, "outside-store")).thenReturn(false);
+
+    assertThat(service.listDocuments(supervisor)).isEmpty();
+  }
+
+  @Test
+  void crossTenantStoreScopeIsRejectedAsForbidden() {
+    AuthUser boss = new AuthUser(
+        1L, 1L, "测试企业", "boss", "", "老板", "BOSS", null, true);
+    doNothing().when(accessControl).requireKnowledgeBaseManage(boss);
+    when(organizationRepository.store(1L, "foreign-store")).thenReturn(Optional.empty());
+    when(repository.storeExistsOutsideTenant(1L, "foreign-store")).thenReturn(true);
+    doThrow(new BusinessException("FORBIDDEN", "当前账号没有访问该业务的权限", HttpStatus.FORBIDDEN))
+        .when(accessControl).rejectKnowledgeBaseCrossTenantStore(boss, "foreign-store");
+
+    assertThatThrownBy(() -> service.upload(
+        boss,
+        new MockMultipartFile(
+            "file", "foreign.txt", "text/plain",
+            "跨租户门店不能作为资料范围".getBytes(StandardCharsets.UTF_8)),
+        "跨租户范围",
+        "门店运营",
+        "STORE",
+        List.of(),
+        List.of("foreign-store"),
+        null, null, null, null,
+        false
+    )).isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getStatus()).isEqualTo(HttpStatus.FORBIDDEN));
   }
 
   private KnowledgeBaseRepository.DocumentRow document(

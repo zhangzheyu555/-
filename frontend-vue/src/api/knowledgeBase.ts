@@ -56,6 +56,16 @@ export interface KnowledgeBaseSearchResponse {
   results: KnowledgeBaseSearchResult[]
 }
 
+export interface AvailableKnowledgeBaseDocument {
+  id: number
+  title: string
+  category: string
+  originalFileName: string
+  fileSize: number
+  publishedAt: string
+  updatedAt: string
+}
+
 export interface KnowledgeBaseUploadPayload {
   file: File
   title?: string
@@ -67,6 +77,7 @@ export interface KnowledgeBaseUploadPayload {
   topicName?: string
   relationType?: KnowledgeBaseRelationType
   predecessorDocumentId?: number
+  publishNow?: boolean
 }
 
 export function searchKnowledgeBase(query: string, limit = 5) {
@@ -85,6 +96,10 @@ export function knowledgeBaseDocuments() {
   return apiGet<KnowledgeBaseDocument[]>('/api/knowledge-base/documents')
 }
 
+export function availableKnowledgeBaseDocuments() {
+  return apiGet<AvailableKnowledgeBaseDocument[]>('/api/knowledge-base/documents/available')
+}
+
 export function uploadKnowledgeBaseDocument(payload: KnowledgeBaseUploadPayload) {
   const form = new FormData()
   form.append('file', payload.file, payload.file.name)
@@ -99,6 +114,7 @@ export function uploadKnowledgeBaseDocument(payload: KnowledgeBaseUploadPayload)
   if (payload.predecessorDocumentId) {
     form.append('predecessorDocumentId', String(payload.predecessorDocumentId))
   }
+  form.append('publishNow', String(payload.publishNow ?? false))
   return apiPostForm<KnowledgeBaseDocument>('/api/knowledge-base/documents', form, { timeout: 60_000 })
 }
 

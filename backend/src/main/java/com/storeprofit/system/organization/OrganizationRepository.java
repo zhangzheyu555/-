@@ -9,6 +9,8 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.ConnectionCallback;
@@ -51,11 +53,16 @@ public class OrganizationRepository {
     StringBuilder sql = new StringBuilder("""
         select s.id, s.code, s.name, s.brand_id, b.name as brand_name, s.area, s.manager, s.manager_phone,
                date_format(s.open_date, '%Y-%m-%d') as open_date, s.status, s.note,
-               s.region_code, s.supply_warehouse_id, w.name as supply_warehouse_name
+               s.region_code, s.supply_warehouse_id, w.name as supply_warehouse_name,
+               s.manager_employee_id, coalesce(s.cost_account_store_id, s.id) as cost_account_store_id,
+               coalesce(cost_store.name, s.name) as cost_account_store_name, s.version
         from store_branch s
         left join brand b on b.id = s.brand_id and b.tenant_id = s.tenant_id
         left join warehouse_facility w
           on w.id = s.supply_warehouse_id and w.tenant_id = s.tenant_id
+        left join store_branch cost_store
+          on cost_store.id = coalesce(s.cost_account_store_id, s.id)
+         and cost_store.tenant_id = s.tenant_id
         where s.tenant_id = ?
         """);
     ArrayList<Object> params = new ArrayList<>();
@@ -93,24 +100,22 @@ public class OrganizationRepository {
   }
 
   public void upsertStore(long tenantId, StoreUpsertRequest request, Long supplyWarehouseId) {
-    jdbcTemplate.update("""
+    StoreResponse existing = store(tenantId, request.id()).orElse(null);
+    if (existing == null) {
+      insertStore(tenantId, request, supplyWarehouseId);
+      return;
+    }
+    long expectedVersion = request.version() == null ? existing.version() : request.version();
+    updateStore(tenantId, request, supplyWarehouseId, expectedVersion);
+  }
+
+  public int insertStore(long tenantId, StoreUpsertRequest request, Long supplyWarehouseId) {
+    return jdbcTemplate.update("""
         insert into store_branch(
           id, tenant_id, brand_id, code, name, area, region_code, supply_warehouse_id,
-          manager, manager_phone, open_date, status, note, created_at
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
-        on duplicate key update
-          brand_id = values(brand_id),
-          code = values(code),
-          name = values(name),
-          area = values(area),
-          region_code = coalesce(values(region_code), region_code),
-          supply_warehouse_id = coalesce(values(supply_warehouse_id), supply_warehouse_id),
-          manager = values(manager),
-          manager_phone = values(manager_phone),
-          open_date = values(open_date),
-          status = values(status),
-          note = values(note),
-          updated_at = current_timestamp
+          manager, manager_employee_id, manager_phone, cost_account_store_id,
+          open_date, status, note, version, created_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, current_timestamp)
         """,
         request.id(),
         tenantId,
@@ -121,11 +126,72 @@ public class OrganizationRepository {
         blankToNull(request.regionCode()),
         supplyWarehouseId,
         blankToNull(request.manager()),
+        blankToNull(request.managerEmployeeId()),
         blankToNull(request.managerPhone()),
+        blankToNull(request.costAccountStoreId()),
         blankToNull(request.openDate()),
         request.status() == null || request.status().isBlank() ? "营业中" : request.status(),
         blankToNull(request.note())
     );
+  }
+
+  public int updateStore(
+      long tenantId,
+      StoreUpsertRequest request,
+      Long supplyWarehouseId,
+      long expectedVersion
+  ) {
+    return jdbcTemplate.update("""
+        update store_branch
+        set brand_id = ?,
+            code = ?,
+            name = ?,
+            area = ?,
+            region_code = ?,
+            supply_warehouse_id = ?,
+            manager = ?,
+            manager_employee_id = ?,
+            manager_phone = ?,
+            cost_account_store_id = ?,
+            open_date = ?,
+            status = ?,
+            note = ?,
+            version = version + 1,
+            updated_at = current_timestamp
+        where tenant_id = ? and id = ? and version = ?
+        """,
+        request.brandId(),
+        blankToNull(request.code()),
+        request.name(),
+        blankToNull(request.area()),
+        blankToNull(request.regionCode()),
+        supplyWarehouseId,
+        blankToNull(request.manager()),
+        blankToNull(request.managerEmployeeId()),
+        blankToNull(request.managerPhone()),
+        blankToNull(request.costAccountStoreId()),
+        blankToNull(request.openDate()),
+        request.status(),
+        blankToNull(request.note()),
+        tenantId,
+        request.id(),
+        expectedVersion
+    );
+  }
+
+  public int updateStoreStatus(
+      long tenantId,
+      String storeId,
+      String status,
+      long expectedVersion
+  ) {
+    return jdbcTemplate.update("""
+        update store_branch
+        set status = ?,
+            version = version + 1,
+            updated_at = current_timestamp
+        where tenant_id = ? and id = ? and version = ?
+        """, status, tenantId, storeId, expectedVersion);
   }
 
   public Optional<StoreResponse> store(long tenantId, String storeId) {
@@ -201,6 +267,83 @@ public class OrganizationRepository {
     return count != null && count > 0;
   }
 
+  public boolean storeNameBelongsToAnotherStore(long tenantId, String name, String storeId) {
+    if (name == null || name.isBlank()) {
+      return false;
+    }
+    Integer count = jdbcTemplate.queryForObject(
+        "select count(*) from store_branch where tenant_id = ? and name = ? and id <> ?",
+        Integer.class,
+        tenantId,
+        name.trim(),
+        storeId
+    );
+    return count != null && count > 0;
+  }
+
+  public Optional<ManagerReference> manager(long tenantId, String employeeId) {
+    if (employeeId == null || employeeId.isBlank()) {
+      return Optional.empty();
+    }
+    return jdbcTemplate.query("""
+        select e.id, e.name, e.phone, e.store_id, s.name as store_name, e.status
+        from employee e
+        join store_branch s on s.tenant_id = e.tenant_id and s.id = e.store_id
+        where e.tenant_id = ? and e.id = ?
+        """, (rs, rowNum) -> new ManagerReference(
+        rs.getString("id"),
+        rs.getString("name"),
+        rs.getString("phone"),
+        rs.getString("store_id"),
+        rs.getString("store_name"),
+        rs.getString("status")
+    ), tenantId, employeeId.trim()).stream().findFirst();
+  }
+
+  public List<StoreArchiveOptionsResponse.ManagerOption> activeManagers(
+      long tenantId,
+      DataScope dataScope
+  ) {
+    StringBuilder sql = new StringBuilder("""
+        select e.id, e.name, e.phone, e.store_id, s.name as store_name
+        from employee e
+        join store_branch s on s.tenant_id = e.tenant_id and s.id = e.store_id
+        where e.tenant_id = ? and e.status = '在职'
+        """);
+    ArrayList<Object> params = new ArrayList<>();
+    params.add(tenantId);
+    appendStoreScope(sql, params, "e.store_id", dataScope);
+    sql.append(" order by e.name, e.id");
+    return jdbcTemplate.query(sql.toString(), (rs, rowNum) ->
+        new StoreArchiveOptionsResponse.ManagerOption(
+            rs.getString("id"),
+            rs.getString("name"),
+            rs.getString("phone"),
+            rs.getString("store_id"),
+            rs.getString("store_name")
+        ), params.toArray());
+  }
+
+  public List<StoreArchiveOptionsResponse.RegionOption> activeStoreRegions(long tenantId) {
+    List<StoreArchiveOptionsResponse.RegionOption> rows = jdbcTemplate.query("""
+        select region_code, name, id
+        from warehouse_facility
+        where tenant_id = ? and enabled = 1 and store_supply_allowed = 1
+        order by region_code,
+                 case warehouse_type when 'CENTRAL' then 0 else 1 end,
+                 id
+        """, (rs, rowNum) -> new StoreArchiveOptionsResponse.RegionOption(
+        rs.getString("region_code"),
+        rs.getString("name"),
+        rs.getLong("id")
+    ), tenantId);
+    Map<String, StoreArchiveOptionsResponse.RegionOption> unique = new LinkedHashMap<>();
+    for (StoreArchiveOptionsResponse.RegionOption row : rows) {
+      unique.putIfAbsent(row.code(), row);
+    }
+    return List.copyOf(unique.values());
+  }
+
   public int brandCount(long tenantId) {
     Integer count = jdbcTemplate.queryForObject("select count(*) from brand where tenant_id = ?", Integer.class, tenantId);
     return count == null ? 0 : count;
@@ -255,7 +398,11 @@ public class OrganizationRepository {
         rs.getString("note"),
         rs.getString("region_code"),
         rs.getObject("supply_warehouse_id", Long.class),
-        rs.getString("supply_warehouse_name")
+        rs.getString("supply_warehouse_name"),
+        rs.getString("manager_employee_id"),
+        rs.getString("cost_account_store_id"),
+        rs.getString("cost_account_store_name"),
+        rs.getLong("version")
     );
   }
 
@@ -395,5 +542,15 @@ public class OrganizationRepository {
   }
 
   private record StoreLinkColumn(String tableName, String columnName, boolean tenantScoped) {
+  }
+
+  public record ManagerReference(
+      String employeeId,
+      String name,
+      String phone,
+      String storeId,
+      String storeName,
+      String status
+  ) {
   }
 }

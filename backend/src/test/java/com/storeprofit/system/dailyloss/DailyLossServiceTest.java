@@ -1,16 +1,19 @@
 package com.storeprofit.system.dailyloss;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.storeprofit.system.audit.AuditRepository;
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.organization.StoreBusinessGuard;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthRepository;
 import com.storeprofit.system.platform.auth.AuthService;
@@ -37,6 +40,40 @@ import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 class DailyLossServiceTest {
+  @Test
+  void inactiveStoreCannotCreateEitherDailyLossEntryShape() {
+    DailyLossRepository repository = mock(DailyLossRepository.class);
+    WarehouseRepository warehouse = mock(WarehouseRepository.class);
+    AccessControlService access = mock(AccessControlService.class);
+    AuditRepository audit = mock(AuditRepository.class);
+    StoreBusinessGuard guard = mock(StoreBusinessGuard.class);
+    AuthUser manager = user("STORE_MANAGER", "s1");
+    BusinessException inactive = new BusinessException(
+        "STORE_INACTIVE_NEW_BUSINESS_FORBIDDEN",
+        "门店已停用，不能创建新的报损单",
+        HttpStatus.CONFLICT
+    );
+    doThrow(inactive).when(guard).requireActive(manager, "s1", "报损单");
+    DailyLossService guarded = new DailyLossService(
+        repository, warehouse, mock(StorageService.class), access, audit, guard);
+
+    assertThatThrownBy(() -> guarded.create(manager, new DailyLossCreateRequest(
+        "s1", LocalDate.of(2026, 7, 24), 1L, BigDecimal.ONE, "测试")))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode())
+            .isEqualTo("STORE_INACTIVE_NEW_BUSINESS_FORBIDDEN"));
+    assertThatThrownBy(() -> guarded.saveReport(manager, new DailyLossReportSaveRequest(
+        "s1",
+        LocalDate.of(2026, 7, 24),
+        List.of(new DailyLossReportLineRequest(1L, BigDecimal.ONE, "测试"))
+    )))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode())
+            .isEqualTo("STORE_INACTIVE_NEW_BUSINESS_FORBIDDEN"));
+
+    verifyNoInteractions(repository);
+  }
+
   @Test
   void approvalWritesExactlyOneLossOutMovementAndDoesNotTouchProfitLedger() {
     DailyLossRepository repository = mock(DailyLossRepository.class);
