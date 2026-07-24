@@ -21,6 +21,7 @@ export interface StoreInfo {
   brandName: string
   area?: string
   manager?: string
+  managerPhone?: string
   openDate?: string
   status?: string
   note?: string
@@ -44,6 +45,7 @@ export interface StorePayload {
   brandId: number
   area?: string
   manager?: string
+  managerPhone?: string
   openDate?: string
   status?: string
   note?: string

@@ -9,7 +9,10 @@ public record DailyLossReportDetailResponse(
     String itemName,
     String category,
     String unit,
+    String pricingUnit,
+    BigDecimal quantityPerPricingUnit,
     BigDecimal lossQuantity,
+    BigDecimal pricedQuantity,
     BigDecimal unitPriceSnapshot,
     BigDecimal amountSnapshot,
     String lossReason

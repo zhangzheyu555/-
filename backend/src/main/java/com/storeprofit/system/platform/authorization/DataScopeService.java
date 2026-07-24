@@ -49,7 +49,7 @@ public class DataScopeService {
     if (user == null) {
       return Map.copyOf(result);
     }
-    if (AccessControlService.isBoss(user)) {
+    if (AccessControlService.hasAllStoreScope(user)) {
       result.replaceAll((domain, ignored) -> DataScope.all());
       return Map.copyOf(result);
     }

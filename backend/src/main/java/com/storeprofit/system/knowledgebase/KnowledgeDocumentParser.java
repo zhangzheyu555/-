@@ -16,6 +16,8 @@ import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.usermodel.WorkbookFactory;
+import org.apache.poi.hwpf.HWPFDocument;
+import org.apache.poi.hwpf.extractor.WordExtractor;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
 import org.apache.poi.xwpf.usermodel.XWPFTable;
@@ -28,7 +30,8 @@ import org.springframework.web.multipart.MultipartFile;
 /** Parses only the locally uploaded source file. No source content leaves the application process. */
 @Component
 public class KnowledgeDocumentParser {
-  private static final int MAX_FILE_BYTES = 20 * 1024 * 1024;
+  /** Training videos are retained as original files; the searchable entry is metadata only. */
+  private static final int MAX_FILE_BYTES = 50 * 1024 * 1024;
   private static final int MAX_PARSED_CHARS = 500_000;
   private static final int MAX_SHEETS = 100;
   private static final int MAX_ROWS_PER_SHEET = 20_000;
@@ -36,10 +39,10 @@ public class KnowledgeDocumentParser {
 
   public ParsedDocument parse(MultipartFile file) {
     if (file == null || file.isEmpty()) {
-      throw KnowledgeBaseErrors.badRequest("KNOWLEDGE_BASE_FILE_REQUIRED", "请选择 Word、Excel、CSV 或文本资料");
+      throw KnowledgeBaseErrors.badRequest("KNOWLEDGE_BASE_FILE_REQUIRED", "请选择 Word、Excel、CSV、文本或培训视频资料");
     }
     if (file.getSize() > MAX_FILE_BYTES) {
-      throw KnowledgeBaseErrors.badRequest("KNOWLEDGE_BASE_FILE_TOO_LARGE", "单个知识库资料不能超过20MB");
+      throw KnowledgeBaseErrors.badRequest("KNOWLEDGE_BASE_FILE_TOO_LARGE", "单个知识库资料不能超过50MB");
     }
     String fileName = safeFileName(file.getOriginalFilename());
     String extension = extension(fileName);
@@ -54,11 +57,13 @@ public class KnowledgeDocumentParser {
     }
     List<ExtractedSection> sections = switch (extension) {
       case "docx" -> parseDocx(source);
+      case "doc" -> parseLegacyDoc(source);
       case "xlsx", "xls" -> parseWorkbook(source);
       case "csv" -> parseDelimited(source, "CSV");
       case "txt" -> parseText(source);
+      case "mp4" -> parseTrainingVideo(fileName, source.length);
       default -> throw KnowledgeBaseErrors.badRequest(
-          "KNOWLEDGE_BASE_FILE_TYPE_UNSUPPORTED", "仅支持 .docx、.xlsx、.xls、.csv 和 .txt 格式的资料");
+          "KNOWLEDGE_BASE_FILE_TYPE_UNSUPPORTED", "仅支持 .doc、.docx、.xlsx、.xls、.csv、.txt 和 .mp4 格式的资料");
     };
     validateExtracted(sections);
     String contentType = file.getContentType() == null || file.getContentType().isBlank()
@@ -86,6 +91,20 @@ public class KnowledgeDocumentParser {
       return sections;
     } catch (IOException | RuntimeException ex) {
       throw KnowledgeBaseErrors.badRequest("KNOWLEDGE_BASE_DOCUMENT_PARSE_FAILED", "Word 文档无法解析，请确认文件未损坏并另存为 .docx 后重试");
+    }
+  }
+
+  private List<ExtractedSection> parseLegacyDoc(byte[] source) {
+    try (HWPFDocument document = new HWPFDocument(new ByteArrayInputStream(source));
+         WordExtractor extractor = new WordExtractor(document)) {
+      StringBuilder text = new StringBuilder();
+      for (String paragraph : extractor.getParagraphText()) appendLine(text, paragraph);
+      ArrayList<ExtractedSection> sections = new ArrayList<>();
+      addSection(sections, "正文", text);
+      return sections;
+    } catch (IOException | RuntimeException ex) {
+      throw KnowledgeBaseErrors.badRequest(
+          "KNOWLEDGE_BASE_DOCUMENT_PARSE_FAILED", "旧版 Word 文档无法解析，请确认文件未损坏后重试");
     }
   }
 
@@ -173,6 +192,15 @@ public class KnowledgeDocumentParser {
     return List.of(new ExtractedSection("正文", value));
   }
 
+  /**
+   * MP4 is intentionally not OCR/transcribed here.  It remains the authoritative training source,
+   * while its filename and category provide a truthful retrieval entry for users to download/watch.
+   */
+  private List<ExtractedSection> parseTrainingVideo(String fileName, int fileSize) {
+    return List.of(new ExtractedSection("培训视频", "培训视频资料：" + fileName
+        + "。请下载或在线播放原始视频学习；系统未自动转写视频内容。文件大小：" + fileSize + " 字节。"));
+  }
+
   private void validateExtracted(List<ExtractedSection> sections) {
     int total = sections.stream().map(ExtractedSection::text).mapToInt(String::length).sum();
     if (total == 0) {
@@ -230,6 +258,7 @@ public class KnowledgeDocumentParser {
   private String contentTypeFor(String extension) {
     return switch (extension) {
       case "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+      case "doc" -> "application/msword";
       case "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
       case "xls" -> "application/vnd.ms-excel";
       case "csv" -> "text/csv";

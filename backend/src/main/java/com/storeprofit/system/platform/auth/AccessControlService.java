@@ -25,6 +25,8 @@ import org.springframework.stereotype.Service;
 public class AccessControlService {
   private static final Logger log = LoggerFactory.getLogger(AccessControlService.class);
   public static final String BOSS_ROLE = "BOSS";
+  /** Roles that always have full store scope regardless of database assignments. */
+  private static final Set<String> GLOBAL_STORE_ROLES = Set.of("BOSS", "FINANCE", "SUPERVISOR", "WAREHOUSE");
 
   private final AuthService authService;
   private final AuthRepository authRepository;
@@ -832,7 +834,7 @@ public class AccessControlService {
       return dataScopeService.allowedStoreIds(user, domainCode);
     }
     LinkedHashSet<String> values = new LinkedHashSet<>();
-    if (isBoss(user)) {
+    if (hasAllStoreScope(user)) {
       values.add("all");
       return values;
     }
@@ -851,7 +853,7 @@ public class AccessControlService {
   }
 
   public Set<String> allowedWarehouseIds(AuthUser user) {
-    if (isBoss(user)) {
+    if (hasAllStoreScope(user)) {
       return Set.of("all");
     }
     if (dataScopeService != null) {
@@ -861,7 +863,7 @@ public class AccessControlService {
   }
 
   public boolean canAccessWarehouse(AuthUser user, String warehouseId) {
-    if (isBoss(user)) {
+    if (hasAllStoreScope(user)) {
       return true;
     }
     return dataScopeService != null && dataScopeService.canAccessWarehouse(user, warehouseId);
@@ -877,7 +879,7 @@ public class AccessControlService {
   }
 
   public boolean hasAllDataScope(AuthUser user, String domainCode) {
-    if (isBoss(user)) {
+    if (hasAllStoreScope(user)) {
       return true;
     }
     if (dataScopeService != null) {
@@ -887,7 +889,7 @@ public class AccessControlService {
   }
 
   public DataScope dataScope(AuthUser user, String domainCode) {
-    if (isBoss(user)) {
+    if (hasAllStoreScope(user)) {
       return DataScope.all();
     }
     if (dataScopeService != null) {
@@ -942,8 +944,22 @@ public class AccessControlService {
     deny(user, action, "API", PermissionCodes.SYSTEM_USER_MANAGE, null, "账号权限管理仅限老板");
   }
 
+  /**
+   * Returns true when the user's role always grants access to every store in the tenant.
+   * Unlike a static store-ids list, this scope is computed dynamically and automatically
+   * includes stores created after the account was configured.
+   */
+  public static boolean hasAllStoreScope(AuthUser user) {
+    return user != null && hasAllStoreScope(user.role());
+  }
+
+  /** Role-only variant for checks where an AuthUser instance is not yet available. */
+  public static boolean hasAllStoreScope(String role) {
+    return GLOBAL_STORE_ROLES.contains(canonicalRole(role));
+  }
+
   private boolean isGlobalStoreRole(AuthUser user) {
-    return isBoss(user);
+    return hasAllStoreScope(user);
   }
 
   public static boolean isBoss(AuthUser user) {

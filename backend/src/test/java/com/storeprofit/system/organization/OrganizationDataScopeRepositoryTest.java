@@ -50,7 +50,7 @@ public class OrganizationDataScopeRepositoryTest {
     jdbc.execute("""
         create table store_branch (
           id varchar(64) not null primary key, tenant_id bigint not null, brand_id bigint,
-          code varchar(80), name varchar(160), area varchar(160), manager varchar(120),
+          code varchar(80), name varchar(160), area varchar(160), manager varchar(120), manager_phone varchar(40),
           open_date date, status varchar(40), note varchar(255), region_code varchar(40),
           supply_warehouse_id bigint, created_at timestamp, updated_at timestamp,
           unique(tenant_id, code)

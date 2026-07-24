@@ -71,6 +71,7 @@ function emptyForm(): StorePayload {
     brandId: 0,
     area: '',
     manager: '',
+    managerPhone: '',
     openDate: '',
     status: '营业中',
     note: '',
@@ -108,6 +109,7 @@ function payloadFromStore(store: StoreInfo, overrides: Partial<StorePayload> = {
     brandId: store.brandId,
     area: store.area || '',
     manager: store.manager || '',
+    managerPhone: store.managerPhone || '',
     openDate: store.openDate || '',
     status: store.status || '营业中',
     note: store.note || '',
@@ -153,6 +155,7 @@ async function saveEditor() {
       brandId: Number(form.brandId),
       area: form.area?.trim() || '',
       manager: form.manager?.trim() || '',
+      managerPhone: form.managerPhone?.trim() || '',
       openDate: form.openDate || '',
       status: form.status || '营业中',
       note: form.note?.trim() || '',
@@ -277,6 +280,7 @@ onMounted(() => {
               <th>品牌</th>
               <th>区域</th>
               <th>负责人</th>
+              <th>联系电话</th>
               <th>开业日期</th>
               <th>状态</th>
               <th v-if="canManageStores">操作</th>
@@ -289,6 +293,7 @@ onMounted(() => {
               <td><BrandBadge :brand-name="store.brandName || brandName(store.brandId)" /></td>
               <td>{{ store.area || '-' }}</td>
               <td>{{ store.manager || '-' }}</td>
+              <td>{{ store.managerPhone || '-' }}</td>
               <td>{{ store.openDate || '-' }}</td>
               <td><span class="status-badge" :class="store.status === '营业中' ? 'ok' : 'warn'">{{ store.status || '未设置' }}</span></td>
               <td v-if="canManageStores">
@@ -306,7 +311,7 @@ onMounted(() => {
               </td>
             </tr>
             <tr v-if="!filteredStores.length">
-              <td class="empty-table-row" :colspan="canManageStores ? 8 : 7">暂无符合当前状态筛选的门店</td>
+              <td class="empty-table-row" :colspan="canManageStores ? 9 : 8">暂无符合当前状态筛选的门店</td>
             </tr>
           </tbody>
         </table>
@@ -361,6 +366,10 @@ onMounted(() => {
             <label>
               负责人
               <input v-model.trim="form.manager" placeholder="店长或负责人" />
+            </label>
+            <label>
+              负责人电话
+              <input v-model.trim="form.managerPhone" inputmode="tel" autocomplete="tel" placeholder="请输入联系电话" />
             </label>
             <label>
               开业日期

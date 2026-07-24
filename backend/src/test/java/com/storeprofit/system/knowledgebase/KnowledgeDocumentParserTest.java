@@ -31,7 +31,7 @@ class KnowledgeDocumentParserTest {
   }
 
   @Test
-  void extractsUtf8CsvAndRejectsUnsupportedLegacyWordFormat() {
+  void extractsUtf8CsvAndReportsMalformedLegacyWordFormat() {
     KnowledgeDocumentParser.ParsedDocument csv = parser.parse(
         new MockMultipartFile("file", "交接班.csv", "text/csv", "事项,要求\n卫生检查,完成登记".getBytes(StandardCharsets.UTF_8)));
     assertThat(csv.sections()).singleElement().satisfies(section -> assertThat(section.text()).contains("卫生检查"));
@@ -39,7 +39,7 @@ class KnowledgeDocumentParserTest {
     assertThatThrownBy(() -> parser.parse(new MockMultipartFile("file", "旧文档.doc", "application/msword", new byte[]{1})))
         .isInstanceOf(BusinessException.class)
         .satisfies(error -> assertThat(((BusinessException) error).getCode())
-            .isEqualTo("KNOWLEDGE_BASE_FILE_TYPE_UNSUPPORTED"));
+            .isEqualTo("KNOWLEDGE_BASE_DOCUMENT_PARSE_FAILED"));
   }
 
   private byte[] workbook() throws Exception {

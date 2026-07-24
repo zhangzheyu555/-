@@ -28,7 +28,7 @@ import {
 } from '../api/users'
 import { useAuthStore } from '../stores/auth'
 import { PERMISSIONS } from '../permissions/permissions'
-import { isBossRole, normalizeRoleCode } from '../permissions/roles'
+import { isBossRole, isGlobalStoreRole, normalizeRoleCode } from '../permissions/roles'
 import { listAvailableWorkspaces } from '../permissions/workspaces'
 
 type AccountForm = UserCreatePayload
@@ -148,6 +148,7 @@ const roles = [
 
 const canManage = computed(() => isBossRole(auth.role))
 const bossAccountForm = computed(() => isBossRole(form.role))
+const globalStoreRoleForm = computed(() => isGlobalStoreRole(form.role))
 const storeManagerAccountForm = computed(() => normalizeRoleCode(form.role) === 'STORE_MANAGER')
 const activeBossCount = computed(() => users.value.filter((user) => isBossRole(user.role) && user.enabled).length)
 const protectedBoss = computed(() => Boolean(
@@ -173,6 +174,7 @@ const roleRows = computed(() => {
   return Array.from(groups.entries()).map(([label, count]) => ({ label, count }))
 })
 const selectedAuthorizationIsBoss = computed(() => isBossRole(selectedAuthorizationUser.value?.role))
+const selectedAuthorizationIsGlobalStoreRole = computed(() => isGlobalStoreRole(selectedAuthorizationUser.value?.role))
 const dataScopeRows = computed<UserDataScopeAssignment[]>(() => DATA_SCOPE_DOMAINS
   .map((domainCode) => draftScopes[domainCode])
   .filter((scope): scope is UserDataScopeAssignment => Boolean(scope)))
@@ -323,6 +325,7 @@ function highRiskHint(permission: PermissionCatalogEntry) {
 function scopeModeOptions(domainCode: string) {
   const role = normalizeRoleCode(selectedAuthorizationUser.value?.role)
   let modes = DOMAIN_MODES[domainCode] || DATA_SCOPE_MODE_ORDER
+  if (isGlobalStoreRole(role)) modes = ['ALL']
   if (role === 'BOSS') modes = ['ALL']
   if (role === 'STORE_MANAGER') modes = ['OWN_STORE', 'NONE']
   if (role === 'EMPLOYEE') modes = domainCode === 'EXAM' ? ['SELF', 'NONE'] : ['NONE']
@@ -363,6 +366,10 @@ function compatibilityScopeFallback(user: UserAccount) {
     fallback.set(domainCode, { domainCode, mode, storeIds: [...storeIds], warehouseIds: [...warehouseIds] })
   }
   const role = normalizeRoleCode(user.role)
+  if (isGlobalStoreRole(role)) {
+    for (const domainCode of DATA_SCOPE_DOMAINS) assign(domainCode, 'ALL')
+    return fallback
+  }
   if (role === 'EMPLOYEE') {
     assign('EXAM', 'SELF')
     return fallback
@@ -400,7 +407,7 @@ function applyAuthorizationDraft(detail: UserAuthorization) {
     const source = scopeByDomain.get(domainCode) || fallbackByDomain.get(domainCode)
     draftScopes[domainCode] = {
       domainCode,
-      mode: selectedAuthorizationIsBoss.value ? 'ALL' : source?.mode || 'NONE',
+      mode: (selectedAuthorizationIsBoss.value || selectedAuthorizationIsGlobalStoreRole.value) ? 'ALL' : source?.mode || 'NONE',
       storeIds: [...(source?.storeIds || [])],
       warehouseIds: [...(source?.warehouseIds || [])],
     }
@@ -450,6 +457,7 @@ function accessProfileScopes(
   return DATA_SCOPE_DOMAINS.map((domainCode) => {
     const current = existing.get(domainCode) || { domainCode, mode: 'NONE' as DataScopeMode, storeIds: [], warehouseIds: [] }
     if (!roleChanged) return { ...current, storeIds: [...current.storeIds], warehouseIds: [...(current.warehouseIds || [])] }
+    if (isGlobalStoreRole(normalizedRole)) return { domainCode, mode: 'ALL', storeIds: [], warehouseIds: [] }
     if (normalizedRole === 'BOSS') return { domainCode, mode: 'ALL', storeIds: [], warehouseIds: [] }
     if (normalizedRole === 'EMPLOYEE') {
       return { domainCode, mode: domainCode === 'EXAM' ? 'SELF' : 'NONE', storeIds: [], warehouseIds: [] }
@@ -608,7 +616,7 @@ async function save() {
   }
 
   const role = normalizeRoleCode(form.role)
-  const scope = isBossRole(role)
+  const scope = isGlobalStoreRole(role) || isBossRole(role)
     ? []
     : storeManagerAccountForm.value
       ? (form.storeId ? [form.storeId] : [])
@@ -616,7 +624,7 @@ async function save() {
   const profile: UserProfilePayload = {
     displayName: form.displayName.trim(),
     role,
-    storeId: isBossRole(role) ? '' : form.storeId || scope[0] || '',
+    storeId: (isGlobalStoreRole(role) || isBossRole(role)) ? '' : form.storeId || scope[0] || '',
     storeScope: scope,
     enabled: form.enabled,
   }
@@ -866,6 +874,7 @@ function storeName(storeId?: string) {
 }
 
 function scopeText(user: UserAccount) {
+  if (isGlobalStoreRole(user.role)) return '全部门店'
   if (!user.storeScope?.length) return '未配置'
   if (user.storeScope.includes('all')) return '全部门店'
   return user.storeScope.map((storeId) => storeName(storeId)).join('、')
@@ -933,7 +942,7 @@ function displayError(reason: unknown, fallback: string) {
 watch(
   () => form.role,
   (role) => {
-    if (isBossRole(role)) {
+    if (isGlobalStoreRole(role) || isBossRole(role)) {
       form.storeId = ''
       form.storeScope = []
       return
@@ -1061,11 +1070,11 @@ onBeforeUnmount(() => {
           <section class="content-card">
             <div class="panel-title"><Store :size="20" /><h3>门店范围</h3></div>
             <div class="scope-list">
-              <div v-for="user in users.filter((item) => !item.storeScope.includes('all'))" :key="user.id">
+              <div v-for="user in users.filter((item) => !isGlobalStoreRole(item.role) && !item.storeScope.includes('all'))" :key="user.id">
                 <b>{{ user.displayName || user.username }}</b>
                 <span>{{ scopeText(user) }}</span>
               </div>
-              <div v-if="!users.some((item) => !item.storeScope.includes('all'))" class="empty-state compact">暂无门店范围配置。</div>
+              <div v-if="!users.some((item) => !isGlobalStoreRole(item.role) && !item.storeScope.includes('all'))" class="empty-state compact">暂无门店范围配置。</div>
             </div>
           </section>
         </aside>
@@ -1120,6 +1129,10 @@ onBeforeUnmount(() => {
               <ShieldCheck :size="18" />
               <div><b>老板权限由系统固定</b><span>老板始终拥有当前公司全部权限和全部数据范围，本页只读且不会发起授权保存请求。</span></div>
             </div>
+            <div v-if="selectedAuthorizationIsGlobalStoreRole && !selectedAuthorizationIsBoss" class="fixed-authorization-note">
+              <ShieldCheck :size="18" />
+              <div><b>该角色默认拥有全部门店范围</b><span>门店数据范围固定为“全部”，无需单独配置。功能权限仍可在下方调整。</span></div>
+            </div>
 
             <div
               v-if="normalizeRoleCode(selectedAuthorizationUser.role) === 'STORE_MANAGER' && !selectedManagerWorkspaceReady"
@@ -1170,7 +1183,7 @@ onBeforeUnmount(() => {
                     <select
                       v-model="scope.mode"
                       :aria-label="`${domainLabel(scope.domainCode)}数据范围`"
-                      :disabled="selectedAuthorizationIsBoss || authorizationSaving"
+                      :disabled="selectedAuthorizationIsBoss || selectedAuthorizationIsGlobalStoreRole || authorizationSaving"
                       @change="onScopeModeChanged(scope.domainCode)"
                     >
                       <option
@@ -1347,6 +1360,7 @@ onBeforeUnmount(() => {
             </label>
             <p class="account-role-hint">店长账号必须且只能绑定一家门店；详细业务范围在账号授权中配置。</p>
           </template>
+          <p v-else-if="globalStoreRoleForm" class="account-role-hint">该角色默认拥有全部门店范围，无需单独配置。</p>
           <p v-else-if="bossAccountForm" class="account-role-hint">老板固定拥有当前公司全部功能和数据范围，无需单独授权。</p>
           <p v-else class="account-role-hint">基础账号只设置身份。保存后请在账号列表点击盾牌按钮，分别配置业务数据范围和个人权限。</p>
           <label v-if="!editingUser">

@@ -118,6 +118,22 @@ public class DailyLossService {
   }
 
   @Transactional(readOnly = true)
+  public DailyLossMonthlyArchiveResponse monthlyArchive(AuthUser user, String month) {
+    // Historical workbooks contain totals across every store, so store-scoped
+    // accounts must not receive this aggregate financial view.
+    accessControl.requireDailyLossReview(user);
+    return repository.monthlyArchive(user.tenantId(), normalizeMonth(month))
+        .map(row -> new DailyLossMonthlyArchiveResponse(
+            row.month(), row.sourceSheet(), row.sourceTitle(),
+            row.declaredTotalLossAmount(), row.detailTotalLossAmount(),
+            row.supplierCompensationAmount(), row.declaredStoreBorneAmount(),
+            row.calculatedStoreBorneAmount(), row.declaredBorneDifference(),
+            row.detailLossDifference(), row.storeCount(), row.itemCount(),
+            row.reconciliationStatus(), row.sourceNote()))
+        .orElse(null);
+  }
+
+  @Transactional(readOnly = true)
   public DailyLossReportResponse today(AuthUser user) {
     accessControl.requireDailyLossRead(user);
     String storeId = resolveRequiredStoreForCurrentUser(user, "查看今日报损");
@@ -177,14 +193,21 @@ public class DailyLossService {
       repository.touchReportDraft(user.tenantId(), reportId);
       repository.resetReportDetails(user.tenantId(), reportId);
     }
+    BigDecimal totalAmount = ZERO;
     for (DailyLossReportLineRequest detail : details) {
       long configId = detail == null || detail.itemConfigId() == null ? 0L : detail.itemConfigId();
       DailyLossRepository.LossItemConfigRow item = repository.activeItemConfig(user.tenantId(), configId)
           .orElseThrow(() -> new BusinessException(
               "DAILY_LOSS_ITEM_NOT_FOUND", "报损品类不存在或已停用", HttpStatus.NOT_FOUND));
       BigDecimal quantity = positiveAmount(detail.lossQuantity(), "报损数量必须大于零");
+      BigDecimal quantityPerPricingUnit = item.quantityPerPricingUnit();
+      if (quantityPerPricingUnit == null || quantityPerPricingUnit.compareTo(BigDecimal.ZERO) <= 0) {
+        throw badRequest("DAILY_LOSS_PRICING_UNIT_INVALID", "该物料的计价折算配置不正确");
+      }
+      BigDecimal pricedQuantity = quantity.divide(quantityPerPricingUnit, 4, RoundingMode.HALF_UP);
       BigDecimal unitPrice = item.unitPrice().setScale(4, RoundingMode.HALF_UP);
-      BigDecimal amount = quantity.multiply(unitPrice).setScale(2, RoundingMode.HALF_UP);
+      BigDecimal amount = pricedQuantity.multiply(unitPrice).setScale(2, RoundingMode.HALF_UP);
+      totalAmount = totalAmount.add(amount);
       String reason = normalizeOptionalText(detail.lossReason(), 500, "报损原因不能超过500个字符");
       repository.insertReportDetail(
           user.tenantId(),
@@ -194,11 +217,18 @@ public class DailyLossService {
           lossDate,
           item,
           quantity,
+          pricedQuantity,
           unitPrice,
           amount,
           reason == null ? "日常报损" : reason,
           user.id());
     }
+    BigDecimal supplierCompensation = nonNegativeAmount(
+        request.supplierCompensationAmount(), "厂商赔付金额不能小于零");
+    if (supplierCompensation.compareTo(totalAmount) > 0) {
+      throw badRequest("DAILY_LOSS_COMPENSATION_EXCEEDS_TOTAL", "厂商赔付金额不能超过报损总金额");
+    }
+    repository.updateSupplierCompensation(user.tenantId(), reportId, supplierCompensation);
     if (files != null && !files.isEmpty()) {
       uploadReportFiles(user, reportId, storeId, files);
     }
@@ -267,6 +297,7 @@ public class DailyLossService {
         user.tenantId(), month, targetStoreId, scope);
     List<DailyLossRepository.MonthlyExportDetailRow> details = repository.monthlyExportDetails(
         user.tenantId(), month, targetStoreId, scope);
+    List<DailyLossItemResponse> configuredItems = repository.activeItems(user.tenantId());
     Map<String, DailyLossRepository.DailyLossReportRow> reportsByStoreDay = new LinkedHashMap<>();
     for (DailyLossRepository.DailyLossReportRow report : reports) {
       reportsByStoreDay.put(report.storeId() + "|" + report.lossDate(), report);
@@ -276,7 +307,8 @@ public class DailyLossService {
       detailsByReport.computeIfAbsent(detail.reportId(), ignored -> new java.util.ArrayList<>()).add(detail);
     }
 
-    byte[] content = buildMonthlyExcel(month, stores, reportsByStoreDay, details, detailsByReport);
+    byte[] content = buildMonthlyExcel(
+        month, stores, reportsByStoreDay, details, detailsByReport, configuredItems);
     String fileName = monthlyExcelFileName(month, stores, targetStoreId);
     String scopeLabel = targetStoreId == null ? "全部门店" : stores.stream()
         .filter(store -> targetStoreId.equals(store.id()))
@@ -324,8 +356,11 @@ public class DailyLossService {
     DailyLossRepository.LossItemRow item = repository.activeItem(user.tenantId(), request.itemId())
         .orElseThrow(() -> new BusinessException("DAILY_LOSS_ITEM_NOT_FOUND", "物料不存在或已停用", HttpStatus.NOT_FOUND));
     BigDecimal unitPrice = item.unitPrice();
-    if (unitPrice == null || unitPrice.compareTo(BigDecimal.ZERO) <= 0) {
+    if (unitPrice == null) {
       throw badRequest("DAILY_LOSS_PRICE_NOT_CONFIGURED", "该物料尚未维护损耗成本，请先在物料档案维护单价");
+    }
+    if (unitPrice.compareTo(BigDecimal.ZERO) < 0) {
+      throw badRequest("DAILY_LOSS_PRICE_INVALID", "该物料损耗成本不能小于零");
     }
     unitPrice = unitPrice.setScale(4, RoundingMode.HALF_UP);
     BigDecimal amount = quantity.multiply(unitPrice).setScale(2, RoundingMode.HALF_UP);
@@ -443,6 +478,10 @@ public class DailyLossService {
         .filter(java.util.Objects::nonNull)
         .reduce(ZERO, BigDecimal::add)
         .setScale(2, RoundingMode.HALF_UP);
+    BigDecimal supplierCompensation = row.supplierCompensationAmount() == null
+        ? ZERO
+        : row.supplierCompensationAmount().setScale(2, RoundingMode.HALF_UP);
+    BigDecimal storeBorne = total.subtract(supplierCompensation).max(ZERO).setScale(2, RoundingMode.HALF_UP);
     String status = normalizeStatus(row.status());
     return new DailyLossReportResponse(
         row.id(),
@@ -455,6 +494,8 @@ public class DailyLossService {
         reportStatusLabel(status),
         true,
         total,
+        supplierCompensation,
+        storeBorne,
         details.size(),
         attachments.size(),
         row.submittedBy(),
@@ -479,6 +520,8 @@ public class DailyLossService {
         "NOT_REPORTED",
         "未报",
         false,
+        ZERO,
+        ZERO,
         ZERO,
         0,
         0,
@@ -537,19 +580,21 @@ public class DailyLossService {
       List<DailyLossRepository.ReportStoreRow> stores,
       Map<String, DailyLossRepository.DailyLossReportRow> reportsByStoreDay,
       List<DailyLossRepository.MonthlyExportDetailRow> details,
-      Map<String, List<DailyLossRepository.MonthlyExportDetailRow>> detailsByReport
+      Map<String, List<DailyLossRepository.MonthlyExportDetailRow>> detailsByReport,
+      List<DailyLossItemResponse> configuredItems
   ) {
     try {
       ByteArrayOutputStream output = new ByteArrayOutputStream();
       try (Workbook workbook = new XSSFWorkbook()) {
         ExcelStyles styles = new ExcelStyles(workbook);
+        buildMonthlyMatrixSheet(workbook, month, stores, reportsByStoreDay, details, configuredItems, styles);
         Sheet summary = workbook.createSheet("每日汇总");
         Sheet detail = workbook.createSheet("报损明细");
         String[] summaryHeaders = {"日期", "门店编码", "门店名称", "报损品类数", "报损总数量", "报损总金额",
-            "上报状态", "提交人", "提交时间", "复核人", "复核时间", "复核意见"};
+            "厂商赔付金额", "店铺承担", "上报状态", "提交人", "提交时间", "复核人", "复核时间", "复核意见"};
         String[] detailHeaders = {"日期", "门店编码", "门店名称", "物料编码", "物料名称", "品类",
-            "报损数量", "单位", "单价", "报损金额", "报损原因", "上报状态", "提交人", "提交时间",
-            "复核人", "复核时间", "复核意见"};
+            "报损数量", "录入单位", "折算量", "计价单位", "计价数量", "计价单价", "报损金额",
+            "报损原因", "上报状态", "提交人", "提交时间", "复核人", "复核时间", "复核意见"};
         writeHeader(summary, summaryHeaders, styles.header());
         writeHeader(detail, detailHeaders, styles.header());
 
@@ -564,6 +609,8 @@ public class DailyLossService {
                 .filter(java.util.Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
             BigDecimal amount = reportDetails.stream().map(DailyLossRepository.MonthlyExportDetailRow::amount)
                 .filter(java.util.Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal compensation = report == null || report.supplierCompensationAmount() == null
+                ? ZERO : report.supplierCompensationAmount();
             Row row = summary.createRow(summaryRowIndex++);
             writeDate(row, 0, day, styles.date());
             writeText(row, 1, store.code(), styles.text());
@@ -571,12 +618,14 @@ public class DailyLossService {
             writeNumber(row, 3, BigDecimal.valueOf(reportDetails.size()), styles.integer());
             writeNumber(row, 4, quantity, styles.quantity());
             writeNumber(row, 5, amount, styles.amount());
-            writeText(row, 6, report == null ? "未报" : reportStatusLabel(normalizeStatus(report.status())), styles.text());
-            writeText(row, 7, report == null ? null : report.submittedByName(), styles.text());
-            writeDateTime(row, 8, report == null ? null : report.submittedAt(), styles.dateTime());
-            writeText(row, 9, report == null ? null : report.reviewedByName(), styles.text());
-            writeDateTime(row, 10, report == null ? null : report.reviewedAt(), styles.dateTime());
-            writeText(row, 11, report == null ? null : report.reviewNote(), styles.text());
+            writeNumber(row, 6, compensation, styles.amount());
+            writeNumber(row, 7, amount.subtract(compensation).max(ZERO), styles.amount());
+            writeText(row, 8, report == null ? "未报" : reportStatusLabel(normalizeStatus(report.status())), styles.text());
+            writeText(row, 9, report == null ? null : report.submittedByName(), styles.text());
+            writeDateTime(row, 10, report == null ? null : report.submittedAt(), styles.dateTime());
+            writeText(row, 11, report == null ? null : report.reviewedByName(), styles.text());
+            writeDateTime(row, 12, report == null ? null : report.reviewedAt(), styles.dateTime());
+            writeText(row, 13, report == null ? null : report.reviewNote(), styles.text());
           }
         }
 
@@ -591,20 +640,23 @@ public class DailyLossService {
           writeText(row, 5, item.category(), styles.text());
           writeNumber(row, 6, item.lossQuantity(), styles.quantity());
           writeText(row, 7, item.unit(), styles.text());
-          writeNumber(row, 8, item.unitPrice(), styles.unitPrice());
-          writeNumber(row, 9, item.amount(), styles.amount());
-          writeText(row, 10, item.lossReason(), styles.text());
-          writeText(row, 11, reportStatusLabel(normalizeStatus(item.status())), styles.text());
-          writeText(row, 12, item.submittedByName(), styles.text());
-          writeDateTime(row, 13, item.submittedAt(), styles.dateTime());
-          writeText(row, 14, item.reviewedByName(), styles.text());
-          writeDateTime(row, 15, item.reviewedAt(), styles.dateTime());
-          writeText(row, 16, item.reviewNote(), styles.text());
+          writeNumber(row, 8, item.quantityPerPricingUnit(), styles.quantity());
+          writeText(row, 9, item.pricingUnit(), styles.text());
+          writeNumber(row, 10, item.pricedQuantity(), styles.quantity());
+          writeNumber(row, 11, item.unitPrice(), styles.unitPrice());
+          writeNumber(row, 12, item.amount(), styles.amount());
+          writeText(row, 13, item.lossReason(), styles.text());
+          writeText(row, 14, reportStatusLabel(normalizeStatus(item.status())), styles.text());
+          writeText(row, 15, item.submittedByName(), styles.text());
+          writeDateTime(row, 16, item.submittedAt(), styles.dateTime());
+          writeText(row, 17, item.reviewedByName(), styles.text());
+          writeDateTime(row, 18, item.reviewedAt(), styles.dateTime());
+          writeText(row, 19, item.reviewNote(), styles.text());
         }
         configureSheet(summary, summaryRowIndex - 1,
-            new int[]{13, 14, 22, 13, 15, 15, 13, 16, 20, 16, 20, 32});
+            new int[]{13, 14, 22, 13, 15, 15, 15, 15, 13, 16, 20, 16, 20, 32});
         configureSheet(detail, detailRowIndex - 1,
-            new int[]{13, 14, 22, 18, 24, 18, 15, 10, 14, 15, 30, 13, 16, 20, 16, 20, 32});
+            new int[]{13, 14, 22, 18, 24, 18, 15, 10, 12, 10, 14, 14, 15, 30, 13, 16, 20, 16, 20, 32});
         workbook.write(output);
       }
       return output.toByteArray();
@@ -612,6 +664,110 @@ public class DailyLossService {
       throw new BusinessException("DAILY_LOSS_EXCEL_EXPORT_FAILED", "本月报损 Excel 生成失败，请稍后重试",
           HttpStatus.INTERNAL_SERVER_ERROR);
     }
+  }
+
+  private void buildMonthlyMatrixSheet(
+      Workbook workbook,
+      YearMonth month,
+      List<DailyLossRepository.ReportStoreRow> stores,
+      Map<String, DailyLossRepository.DailyLossReportRow> reportsByStoreDay,
+      List<DailyLossRepository.MonthlyExportDetailRow> details,
+      List<DailyLossItemResponse> configuredItems,
+      ExcelStyles styles
+  ) {
+    Sheet sheet = workbook.createSheet(month.getMonthValue() + "月份");
+    LinkedHashMap<String, MatrixItem> items = new LinkedHashMap<>();
+    for (DailyLossItemResponse item : configuredItems) {
+      items.put(item.itemCode(), new MatrixItem(
+          item.itemCode(), item.itemName(), item.unit(), item.pricingUnit(),
+          item.quantityPerPricingUnit(), item.unitPrice()));
+    }
+    for (DailyLossRepository.MonthlyExportDetailRow item : details) {
+      items.putIfAbsent(item.itemCode(), new MatrixItem(
+          item.itemCode(), item.itemName(), item.unit(), item.pricingUnit(),
+          item.quantityPerPricingUnit(), item.unitPrice()));
+    }
+    List<MatrixItem> columns = List.copyOf(items.values());
+    int lastColumn = Math.max(1, columns.size() + 1);
+    Row title = sheet.createRow(0);
+    writeText(title, 0, month.getMonthValue() + "月份店铺损耗表", styles.title());
+    for (int column = 1; column <= lastColumn; column++) {
+      title.createCell(column).setCellStyle(styles.title());
+    }
+    sheet.addMergedRegion(new CellRangeAddress(0, 0, 0, lastColumn));
+
+    Row header = sheet.createRow(1);
+    writeText(header, 0, "店铺", styles.matrixHeader());
+    writeText(header, 1, "合计", styles.matrixHeader());
+    for (int index = 0; index < columns.size(); index++) {
+      MatrixItem item = columns.get(index);
+      writeText(header, index + 2, item.name() + "\n单位：" + item.inputUnit(), styles.matrixHeader());
+    }
+    header.setHeightInPoints(38);
+
+    Map<String, Map<String, BigDecimal>> rawByStore = new LinkedHashMap<>();
+    Map<String, BigDecimal> amountByStore = new LinkedHashMap<>();
+    Map<String, BigDecimal> rawByItem = new LinkedHashMap<>();
+    Map<String, BigDecimal> pricedByItem = new LinkedHashMap<>();
+    Map<String, BigDecimal> amountByItem = new LinkedHashMap<>();
+    for (DailyLossRepository.MonthlyExportDetailRow detail : details) {
+      rawByStore.computeIfAbsent(detail.storeId(), ignored -> new LinkedHashMap<>())
+          .merge(detail.itemCode(), nullSafe(detail.lossQuantity()), BigDecimal::add);
+      amountByStore.merge(detail.storeId(), nullSafe(detail.amount()), BigDecimal::add);
+      rawByItem.merge(detail.itemCode(), nullSafe(detail.lossQuantity()), BigDecimal::add);
+      pricedByItem.merge(detail.itemCode(), nullSafe(detail.pricedQuantity()), BigDecimal::add);
+      amountByItem.merge(detail.itemCode(), nullSafe(detail.amount()), BigDecimal::add);
+    }
+
+    int rowIndex = 2;
+    for (DailyLossRepository.ReportStoreRow store : stores) {
+      Row row = sheet.createRow(rowIndex++);
+      writeText(row, 0, store.name(), styles.matrixText());
+      writeNumber(row, 1, amountByStore.get(store.id()), styles.matrixAmount());
+      Map<String, BigDecimal> storeItems = rawByStore.getOrDefault(store.id(), Map.of());
+      for (int index = 0; index < columns.size(); index++) {
+        writeNumber(row, index + 2, storeItems.get(columns.get(index).code()), styles.matrixQuantity());
+      }
+    }
+
+    BigDecimal totalAmount = amountByItem.values().stream().reduce(ZERO, BigDecimal::add);
+    BigDecimal compensation = reportsByStoreDay.values().stream()
+        .map(DailyLossRepository.DailyLossReportRow::supplierCompensationAmount)
+        .filter(java.util.Objects::nonNull)
+        .reduce(ZERO, BigDecimal::add);
+    String[] labels = {"合计（总量）", "总量", "价格", "总计损耗金额", "厂商赔付金额", "店铺承担"};
+    for (int offset = 0; offset < labels.length; offset++) {
+      Row row = sheet.createRow(rowIndex++);
+      writeText(row, 0, labels[offset], styles.matrixSummary());
+      BigDecimal overall = switch (offset) {
+        case 3 -> totalAmount;
+        case 4 -> compensation;
+        case 5 -> totalAmount.subtract(compensation).max(ZERO);
+        default -> BigDecimal.ZERO;
+      };
+      if (offset >= 3) writeNumber(row, 1, overall, styles.matrixSummaryAmount());
+      else writeText(row, 1, "", styles.matrixSummary());
+      for (int index = 0; index < columns.size(); index++) {
+        MatrixItem item = columns.get(index);
+        BigDecimal value = switch (offset) {
+          case 0 -> rawByItem.get(item.code());
+          case 1 -> pricedByItem.get(item.code());
+          case 2 -> item.unitPrice();
+          case 3 -> amountByItem.get(item.code());
+          default -> null;
+        };
+        writeNumber(row, index + 2, value, offset >= 3 ? styles.matrixSummaryAmount() : styles.matrixSummaryNumber());
+      }
+    }
+    sheet.createFreezePane(2, 2);
+    sheet.setColumnWidth(0, 18 * 256);
+    sheet.setColumnWidth(1, 15 * 256);
+    for (int column = 2; column <= lastColumn; column++) sheet.setColumnWidth(column, 16 * 256);
+    sheet.setDefaultRowHeightInPoints(21);
+  }
+
+  private BigDecimal nullSafe(BigDecimal value) {
+    return value == null ? BigDecimal.ZERO : value;
   }
 
   private void writeHeader(Sheet sheet, String[] headers, CellStyle headerStyle) {
@@ -691,12 +847,18 @@ public class DailyLossService {
   }
 
   private record ExcelStyles(CellStyle header, CellStyle text, CellStyle integer, CellStyle quantity,
-                             CellStyle unitPrice, CellStyle amount, CellStyle date, CellStyle dateTime) {
+                             CellStyle unitPrice, CellStyle amount, CellStyle date, CellStyle dateTime,
+                             CellStyle title, CellStyle matrixHeader, CellStyle matrixText,
+                             CellStyle matrixQuantity, CellStyle matrixAmount, CellStyle matrixSummary,
+                             CellStyle matrixSummaryNumber, CellStyle matrixSummaryAmount) {
     private ExcelStyles(Workbook workbook) {
       this(headerStyle(workbook), workbook.createCellStyle(), numericStyle(workbook, "0"),
           numericStyle(workbook, "#,##0.00####"), numericStyle(workbook, "#,##0.0000"),
           numericStyle(workbook, "#,##0.00"), dateStyle(workbook, "yyyy-mm-dd"),
-          dateStyle(workbook, "yyyy-mm-dd hh:mm:ss"));
+          dateStyle(workbook, "yyyy-mm-dd hh:mm:ss"), titleStyle(workbook), matrixHeaderStyle(workbook),
+          matrixStyle(workbook, null), matrixStyle(workbook, "#,##0.00####"),
+          matrixStyle(workbook, "#,##0.00"), matrixSummaryStyle(workbook, null),
+          matrixSummaryStyle(workbook, "#,##0.00####"), matrixSummaryStyle(workbook, "#,##0.00"));
     }
 
     private static CellStyle headerStyle(Workbook workbook) {
@@ -720,7 +882,54 @@ public class DailyLossService {
     private static CellStyle dateStyle(Workbook workbook, String format) {
       return numericStyle(workbook, format);
     }
+
+    private static CellStyle titleStyle(Workbook workbook) {
+      CellStyle style = matrixStyle(workbook, null);
+      Font font = workbook.createFont();
+      font.setBold(true);
+      font.setFontHeightInPoints((short) 15);
+      style.setFont(font);
+      style.setAlignment(org.apache.poi.ss.usermodel.HorizontalAlignment.CENTER);
+      style.setFillForegroundColor(org.apache.poi.ss.usermodel.IndexedColors.LIGHT_TURQUOISE.getIndex());
+      style.setFillPattern(org.apache.poi.ss.usermodel.FillPatternType.SOLID_FOREGROUND);
+      return style;
+    }
+
+    private static CellStyle matrixHeaderStyle(Workbook workbook) {
+      CellStyle style = matrixStyle(workbook, null);
+      Font font = workbook.createFont();
+      font.setBold(true);
+      style.setFont(font);
+      style.setAlignment(org.apache.poi.ss.usermodel.HorizontalAlignment.CENTER);
+      style.setVerticalAlignment(org.apache.poi.ss.usermodel.VerticalAlignment.CENTER);
+      style.setWrapText(true);
+      return style;
+    }
+
+    private static CellStyle matrixSummaryStyle(Workbook workbook, String format) {
+      CellStyle style = matrixStyle(workbook, format);
+      Font font = workbook.createFont();
+      font.setBold(true);
+      style.setFont(font);
+      style.setFillForegroundColor(org.apache.poi.ss.usermodel.IndexedColors.LIGHT_YELLOW.getIndex());
+      style.setFillPattern(org.apache.poi.ss.usermodel.FillPatternType.SOLID_FOREGROUND);
+      return style;
+    }
+
+    private static CellStyle matrixStyle(Workbook workbook, String format) {
+      CellStyle style = workbook.createCellStyle();
+      if (format != null) style.setDataFormat(workbook.createDataFormat().getFormat(format));
+      style.setBorderTop(org.apache.poi.ss.usermodel.BorderStyle.THIN);
+      style.setBorderRight(org.apache.poi.ss.usermodel.BorderStyle.THIN);
+      style.setBorderBottom(org.apache.poi.ss.usermodel.BorderStyle.THIN);
+      style.setBorderLeft(org.apache.poi.ss.usermodel.BorderStyle.THIN);
+      style.setVerticalAlignment(org.apache.poi.ss.usermodel.VerticalAlignment.CENTER);
+      return style;
+    }
   }
+
+  private record MatrixItem(String code, String name, String inputUnit, String pricingUnit,
+                            BigDecimal quantityPerPricingUnit, BigDecimal unitPrice) {}
 
   private DailyLossRepository.DailyLossRow requiredRecord(long tenantId, String id) {
     String normalizedId = requiredText(id, "报损单编号不正确");
@@ -744,6 +953,14 @@ public class DailyLossService {
   private BigDecimal positiveAmount(BigDecimal value, String message) {
     if (value == null || value.compareTo(BigDecimal.ZERO) <= 0) {
       throw badRequest("DAILY_LOSS_QUANTITY_INVALID", message);
+    }
+    return value.setScale(2, RoundingMode.HALF_UP);
+  }
+
+  private BigDecimal nonNegativeAmount(BigDecimal value, String message) {
+    if (value == null) return ZERO;
+    if (value.compareTo(BigDecimal.ZERO) < 0) {
+      throw badRequest("DAILY_LOSS_AMOUNT_INVALID", message);
     }
     return value.setScale(2, RoundingMode.HALF_UP);
   }

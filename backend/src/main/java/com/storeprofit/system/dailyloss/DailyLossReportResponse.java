@@ -16,6 +16,8 @@ public record DailyLossReportResponse(
     String statusLabel,
     boolean reported,
     BigDecimal totalAmount,
+    BigDecimal supplierCompensationAmount,
+    BigDecimal storeBorneAmount,
     int detailCount,
     int attachmentCount,
     Long submittedBy,

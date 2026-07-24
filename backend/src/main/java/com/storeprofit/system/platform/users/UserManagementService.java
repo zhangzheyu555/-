@@ -664,10 +664,24 @@ public class UserManagementService {
     if ("SUPERVISOR".equals(role)) {
       List<String> storeIds = normalizedStoreIds(storeScope);
       return DataScopeDomains.ALL.stream()
-          .map(domain -> SUPERVISOR_SCOPE_DOMAINS.contains(domain) && !storeIds.isEmpty()
-              ? new DataScopeAssignment(domain, DataScopeModes.STORE_LIST, storeIds)
+          .map(domain -> SUPERVISOR_SCOPE_DOMAINS.contains(domain)
+              ? new DataScopeAssignment(domain, DataScopeModes.ALL, List.of())
               : new DataScopeAssignment(domain, DataScopeModes.NONE, List.of()))
           .toList();
+    }
+    if ("FINANCE".equals(role)) {
+      return List.of(
+          DataScopeDomains.STORE,
+          DataScopeDomains.FINANCE,
+          DataScopeDomains.SALARY,
+          DataScopeDomains.WAREHOUSE
+      ).stream()
+          .map(domain -> new DataScopeAssignment(domain, DataScopeModes.ALL, List.of()))
+          .toList();
+    }
+    if ("WAREHOUSE".equals(role)) {
+      return List.of(new DataScopeAssignment(
+          DataScopeDomains.WAREHOUSE, DataScopeModes.ALL, List.of()));
     }
     if ("EMPLOYEE".equals(role)) {
       return List.of(new DataScopeAssignment(
@@ -832,7 +846,7 @@ public class UserManagementService {
     if (directStoreId != null) {
       scope.add(directStoreId);
     }
-    if (AccessControlService.isBossRole(role)) {
+    if (AccessControlService.hasAllStoreScope(role)) {
       return new UserProfile(name, role, null, List.of(), enabled);
     }
     if ("STORE_MANAGER".equals(role) && scope.size() != 1) {

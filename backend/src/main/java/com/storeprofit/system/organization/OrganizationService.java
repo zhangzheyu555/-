@@ -124,7 +124,7 @@ public class OrganizationService {
     }
     StoreUpsertRequest normalized = new StoreUpsertRequest(
         request.id(), request.code(), request.name(), request.brandId(), request.area(),
-        request.manager(), request.openDate(), request.status(), request.note(), regionCode, null);
+        request.manager(), request.managerPhone(), request.openDate(), request.status(), request.note(), regionCode, null);
     try {
       if (warehouseTopologyService == null) {
         organizationRepository.upsertStore(user.tenantId(), normalized);
@@ -203,6 +203,7 @@ public class OrganizationService {
         request.brandId(),
         request.area(),
         request.manager(),
+        request.managerPhone(),
         request.openDate(),
         status,
         request.note(),

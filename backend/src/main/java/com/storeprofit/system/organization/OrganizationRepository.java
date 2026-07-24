@@ -49,7 +49,7 @@ public class OrganizationRepository {
 
   public List<StoreResponse> stores(long tenantId, DataScope dataScope) {
     StringBuilder sql = new StringBuilder("""
-        select s.id, s.code, s.name, s.brand_id, b.name as brand_name, s.area, s.manager,
+        select s.id, s.code, s.name, s.brand_id, b.name as brand_name, s.area, s.manager, s.manager_phone,
                date_format(s.open_date, '%Y-%m-%d') as open_date, s.status, s.note,
                s.region_code, s.supply_warehouse_id, w.name as supply_warehouse_name
         from store_branch s
@@ -96,8 +96,8 @@ public class OrganizationRepository {
     jdbcTemplate.update("""
         insert into store_branch(
           id, tenant_id, brand_id, code, name, area, region_code, supply_warehouse_id,
-          manager, open_date, status, note, created_at
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+          manager, manager_phone, open_date, status, note, created_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
         on duplicate key update
           brand_id = values(brand_id),
           code = values(code),
@@ -106,6 +106,7 @@ public class OrganizationRepository {
           region_code = coalesce(values(region_code), region_code),
           supply_warehouse_id = coalesce(values(supply_warehouse_id), supply_warehouse_id),
           manager = values(manager),
+          manager_phone = values(manager_phone),
           open_date = values(open_date),
           status = values(status),
           note = values(note),
@@ -120,6 +121,7 @@ public class OrganizationRepository {
         blankToNull(request.regionCode()),
         supplyWarehouseId,
         blankToNull(request.manager()),
+        blankToNull(request.managerPhone()),
         blankToNull(request.openDate()),
         request.status() == null || request.status().isBlank() ? "营业中" : request.status(),
         blankToNull(request.note())
@@ -247,6 +249,7 @@ public class OrganizationRepository {
         rs.getString("brand_name"),
         rs.getString("area"),
         rs.getString("manager"),
+        rs.getString("manager_phone"),
         rs.getString("open_date"),
         rs.getString("status"),
         rs.getString("note"),

@@ -25,6 +25,7 @@ import {
   downloadMonthlyDailyLossExcel,
   fetchDailyLossAttachment,
   getDailyLossItems,
+  getDailyLossMonthlyArchive,
   getDailyLossReports,
   reviewDailyLossReport,
   saveDailyLossReport,
@@ -32,6 +33,7 @@ import {
   uploadDailyLossReportAttachments,
   type DailyLossAttachment,
   type DailyLossItem,
+  type DailyLossMonthlyArchive,
   type DailyLossReport,
 } from '../api/dailyLoss'
 import { getStores, type StoreInfo } from '../api/operations'
@@ -63,6 +65,7 @@ const route = useRoute()
 const stores = ref<StoreInfo[]>([])
 const items = ref<DailyLossItem[]>([])
 const reports = ref<DailyLossReport[]>([])
+const monthlyArchive = ref<DailyLossMonthlyArchive | null>(null)
 const selectedBrandId = ref('')
 const selectedStoreId = ref('')
 const selectedMonth = ref(currentMonth())
@@ -82,6 +85,7 @@ const detailReport = ref<DailyLossReport | null>(null)
 const approvalNotes = ref<Record<string, string>>({})
 const approvingId = ref('')
 const lines = ref<LossLineForm[]>([emptyLine()])
+const supplierCompensation = ref('0')
 const formRef = ref<HTMLElement | null>(null)
 const pickerSearchRef = ref<HTMLInputElement | null>(null)
 const pickerOpen = ref(false)
@@ -136,6 +140,15 @@ const pendingCount = computed(() => reports.value.filter((report) => statusKey(r
 const reviewedCount = computed(() => reports.value.filter((report) => ['REVIEWED', 'APPROVED'].includes(statusKey(report))).length)
 const todayReport = computed(() => reports.value.find((report) => report.lossDate === localDate()))
 const itemsById = computed(() => new Map(items.value.map((item) => [Number(item.id), item])))
+const expectedLossAmount = computed(() => lines.value.reduce((total, line) => {
+  const item = selectedItem(line)
+  const quantity = Number(line.quantity)
+  const factor = Number(item?.quantityPerPricingUnit || 1)
+  const price = Number(item?.unitPrice || 0)
+  return total + (Number.isFinite(quantity) && quantity > 0 && factor > 0 ? quantity / factor * price : 0)
+}, 0))
+const expectedSupplierCompensation = computed(() => Math.max(0, Number(supplierCompensation.value) || 0))
+const expectedStoreBorneAmount = computed(() => Math.max(0, expectedLossAmount.value - expectedSupplierCompensation.value))
 const categoryTabs = computed<CategoryTab[]>(() => {
   const grouped = new Map<string, CategoryTab>()
   for (const item of items.value) {
@@ -237,17 +250,20 @@ async function refreshData() {
   if (!effectiveStoreId.value && !canSelectAllStores.value) {
     items.value = []
     reports.value = []
+    monthlyArchive.value = null
     return
   }
   refreshing.value = true
   pageError.value = ''
   try {
-    const [itemRows, reportRows] = await Promise.all([
+    const [itemRows, reportRows, archiveRow] = await Promise.all([
       getDailyLossItems(),
       getDailyLossReports({ storeId: effectiveStoreId.value, month: selectedMonth.value }),
+      canReview.value ? getDailyLossMonthlyArchive(selectedMonth.value) : Promise.resolve(null),
     ])
     items.value = itemRows
     reports.value = reportRows
+    monthlyArchive.value = archiveRow
     openRequestedReport(reportRows)
     await loadRemoteImages(reportRows)
   } catch (error) {
@@ -288,6 +304,24 @@ function selectedItem(line: LossLineForm) {
 
 function selectedLineUnit(line: LossLineForm) {
   return itemUnit(selectedItem(line))
+}
+
+function pricingHint(line: LossLineForm) {
+  const item = selectedItem(line)
+  if (!item) return ''
+  const factor = Number(item.quantityPerPricingUnit || 1)
+  if (Number(item.unitPrice || 0) === 0) {
+    return `仓库免费叫货（0元），按${itemUnit(item)}登记报损数量`
+  }
+  return `${formatQuantity(factor)}${itemUnit(item)} = 1${item.pricingUnit || itemUnit(item)}，单价 ¥${formatMoney(item.unitPrice || 0)}`
+}
+
+function formatQuantity(value: number) {
+  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(4)))
+}
+
+function formatMoney(value?: number) {
+  return Number(value || 0).toFixed(2)
 }
 
 function openItemPicker(index: number) {
@@ -378,6 +412,10 @@ async function submitReport() {
     pageError.value = '请至少选择一个报损品类，并填写大于零的数量。'
     return
   }
+  if (expectedSupplierCompensation.value > expectedLossAmount.value + 0.005) {
+    pageError.value = '厂商赔付金额不能超过报损总金额。'
+    return
+  }
   if (!selectedFiles.value.length && !(todayReport.value?.attachments?.length)) {
     pageError.value = '请至少上传一张报损照片。'
     return
@@ -391,6 +429,7 @@ async function submitReport() {
       storeId: effectiveStoreId.value,
       lossDate: localDate(),
       details,
+      supplierCompensationAmount: expectedSupplierCompensation.value,
     })
     if (selectedFiles.value.length && saved.id) {
       await uploadDailyLossReportAttachments(saved.id, selectedFiles.value, (percent) => { uploadProgress.value = percent })
@@ -398,6 +437,7 @@ async function submitReport() {
     if (saved.id) await submitDailyLossReport(saved.id)
     actionMessage.value = '今日报损已提交，等待督导复核。'
     lines.value = [emptyLine()]
+    supplierCompensation.value = '0'
     selectedFiles.value = []
     releaseSelectedPreviews()
     await refreshData()
@@ -601,9 +641,9 @@ function currentMonth() {
         <span>月份</span>
         <input v-model="selectedMonth" type="month" :disabled="loading || refreshing" aria-label="月份" />
       </label>
-      <div class="toolbar-note" title="页面不录入单价，后端按配置快照计算金额。">
+      <div class="toolbar-note" title="克类物料按500克折算1斤，金额仍由后端快照核算。">
         <Info :size="16" />
-        <span>单价与金额由后端按配置快照核算，页面不录入单价。</span>
+        <span>数量按录入单位填写；克类物料按 500克=1斤 折算计价。</span>
       </div>
       <UiButton
         v-if="canExport"
@@ -624,12 +664,32 @@ function currentMonth() {
       <article><span>今日状态</span><strong>{{ todayReport ? statusLabel(todayReport) : '未报' }}</strong><small>{{ localDate() }}</small></article>
     </div>
 
+    <section v-if="monthlyArchive" class="content-card archive-summary" aria-label="历史月度报损归档">
+      <header>
+        <div>
+          <h2>{{ monthlyArchive.sourceTitle }}</h2>
+          <p>历史真实数据 · {{ monthlyArchive.storeCount }} 家门店 · {{ monthlyArchive.itemCount }} 个品类</p>
+        </div>
+        <span :class="{ warning: monthlyArchive.reconciliationStatus === 'SOURCE_VARIANCE' }">
+          {{ monthlyArchive.reconciliationStatus === 'MATCHED' ? '源表已核对' : '源表存在汇总差异' }}
+        </span>
+      </header>
+      <div class="archive-amounts">
+        <div><span>源表总损耗</span><strong>¥{{ formatMoney(monthlyArchive.declaredTotalLossAmount) }}</strong></div>
+        <div><span>厂商赔付</span><strong>¥{{ formatMoney(monthlyArchive.supplierCompensationAmount) }}</strong></div>
+        <div><span>系统计算店铺承担</span><strong>¥{{ formatMoney(monthlyArchive.calculatedStoreBorneAmount) }}</strong></div>
+      </div>
+      <p v-if="monthlyArchive.reconciliationStatus === 'SOURCE_VARIANCE'" class="archive-note">
+        原始值已完整保留：{{ monthlyArchive.sourceNote }}
+      </p>
+    </section>
+
     <form v-if="canSubmit" ref="formRef" class="content-card loss-form" @submit.prevent="submitReport">
       <div class="section-heading">
         <PackageMinus :size="20" />
         <div>
           <h2>今日报损</h2>
-          <p>一次提交多个品类，照片先上传到后端附件库；门店不填写单价。</p>
+          <p>按实际单位录入数量，系统自动折算计价，并分别核算厂商赔付与店铺承担。</p>
         </div>
       </div>
 
@@ -661,6 +721,7 @@ function currentMonth() {
               <input v-model="line.quantity" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0.00" required />
               <em>{{ selectedLineUnit(line) }}</em>
             </span>
+            <small v-if="selectedItem(line)" class="pricing-hint">{{ pricingHint(line) }}</small>
           </label>
           <label class="reason-field">
             <span>原因</span>
@@ -684,6 +745,15 @@ function currentMonth() {
       </div>
 
       <button class="text-button" type="button" @click="addLine"><Plus :size="15" />增加品类</button>
+
+      <section class="settlement-block" aria-label="报损结算">
+        <label>
+          <span>厂商赔付金额</span>
+          <span class="money-control"><em>¥</em><input v-model="supplierCompensation" type="number" min="0" step="0.01" inputmode="decimal" /></span>
+        </label>
+        <div><span>总计损耗金额</span><strong>¥{{ formatMoney(expectedLossAmount) }}</strong></div>
+        <div><span>店铺承担</span><strong>¥{{ formatMoney(expectedStoreBorneAmount) }}</strong></div>
+      </section>
 
       <section class="photo-upload-block" aria-label="报损照片上传">
         <label class="attachment-field">
@@ -741,7 +811,7 @@ function currentMonth() {
               <span class="status-pill" :class="`status-${statusKey(report).toLowerCase()}`">{{ statusLabel(report) }}</span>
             </div>
             <p v-if="report.reported">
-              {{ report.detailCount || 0 }} 项明细 · 照片 {{ report.attachmentCount || 0 }} 张
+              {{ report.detailCount || 0 }} 项明细 · 损耗 ¥{{ formatMoney(report.totalAmount) }} · 厂商赔付 ¥{{ formatMoney(report.supplierCompensationAmount) }} · 店铺承担 ¥{{ formatMoney(report.storeBorneAmount) }}
             </p>
             <p v-else>当天尚未提交报损。</p>
             <div v-if="report.details?.length" class="detail-list">
@@ -842,11 +912,16 @@ function currentMonth() {
           该日期尚未提交报损。历史日期不能在此补报，请按现有业务规则处理。
         </div>
         <div v-else class="detail-body">
+          <section class="detail-settlement">
+            <div><span>总计损耗金额</span><strong>¥{{ formatMoney(detailReport.totalAmount) }}</strong></div>
+            <div><span>厂商赔付金额</span><strong>¥{{ formatMoney(detailReport.supplierCompensationAmount) }}</strong></div>
+            <div><span>店铺承担</span><strong>¥{{ formatMoney(detailReport.storeBorneAmount) }}</strong></div>
+          </section>
           <section>
             <h3>报损明细</h3>
             <div class="detail-list detail-list--dialog">
               <span v-for="detail in detailReport.details || []" :key="detail.id">
-                {{ detail.itemName }} {{ detail.lossQuantity }}{{ detail.unit || '' }}<template v-if="detail.lossReason"> · {{ detail.lossReason }}</template>
+                {{ detail.itemName }} {{ detail.lossQuantity }}{{ detail.unit || '' }} → {{ detail.pricedQuantity }}{{ detail.pricingUnit || detail.unit || '' }} · ¥{{ formatMoney(detail.amountSnapshot) }}<template v-if="detail.lossReason"> · {{ detail.lossReason }}</template>
               </span>
             </div>
           </section>
@@ -950,6 +1025,18 @@ function currentMonth() {
 .loss-summary article { display: grid; gap: 4px; padding: 15px 16px; border: 1px solid var(--ds-line); border-radius: 8px; background: var(--ds-surface); }
 .loss-summary span, .loss-summary small { color: var(--ds-muted); font-size: 12px; }
 .loss-summary strong { color: var(--ds-ink); font-size: 22px; line-height: 1.15; word-break: break-word; }
+
+.archive-summary { display: grid; gap: 14px; padding: 18px 20px; }
+.archive-summary header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.archive-summary h2 { margin: 0; color: var(--ds-ink); font-size: 17px; }
+.archive-summary header p { margin: 4px 0 0; color: var(--ds-muted); font-size: 12px; }
+.archive-summary header > span { padding: 4px 9px; border-radius: 999px; background: var(--ds-success-soft); color: #27724b; font-size: 12px; font-weight: 700; }
+.archive-summary header > span.warning { background: var(--ds-warning-soft); color: #87500f; }
+.archive-amounts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.archive-amounts div { display: grid; gap: 4px; padding: 12px; border: 1px solid var(--ds-line); border-radius: 7px; background: #fbfdfc; }
+.archive-amounts span { color: var(--ds-muted); font-size: 12px; }
+.archive-amounts strong { color: var(--ds-ink); font-size: 19px; }
+.archive-note { margin: 0; padding: 9px 11px; border-radius: 6px; background: var(--ds-warning-soft); color: #87500f; font-size: 12px; line-height: 1.5; }
 
 .loss-form,
 .records-card {
@@ -1055,6 +1142,40 @@ function currentMonth() {
   text-align: center;
   white-space: nowrap;
 }
+
+.pricing-hint { color: var(--ds-muted); font-size: 11px; font-weight: 600; line-height: 1.35; }
+
+.settlement-block,
+.detail-settlement {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #efddb9;
+  border-radius: 8px;
+  background: var(--ds-warning-soft);
+}
+
+.settlement-block > div,
+.detail-settlement > div { display: grid; gap: 5px; align-content: center; }
+.settlement-block span,
+.detail-settlement span { color: var(--ds-muted); font-size: 12px; font-weight: 700; }
+.settlement-block strong,
+.detail-settlement strong { color: var(--ds-ink); font-size: 19px; }
+
+.money-control {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  min-height: 42px;
+  overflow: hidden;
+  border: 1px solid var(--ds-line-strong);
+  border-radius: 7px;
+  background: #fff;
+}
+
+.money-control em { padding-left: 10px; color: var(--ds-muted); font-style: normal; }
+.money-control input { min-width: 0; min-height: 40px; border: 0; background: transparent; color: var(--ds-ink); font: inherit; }
 
 .reason-field input { padding: 8px 10px; }
 .quick-reasons { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -1414,6 +1535,7 @@ function currentMonth() {
   }
   .loss-summary { grid-template-columns: 1fr 1fr; gap: 8px; }
   .loss-summary article { padding: 12px; }
+  .archive-amounts { grid-template-columns: 1fr; }
   .loss-form,
   .records-card { padding: 14px; }
   .line-row { padding: 10px; gap: 10px; }
@@ -1440,6 +1562,7 @@ function currentMonth() {
   .loss-toolbar { grid-template-columns: 1fr; }
   .toolbar-export { grid-column: 1; justify-self: stretch; }
   .loss-summary { grid-template-columns: 1fr; }
+  .archive-summary header { display: grid; }
   .picker-grid { grid-template-columns: 1fr; }
   .selected-preview-grid figure { width: 74px; height: 62px; }
 }

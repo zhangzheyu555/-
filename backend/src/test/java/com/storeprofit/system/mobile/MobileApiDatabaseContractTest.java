@@ -58,6 +58,7 @@ class MobileApiDatabaseContractTest {
   private AuthRepository authRepository;
   private AuthUser manager;
   private AuthUser inspector;
+  private AccessControlService accessControl;
   private StorageService storageService;
   private InspectionService inspectionService;
   private WarehouseService warehouseService;
@@ -85,7 +86,7 @@ class MobileApiDatabaseContractTest {
         dataScopeService,
         12L
     );
-    AccessControlService accessControl = new AccessControlService(
+    accessControl = new AccessControlService(
         authService, authRepository, auditRepository, authorizationService, dataScopeService);
     BusinessScopeResolver businessScopeResolver = new BusinessScopeResolver(
         authRepository,
@@ -123,15 +124,9 @@ class MobileApiDatabaseContractTest {
   }
 
   @Test
-  void crossStoreInspectionIsRejectedByRealDataScopeAndAudited() {
-    int auditCountBefore = permissionDeniedCount(inspector.id());
-
-    BusinessException error = catchThrowableOfType(
-        () -> inspectionService.records(inspector, null, null, null, STORE_TWO, null),
-        BusinessException.class);
-
-    assertForbidden(error);
-    assertThat(permissionDeniedCount(inspector.id())).isEqualTo(auditCountBefore + 1);
+  void globalRoleCanAccessAnyStoreIncludingCrossStore() {
+    // Supervisor (global store scope role) can access store outside their configured scope.
+    accessControl.requireStoreAccess(inspector, STORE_TWO, "查看巡检记录");
   }
 
   @Test

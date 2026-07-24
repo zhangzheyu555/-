@@ -105,7 +105,7 @@ public class AuthRepository {
   }
 
   public List<String> storeScope(long tenantId, long userId, String role, String directStoreId) {
-    if (AccessControlService.isBossRole(role)) {
+    if (AccessControlService.hasAllStoreScope(role)) {
       return List.of("all");
     }
     List<String> scoped = assignedStoreScope(tenantId, userId);

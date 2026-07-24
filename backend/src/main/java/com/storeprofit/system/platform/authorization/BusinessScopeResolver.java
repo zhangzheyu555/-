@@ -89,7 +89,7 @@ public class BusinessScopeResolver {
     String storeId = normalize(requestedStoreId);
     StoreIdentity store = null;
     if (storeId != null) {
-      if (!AccessControlService.isBoss(user) && !dataScope.allowsStore(storeId)) {
+      if (!AccessControlService.hasAllStoreScope(user) && !dataScope.allowsStore(storeId)) {
         deny(user, action, "STORE", storeId, storeId, auditMonth, "门店不在当前账号的数据范围内");
       }
       store = repository.store(user.tenantId(), storeId)
