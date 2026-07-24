@@ -231,7 +231,7 @@ onMounted(() => {
       :inert="mobileNavOpen || undefined"
       :aria-hidden="mobileNavOpen || undefined"
     >
-      <header class="topbar app-topbar">
+      <header class="topbar app-topbar" :class="{ 'daily-loss-topbar': route.path === '/daily-loss' }">
         <div class="topbar-primary-row">
           <button
             ref="mobileMenuButton"
@@ -244,7 +244,7 @@ onMounted(() => {
           >
             <Menu :size="20" />
           </button>
-          <div class="topbar-context">
+          <div v-if="route.path !== '/daily-loss'" class="topbar-context">
             <span class="date-display"><CalendarDays :size="16" />{{ updatedAt }}</span>
             <label v-if="!businessScope.isStoreManager.value && !hideTopbarStoreSelector" class="scope-display" :title="auth.scopeText">
               <select
@@ -306,6 +306,17 @@ onMounted(() => {
   position: relative;
   z-index: 0;
   isolation: isolate;
+}
+
+.daily-loss-topbar {
+  display: none;
+}
+
+@media (max-width: 1024px) {
+  .daily-loss-topbar {
+    display: grid;
+    min-height: 0;
+  }
 }
 
 .app-main > :deep(*) {

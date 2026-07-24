@@ -19,12 +19,10 @@ public class AuthorizationService {
       // KnowledgeBaseService. It must remain available to ordinary employees, not only managers.
       PermissionCodes.KNOWLEDGE_BASE_SEARCH
   );
-  /** Supervisor takes over operations, never finance, payroll, account, store, or central-warehouse control. */
+  /** Supervisor takes over operations and may maintain employee profiles, but never payroll. */
   private static final Set<String> SUPERVISOR_PERMISSION_CEILING = Set.of(
       PermissionCodes.SYSTEM_USER_MANAGE,
       PermissionCodes.STORE_MANAGE,
-      PermissionCodes.EMPLOYEE_READ,
-      PermissionCodes.EMPLOYEE_MANAGE,
       PermissionCodes.FINANCE_PROFIT_WRITE,
       PermissionCodes.FINANCE_PROFIT_IMPORT,
       PermissionCodes.FINANCE_PROFIT_DELETE,
@@ -163,6 +161,7 @@ public class AuthorizationService {
       case "FINANCE" -> Set.of(
           PermissionCodes.STORE_READ,
           PermissionCodes.EMPLOYEE_READ,
+          PermissionCodes.EMPLOYEE_MANAGE,
           PermissionCodes.FINANCE_PROFIT_READ,
           PermissionCodes.FINANCE_PROFIT_WRITE,
           PermissionCodes.FINANCE_PROFIT_IMPORT,
@@ -234,6 +233,8 @@ public class AuthorizationService {
       case "SUPERVISOR" -> Set.of(
           PermissionCodes.OPERATIONS_DASHBOARD_READ,
           PermissionCodes.STORE_READ,
+          PermissionCodes.EMPLOYEE_READ,
+          PermissionCodes.EMPLOYEE_MANAGE,
           PermissionCodes.INVENTORY_READ,
           PermissionCodes.INVENTORY_MANAGE,
           PermissionCodes.INVENTORY_REVIEW,

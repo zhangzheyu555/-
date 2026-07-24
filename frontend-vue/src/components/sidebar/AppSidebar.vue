@@ -360,7 +360,7 @@ watch(
   opacity: 0.62;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1024px) {
   .app-sidebar--desktop {
     display: none;
   }

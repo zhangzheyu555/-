@@ -276,8 +276,7 @@ router.beforeEach(async (to) => {
   }
 
   const supervisorForbiddenSurface = normalizeRoleCode(auth.role) === 'SUPERVISOR'
-    && (to.path === '/staff'
-      || to.path === '/assistant'
+    && (to.path === '/assistant'
       || to.path === '/employee-assistant'
       || to.path.startsWith('/employee-assistant/')
       || to.path === '/store-detail'

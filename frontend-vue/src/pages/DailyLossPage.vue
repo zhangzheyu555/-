@@ -8,7 +8,6 @@ import {
   FileUp,
   Image,
   ImageOff,
-  Info,
   PackageMinus,
   Plus,
   RefreshCw,
@@ -19,7 +18,6 @@ import {
 } from 'lucide-vue-next'
 import PageHeader from '../components/common/PageHeader.vue'
 import BusinessScopeBar from '../components/common/BusinessScopeBar.vue'
-import BrandSelect from '../components/common/BrandSelect.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import {
   downloadMonthlyDailyLossExcel,
@@ -66,7 +64,6 @@ const stores = ref<StoreInfo[]>([])
 const items = ref<DailyLossItem[]>([])
 const reports = ref<DailyLossReport[]>([])
 const monthlyArchive = ref<DailyLossMonthlyArchive | null>(null)
-const selectedBrandId = ref('')
 const selectedStoreId = ref('')
 const selectedMonth = ref(currentMonth())
 const loading = ref(true)
@@ -87,6 +84,8 @@ const approvingId = ref('')
 const lines = ref<LossLineForm[]>([emptyLine()])
 const supplierCompensation = ref('0')
 const formRef = ref<HTMLElement | null>(null)
+const recordsRef = ref<HTMLElement | null>(null)
+const recordFilter = ref<'ALL' | 'NOT_REPORTED' | 'SUBMITTED' | 'REVIEWED'>('ALL')
 const pickerSearchRef = ref<HTMLInputElement | null>(null)
 const pickerOpen = ref(false)
 const pickerLineIndex = ref(0)
@@ -100,44 +99,53 @@ const canSubmit = computed(() => auth.hasPermission(PERMISSIONS.DAILY_LOSS_CREAT
   && (isBossRole(auth.role) || normalizeRoleCode(auth.role) === 'STORE_MANAGER'))
 const canReview = computed(() => auth.hasPermission(PERMISSIONS.DAILY_LOSS_REVIEW)
   && (isBossRole(auth.role) || normalizeRoleCode(auth.role) === 'SUPERVISOR'))
+const hasGlobalDailyLossStoreScope = computed(() => (
+  isBossRole(auth.role) || normalizeRoleCode(auth.role) === 'SUPERVISOR'
+))
 const storeScope = computed(() => normalizeRoleCode(auth.role) === 'FINANCE'
   ? (auth.dataScope('FINANCE') || auth.dataScope('STORE'))
   : (auth.dataScope('STORE') || auth.dataScope('WAREHOUSE')))
 const accessibleStores = computed(() => {
+  let scopedStores: StoreInfo[]
   if (scope.isStoreManager.value) {
-    return stores.value.filter((store) => store.id === scope.boundStoreId.value)
+    scopedStores = stores.value.filter((store) => store.id === scope.boundStoreId.value)
+  } else if (hasGlobalDailyLossStoreScope.value || storeScope.value?.mode === 'ALL') {
+    scopedStores = stores.value
+  } else {
+    const storeIds = storeScope.value?.storeIds || []
+    scopedStores = storeIds.length
+      ? stores.value.filter((store) => storeIds.includes(store.id))
+      : stores.value
   }
-  if (storeScope.value?.mode === 'ALL') return stores.value
-  const storeIds = storeScope.value?.storeIds || []
-  if (storeIds.length) return stores.value.filter((store) => storeIds.includes(store.id))
-  return stores.value
+  return scopedStores.filter((store) => normalizeBrandName(store.brandName) === '茹菓')
 })
-const brandOptions = computed(() => {
-  const seen = new Set<number>()
-  return accessibleStores.value.flatMap((store) => {
-    const id = Number(store.brandId)
-    const name = normalizeBrandName(store.brandName)
-    if (!Number.isSafeInteger(id) || id <= 0 || !name || seen.has(id)) return []
-    seen.add(id)
-    return [{ id, name }]
-  })
-})
-const selectedBrandNumericId = computed(() => {
-  const id = Number(selectedBrandId.value)
-  return Number.isSafeInteger(id) && id > 0 ? id : undefined
-})
-const selectableStores = computed(() => accessibleStores.value.filter((store) => (
-  !selectedBrandNumericId.value || Number(store.brandId) === selectedBrandNumericId.value
-)))
+const selectableStores = computed(() => accessibleStores.value)
 const effectiveStoreId = computed(() => scope.scopedStoreId(selectedStoreId.value))
 const canSelectAllStores = computed(() => !scope.isStoreManager.value
-  && storeScope.value?.mode === 'ALL'
-  && !selectedBrandNumericId.value)
+  && (hasGlobalDailyLossStoreScope.value || storeScope.value?.mode === 'ALL'))
 const canExport = computed(() => auth.hasPermission(PERMISSIONS.DAILY_LOSS_EXPORT)
-  && (isBossRole(auth.role) || normalizeRoleCode(auth.role) === 'FINANCE'))
+  && (isBossRole(auth.role) || normalizeRoleCode(auth.role) === 'SUPERVISOR'))
 const notReportedCount = computed(() => reports.value.filter((report) => statusKey(report) === 'NOT_REPORTED').length)
 const pendingCount = computed(() => reports.value.filter((report) => statusKey(report) === 'SUBMITTED').length)
 const reviewedCount = computed(() => reports.value.filter((report) => ['REVIEWED', 'APPROVED'].includes(statusKey(report))).length)
+const displayedReports = computed(() => reports.value.filter((report) => {
+  if (recordFilter.value === 'ALL') return true
+  if (recordFilter.value === 'REVIEWED') return ['REVIEWED', 'APPROVED'].includes(statusKey(report))
+  return statusKey(report) === recordFilter.value
+}))
+const reportDayGroups = computed(() => {
+  const groups = new Map<string, DailyLossReport[]>()
+  for (const report of displayedReports.value) {
+    const rows = groups.get(report.lossDate) || []
+    rows.push(report)
+    groups.set(report.lossDate, rows)
+  }
+  return Array.from(groups, ([date, rows]) => ({
+    date,
+    rows,
+    notReportedCount: rows.filter((report) => statusKey(report) === 'NOT_REPORTED').length,
+  }))
+})
 const todayReport = computed(() => reports.value.find((report) => report.lossDate === localDate()))
 const itemsById = computed(() => new Map(items.value.map((item) => [Number(item.id), item])))
 const expectedLossAmount = computed(() => lines.value.reduce((total, line) => {
@@ -222,10 +230,6 @@ async function initialize() {
       return
     }
     stores.value = await getStores()
-    const requestedBrandId = queryValue('brandId')
-    if (brandOptions.value.some((brand) => String(brand.id) === requestedBrandId)) {
-      selectedBrandId.value = requestedBrandId
-    }
     selectedStoreId.value = initialStoreId()
     const requestedMonth = queryValue('month')
     if (/^\d{4}-(0[1-9]|1[0-2])$/.test(requestedMonth)) selectedMonth.value = requestedMonth
@@ -235,15 +239,6 @@ async function initialize() {
   } finally {
     loading.value = false
   }
-}
-
-function handleBrandChange(brandId: string) {
-  selectedBrandId.value = brandId
-  selectedStoreId.value = brandId
-    ? selectableStores.value[0]?.id || ''
-    : storeScope.value?.mode === 'ALL'
-      ? ''
-      : accessibleStores.value[0]?.id || ''
 }
 
 async function refreshData() {
@@ -282,6 +277,26 @@ function removeLine(index: number) {
   if (!lines.value.length) lines.value.push(emptyLine())
 }
 
+async function showFilteredReports(filter: 'NOT_REPORTED' | 'SUBMITTED' | 'REVIEWED') {
+  recordFilter.value = filter
+  await nextTick()
+  recordsRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+function filteredRecordsTitle() {
+  if (recordFilter.value === 'NOT_REPORTED') return '全部未报门店'
+  if (recordFilter.value === 'SUBMITTED') return '全部待复核报损'
+  if (recordFilter.value === 'REVIEWED') return '全部已复核报损'
+  return '每日报损列表'
+}
+
+function filteredRecordsDescription() {
+  if (recordFilter.value === 'NOT_REPORTED') return '按天显示尚未提交报损的门店。'
+  if (recordFilter.value === 'SUBMITTED') return '集中显示所有门店等待督导处理的报损。'
+  if (recordFilter.value === 'REVIEWED') return '集中显示已经完成督导复核的报损。'
+  return '按天显示各门店未报、待复核、已复核；未来日期不显示。'
+}
+
 function itemLabel(item: DailyLossItem) {
   return item.itemName || item.name || item.itemCode || item.code || `品类 ${item.id}`
 }
@@ -292,6 +307,10 @@ function itemUnit(item?: DailyLossItem) {
 
 function itemCategoryName(item: DailyLossItem) {
   return item.categoryName || item.category || '其他'
+}
+
+function itemPriceLabel(item: DailyLossItem) {
+  return `每${itemUnit(item)} ¥${Number(item.unitPrice || 0).toFixed(4)}`
 }
 
 function itemCategoryCode(item: DailyLossItem) {
@@ -375,21 +394,30 @@ function applyQuickReason(line: LossLineForm, reason: string) {
   line.reason = reason
 }
 
+function selectedFileKey(file: File) {
+  return `${file.name}:${file.size}:${file.lastModified}`
+}
+
 function onFilesChanged(event: Event) {
   const input = event.target as HTMLInputElement
-  const nextFiles = Array.from(input.files || []).filter((file) => file.type.startsWith('image/')).slice(0, 12)
+  const incomingFiles = Array.from(input.files || []).filter((file) => file.type.startsWith('image/'))
   input.value = ''
-  releaseSelectedPreviews()
-  selectedFiles.value = nextFiles
-  selectedFilePreviews.value = Object.fromEntries(nextFiles.map((file) => [file.name, URL.createObjectURL(file)]))
+  const existingKeys = new Set(selectedFiles.value.map(selectedFileKey))
+  const addedFiles = incomingFiles.filter((file) => !existingKeys.has(selectedFileKey(file)))
+  selectedFiles.value = [...selectedFiles.value, ...addedFiles]
+  selectedFilePreviews.value = {
+    ...selectedFilePreviews.value,
+    ...Object.fromEntries(addedFiles.map((file) => [selectedFileKey(file), URL.createObjectURL(file)])),
+  }
 }
 
 function removeSelectedFile(file: File) {
-  const previewUrl = selectedFilePreviews.value[file.name]
+  const key = selectedFileKey(file)
+  const previewUrl = selectedFilePreviews.value[key]
   if (previewUrl) URL.revokeObjectURL(previewUrl)
   selectedFiles.value = selectedFiles.value.filter((current) => current !== file)
   const next = { ...selectedFilePreviews.value }
-  delete next[file.name]
+  delete next[key]
   selectedFilePreviews.value = next
 }
 
@@ -456,7 +484,7 @@ async function reviewReport(report: DailyLossReport) {
   actionMessage.value = ''
   try {
     await reviewDailyLossReport(report.id, approvalNotes.value[report.id])
-    actionMessage.value = `${report.storeName || report.storeId} ${report.lossDate} 的报损已复核。`
+    actionMessage.value = `${report.storeName || report.storeId} ${report.lossDate} 的报损已复核，库存已按报损明细扣减。`
     await refreshData()
   } catch (error) {
     pageError.value = readableError(error, '复核失败，请刷新记录后重试。')
@@ -531,7 +559,7 @@ function openPreview(attachment: DailyLossAttachment) {
 }
 
 function openSelectedPreview(file: File) {
-  const url = selectedFilePreviews.value[file.name]
+  const url = selectedFilePreviews.value[selectedFileKey(file)]
   if (url) preview.value = { url, alt: file.name }
 }
 
@@ -617,34 +645,16 @@ function currentMonth() {
 
     <section class="loss-toolbar content-card" aria-label="报损筛选">
       <BusinessScopeBar v-if="scope.isStoreManager.value" />
-      <label v-if="!scope.isStoreManager.value" class="toolbar-field toolbar-field--brand">
-        <span>品牌</span>
-        <BrandSelect
-          v-model="selectedBrandId"
-          :brands="brandOptions"
-          :disabled="loading || refreshing"
-          aria-label="品牌"
-          @change="handleBrandChange"
-        />
-      </label>
       <label v-if="!scope.isStoreManager.value" class="toolbar-field">
         <span>门店</span>
         <select v-model="selectedStoreId" :disabled="loading || refreshing" aria-label="门店">
-          <option v-if="canSelectAllStores" value="">全部门店</option>
+          <option v-if="canSelectAllStores" value="">全部茹菓门店</option>
           <option v-else value="" disabled>请选择门店</option>
           <option v-for="store in selectableStores" :key="store.id" :value="store.id">
             {{ store.brandName ? `${store.brandName} · ` : '' }}{{ store.name || store.id }}
           </option>
         </select>
       </label>
-      <label class="toolbar-field toolbar-field--month">
-        <span>月份</span>
-        <input v-model="selectedMonth" type="month" :disabled="loading || refreshing" aria-label="月份" />
-      </label>
-      <div class="toolbar-note" title="克类物料按500克折算1斤，金额仍由后端快照核算。">
-        <Info :size="16" />
-        <span>数量按录入单位填写；克类物料按 500克=1斤 折算计价。</span>
-      </div>
       <UiButton
         v-if="canExport"
         class="toolbar-export"
@@ -658,9 +668,21 @@ function currentMonth() {
     </section>
 
     <div class="loss-summary" aria-label="报损汇总">
-      <article><span>未报</span><strong>{{ notReportedCount }}</strong><small>本月日期状态</small></article>
-      <article><span>待复核</span><strong>{{ pendingCount }}</strong><small>等待督导确认</small></article>
-      <article><span>已复核</span><strong>{{ reviewedCount }}</strong><small>已完成闭环</small></article>
+      <article class="summary-action-card">
+        <button type="button" class="summary-action" @click="showFilteredReports('NOT_REPORTED')">
+          <span>未报</span><strong>{{ notReportedCount }}</strong><small>点击查看全部未报</small>
+        </button>
+      </article>
+      <article class="summary-action-card">
+        <button type="button" class="summary-action" @click="showFilteredReports('SUBMITTED')">
+          <span>待复核</span><strong>{{ pendingCount }}</strong><small>点击查看全部待复核</small>
+        </button>
+      </article>
+      <article class="summary-action-card">
+        <button type="button" class="summary-action" @click="showFilteredReports('REVIEWED')">
+          <span>已复核</span><strong>{{ reviewedCount }}</strong><small>点击查看全部已复核</small>
+        </button>
+      </article>
       <article><span>今日状态</span><strong>{{ todayReport ? statusLabel(todayReport) : '未报' }}</strong><small>{{ localDate() }}</small></article>
     </div>
 
@@ -763,13 +785,13 @@ function currentMonth() {
             <em>{{ selectedFiles.length ? `已选择 ${selectedFiles.length} 张` : '未选择照片' }}</em>
           </span>
           <input type="file" multiple accept="image/*" @change="onFilesChanged" />
-          <small v-if="selectedFiles.length">已选择 {{ selectedFiles.length }} 张照片<span v-if="submitting && uploadProgress">，上传 {{ uploadProgress }}%</span></small>
-          <small v-else>提交前至少上传一张报损现场照片。</small>
+          <small v-if="selectedFiles.length">已选择 {{ selectedFiles.length }} 张照片，可继续追加选择<span v-if="submitting && uploadProgress">，上传 {{ uploadProgress }}%</span></small>
+          <small v-else>提交前至少上传一张报损现场照片，照片数量不限。</small>
         </label>
         <div v-if="selectedFiles.length" class="selected-preview-grid">
-          <figure v-for="file in selectedFiles" :key="file.name">
+          <figure v-for="file in selectedFiles" :key="selectedFileKey(file)">
             <button type="button" :aria-label="`预览 ${file.name}`" @click="openSelectedPreview(file)">
-              <img :src="selectedFilePreviews[file.name]" :alt="`${file.name} 缩略图`" />
+              <img :src="selectedFilePreviews[selectedFileKey(file)]" :alt="`${file.name} 缩略图`" />
             </button>
             <button type="button" class="remove-photo" :aria-label="`移除 ${file.name}`" @click="removeSelectedFile(file)">
               <X :size="13" />
@@ -786,25 +808,33 @@ function currentMonth() {
       </div>
     </form>
 
-    <section class="content-card records-card" aria-label="每日报损列表">
+    <section ref="recordsRef" class="content-card records-card" aria-label="每日报损列表">
       <div class="records-toolbar">
         <div>
-          <h2>每日报损列表</h2>
-          <p>按门店和日期显示未报、待复核、已复核；点击记录查看明细和照片。</p>
+          <h2>{{ filteredRecordsTitle() }}</h2>
+          <p>{{ filteredRecordsDescription() }}</p>
         </div>
+        <UiButton v-if="recordFilter !== 'ALL'" variant="ghost" @click="recordFilter = 'ALL'">返回全部记录</UiButton>
       </div>
       <div v-if="loading || refreshing" class="empty-state">正在读取报损记录...</div>
-      <ol v-else class="record-list">
-        <li
-          v-for="report in reports"
-          :key="`${report.storeId}-${report.lossDate}`"
-          class="record-row"
-          :class="{ empty: !report.reported }"
-          role="button"
-          tabindex="0"
-          @click="openReport(report)"
-          @keydown.enter.prevent="openReport(report)"
-        >
+      <div v-else-if="reportDayGroups.length" class="day-groups">
+        <section v-for="group in reportDayGroups" :key="group.date" class="day-group">
+          <header class="day-group-header">
+            <strong>{{ group.date }}</strong>
+            <span v-if="recordFilter === 'ALL'">{{ group.notReportedCount ? `${group.notReportedCount} 家未报` : '全部已报' }}</span>
+            <span v-else>{{ group.rows.length }} 条记录</span>
+          </header>
+          <ol class="record-list">
+            <li
+              v-for="report in group.rows"
+              :key="`${report.storeId}-${report.lossDate}`"
+              class="record-row"
+              :class="{ empty: !report.reported }"
+              role="button"
+              tabindex="0"
+              @click="openReport(report)"
+              @keydown.enter.prevent="openReport(report)"
+            >
           <div class="record-main">
             <div class="record-title">
               <strong>{{ report.storeName || report.storeId }} · {{ report.lossDate }}</strong>
@@ -812,6 +842,9 @@ function currentMonth() {
             </div>
             <p v-if="report.reported">
               {{ report.detailCount || 0 }} 项明细 · 损耗 ¥{{ formatMoney(report.totalAmount) }} · 厂商赔付 ¥{{ formatMoney(report.supplierCompensationAmount) }} · 店铺承担 ¥{{ formatMoney(report.storeBorneAmount) }}
+            </p>
+            <p v-if="report.reported && ['REVIEWED', 'APPROVED'].includes(statusKey(report))" class="inventory-result">
+              {{ report.inventoryStatusLabel || (report.inventoryDeducted ? '库存已准确扣减' : '库存扣减状态异常') }}
             </p>
             <p v-else>当天尚未提交报损。</p>
             <div v-if="report.details?.length" class="detail-list">
@@ -842,8 +875,11 @@ function currentMonth() {
             </UiButton>
           </div>
           <p v-else-if="report.reviewNote" class="approval-note">复核说明：{{ report.reviewNote }}</p>
-        </li>
-      </ol>
+            </li>
+          </ol>
+        </section>
+      </div>
+      <div v-else class="empty-state">{{ recordFilter === 'ALL' ? '当前月份暂无报损记录。' : '当前筛选状态没有记录。' }}</div>
     </section>
   </section>
 
@@ -853,7 +889,7 @@ function currentMonth() {
         <header>
           <div>
             <h2>选择品类</h2>
-            <p>按分类和关键词快速定位，页面不显示单价。</p>
+            <p>按分类和关键词快速定位，卡片显示损耗单价。</p>
           </div>
           <UiButton variant="ghost" icon-only aria-label="关闭品类选择" title="关闭" @click="closeItemPicker">
             <template #icon><X :size="18" /></template>
@@ -887,7 +923,7 @@ function currentMonth() {
             @click="selectPickerItem(item)"
           >
             <b>{{ itemLabel(item) }}</b>
-            <span>{{ itemUnit(item) }}</span>
+            <strong class="picker-card-price">{{ itemPriceLabel(item) }}</strong>
             <small>{{ itemCategoryName(item) }}</small>
           </button>
         </div>
@@ -971,7 +1007,7 @@ function currentMonth() {
 
 .loss-toolbar {
   display: grid;
-  grid-template-columns: minmax(150px, .72fr) minmax(210px, 1fr) minmax(176px, .68fr) minmax(230px, 1.15fr) max-content;
+  grid-template-columns: minmax(210px, 1fr) max-content;
   min-height: 64px;
   align-items: end;
   gap: 12px;
@@ -990,12 +1026,8 @@ function currentMonth() {
   font-size: 12px;
 }
 
-.toolbar-field--month { min-width: 176px; }
-.toolbar-field--brand :deep(.brand-select-wrap) { width: 100%; }
-.toolbar-field--brand :deep(.brand-select-wrap select) { min-width: 0; flex: 1; }
 .toolbar-field select,
-.toolbar-field input,
-.toolbar-field :deep(.brand-select-wrap select) {
+.toolbar-field input {
   width: 100%;
   min-height: 38px;
   padding: 7px 10px;
@@ -1006,25 +1038,30 @@ function currentMonth() {
   font: inherit;
 }
 
-.toolbar-note {
-  display: inline-flex;
-  min-width: 220px;
-  max-width: 460px;
-  align-items: center;
-  gap: 7px;
-  color: #31645e;
-  font-size: 13px;
-  font-weight: 650;
-  line-height: 1.45;
-}
-
-.toolbar-note svg { flex: none; color: var(--ds-primary-hover); }
 .toolbar-export { justify-self: end; }
 
 .loss-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .loss-summary article { display: grid; gap: 4px; padding: 15px 16px; border: 1px solid var(--ds-line); border-radius: 8px; background: var(--ds-surface); }
 .loss-summary span, .loss-summary small { color: var(--ds-muted); font-size: 12px; }
 .loss-summary strong { color: var(--ds-ink); font-size: 22px; line-height: 1.15; word-break: break-word; }
+.summary-action-card { padding: 0 !important; }
+.summary-action {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  gap: 4px;
+  padding: 15px 16px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.summary-action:hover,
+.summary-action:focus-visible {
+  background: var(--ds-primary-soft);
+  outline: 2px solid var(--ds-primary);
+}
 
 .archive-summary { display: grid; gap: 14px; padding: 18px 20px; }
 .archive-summary header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
@@ -1050,6 +1087,7 @@ function currentMonth() {
 .records-toolbar {
   display: flex;
   align-items: flex-start;
+  justify-content: space-between;
   gap: 10px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--ds-line);
@@ -1334,6 +1372,20 @@ function currentMonth() {
   border-top: 1px solid var(--ds-line);
 }
 
+.day-groups { display: grid; gap: 16px; }
+.day-group { display: grid; gap: 9px; }
+.day-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-left: 4px solid var(--ds-primary);
+  border-radius: 6px;
+  background: var(--ds-surface-muted);
+}
+.day-group-header strong { color: var(--ds-ink); font-size: 15px; }
+.day-group-header span { color: var(--ds-secondary); font-size: 12px; font-weight: 750; }
 .record-list { display: grid; margin: 0; padding: 0; list-style: none; gap: 10px; }
 .record-row {
   display: grid;
@@ -1402,6 +1454,10 @@ function currentMonth() {
   background: #fff;
 }
 
+.item-picker-dialog {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
 .item-picker-dialog header,
 .detail-dialog header,
 .image-preview-dialog header {
@@ -1454,16 +1510,33 @@ function currentMonth() {
 .picker-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  min-height: 0;
+  align-content: start;
   gap: 10px;
-  overflow: auto;
-  padding-right: 2px;
+  overflow-x: hidden;
+  overflow-y: scroll;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding-right: 4px;
 }
+
+.picker-grid::-webkit-scrollbar { width: 9px; }
+.picker-grid::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: var(--ds-surface-muted);
+}
+.picker-grid::-webkit-scrollbar-thumb {
+  border: 2px solid var(--ds-surface-muted);
+  border-radius: 999px;
+  background: var(--ds-line-strong);
+}
+.picker-grid::-webkit-scrollbar-thumb:hover { background: var(--ds-primary); }
 
 .picker-card {
   display: grid;
-  min-height: 92px;
+  min-height: 106px;
   align-content: start;
-  gap: 7px;
+  gap: 6px;
   padding: 12px;
   border: 1px solid var(--ds-line);
   border-radius: 8px;
@@ -1478,13 +1551,23 @@ function currentMonth() {
 }
 
 .picker-card b {
-  overflow: hidden;
+  display: block;
+  overflow: visible;
+  padding: 2px 0 3px;
   color: var(--ds-ink);
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.5;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.picker-card span,
+.picker-card-price {
+  color: var(--ds-primary-hover);
+  font-size: 14px;
+  font-weight: 800;
+}
+
 .picker-card small { color: var(--ds-muted); font-size: 12px; }
 .detail-body { display: grid; gap: 16px; overflow: auto; }
 .detail-body section { display: grid; gap: 8px; }
@@ -1498,7 +1581,6 @@ function currentMonth() {
 
 @media (max-width: 1080px) {
   .loss-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .toolbar-note { grid-column: 1 / -1; }
   .toolbar-export { grid-column: 2; align-self: end; justify-self: end; }
   .line-row { grid-template-columns: minmax(240px, 1.2fr) minmax(160px, .7fr) minmax(220px, 1fr) 42px; }
 }
@@ -1523,16 +1605,12 @@ function currentMonth() {
     padding: 10px;
   }
   .loss-toolbar :deep(.business-scope-static),
-  .loss-toolbar :deep(.business-scope-error),
-  .toolbar-note {
+  .loss-toolbar :deep(.business-scope-error) {
     grid-column: 1 / -1;
     width: 100%;
     max-width: none;
   }
-  .toolbar-field,
-  .toolbar-field--month {
-    min-width: 0;
-  }
+  .toolbar-field { min-width: 0; }
   .loss-summary { grid-template-columns: 1fr 1fr; gap: 8px; }
   .loss-summary article { padding: 12px; }
   .archive-amounts { grid-template-columns: 1fr; }

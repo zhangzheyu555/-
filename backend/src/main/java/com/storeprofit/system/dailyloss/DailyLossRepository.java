@@ -90,7 +90,13 @@ public class DailyLossRepository {
 
   public boolean storeExists(long tenantId, String storeId) {
     Integer count = jdbcTemplate.queryForObject(
-        "select count(*) from store_branch where tenant_id = ? and id = ?", Integer.class, tenantId, storeId);
+        """
+        select count(*)
+        from store_branch store
+        join brand brand on brand.tenant_id = store.tenant_id and brand.id = store.brand_id
+        where store.tenant_id = ? and store.id = ?
+          and (brand.name in ('茹菓', '茹果') or lower(brand.name) in ('ruguo', 'ru guo', 'rg'))
+        """, Integer.class, tenantId, storeId);
     return count != null && count > 0;
   }
 
@@ -175,6 +181,7 @@ public class DailyLossRepository {
       sql.append(" and r.store_id = :storeId");
       params.addValue("storeId", storeId.trim());
     }
+    appendDailyLossBrandScope(sql, "r.store_id");
     appendStoreScope(sql, params, scope, "r.store_id");
     sql.append(" order by r.loss_date desc, s.code, r.id");
     return namedJdbc.query(sql.toString(), params, reportMapper());
@@ -184,7 +191,11 @@ public class DailyLossRepository {
     StringBuilder sql = new StringBuilder("""
         select s.id, s.code, s.name
         from store_branch s
+        join brand daily_loss_brand
+          on daily_loss_brand.tenant_id = s.tenant_id and daily_loss_brand.id = s.brand_id
         where s.tenant_id = :tenantId
+          and (daily_loss_brand.name in ('茹菓', '茹果')
+               or lower(daily_loss_brand.name) in ('ruguo', 'ru guo', 'rg'))
         """);
     MapSqlParameterSource params = new MapSqlParameterSource("tenantId", tenantId);
     if (storeId != null && !storeId.isBlank()) {
@@ -293,10 +304,13 @@ public class DailyLossRepository {
                coalesce(wc.name, c.category, '每日报损') as category,
                r.stock_unit, r.pricing_unit_snapshot, r.quantity_per_pricing_unit_snapshot,
                r.loss_quantity, r.priced_quantity_snapshot, r.unit_price_snapshot,
-               r.amount_snapshot, r.loss_reason
+               r.amount_snapshot, r.loss_reason,
+               case when application.daily_loss_id is null then 0 else 1 end as inventory_deducted
         from daily_loss_record r
         left join loss_item_config c on c.tenant_id = r.tenant_id and c.id = r.item_config_id
         left join warehouse_item_category wc on wc.tenant_id = c.tenant_id and wc.id = c.warehouse_category_id
+        left join daily_loss_inventory_application application
+          on application.tenant_id = r.tenant_id and application.daily_loss_id = r.id
         where r.tenant_id = ? and r.report_id = ?
         order by r.id
         """, (rs, rowNum) -> new DailyLossReportDetailResponse(
@@ -312,7 +326,36 @@ public class DailyLossRepository {
             rs.getBigDecimal("priced_quantity_snapshot"),
             rs.getBigDecimal("unit_price_snapshot"),
             rs.getBigDecimal("amount_snapshot"),
-            rs.getString("loss_reason")),
+            rs.getString("loss_reason"),
+            rs.getBoolean("inventory_deducted")),
+        tenantId, reportId);
+  }
+
+  public List<LockedLossRow> findReportDetailsForUpdate(long tenantId, String reportId) {
+    return jdbcTemplate.query("""
+        select detail.id, detail.store_id,
+               (
+                 select item.id
+                 from warehouse_item item
+                 where item.tenant_id = detail.tenant_id
+                   and item.active = 1
+                   and (item.code = detail.item_code or item.name = detail.item_name)
+                 order by case when item.code = detail.item_code then 0 else 1 end, item.id
+                 limit 1
+               ) as item_id,
+               detail.loss_quantity,
+               detail.loss_reason, detail.status
+        from daily_loss_record detail
+        where detail.tenant_id = ? and detail.report_id = ?
+        order by detail.id
+        for update
+        """, (rs, rowNum) -> new LockedLossRow(
+            rs.getString("id"),
+            rs.getString("store_id"),
+            rs.getObject("item_id", Long.class),
+            rs.getBigDecimal("loss_quantity"),
+            rs.getString("loss_reason"),
+            rs.getString("status")),
         tenantId, reportId);
   }
 
@@ -363,6 +406,7 @@ public class DailyLossRepository {
       sql.append(" and report.store_id = :storeId");
       params.addValue("storeId", storeId.trim());
     }
+    appendDailyLossBrandScope(sql, "report.store_id");
     appendStoreScope(sql, params, scope, "report.store_id");
     sql.append(" order by report.loss_date, s.code, report.id, detail.id");
     return namedJdbc.query(sql.toString(), params, (rs, rowNum) -> new MonthlyExportDetailRow(
@@ -401,6 +445,7 @@ public class DailyLossRepository {
       params.addValue("monthStart", monthStart).addValue("monthEnd", monthEnd);
     }
     if (storeId != null && !storeId.isBlank()) { sql.append(" and r.store_id = :storeId"); params.addValue("storeId", storeId.trim()); }
+    appendDailyLossBrandScope(sql, "r.store_id");
     appendStoreScope(sql, params, scope);
     sql.append(" order by r.loss_date desc, r.submitted_at desc, r.id desc");
     return namedJdbc.query(sql.toString(), params, rowMapper());
@@ -544,6 +589,22 @@ public class DailyLossRepository {
     params.addValue("scopeStoreIds", scope.storeIds());
   }
 
+  private void appendDailyLossBrandScope(StringBuilder sql, String storeColumn) {
+    sql.append("""
+         and exists (
+           select 1
+           from store_branch daily_loss_store
+           join brand daily_loss_brand
+             on daily_loss_brand.tenant_id = daily_loss_store.tenant_id
+            and daily_loss_brand.id = daily_loss_store.brand_id
+           where daily_loss_store.tenant_id = :tenantId
+             and daily_loss_store.id = %s
+             and (daily_loss_brand.name in ('茹菓', '茹果')
+                  or lower(daily_loss_brand.name) in ('ruguo', 'ru guo', 'rg'))
+         )
+        """.formatted(storeColumn));
+  }
+
   public boolean storeInWarehouseScope(long tenantId, String storeId, List<String> warehouseIds) {
     if (warehouseIds == null || warehouseIds.isEmpty()) {
       return false;
@@ -600,7 +661,7 @@ public class DailyLossRepository {
       String lossReason, String submittedByName,
       LocalDateTime submittedAt, String reviewedByName, LocalDateTime reviewedAt, String reviewNote
   ) {}
-  public record LockedLossRow(String id, String storeId, long itemId, BigDecimal lossQuantity, String lossReason,
+  public record LockedLossRow(String id, String storeId, Long itemId, BigDecimal lossQuantity, String lossReason,
                               String status) {}
   public record DailyLossRow(String id, String storeId, String storeCode, String storeName, LocalDate lossDate,
       long itemId, String itemCode, String itemName, String stockUnit, BigDecimal lossQuantity,

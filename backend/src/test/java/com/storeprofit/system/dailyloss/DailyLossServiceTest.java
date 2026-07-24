@@ -176,9 +176,17 @@ class DailyLossServiceTest {
         .thenReturn(new DataScope(DataScopeModes.OWN_STORE, List.of("s1")));
     when(access.dataScope(supervisor, DataScopeDomains.STORE)).thenReturn(DataScope.all());
     when(access.dataScope(finance, DataScopeDomains.FINANCE)).thenReturn(DataScope.all());
+    WarehouseRepository warehouseRepository = mock(WarehouseRepository.class);
+    when(warehouseRepository.subtractStoreInventoryIfEnough(
+        org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyString(),
+        org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.any(),
+        org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
+        org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
+        org.mockito.ArgumentMatchers.anyLong()))
+        .thenReturn(true);
     DailyLossService dailyLossService = new DailyLossService(
         repository,
-        mock(WarehouseRepository.class),
+        warehouseRepository,
         mock(StorageService.class),
         access,
         new AuditRepository(jdbcTemplate)
@@ -219,6 +227,13 @@ class DailyLossServiceTest {
         .containsExactlyInAnyOrder(new BigDecimal("0.14"), new BigDecimal("50.00"));
     assertThat(submitted.status()).isEqualTo("SUBMITTED");
     assertThat(reviewed.status()).isEqualTo("REVIEWED");
+    assertThat(reviewed.inventoryDeducted()).isTrue();
+    assertThat(reviewed.inventoryDeductedCount()).isEqualTo(2);
+    assertThat(reviewed.details()).allMatch(DailyLossReportDetailResponse::inventoryDeducted);
+    verify(warehouseRepository, org.mockito.Mockito.times(2)).subtractStoreInventoryIfEnough(
+        eq(1L), eq("s1"), org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.any(),
+        eq("LOSS_OUT"), eq("DAILY_LOSS"), org.mockito.ArgumentMatchers.anyString(),
+        org.mockito.ArgumentMatchers.anyString(), eq(7L));
     assertThat(export.fileName()).isEqualTo("测试门店-2026年07月-每日报损.xlsx");
     assertThat(export.summaryRowCount()).isEqualTo(31);
     assertThat(export.detailRowCount()).isEqualTo(2);
@@ -521,9 +536,17 @@ class DailyLossServiceTest {
 
   private void createReportSchema(JdbcTemplate jdbcTemplate) {
     jdbcTemplate.execute("""
+        create table brand (
+          id bigint primary key,
+          tenant_id bigint not null,
+          name varchar(120) not null
+        )
+        """);
+    jdbcTemplate.execute("""
         create table store_branch (
           id varchar(64) primary key,
           tenant_id bigint not null,
+          brand_id bigint,
           code varchar(80),
           name varchar(160) not null
         )
@@ -549,6 +572,15 @@ class DailyLossServiceTest {
         )
         """);
     jdbcTemplate.execute("""
+        create table warehouse_item (
+          id bigint primary key,
+          tenant_id bigint not null,
+          code varchar(80) not null,
+          name varchar(160) not null,
+          active tinyint not null default 1
+        )
+        """);
+    jdbcTemplate.execute("""
         create table loss_item_config (
           id bigint primary key,
           tenant_id bigint not null,
@@ -562,6 +594,19 @@ class DailyLossServiceTest {
           unit_price decimal(14,4) not null,
           source_sheet varchar(80),
           active tinyint not null default 1
+        )
+        """);
+    jdbcTemplate.execute("""
+        create table daily_loss_inventory_application (
+          tenant_id bigint not null,
+          daily_loss_id varchar(120) not null,
+          store_id varchar(64) not null,
+          item_id bigint not null,
+          quantity decimal(14,4) not null,
+          movement_type varchar(40) not null,
+          applied_by bigint,
+          applied_at timestamp,
+          primary key (tenant_id, daily_loss_id)
         )
         """);
     jdbcTemplate.execute("""
@@ -641,8 +686,15 @@ class DailyLossServiceTest {
           created_at timestamp default current_timestamp
         )
         """);
-    jdbcTemplate.update("insert into store_branch(id, tenant_id, code, name) values ('s1', 1, '001', '测试门店')");
+    jdbcTemplate.update("insert into brand(id, tenant_id, name) values (1, 1, '茹菓')");
+    jdbcTemplate.update(
+        "insert into store_branch(id, tenant_id, brand_id, code, name) values ('s1', 1, 1, '001', '测试门店')");
     jdbcTemplate.update("insert into auth_user(id, tenant_id, display_name) values (7, 1, '测试人员')");
+    jdbcTemplate.update("""
+        insert into warehouse_item(id, tenant_id, code, name, active) values
+          (101, 1, 'daily-apple-juice', '苹果汁', 1),
+          (102, 1, 'fruit-pineapple', '凤梨', 1)
+        """);
     jdbcTemplate.update("""
         insert into loss_item_config(
           id, tenant_id, item_code, item_name, category, unit, pricing_unit,

@@ -168,6 +168,7 @@ class AuthorizationServiceTest {
             PermissionCodes.WAREHOUSE_STORE_READ,
             PermissionCodes.WAREHOUSE_CENTRAL_MANAGE,
             PermissionCodes.EMPLOYEE_READ,
+            PermissionCodes.EMPLOYEE_MANAGE,
             PermissionCodes.ASSISTANT_USE,
             PermissionCodes.EMPLOYEE_ASSISTANT_USE
         ));
@@ -189,6 +190,7 @@ class AuthorizationServiceTest {
         PermissionCodes.WAREHOUSE_STORE_READ,
         PermissionCodes.WAREHOUSE_CENTRAL_MANAGE,
         PermissionCodes.EMPLOYEE_READ,
+        PermissionCodes.EMPLOYEE_MANAGE,
         PermissionCodes.ASSISTANT_USE,
         PermissionCodes.EMPLOYEE_ASSISTANT_USE
     ));
@@ -209,33 +211,36 @@ class AuthorizationServiceTest {
             PermissionCodes.OPERATIONS_DASHBOARD_READ,
             PermissionCodes.PLATFORM_MANAGE,
             PermissionCodes.INVENTORY_MANAGE,
-            PermissionCodes.EXAM_MANAGE)
+            PermissionCodes.EXAM_MANAGE,
+            PermissionCodes.EMPLOYEE_READ,
+            PermissionCodes.EMPLOYEE_MANAGE)
         .doesNotContain(PermissionCodes.FINANCE_PROFIT_WRITE, PermissionCodes.SALARY_EDIT,
             PermissionCodes.WAREHOUSE_CENTRAL_MANAGE, PermissionCodes.STORE_MANAGE,
             PermissionCodes.SYSTEM_USER_MANAGE, PermissionCodes.EXPENSE_CREATE,
             PermissionCodes.EXPENSE_READ, PermissionCodes.EXPENSE_REVIEW,
             PermissionCodes.WAREHOUSE_READ, PermissionCodes.WAREHOUSE_STORE_READ,
-            PermissionCodes.EMPLOYEE_READ, PermissionCodes.ASSISTANT_USE,
+            PermissionCodes.ASSISTANT_USE,
             PermissionCodes.EMPLOYEE_ASSISTANT_USE);
     assertThat(service.effectivePermissions(supervisor))
         .contains(PermissionCodes.INSPECTION_READ, PermissionCodes.INSPECTION_MANAGE, PermissionCodes.TODO_READ,
             PermissionCodes.OPERATIONS_DASHBOARD_READ,
             PermissionCodes.PLATFORM_MANAGE,
             PermissionCodes.INVENTORY_MANAGE,
-            PermissionCodes.EXAM_MANAGE)
+            PermissionCodes.EXAM_MANAGE,
+            PermissionCodes.EMPLOYEE_READ)
         .doesNotContain(PermissionCodes.FINANCE_PROFIT_WRITE, PermissionCodes.SALARY_EDIT,
             PermissionCodes.WAREHOUSE_CENTRAL_MANAGE, PermissionCodes.STORE_MANAGE,
             PermissionCodes.SYSTEM_USER_MANAGE, PermissionCodes.EXPENSE_CREATE,
             PermissionCodes.EXPENSE_READ, PermissionCodes.EXPENSE_REVIEW,
             PermissionCodes.WAREHOUSE_READ, PermissionCodes.WAREHOUSE_STORE_READ,
-            PermissionCodes.EMPLOYEE_READ, PermissionCodes.ASSISTANT_USE,
+            PermissionCodes.ASSISTANT_USE,
             PermissionCodes.EMPLOYEE_ASSISTANT_USE);
     assertThat(AuthorizationService.legacyTemplatePermissions("SUPERVISOR"))
         .contains(PermissionCodes.INSPECTION_READ, PermissionCodes.INSPECTION_MANAGE, PermissionCodes.TODO_TRANSITION,
             PermissionCodes.OPERATIONS_DASHBOARD_READ, PermissionCodes.PLATFORM_MANAGE,
-            PermissionCodes.DAILY_LOSS_READ, PermissionCodes.DAILY_LOSS_REVIEW, PermissionCodes.DAILY_LOSS_EXPORT)
+            PermissionCodes.DAILY_LOSS_READ, PermissionCodes.DAILY_LOSS_REVIEW, PermissionCodes.DAILY_LOSS_EXPORT,
+            PermissionCodes.EMPLOYEE_READ, PermissionCodes.EMPLOYEE_MANAGE)
         .doesNotContain(PermissionCodes.WAREHOUSE_READ, PermissionCodes.WAREHOUSE_STORE_READ,
-            PermissionCodes.EMPLOYEE_READ, PermissionCodes.EMPLOYEE_MANAGE,
             PermissionCodes.ASSISTANT_USE, PermissionCodes.EMPLOYEE_ASSISTANT_USE,
             PermissionCodes.EMPLOYEE_ASSISTANT_HANDOFF_MANAGE);
   }

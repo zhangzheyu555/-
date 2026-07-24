@@ -105,7 +105,7 @@ public class DailyLossService {
       existing.put(row.storeId() + "|" + row.lossDate(), row);
     }
     return stores.stream()
-        .flatMap(store -> targetMonth.atDay(1).datesUntil(targetMonth.plusMonths(1).atDay(1))
+        .flatMap(store -> visibleReportDays(targetMonth)
             .map(day -> {
               DailyLossRepository.DailyLossReportRow row = existing.get(store.id() + "|" + day);
               return row == null ? missingReport(store, day) : reportResponse(user.tenantId(), row);
@@ -115,6 +115,18 @@ public class DailyLossService {
           return date != 0 ? date : String.valueOf(left.storeCode()).compareTo(String.valueOf(right.storeCode()));
         })
         .toList();
+  }
+
+  private java.util.stream.Stream<LocalDate> visibleReportDays(YearMonth month) {
+    LocalDate today = LocalDate.now(BUSINESS_ZONE);
+    LocalDate start = month.atDay(1);
+    if (start.isAfter(today)) {
+      return java.util.stream.Stream.empty();
+    }
+    LocalDate endExclusive = month.equals(YearMonth.from(today))
+        ? today.plusDays(1)
+        : month.plusMonths(1).atDay(1);
+    return start.datesUntil(endExclusive);
   }
 
   @Transactional(readOnly = true)
@@ -262,14 +274,48 @@ public class DailyLossService {
     requireStoreScope(user, report.storeId(), "复核每日报损");
     String status = normalizeStatus(report.status());
     if ("REVIEWED".equals(status)) {
-      return reportResponse(user.tenantId(), report);
+      DailyLossReportResponse reviewed = reportResponse(user.tenantId(), report);
+      if (!reviewed.inventoryDeducted()) {
+        throw new BusinessException(
+            "DAILY_LOSS_INVENTORY_INCONSISTENT",
+            "报损已复核但库存扣减不完整，请联系管理员处理",
+            HttpStatus.CONFLICT);
+      }
+      return reviewed;
     }
     if (!"SUBMITTED".equals(status)) {
       throw new BusinessException("DAILY_LOSS_REVIEW_CONFLICT", "只有已提交的报损日报才能复核", HttpStatus.CONFLICT);
     }
     String reviewNote = request == null ? null : normalizeOptionalText(request.reviewNote(), 500, "复核备注不能超过500个字符");
+    List<DailyLossRepository.LockedLossRow> details =
+        repository.findReportDetailsForUpdate(user.tenantId(), report.id());
+    if (details.isEmpty()) {
+      throw badRequest("DAILY_LOSS_DETAILS_REQUIRED", "报损日报没有可复核的明细");
+    }
+    for (DailyLossRepository.LockedLossRow detail : details) {
+      if (detail.itemId() == null) {
+        throw new BusinessException(
+            "DAILY_LOSS_ITEM_NOT_MAPPED",
+            "物料“" + detail.id() + "”尚未关联库存物料，不能确认扣减",
+            HttpStatus.CONFLICT);
+      }
+      if (!repository.insertInventoryApplication(user.tenantId(), detail, user.id())) {
+        throw new BusinessException(
+            "DAILY_LOSS_DUPLICATE_APPLICATION", "该报损正在处理，请刷新后重试", HttpStatus.CONFLICT);
+      }
+      boolean deducted = warehouseRepository.subtractStoreInventoryIfEnough(
+          user.tenantId(), detail.storeId(), detail.itemId(), detail.lossQuantity(),
+          "LOSS_OUT", "DAILY_LOSS", detail.id(), detail.lossReason(), user.id());
+      if (!deducted) {
+        throw new BusinessException(
+            "DAILY_LOSS_INSUFFICIENT_STOCK",
+            "部分物料库存不足，未执行任何扣减，请核对门店库存后重试",
+            HttpStatus.CONFLICT);
+      }
+    }
     repository.markReportReviewed(user.tenantId(), report.id(), user.id(), reviewNote);
-    audit(user, "daily_loss_review", report.id(), report.storeId(), "督导复核每日报损");
+    audit(user, "daily_loss_review", report.id(), report.storeId(),
+        "督导复核每日报损并完成" + details.size() + "项库存扣减");
     return reportResponse(user.tenantId(), requiredReport(user.tenantId(), report.id()));
   }
 
@@ -483,6 +529,15 @@ public class DailyLossService {
         : row.supplierCompensationAmount().setScale(2, RoundingMode.HALF_UP);
     BigDecimal storeBorne = total.subtract(supplierCompensation).max(ZERO).setScale(2, RoundingMode.HALF_UP);
     String status = normalizeStatus(row.status());
+    int inventoryDeductedCount = (int) details.stream()
+        .filter(DailyLossReportDetailResponse::inventoryDeducted)
+        .count();
+    boolean inventoryDeducted = !details.isEmpty() && inventoryDeductedCount == details.size();
+    String inventoryStatusLabel = inventoryDeducted
+        ? "库存已准确扣减（" + inventoryDeductedCount + "/" + details.size() + "）"
+        : inventoryDeductedCount > 0
+            ? "库存扣减异常（" + inventoryDeductedCount + "/" + details.size() + "）"
+            : "库存未扣减";
     return new DailyLossReportResponse(
         row.id(),
         row.storeId(),
@@ -498,6 +553,9 @@ public class DailyLossService {
         storeBorne,
         details.size(),
         attachments.size(),
+        inventoryDeductedCount,
+        inventoryDeducted,
+        inventoryStatusLabel,
         row.submittedBy(),
         row.submittedByName(),
         row.submittedAt(),
@@ -525,6 +583,9 @@ public class DailyLossService {
         ZERO,
         0,
         0,
+        0,
+        false,
+        "库存未扣减",
         null,
         null,
         null,
@@ -550,9 +611,6 @@ public class DailyLossService {
   private void uploadReportFiles(AuthUser user, String reportId, String storeId, List<MultipartFile> files) {
     if (files == null || files.isEmpty()) {
       throw badRequest("DAILY_LOSS_ATTACHMENT_REQUIRED", "请先选择要上传的附件");
-    }
-    if (files.size() > 12) {
-      throw badRequest("DAILY_LOSS_ATTACHMENT_LIMIT", "每次最多上传12张照片");
     }
     for (MultipartFile file : files) {
       if (file == null || file.isEmpty()) {
