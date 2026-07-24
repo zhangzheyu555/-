@@ -481,6 +481,175 @@ class WarehouseServiceTest {
   }
 
   @Test
+  void warehouseCanPartiallyShipAvailableStockAndFulfillAfterReplenishment() {
+    WarehouseRequisitionResponse created = service.createRequisition(
+        storeManager(),
+        new WarehouseRequisitionRequest(
+            "rg1",
+            List.of(new WarehouseRequisitionLineRequest(
+                1L, new BigDecimal("40"), "库存不足时先发可用数量")),
+            "门店申请40件"
+        )
+    );
+
+    service.review(
+        warehouseManager(),
+        created.id(),
+        new WarehouseRequisitionReviewRequest(
+            true,
+            List.of(),
+            "按当前可用库存先发",
+            WarehouseRequisitionHandlingMode.AVAILABLE_ONLY
+        )
+    );
+    service.ship(warehouseManager(), created.id());
+
+    WarehouseRequisitionResponse partial = service.requisitions(storeManager()).stream()
+        .filter(row -> created.id().equals(row.id()))
+        .findFirst()
+        .orElseThrow();
+    assertThat(partial.status()).isEqualTo("PARTIALLY_SHIPPED");
+    assertThat(partial.statusLabel()).isEqualTo("部分发货 / 待补货");
+    assertThat(partial.lines().getFirst().approvedQuantity()).isEqualByComparingTo("30.00");
+    assertThat(partial.lines().getFirst().shippedQuantity()).isEqualByComparingTo("30.00");
+    assertThat(itemStock(1L)).isEqualByComparingTo("0.00");
+    assertThat(jdbcTemplate.queryForObject(
+        "select count(*) from warehouse_delivery_order where tenant_id = 1 and requisition_id = ?",
+        Integer.class,
+        created.id()
+    )).isEqualTo(1);
+
+    service.receiveByStore(
+        storeManager(), created.id(), new WarehouseReceiptRequest("确认收到首批30件"));
+    WarehouseRequisitionResponse backordered = service.requisitions(storeManager()).stream()
+        .filter(row -> created.id().equals(row.id()))
+        .findFirst()
+        .orElseThrow();
+    assertThat(backordered.status()).isEqualTo("BACKORDERED");
+    assertThat(backordered.statusLabel()).isEqualTo("缺货待处理");
+    assertThat(storeStock("rg1", 1L)).isEqualByComparingTo("30.00");
+
+    jdbcTemplate.update("""
+        insert into warehouse_stock_batch(
+          tenant_id, item_id, batch_no, received_date, expiry_date,
+          quantity, unit_cost, note, created_at
+        ) values (1, 1, 'B002', '2026-07-20', '2026-08-20',
+          15.00, 82.00, '补货批次', current_timestamp)
+        """);
+    service.review(
+        warehouseManager(),
+        created.id(),
+        new WarehouseRequisitionReviewRequest(
+            true,
+            List.of(),
+            "补货后发剩余数量",
+            WarehouseRequisitionHandlingMode.AVAILABLE_ONLY
+        )
+    );
+    service.ship(warehouseManager(), created.id());
+
+    WarehouseRequisitionResponse fullyShipped = service.requisitions(storeManager()).stream()
+        .filter(row -> created.id().equals(row.id()))
+        .findFirst()
+        .orElseThrow();
+    assertThat(fullyShipped.status()).isEqualTo("SHIPPED");
+    assertThat(fullyShipped.lines().getFirst().approvedQuantity()).isEqualByComparingTo("40.00");
+    assertThat(fullyShipped.lines().getFirst().shippedQuantity()).isEqualByComparingTo("40.00");
+    assertThat(itemStock(1L)).isEqualByComparingTo("5.00");
+    assertThat(jdbcTemplate.queryForObject(
+        "select count(*) from warehouse_delivery_order where tenant_id = 1 and requisition_id = ?",
+        Integer.class,
+        created.id()
+    )).isEqualTo(2);
+    assertThat(jdbcTemplate.queryForObject("""
+        select sum(line.shipped_quantity)
+        from warehouse_delivery_order_line line
+        join warehouse_delivery_order delivery on delivery.id = line.delivery_id
+        where delivery.tenant_id = 1 and delivery.requisition_id = ?
+        """, BigDecimal.class, created.id())).isEqualByComparingTo("40.00");
+
+    service.receiveByStore(
+        storeManager(), created.id(), new WarehouseReceiptRequest("确认收到补发10件"));
+    WarehouseRequisitionResponse received = service.requisitions(storeManager()).stream()
+        .filter(row -> created.id().equals(row.id()))
+        .findFirst()
+        .orElseThrow();
+    assertThat(received.status()).isEqualTo("RECEIVED");
+    assertThat(storeStock("rg1", 1L)).isEqualByComparingTo("40.00");
+  }
+
+  @Test
+  void allOutOfStockRequisitionCanWaitForReplenishmentWithoutDelivery() {
+    jdbcTemplate.update("update warehouse_stock_batch set quantity = 0 where tenant_id = 1 and item_id = 1");
+    WarehouseRequisitionResponse created = service.createRequisition(
+        storeManager(),
+        new WarehouseRequisitionRequest(
+            "rg1",
+            List.of(new WarehouseRequisitionLineRequest(1L, new BigDecimal("5"), "全部缺货")),
+            "仍然提交缺货申请"
+        )
+    );
+
+    service.review(
+        warehouseManager(),
+        created.id(),
+        new WarehouseRequisitionReviewRequest(
+            true,
+            List.of(),
+            "等待补货后继续发货",
+            WarehouseRequisitionHandlingMode.WAIT_REPLENISHMENT
+        )
+    );
+
+    WarehouseRequisitionResponse waiting = service.requisitions(storeManager()).stream()
+        .filter(row -> created.id().equals(row.id()))
+        .findFirst()
+        .orElseThrow();
+    assertThat(waiting.status()).isEqualTo("WAITING_REPLENISHMENT");
+    assertThat(waiting.statusLabel()).isEqualTo("待补货");
+    assertThat(waiting.lines().getFirst().shippedQuantity()).isZero();
+    assertThat(jdbcTemplate.queryForObject(
+        "select count(*) from warehouse_delivery_order where tenant_id = 1 and requisition_id = ?",
+        Integer.class,
+        created.id()
+    )).isZero();
+    assertThat(itemStock(1L)).isZero();
+  }
+
+  @Test
+  void warehouseRequisitionRejectionRequiresBusinessReason() {
+    WarehouseRequisitionResponse created = service.createRequisition(
+        storeManager(),
+        new WarehouseRequisitionRequest(
+            "rg1",
+            List.of(new WarehouseRequisitionLineRequest(1L, BigDecimal.ONE, "误填测试")),
+            "待核对"
+        )
+    );
+
+    assertThatThrownBy(() -> service.review(
+        warehouseManager(),
+        created.id(),
+        new WarehouseRequisitionReviewRequest(false, List.of(), " ")
+    ))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode())
+            .isEqualTo("REJECTION_REASON_REQUIRED"));
+
+    service.review(
+        warehouseManager(),
+        created.id(),
+        new WarehouseRequisitionReviewRequest(false, List.of(), "门店重复提交")
+    );
+    WarehouseRequisitionResponse rejected = service.requisitions(storeManager()).stream()
+        .filter(row -> created.id().equals(row.id()))
+        .findFirst()
+        .orElseThrow();
+    assertThat(rejected.status()).isEqualTo("REJECTED");
+    assertThat(rejected.note()).isEqualTo("门店重复提交");
+  }
+
+  @Test
   void warehouseManagerCanManageItemCategoryAndItemFile() {
     WarehouseItemCategoryResponse category = service.saveItemCategory(
         warehouseManager(),

@@ -5,26 +5,22 @@ import com.storeprofit.system.warehouse.WarehouseRepository.WarehouseDeliveryPri
 import com.storeprofit.system.warehouse.WarehouseRepository.WarehouseDeliveryPrintLine;
 import com.storeprofit.system.warehouse.WarehouseRepository.WarehouseMovementPrintRow;
 import com.storeprofit.system.warehouse.WarehouseRepository.WarehouseReceiptPrintRow;
-import java.awt.BasicStroke;
-import java.awt.Color;
-import java.awt.Font;
-import java.awt.FontMetrics;
-import java.awt.Graphics2D;
-import java.awt.GraphicsEnvironment;
-import java.awt.RenderingHints;
-import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
+import java.text.Normalizer;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Set;
-import javax.imageio.ImageIO;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.font.PDType0Font;
+import org.apache.pdfbox.util.Matrix;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
@@ -32,93 +28,122 @@ import org.springframework.stereotype.Component;
 public class WarehousePdfRenderer {
   private static final int CANVAS_WIDTH = 1240;
   private static final int CANVAS_HEIGHT = 1754;
+  private static final int RECEIPT_CANVAS_WIDTH = 1240;
+  private static final int RECEIPT_CANVAS_HEIGHT = 375;
+  private static final int RETURN_CANVAS_WIDTH = 1240;
+  private static final int RETURN_CANVAS_HEIGHT = 403;
   private static final int DELIVERY_CANVAS_WIDTH = 1109;
   private static final int DELIVERY_CANVAS_HEIGHT = 691;
   private static final int MARGIN = 90;
   private static final float PDF_WIDTH = 595f;
   private static final float PDF_HEIGHT = 842f;
+  private static final float RECEIPT_PDF_WIDTH = 877f;
+  private static final float RECEIPT_PDF_HEIGHT = 265f;
+  private static final float RETURN_PDF_WIDTH = 887f;
+  private static final float RETURN_PDF_HEIGHT = 288f;
   private static final float DELIVERY_PDF_WIDTH = 1109f;
   private static final float DELIVERY_PDF_HEIGHT = 691f;
+  private static final String FONT_RESOURCE = "/fonts/NotoSansSC-Regular.ttf";
 
   public byte[] receipt(WarehouseReceiptPrintRow row) {
-    return render(sheet -> {
-      sheet.receiptSlip(
-          "RKD" + dateShort(row.createdAt()) + padded(row.batchId()),
-          dateOnly(display(row.receivedDate(), row.createdAt())),
+    return renderReceipt(sheet -> sheet.receiptSlip(
+        WarehouseDocumentNumbers.receipt(row.createdAt(), row.batchId()),
+        dateOnly(display(row.receivedDate(), row.createdAt())),
+        "采购",
+        "自购",
+        amount(row.receivedQuantity()).multiply(amount(row.unitCost())),
+        display(row.note(), ""),
+        List.of(List.of(
+            display(row.itemName()),
+            display(row.itemCode()),
+            display(row.spec(), ""),
+            qty(row.receivedQuantity()),
+            display(row.unit(), "件"),
+            money(row.unitCost()),
+            money(amount(row.receivedQuantity()).multiply(amount(row.unitCost()))),
+            display(row.note(), "")
+        ))
+    ));
+  }
+
+  public byte[] delivery(WarehouseDeliveryPrintHeader header, List<WarehouseDeliveryPrintLine> lines) {
+    return renderDelivery(sheet -> sheet.deliverySlip(
+        WarehouseDocumentNumbers.delivery(
+            header.shippedAt(),
+            header.deliveryId(),
+            header.requisitionId()
+        ),
+        dateOnly(header.shippedAt()),
+        deliveryStatusLabel(header.status()),
+        "采购",
+        display(header.storeName(), header.storeId()),
+        deliveryTotal(lines),
+        display(header.receiverName()),
+        display(header.receiverPhone()),
+        display(header.receiverAddress()),
+        lines.stream()
+            .map(line -> List.of(
+                displayItemName(line.itemName(), line.spec()),
+                qty(line.shippedQuantity()),
+                display(line.unit()),
+                money(line.unitPrice()),
+                money(lineSubtotal(line))
+            ))
+            .toList()
+    ));
+  }
+
+  public byte[] returnOrder(WarehouseReturnResponse order) {
+    return renderReturn(sheet -> sheet.returnSlip(
+        WarehouseDocumentNumbers.returnOrder(
+            order.returnDate(),
+            order.returnNo(),
+            order.id()
+        ),
+        dateOnly(order.returnDate()),
+        display(order.returnStoreName(), order.returnStoreId()),
+        display(order.receiveWarehouseName(), "未记录收货部门"),
+        display(order.handledBy(), ""),
+        order.lines().stream()
+            .map(line -> List.of(
+                display(line.itemName()),
+                display(line.spec(), ""),
+                qty(line.quantity()),
+                display(line.unit(), "件"),
+                money(line.unitPrice()),
+                money(line.returnPrice()),
+                money(line.amount())
+            ))
+            .toList()
+    ));
+  }
+
+  public byte[] movement(WarehouseMovementPrintRow row) {
+    boolean in = "IN".equals(row.movementType());
+    if (in) {
+      return renderReceipt(sheet -> sheet.receiptSlip(
+          WarehouseDocumentNumbers.receipt(row.createdAt(), row.movementId()),
+          dateOnly(row.createdAt()),
           "采购",
           "自购",
-          amount(row.receivedQuantity()).multiply(amount(row.unitCost())),
+          amount(row.quantityDelta().abs()).multiply(amount(row.unitCost())),
           display(row.note(), ""),
           List.of(List.of(
               display(row.itemName()),
               display(row.itemCode()),
               display(row.spec(), ""),
-              qty(row.receivedQuantity()),
+              qty(row.quantityDelta().abs()),
               display(row.unit(), "件"),
               money(row.unitCost()),
-              money(amount(row.receivedQuantity()).multiply(amount(row.unitCost()))),
+              money(amount(row.quantityDelta().abs()).multiply(amount(row.unitCost()))),
               display(row.note(), "")
           ))
-      );
-    });
-  }
-
-  public byte[] delivery(WarehouseDeliveryPrintHeader header, List<WarehouseDeliveryPrintLine> lines) {
-    return renderDelivery(sheet -> {
-      sheet.deliverySlip(
-          display(header.deliveryId(), header.requisitionId()),
-          dateOnly(header.shippedAt()),
-          deliveryStatusLabel(header.status()),
-          "采购",
-          display(header.storeName(), header.storeId()),
-          deliveryTotal(lines),
-          display(header.receiverName()),
-          display(header.receiverPhone()),
-          display(header.receiverAddress()),
-          display(header.note()),
-          lines.stream()
-              .map(line -> List.of(
-                  displayItemName(line.itemName(), line.spec()),
-                  display(line.batchNos(), "-"),
-                  qty(line.shippedQuantity()),
-                  display(line.unit()),
-                  money(line.unitPrice()),
-                  money(lineSubtotal(line))
-              ))
-              .toList()
-      );
-    });
-  }
-
-  public byte[] returnOrder(WarehouseReturnResponse order) {
+      ));
+    }
     return render(sheet -> {
-      sheet.returnSlip(
-          display(order.returnNo()),
-          dateOnly(order.returnDate()),
-          display(order.returnStoreName(), order.returnStoreId()),
-          display(order.receiveWarehouseName(), "未记录收货仓"),
-          display(order.handledBy(), ""),
-          order.lines().stream()
-              .map(line -> List.of(
-                  display(line.itemName()),
-                  display(line.spec(), ""),
-                  qty(line.quantity()),
-                  display(line.unit(), "件"),
-                  money(line.unitPrice()),
-                  money(line.returnPrice()),
-                  money(line.amount())
-              ))
-              .toList()
-      );
-    });
-  }
-
-  public byte[] movement(WarehouseMovementPrintRow row) {
-    boolean in = "IN".equals(row.movementType());
-    return render(sheet -> {
-      sheet.title(in ? "AI Profit OS 仓库入库单" : "AI Profit OS 库存流水单");
+      sheet.title("AI Profit OS 库存流水单");
       sheet.meta(List.of(
-          "单据编号：" + (in ? "IN" : "MOVE") + "-" + dateCompact(row.createdAt()) + "-" + padded(row.movementId()),
+          "单据编号：MOVE-" + dateCompact(row.createdAt()) + "-" + padded(row.movementId()),
           "记录时间：" + display(row.createdAt()),
           "业务类型：" + movementType(row.movementType()),
           "门店：" + display(row.storeName(), row.storeId()),
@@ -139,7 +164,7 @@ public class WarehousePdfRenderer {
           new int[] {190, 155, 135, 90, 210, 260}
       );
       sheet.paragraph("说明：" + display(row.note()));
-      sheet.signatures(in ? "仓库经办人" : "操作人", "复核人");
+      sheet.signatures("操作人", "复核人");
     });
   }
 
@@ -147,70 +172,71 @@ public class WarehousePdfRenderer {
     return render(drawAction, CANVAS_WIDTH, CANVAS_HEIGHT, PDF_WIDTH, PDF_HEIGHT);
   }
 
+  private byte[] renderReceipt(DrawAction drawAction) {
+    return render(
+        drawAction,
+        RECEIPT_CANVAS_WIDTH,
+        RECEIPT_CANVAS_HEIGHT,
+        RECEIPT_PDF_WIDTH,
+        RECEIPT_PDF_HEIGHT
+    );
+  }
+
   private byte[] renderDelivery(DrawAction drawAction) {
-    return render(drawAction, DELIVERY_CANVAS_WIDTH, DELIVERY_CANVAS_HEIGHT, DELIVERY_PDF_WIDTH, DELIVERY_PDF_HEIGHT);
+    return render(
+        drawAction,
+        DELIVERY_CANVAS_WIDTH,
+        DELIVERY_CANVAS_HEIGHT,
+        DELIVERY_PDF_WIDTH,
+        DELIVERY_PDF_HEIGHT
+    );
   }
 
-  private byte[] render(DrawAction drawAction, int canvasWidth, int canvasHeight, float pdfWidth, float pdfHeight) {
-    BufferedImage image = new BufferedImage(canvasWidth, canvasHeight, BufferedImage.TYPE_INT_RGB);
-    Graphics2D graphics = image.createGraphics();
-    try {
-      graphics.setColor(Color.WHITE);
-      graphics.fillRect(0, 0, canvasWidth, canvasHeight);
-      graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-      graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-      drawAction.draw(new Sheet(graphics, chineseFontFamily(), canvasWidth, canvasHeight));
-      ByteArrayOutputStream imageOut = new ByteArrayOutputStream();
-      ImageIO.write(image, "jpg", imageOut);
-      return imagePdf(imageOut.toByteArray(), canvasWidth, canvasHeight, pdfWidth, pdfHeight);
-    } catch (IOException ex) {
-      throw new BusinessException("PDF_GENERATION_FAILED", "生成打印单失败：" + ex.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
-    } finally {
-      graphics.dispose();
+  private byte[] renderReturn(DrawAction drawAction) {
+    return render(
+        drawAction,
+        RETURN_CANVAS_WIDTH,
+        RETURN_CANVAS_HEIGHT,
+        RETURN_PDF_WIDTH,
+        RETURN_PDF_HEIGHT
+    );
+  }
+
+  private byte[] render(
+      DrawAction drawAction,
+      int canvasWidth,
+      int canvasHeight,
+      float pdfWidth,
+      float pdfHeight
+  ) {
+    try (PDDocument document = new PDDocument();
+         ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+      PDType0Font font = loadChineseFont(document);
+      PDPage page = new PDPage(new PDRectangle(pdfWidth, pdfHeight));
+      document.addPage(page);
+      try (PDPageContentStream content = new PDPageContentStream(document, page)) {
+        content.transform(Matrix.getScaleInstance(pdfWidth / canvasWidth, pdfHeight / canvasHeight));
+        drawAction.draw(new Sheet(content, font, canvasWidth, canvasHeight));
+      }
+      document.save(output);
+      return output.toByteArray();
+    } catch (IOException | RuntimeException ex) {
+      throw new BusinessException(
+          "PDF_GENERATION_FAILED",
+          "生成打印单失败：" + ex.getMessage(),
+          HttpStatus.INTERNAL_SERVER_ERROR
+      );
     }
   }
 
-  private byte[] imagePdf(byte[] imageBytes, int canvasWidth, int canvasHeight, float pdfWidth, float pdfHeight) throws IOException {
-    ByteArrayOutputStream out = new ByteArrayOutputStream();
-    List<Integer> offsets = new ArrayList<>();
-    writeAscii(out, "%PDF-1.4\n");
-    offsets.add(out.size());
-    writeAscii(out, "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
-    offsets.add(out.size());
-    writeAscii(out, "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
-    offsets.add(out.size());
-    writeAscii(out, "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 " + pdfWidth + " " + pdfHeight + "] /Resources << /XObject << /Im1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n");
-    offsets.add(out.size());
-    writeAscii(out, "4 0 obj\n<< /Type /XObject /Subtype /Image /Width " + canvasWidth + " /Height " + canvasHeight + " /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length " + imageBytes.length + " >>\nstream\n");
-    out.write(imageBytes);
-    writeAscii(out, "\nendstream\nendobj\n");
-    byte[] content = ("q\n" + pdfWidth + " 0 0 " + pdfHeight + " 0 0 cm\n/Im1 Do\nQ\n").getBytes(StandardCharsets.US_ASCII);
-    offsets.add(out.size());
-    writeAscii(out, "5 0 obj\n<< /Length " + content.length + " >>\nstream\n");
-    out.write(content);
-    writeAscii(out, "endstream\nendobj\n");
-    int xrefOffset = out.size();
-    writeAscii(out, "xref\n0 6\n0000000000 65535 f \n");
-    for (int offset : offsets) {
-      writeAscii(out, String.format(Locale.ROOT, "%010d 00000 n \n", offset));
+  private PDType0Font loadChineseFont(PDDocument document) throws IOException {
+    InputStream input = WarehousePdfRenderer.class.getResourceAsStream(FONT_RESOURCE);
+    if (input == null) {
+      throw new IOException("缺少内置中文字体 " + FONT_RESOURCE);
     }
-    writeAscii(out, "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n" + xrefOffset + "\n%%EOF\n");
-    return out.toByteArray();
-  }
-
-  private void writeAscii(ByteArrayOutputStream out, String value) throws IOException {
-    out.write(value.getBytes(StandardCharsets.US_ASCII));
-  }
-
-  private String chineseFontFamily() {
-    Set<String> available = new HashSet<>(Arrays.asList(GraphicsEnvironment
-        .getLocalGraphicsEnvironment()
-        .getAvailableFontFamilyNames(Locale.SIMPLIFIED_CHINESE)));
-    return List.of("SimSun", "Microsoft YaHei", "SimHei", "Noto Sans CJK SC", "Dialog")
-        .stream()
-        .filter(available::contains)
-        .findFirst()
-        .orElse("Dialog");
+    try (input) {
+      return PDType0Font.load(document, input, true);
+    }
   }
 
   private String display(String value) {
@@ -218,7 +244,104 @@ public class WarehousePdfRenderer {
   }
 
   private String display(String value, String fallback) {
-    return value == null || value.isBlank() ? fallback : value;
+    if (value == null || value.isBlank()) {
+      return fallback;
+    }
+    return repairMojibake(value);
+  }
+
+  private String repairMojibake(String value) {
+    if (!looksLikeMojibake(value)) {
+      return value;
+    }
+
+    StringBuilder repaired = new StringBuilder(value.length());
+    StringBuilder encodedRun = new StringBuilder();
+    for (int offset = 0; offset < value.length();) {
+      int codePoint = value.codePointAt(offset);
+      if (mojibakeSourceByte(codePoint) >= 0) {
+        encodedRun.appendCodePoint(codePoint);
+      } else {
+        appendDecodedMojibakeRun(repaired, encodedRun);
+        repaired.appendCodePoint(codePoint);
+      }
+      offset += Character.charCount(codePoint);
+    }
+    appendDecodedMojibakeRun(repaired, encodedRun);
+
+    String candidate = repaired.toString();
+    return cjkCount(candidate) > cjkCount(value) ? candidate : value;
+  }
+
+  private void appendDecodedMojibakeRun(StringBuilder output, StringBuilder encodedRun) {
+    if (encodedRun.isEmpty()) {
+      return;
+    }
+    ByteArrayOutputStream originalBytes = new ByteArrayOutputStream(encodedRun.length());
+    for (int offset = 0; offset < encodedRun.length();) {
+      int codePoint = encodedRun.codePointAt(offset);
+      originalBytes.write(mojibakeSourceByte(codePoint));
+      offset += Character.charCount(codePoint);
+    }
+    String original = encodedRun.toString();
+    String decoded = new String(originalBytes.toByteArray(), StandardCharsets.UTF_8);
+    output.append(!decoded.contains("\uFFFD") && cjkCount(decoded) > cjkCount(original)
+        ? decoded
+        : original);
+    encodedRun.setLength(0);
+  }
+
+  private int mojibakeSourceByte(int codePoint) {
+    if (codePoint >= 0 && codePoint <= 0xff) {
+      return codePoint;
+    }
+    return switch (codePoint) {
+      case 0x20ac -> 0x80;
+      case 0x201a -> 0x82;
+      case 0x0192 -> 0x83;
+      case 0x201e -> 0x84;
+      case 0x2026 -> 0x85;
+      case 0x2020 -> 0x86;
+      case 0x2021 -> 0x87;
+      case 0x02c6 -> 0x88;
+      case 0x2030 -> 0x89;
+      case 0x0160 -> 0x8a;
+      case 0x2039 -> 0x8b;
+      case 0x0152 -> 0x8c;
+      case 0x017d -> 0x8e;
+      case 0x2018 -> 0x91;
+      case 0x2019 -> 0x92;
+      case 0x201c -> 0x93;
+      case 0x201d -> 0x94;
+      case 0x2022 -> 0x95;
+      case 0x2013 -> 0x96;
+      case 0x2014 -> 0x97;
+      case 0x02dc -> 0x98;
+      case 0x2122 -> 0x99;
+      case 0x0161 -> 0x9a;
+      case 0x203a -> 0x9b;
+      case 0x0153 -> 0x9c;
+      case 0x017e -> 0x9e;
+      case 0x0178 -> 0x9f;
+      default -> -1;
+    };
+  }
+
+  private boolean looksLikeMojibake(String value) {
+    for (int index = 0; index < value.length(); index++) {
+      char current = value.charAt(index);
+      if ((current >= '\u0080' && current <= '\u009f')
+          || "ÃÂâåæçäèéïðœžŸ".indexOf(current) >= 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private long cjkCount(String value) {
+    return value.codePoints()
+        .filter(codePoint -> codePoint >= 0x3400 && codePoint <= 0x9fff)
+        .count();
   }
 
   private String qty(BigDecimal value) {
@@ -240,11 +363,15 @@ public class WarehousePdfRenderer {
     if (recorded.compareTo(BigDecimal.ZERO) > 0) {
       return recorded;
     }
-    return amount(line.shippedQuantity()).multiply(amount(line.unitPrice())).setScale(2, RoundingMode.HALF_UP);
+    return amount(line.shippedQuantity())
+        .multiply(amount(line.unitPrice()))
+        .setScale(2, RoundingMode.HALF_UP);
   }
 
   private BigDecimal amount(BigDecimal value) {
-    return value == null ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP) : value.setScale(2, RoundingMode.HALF_UP);
+    return value == null
+        ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
+        : value.setScale(2, RoundingMode.HALF_UP);
   }
 
   private String dateCompact(String value) {
@@ -252,11 +379,6 @@ public class WarehousePdfRenderer {
       return "00000000";
     }
     return value.substring(0, 10).replace("-", "");
-  }
-
-  private String dateShort(String value) {
-    String compact = dateCompact(value);
-    return compact.length() == 8 ? compact.substring(2) : compact;
   }
 
   private String dateOnly(String value) {
@@ -267,11 +389,7 @@ public class WarehousePdfRenderer {
   }
 
   private String padded(long id) {
-    return String.format("%04d", id);
-  }
-
-  private String safeCode(String value) {
-    return value == null || value.isBlank() ? "0000" : value.replaceAll("[^a-zA-Z0-9_-]", "");
+    return String.format(Locale.ROOT, "%04d", id);
   }
 
   private String displayItemName(String name, String spec) {
@@ -279,7 +397,7 @@ public class WarehousePdfRenderer {
     if (spec == null || spec.isBlank() || "-".equals(spec)) {
       return itemName;
     }
-    return itemName + "（" + spec + "）";
+    return itemName + "（" + display(spec, "") + "）";
   }
 
   private String deliveryStatusLabel(String status) {
@@ -306,15 +424,20 @@ public class WarehousePdfRenderer {
   }
 
   private static final class Sheet {
-    private final Graphics2D graphics;
-    private final String fontFamily;
+    private final PDPageContentStream content;
+    private final PDType0Font font;
     private final int canvasWidth;
     private final int canvasHeight;
     private int y = MARGIN;
 
-    private Sheet(Graphics2D graphics, String fontFamily, int canvasWidth, int canvasHeight) {
-      this.graphics = graphics;
-      this.fontFamily = fontFamily;
+    private Sheet(
+        PDPageContentStream content,
+        PDType0Font font,
+        int canvasWidth,
+        int canvasHeight
+    ) {
+      this.content = content;
+      this.font = font;
       this.canvasWidth = canvasWidth;
       this.canvasHeight = canvasHeight;
     }
@@ -329,54 +452,49 @@ public class WarehousePdfRenderer {
         String receiverName,
         String receiverPhone,
         String receiverAddress,
-        String note,
         List<List<String>> rows
-    ) {
+    ) throws IOException {
       int left = 24;
       int width = canvasWidth - left * 2;
-      y = 46;
-      graphics.setColor(Color.BLACK);
-      setFont(22, Font.BOLD);
-      center("配送单", left, width, y);
-      y += 18;
-      dashedLine(left, canvasWidth - left);
-      y += 28;
+      int titleWidth = 850;
+      drawCentered("配送单", left, titleWidth, 40, 22);
+      dashedLine(left, left + titleWidth, 52);
 
-      setFont(18, Font.PLAIN);
-      graphics.drawString("单据号：" + blank(orderNo), left + 5, y);
-      graphics.drawString("日期：" + blank(date), left + 385, y);
-      graphics.drawString("状态：" + blank(status), left + 610, y);
-      y += 26;
-      graphics.drawString("配出部门：" + blank(fromDepartment), left + 5, y);
-      setFont(27, Font.BOLD);
-      graphics.drawString("配入部门：" + blank(toDepartment), left + 340, y + 2);
-      setFont(18, Font.PLAIN);
-      graphics.drawString("总金额：" + formatAmount(totalAmount), left + 710, y);
-      y += 12;
+      drawText("单据号：" + blank(orderNo), left + 5, 76, 18);
+      drawText("日期：" + blank(date), left + 315, 76, 18);
+      drawText("状态：" + blank(status), left + 590, 76, 18);
+      drawText("配出部门：" + blank(fromDepartment), left + 5, 99, 18);
+      drawText("配入部门：" + blank(toDepartment), left + 315, 101, 27);
+      drawText("总金额：" + formatAmount(totalAmount), left + 590, 99, 18);
 
-      int[] widths = {70, 400, 245, 70, 70, 80, 126};
-      deliveryTable(
-          List.of("序号", "物品名称", "批次号", "数量", "单位", "单价", "小计"),
+      int tableTop = 104;
+      int rowHeight = deliveryRowHeight(rows.size(), tableTop);
+      int[] widths = {104, 513, 104, 104, 105, 105};
+      numberedTable(
+          List.of("序号", "物品名称", "数量", "单位", "单价", "小计"),
           rows,
           widths,
           left,
-          y + 2
+          tableTop,
+          rowHeight,
+          rowHeight <= 28 ? 17 : 21
       );
 
-      y += 8;
-      setFont(19, Font.PLAIN);
-      int noteHeight = 58;
-      graphics.drawRect(left, y, width, noteHeight);
-      graphics.drawString("备注：" + blank(note), left + 8, y + 35);
-      y += noteHeight + 24;
+      int tableBottom = tableTop + (rows.size() + 1) * rowHeight;
+      int footerY = Math.min(tableBottom + 22, canvasHeight - 42);
+      drawText("收货人：" + blank(receiverName), left + 5, footerY, 18);
+      drawText("联系电话：" + blank(receiverPhone), left + 230, footerY, 18);
+      drawText("收货地址：" + blank(receiverAddress), left + 500, footerY, 18);
+      drawCentered("第1页/共1页", left, width, canvasHeight - 12, 16);
+    }
 
-      setFont(18, Font.PLAIN);
-      graphics.drawString("收货人：" + blank(receiverName), left + 8, y);
-      graphics.drawString("联系电话：" + blank(receiverPhone), left + 260, y);
-      graphics.drawString("收货地址：" + blank(receiverAddress), left + 560, y);
-
-      setFont(18, Font.PLAIN);
-      center("第1页/共1页", left, width, canvasHeight - 18);
+    private int deliveryRowHeight(int rowCount, int tableTop) {
+      int available = canvasHeight - tableTop - 65;
+      int preferred = 34;
+      if ((rowCount + 1) * preferred <= available) {
+        return preferred;
+      }
+      return Math.max(22, available / Math.max(1, rowCount + 1));
     }
 
     private void receiptSlip(
@@ -387,265 +505,289 @@ public class WarehousePdfRenderer {
         BigDecimal totalAmount,
         String note,
         List<List<String>> rows
-    ) {
-      int left = 48;
+    ) throws IOException {
+      int left = 24;
       int width = canvasWidth - left * 2;
-      y = 64;
-      graphics.setColor(Color.BLACK);
-      setFont(30, Font.PLAIN);
-      center("入库单", left, width, y);
-      logoPlaceholder(canvasWidth - 280, 28, 190, 42);
+      int rightColumn = left + 470;
+      drawCentered("入库单", left, width, 38, 28);
+      logoPlaceholder(canvasWidth - left - 190, 14, 190, 40);
 
-      y = 108;
-      setFont(24, Font.PLAIN);
-      graphics.drawString("单据号：" + blank(receiptNo), left, y);
-      graphics.drawString("日期：" + blank(date), left + 470, y);
-      y += 36;
-      graphics.drawString("部门：" + blank(department), left, y);
-      graphics.drawString("供应商名称：" + blank(supplierName), left + 470, y);
-      y += 36;
-      graphics.drawString("金额：" + formatAmount(totalAmount), left, y);
-      graphics.drawString("备注：" + blank(note), left + 470, y);
-      y += 14;
+      drawText("单据号：" + blank(receiptNo), left, 64, 21);
+      drawText("日期：" + blank(date), rightColumn, 64, 21);
+      drawText("部门：" + blank(department), left, 94, 21);
+      drawText("供应商名称：" + blank(supplierName), rightColumn, 94, 21);
+      drawText("金额：" + formatAmount(totalAmount), left, 124, 21);
+      drawText("备注：" + blank(note), rightColumn, 124, 21);
 
-      numberedSlipTable(
+      numberedTable(
           List.of("序号", "物品名称", "内部编号", "规格", "数量", "单位", "单价", "小计", "备注"),
           rows,
-          new int[] {70, 300, 130, 100, 80, 70, 80, 95, 219},
+          new int[] {75, 405, 155, 100, 80, 80, 90, 115, 92},
           left,
-          y,
-          48,
-          24
+          134,
+          40,
+          20
       );
-      y += 30;
-      setFont(24, Font.PLAIN);
-      graphics.drawString("状态：已核对", left, y);
+      int statusY = 134 + (rows.size() + 1) * 40 + 26;
+      drawText("状态：已核对", left, statusY, 21);
     }
 
     private void returnSlip(
         String returnNo,
         String date,
         String returnDepartment,
-        String receiveWarehouse,
+        String receiveDepartment,
         String handledBy,
         List<List<String>> rows
-    ) {
-      int left = 24;
+    ) throws IOException {
+      int left = 22;
       int width = canvasWidth - left * 2;
-      y = 76;
-      graphics.setColor(Color.BLACK);
-      logoPlaceholder(left, 48, 200, 42);
-      setFont(30, Font.PLAIN);
-      center("配送退货单", left, width, y);
+      logoPlaceholder(left, 32, 200, 42);
+      drawCentered("配送退货单", left, width, 70, 30);
 
-      y = 150;
-      setFont(24, Font.PLAIN);
-      graphics.drawString("退货部门：" + blank(returnDepartment), left, y);
-      graphics.drawString("收货仓：" + blank(receiveWarehouse), left + 360, y);
-      FontMetrics metrics = graphics.getFontMetrics();
-      int handlerX = left + 770;
-      List<String> handlerLines = wrap("经手人：" + blank(handledBy), metrics, canvasWidth - handlerX - 36);
-      graphics.drawString(handlerLines.get(0), handlerX, y);
+      drawText("退货部门：" + blank(returnDepartment), left, 113, 23);
+      drawText("收货部门：" + blank(receiveDepartment), left + 378, 113, 23);
+      List<String> handlerLines = wrap(
+          "经手人：" + blank(handledBy),
+          23,
+          canvasWidth - (left + 790) - 30
+      );
+      drawText(handlerLines.get(0), left + 790, 113, 23);
       if (handlerLines.size() > 1) {
-        graphics.drawString(handlerLines.get(1), handlerX, y + 30);
+        drawText(handlerLines.get(1), left + 790, 151, 23);
       }
-      y += 46;
-      graphics.drawString("单据号：" + blank(returnNo), left + 20, y);
-      graphics.drawString("日期：" + blank(date), left + 430, y);
-      y += 14;
 
-      numberedSlipTable(
+      drawText("单据号：" + blank(returnNo), left + 25, 172, 23);
+      drawText("日期：" + blank(date), left + 428, 172, 23);
+      int tableTop = 187;
+      int rowHeight = returnRowHeight(rows.size(), tableTop);
+      numberedTable(
           List.of("序号", "物品名称", "规格", "数量", "单位", "单价", "退货价", "小计"),
           rows,
-          new int[] {80, 330, 120, 100, 80, 100, 120, 262},
+          new int[] {110, 343, 112, 112, 112, 109, 161, 108},
           left,
-          y,
-          48,
-          24
+          tableTop,
+          rowHeight,
+          rowHeight <= 28 ? 17 : 23
       );
     }
 
-    private void title(String text) {
-      setFont(34, Font.BOLD);
-      graphics.setColor(Color.BLACK);
-      graphics.drawString(text, MARGIN, y);
+    private int returnRowHeight(int rowCount, int tableTop) {
+      int available = canvasHeight - tableTop - 18;
+      int preferred = 40;
+      if ((rowCount + 1) * preferred <= available) {
+        return preferred;
+      }
+      return Math.max(18, available / Math.max(1, rowCount + 1));
+    }
+
+    private void title(String text) throws IOException {
+      drawText(text, MARGIN, y, 34);
       y += 52;
-      line();
+      line(MARGIN, canvasWidth - MARGIN, y);
       y += 30;
     }
 
-    private void meta(List<String> values) {
-      setFont(24, Font.PLAIN);
+    private void meta(List<String> values) throws IOException {
       for (String value : values) {
-        graphics.drawString(value, MARGIN, y);
+        drawText(value, MARGIN, y, 24);
         y += 36;
       }
       y += 16;
     }
 
-    private void section(String text) {
+    private void section(String text) throws IOException {
       y += 14;
-      setFont(26, Font.BOLD);
-      graphics.drawString(text, MARGIN, y);
+      drawText(text, MARGIN, y, 26);
       y += 24;
     }
 
-    private void paragraph(String text) {
+    private void paragraph(String text) throws IOException {
       y += 28;
-      setFont(24, Font.PLAIN);
-      FontMetrics metrics = graphics.getFontMetrics();
-      for (String line : wrap(text, metrics, canvasWidth - MARGIN * 2)) {
-        graphics.drawString(line, MARGIN, y);
+      for (String line : wrap(text, 24, canvasWidth - MARGIN * 2)) {
+        drawText(line, MARGIN, y, 24);
         y += 34;
       }
     }
 
-    private void signatures(String first, String second) {
+    private void signatures(String first, String second) throws IOException {
       y += 70;
-      setFont(26, Font.BOLD);
-      graphics.drawString("签字区：", MARGIN, y);
+      drawText("签字区：", MARGIN, y, 26);
       y += 70;
-      setFont(25, Font.PLAIN);
-      graphics.drawString(first + "：____________________        " + second + "：____________________", MARGIN, y);
+      drawText(first + "：____________________        " + second + "：____________________", MARGIN, y, 25);
       y += 82;
-      graphics.drawString("日期：____________________", MARGIN, y);
+      drawText("日期：____________________", MARGIN, y, 25);
     }
 
-    private void table(List<String> headers, List<List<String>> rows, int[] widths) {
-      setFont(21, Font.BOLD);
-      drawRow(headers, widths, true);
-      setFont(21, Font.PLAIN);
+    private void table(
+        List<String> headers,
+        List<List<String>> rows,
+        int[] widths
+    ) throws IOException {
+      drawTableRow(headers, widths, MARGIN, y, 56, 21, true);
+      y += 56;
       for (List<String> row : rows) {
-        drawRow(row, widths, false);
+        drawTableRow(row, widths, MARGIN, y, 56, 21, false);
+        y += 56;
       }
     }
 
-    private void deliveryTable(List<String> headers, List<List<String>> rows, int[] widths, int left, int top) {
-      y = top;
-      int rowHeight = rows.size() > 18 ? 28 : 34;
-      int fontSize = rows.size() > 18 ? 18 : 23;
-      drawDeliveryRow(headers, widths, left, rowHeight, 22, true);
+    private void numberedTable(
+        List<String> headers,
+        List<List<String>> rows,
+        int[] widths,
+        int left,
+        int top,
+        int rowHeight,
+        int fontSize
+    ) throws IOException {
+      drawTableRow(headers, widths, left, top, rowHeight, fontSize, true);
+      int currentTop = top + rowHeight;
       int index = 1;
       for (List<String> row : rows) {
         List<String> cells = new ArrayList<>();
         cells.add(String.valueOf(index++));
         cells.addAll(row);
-        drawDeliveryRow(cells, widths, left, rowHeight, fontSize, false);
+        drawTableRow(cells, widths, left, currentTop, rowHeight, fontSize, false);
+        currentTop += rowHeight;
       }
     }
 
-    private void numberedSlipTable(List<String> headers, List<List<String>> rows, int[] widths, int left, int top, int rowHeight, int fontSize) {
-      y = top;
-      drawSlipRow(headers, widths, left, rowHeight, fontSize, true);
-      int index = 1;
-      for (List<String> row : rows) {
-        List<String> cells = new ArrayList<>();
-        cells.add(String.valueOf(index++));
-        cells.addAll(row);
-        drawSlipRow(cells, widths, left, rowHeight, fontSize, false);
+    private void drawTableRow(
+        List<String> cells,
+        int[] widths,
+        int left,
+        int top,
+        int rowHeight,
+        int fontSize,
+        boolean header
+    ) throws IOException {
+      int totalWidth = 0;
+      for (int width : widths) {
+        totalWidth += width;
       }
-    }
-
-    private void drawSlipRow(List<String> cells, int[] widths, int left, int rowHeight, int fontSize, boolean header) {
-      int totalWidth = Arrays.stream(widths).sum();
+      if (header) {
+        fillRect(left, top, totalWidth, rowHeight, 210);
+      }
       int x = left;
-      graphics.setStroke(new BasicStroke(1.2f));
-      if (header) {
-        graphics.setColor(new Color(210, 210, 210));
-        graphics.fillRect(left, y, totalWidth, rowHeight);
-      }
-      graphics.setColor(Color.BLACK);
       for (int width : widths) {
-        graphics.drawRect(x, y, width, rowHeight);
+        strokeRect(x, top, width, rowHeight);
         x += width;
       }
-      setFont(fontSize, Font.PLAIN);
-      FontMetrics metrics = graphics.getFontMetrics();
       x = left;
+      int baseline = top + rowHeight - Math.max(10, (rowHeight - fontSize) / 2);
       for (int index = 0; index < widths.length; index++) {
-        String text = index < cells.size() ? cells.get(index) : "";
-        String clipped = clip(text, metrics, widths[index] - 12);
-        graphics.drawString(clipped, x + 6, y + rowHeight - 14);
+        String value = index < cells.size() ? cells.get(index) : "";
+        String clipped = clip(value, fontSize, widths[index] - 12);
+        drawText(clipped, x + 6, baseline, fontSize);
         x += widths[index];
       }
-      y += rowHeight;
     }
 
-    private void drawDeliveryRow(List<String> cells, int[] widths, int left, int rowHeight, int fontSize, boolean header) {
-      int x = left;
-      graphics.setStroke(new BasicStroke(1f));
-      if (header) {
-        graphics.setColor(new Color(210, 210, 210));
-        graphics.fillRect(left, y, Arrays.stream(widths).sum(), rowHeight);
+    private void drawText(String value, float x, float baseline, float fontSize) throws IOException {
+      String printable = printable(value);
+      content.beginText();
+      content.setFont(font, fontSize);
+      content.newLineAtOffset(x, canvasHeight - baseline);
+      content.showText(printable);
+      content.endText();
+    }
+
+    private void drawCentered(
+        String value,
+        int left,
+        int width,
+        int baseline,
+        int fontSize
+    ) throws IOException {
+      String printable = printable(value);
+      float x = left + (width - textWidth(printable, fontSize)) / 2f;
+      drawText(printable, x, baseline, fontSize);
+    }
+
+    private void line(float x1, float x2, float top) throws IOException {
+      content.setStrokingColor(0, 0, 0);
+      content.setLineWidth(1.2f);
+      content.moveTo(x1, canvasHeight - top);
+      content.lineTo(x2, canvasHeight - top);
+      content.stroke();
+    }
+
+    private void dashedLine(float x1, float x2, float top) throws IOException {
+      content.setLineDashPattern(new float[] {8, 6}, 0);
+      line(x1, x2, top);
+      content.setLineDashPattern(new float[0], 0);
+    }
+
+    private void strokeRect(float x, float top, float width, float height) throws IOException {
+      content.setStrokingColor(0, 0, 0);
+      content.setLineWidth(1f);
+      content.addRect(x, canvasHeight - top - height, width, height);
+      content.stroke();
+    }
+
+    private void fillRect(
+        float x,
+        float top,
+        float width,
+        float height,
+        int gray
+    ) throws IOException {
+      float normalizedGray = gray / 255f;
+      content.setNonStrokingColor(normalizedGray, normalizedGray, normalizedGray);
+      content.addRect(x, canvasHeight - top - height, width, height);
+      content.fill();
+      content.setNonStrokingColor(0, 0, 0);
+    }
+
+    private void logoPlaceholder(
+        float x,
+        float top,
+        float width,
+        float height
+    ) throws IOException {
+      strokeRect(x, top, width, height);
+    }
+
+    private String clip(String value, float fontSize, float maxWidth) throws IOException {
+      String text = printable(blank(value));
+      if (textWidth(text, fontSize) <= maxWidth) {
+        return text;
       }
-      graphics.setColor(Color.BLACK);
-      for (int width : widths) {
-        graphics.drawRect(x, y, width, rowHeight);
-        x += width;
+      while (!text.isEmpty() && textWidth(text + "...", fontSize) > maxWidth) {
+        int end = text.offsetByCodePoints(text.length(), -1);
+        text = text.substring(0, end);
       }
-      setFont(fontSize, header ? Font.PLAIN : Font.PLAIN);
-      FontMetrics metrics = graphics.getFontMetrics();
-      x = left;
-      for (int index = 0; index < widths.length; index++) {
-        String text = index < cells.size() ? cells.get(index) : "";
-        int cellFontSize = (!header && index == 2) ? fittingFontSize(text, fontSize, 14, widths[index] - 12) : fontSize;
-        setFont(cellFontSize, Font.PLAIN);
-        metrics = graphics.getFontMetrics();
-        String clipped = clip(text, metrics, widths[index] - 12);
-        graphics.drawString(clipped, x + 6, y + rowHeight - 12);
-        x += widths[index];
+      return text + "...";
+    }
+
+    private List<String> wrap(String value, float fontSize, float maxWidth) throws IOException {
+      String text = printable(blank(value));
+      if (textWidth(text, fontSize) <= maxWidth) {
+        return List.of(text);
       }
-      y += rowHeight;
-    }
-
-    private void drawRow(List<String> cells, int[] widths, boolean header) {
-      int rowHeight = 56;
-      int x = MARGIN;
-      graphics.setStroke(new BasicStroke(1.25f));
-      graphics.setColor(Color.BLACK);
-      for (int width : widths) {
-        graphics.drawRect(x, y, width, rowHeight);
-        x += width;
+      List<String> lines = new ArrayList<>();
+      String remaining = text;
+      while (!remaining.isBlank()) {
+        int end = remaining.length();
+        while (end > 1 && textWidth(remaining.substring(0, end), fontSize) > maxWidth) {
+          end = remaining.offsetByCodePoints(end, -1);
+        }
+        lines.add(remaining.substring(0, end));
+        remaining = remaining.substring(end).trim();
       }
-      FontMetrics metrics = graphics.getFontMetrics();
-      x = MARGIN;
-      for (int index = 0; index < widths.length; index++) {
-        String text = index < cells.size() ? cells.get(index) : "";
-        String clipped = clip(text, metrics, widths[index] - 20);
-        graphics.drawString(clipped, x + 10, y + 36);
-        x += widths[index];
-      }
-      y += rowHeight;
-      if (header) {
-        setFont(21, Font.PLAIN);
-      }
+      return lines.isEmpty() ? List.of("-") : lines;
     }
 
-    private void line() {
-      graphics.setStroke(new BasicStroke(1.5f));
-      graphics.drawLine(MARGIN, y, canvasWidth - MARGIN, y);
+    private float textWidth(String value, float fontSize) throws IOException {
+      return font.getStringWidth(value) / 1000f * fontSize;
     }
 
-    private void dashedLine(int x1, int x2) {
-      graphics.setStroke(new BasicStroke(1.4f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL, 0, new float[] {8, 6}, 0));
-      graphics.drawLine(x1, y, x2, y);
-      graphics.setStroke(new BasicStroke(1f));
-    }
-
-    private void logoPlaceholder(int x, int y, int width, int height) {
-      graphics.setStroke(new BasicStroke(1f));
-      graphics.setColor(Color.LIGHT_GRAY);
-      graphics.drawRect(x, y, width, height);
-      graphics.setColor(Color.BLACK);
-    }
-
-    private void center(String text, int left, int width, int baseline) {
-      FontMetrics metrics = graphics.getFontMetrics();
-      graphics.drawString(text, left + (width - metrics.stringWidth(text)) / 2, baseline);
-    }
-
-    private void setFont(int size, int style) {
-      graphics.setFont(new Font(fontFamily, style, size));
+    private String printable(String value) {
+      return Normalizer.normalize(
+          value == null ? "" : value,
+          Normalizer.Form.NFC
+      ).replace('\r', ' ').replace('\n', ' ').replace('\t', ' ');
     }
 
     private String blank(String value) {
@@ -653,48 +795,10 @@ public class WarehousePdfRenderer {
     }
 
     private String formatAmount(BigDecimal value) {
-      BigDecimal safe = value == null ? BigDecimal.ZERO : value.setScale(2, RoundingMode.HALF_UP);
+      BigDecimal safe = value == null
+          ? BigDecimal.ZERO
+          : value.setScale(2, RoundingMode.HALF_UP);
       return safe.stripTrailingZeros().toPlainString();
-    }
-
-    private String clip(String value, FontMetrics metrics, int maxWidth) {
-      String text = value == null || value.isBlank() ? "-" : value;
-      if (metrics.stringWidth(text) <= maxWidth) {
-        return text;
-      }
-      while (!text.isEmpty() && metrics.stringWidth(text + "...") > maxWidth) {
-        text = text.substring(0, text.length() - 1);
-      }
-      return text + "...";
-    }
-
-    private int fittingFontSize(String value, int preferredSize, int minSize, int maxWidth) {
-      String text = value == null || value.isBlank() ? "-" : value;
-      for (int size = preferredSize; size > minSize; size--) {
-        FontMetrics metrics = graphics.getFontMetrics(new Font(fontFamily, Font.PLAIN, size));
-        if (metrics.stringWidth(text) <= maxWidth) {
-          return size;
-        }
-      }
-      return minSize;
-    }
-
-    private List<String> wrap(String text, FontMetrics metrics, int maxWidth) {
-      String value = text == null || text.isBlank() ? "-" : text;
-      if (metrics.stringWidth(value) <= maxWidth) {
-        return List.of(value);
-      }
-      List<String> lines = new ArrayList<>();
-      String remaining = value;
-      while (!remaining.isBlank()) {
-        int end = remaining.length();
-        while (end > 1 && metrics.stringWidth(remaining.substring(0, end)) > maxWidth) {
-          end--;
-        }
-        lines.add(remaining.substring(0, end));
-        remaining = remaining.substring(end).trim();
-      }
-      return lines.isEmpty() ? Arrays.asList("-") : lines;
     }
   }
 }

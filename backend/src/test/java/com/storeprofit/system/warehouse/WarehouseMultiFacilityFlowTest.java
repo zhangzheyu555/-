@@ -173,6 +173,62 @@ class WarehouseMultiFacilityFlowTest {
   }
 
   @Test
+  void regionalWarehousePartialFulfillmentReservesAndShipsOnlyAvailableStock() {
+    jdbc.update("""
+        insert into warehouse_stock_batch(
+          tenant_id, warehouse_id, item_id, batch_no, received_date, expiry_date,
+          quantity, reserved_quantity, unit_cost, note, version, created_at
+        ) values (1, ?, ?, 'SD-PARTIAL-1', '2026-07-20', '2026-08-20',
+          3.00, 0.00, 138.00, '分仓部分库存', 0, current_timestamp)
+        """, regionalWarehouseId, itemId);
+    jdbc.update("""
+        update warehouse_inventory
+        set on_hand_quantity = 3.00, reserved_quantity = 0.00, unit_cost = 138.00
+        where tenant_id = 1 and warehouse_id = ? and item_id = ?
+        """, regionalWarehouseId, itemId);
+
+    WarehouseRequisitionResponse created = warehouseService.createRequisition(
+        storeManager,
+        new WarehouseRequisitionRequest(
+            "sd-store-1",
+            List.of(new WarehouseRequisitionLineRequest(
+                itemId, new BigDecimal("5"), "分仓库存不足时部分发货")),
+            "申请5件"
+        )
+    );
+    warehouseService.review(
+        regionalManager,
+        created.id(),
+        new WarehouseRequisitionReviewRequest(
+            true,
+            List.of(),
+            "按可用库存发货",
+            WarehouseRequisitionHandlingMode.AVAILABLE_ONLY
+        )
+    );
+
+    assertThat(inventoryQuantity(regionalWarehouseId, itemId, "on_hand_quantity"))
+        .isEqualByComparingTo("3.00");
+    assertThat(inventoryQuantity(regionalWarehouseId, itemId, "reserved_quantity"))
+        .isEqualByComparingTo("3.00");
+    assertThat(batchQuantity(regionalWarehouseId, itemId, "reserved_quantity"))
+        .isEqualByComparingTo("3.00");
+
+    warehouseService.ship(regionalManager, created.id());
+
+    WarehouseRequisitionResponse partial = warehouseRepository.requisition(TENANT_ID, created.id())
+        .orElseThrow();
+    assertThat(partial.status()).isEqualTo("PARTIALLY_SHIPPED");
+    assertThat(partial.lines().getFirst().shippedQuantity()).isEqualByComparingTo("3.00");
+    assertThat(inventoryQuantity(regionalWarehouseId, itemId, "on_hand_quantity"))
+        .isZero();
+    assertThat(inventoryQuantity(regionalWarehouseId, itemId, "reserved_quantity"))
+        .isZero();
+    assertThat(batchQuantity(regionalWarehouseId, itemId, "quantity")).isZero();
+    assertThat(batchQuantity(regionalWarehouseId, itemId, "reserved_quantity")).isZero();
+  }
+
+  @Test
   void regionalWarehouseExternalPurchaseIsForbiddenEvenWithPermissionAndScope() {
     int before = jdbc.queryForObject(
         "select count(*) from warehouse_purchase_order where tenant_id = 1",

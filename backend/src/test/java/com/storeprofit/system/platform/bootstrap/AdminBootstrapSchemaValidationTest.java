@@ -88,10 +88,19 @@ class AdminBootstrapSchemaValidationTest {
             installed_rank int primary key, version varchar(50), success boolean
           )
           """);
-      for (int version = 1; version <= successfulVersions; version++) {
+      List<Integer> versions = successfulVersions == AdminBootstrapCommand.EXPECTED_FLYWAY_VERSION
+          ? AdminBootstrapCommand.EXPECTED_FLYWAY_VERSIONS.stream().sorted().toList()
+          : java.util.stream.IntStream.rangeClosed(1, successfulVersions).boxed().toList();
+      int lastVersion = versions.isEmpty() ? 0 : versions.get(versions.size() - 1);
+      for (int version : versions) {
         boolean success = !(failLast && version == successfulVersions);
+        success = success && !(failLast && version == lastVersion);
         statement.execute("insert into flyway_schema_history values ("
             + version + ", '" + version + "', " + success + ")");
+      }
+      if (!failLast) {
+        statement.execute("insert into flyway_schema_history values ("
+            + (lastVersion + 1) + ", null, true)");
       }
       statement.execute("create table tenant(id bigint, name varchar(160), status varchar(40))");
       statement.execute("""

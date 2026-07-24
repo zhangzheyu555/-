@@ -40,6 +40,17 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class WarehouseService {
   private static final DateTimeFormatter RETURN_NO_TIME = DateTimeFormatter.ofPattern("yyMMddHHmmss");
+  private static final Set<String> REQUISITION_PENDING_STATUSES = Set.of(
+      "SUBMITTED",
+      "APPROVED",
+      "BACKORDERED",
+      "WAITING_REPLENISHMENT"
+  );
+  private static final Set<String> REQUISITION_REVIEWABLE_STATUSES = Set.of(
+      "SUBMITTED",
+      "BACKORDERED",
+      "WAITING_REPLENISHMENT"
+  );
   private final WarehouseRepository warehouseRepository;
   private final AccessControlService accessControl;
   private final BusinessScopeResolver businessScopeResolver;
@@ -111,7 +122,7 @@ public class WarehouseService {
           (int) safeItems.stream().filter(item -> "LOW".equals(item.alertLevel())).count(),
           (int) safeItems.stream().filter(item -> "EXPIRING".equals(item.alertLevel())).count(),
           0,
-          (int) requisitions.stream().filter(row -> List.of("SUBMITTED", "APPROVED").contains(row.status())).count(),
+          (int) requisitions.stream().filter(row -> REQUISITION_PENDING_STATUSES.contains(row.status())).count(),
           (int) deliveries.stream().filter(row -> "SHIPPED".equals(row.status())).count(),
           0,
           amount(BigDecimal.ZERO)
@@ -856,8 +867,11 @@ public class WarehouseService {
     } else {
       topologyService.requireRequisitionProcess(user, supplyWarehouse, "审核叫货单");
     }
-    if (!"SUBMITTED".equals(requisition.status())) {
-      throw new BusinessException("BAD_STATUS", "只有待审核叫货单可以审核", HttpStatus.CONFLICT);
+    if (!REQUISITION_REVIEWABLE_STATUSES.contains(requisition.status())) {
+      throw new BusinessException("BAD_STATUS", "只有待处理或待补货叫货单可以处理", HttpStatus.CONFLICT);
+    }
+    if (request == null) {
+      throw new BusinessException("REVIEW_REQUIRED", "请选择叫货处理方式", HttpStatus.BAD_REQUEST);
     }
     Map<Long, BigDecimal> approvedMap = new HashMap<>();
     if (request.lines() != null) {
@@ -865,22 +879,129 @@ public class WarehouseService {
         approvedMap.put(line.itemId(), line.approvedQuantity());
       }
     }
+    WarehouseRequisitionHandlingMode mode = request.handlingMode() == null
+        ? WarehouseRequisitionHandlingMode.FULL
+        : request.handlingMode();
+    if (!request.approved()) {
+      rejectRequisition(user, requisition, request.note());
+      return;
+    }
+    if (List.of(
+        WarehouseRequisitionHandlingMode.MARK_BACKORDER,
+        WarehouseRequisitionHandlingMode.WAIT_REPLENISHMENT
+    ).contains(mode)) {
+      markRequisitionBackordered(user, requisition, mode, request.note());
+      return;
+    }
+
     BigDecimal total = BigDecimal.ZERO;
+    BigDecimal newlyApprovedTotal = BigDecimal.ZERO;
     for (WarehouseRequisitionLineResponse line : requisition.lines()) {
-      BigDecimal approved = request.approved()
-          ? amount(approvedMap.getOrDefault(line.itemId(), line.requestedQuantity()))
-          : BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
-      if (approved.compareTo(line.requestedQuantity()) > 0) {
+      BigDecimal shipped = amount(line.shippedQuantity());
+      BigDecimal requestedTarget = amount(approvedMap.getOrDefault(line.itemId(), line.requestedQuantity()));
+      if (requestedTarget.compareTo(line.requestedQuantity()) > 0) {
         throw new BusinessException("APPROVED_QUANTITY_TOO_LARGE", "批准数量不能超过申请数量", HttpStatus.BAD_REQUEST);
       }
-      if (request.approved() && supplyWarehouse != null && approved.signum() > 0) {
-        reserveRequisitionStock(user, supplyWarehouse, requisitionId, line, approved);
+      if (requestedTarget.compareTo(shipped) < 0) {
+        throw new BusinessException("APPROVED_QUANTITY_TOO_SMALL", "批准数量不能小于已发数量", HttpStatus.BAD_REQUEST);
       }
+      BigDecimal quantityToApprove = requestedTarget.subtract(shipped).setScale(2, RoundingMode.HALF_UP);
+      if (mode == WarehouseRequisitionHandlingMode.AVAILABLE_ONLY) {
+        quantityToApprove = supplyWarehouse == null
+            ? quantityToApprove.min(legacyAvailableStock(user.tenantId(), line.itemId()))
+            : reserveRequisitionStock(user, supplyWarehouse, requisitionId, line, quantityToApprove, true);
+      } else if (supplyWarehouse != null && quantityToApprove.signum() > 0) {
+        quantityToApprove = reserveRequisitionStock(
+            user, supplyWarehouse, requisitionId, line, quantityToApprove, false);
+      }
+      BigDecimal approved = shipped.add(quantityToApprove).setScale(2, RoundingMode.HALF_UP);
       warehouseRepository.updateApprovedQuantity(user.tenantId(), requisitionId, line.itemId(), approved);
       total = total.add(approved.multiply(line.unitPrice()));
+      newlyApprovedTotal = newlyApprovedTotal.add(quantityToApprove);
     }
-    warehouseRepository.reviewRequisition(user.tenantId(), requisitionId, request.approved(), total, user.id(), request.note());
-    warehouseRepository.logAction(user.tenantId(), user.id(), user.displayName(), request.approved() ? "审核叫货" : "驳回叫货", requisitionId, requisition.storeId(), request.note());
+    if (mode == WarehouseRequisitionHandlingMode.AVAILABLE_ONLY
+        && newlyApprovedTotal.signum() == 0) {
+      throw new BusinessException(
+          "NO_AVAILABLE_STOCK",
+          "当前没有可发库存，请标记缺货或等待补货",
+          HttpStatus.CONFLICT
+      );
+    }
+    String nextStatus = newlyApprovedTotal.signum() > 0 ? "APPROVED" : "BACKORDERED";
+    String action = newlyApprovedTotal.signum() > 0
+        ? (mode == WarehouseRequisitionHandlingMode.AVAILABLE_ONLY ? "按可用库存批准叫货" : "审核叫货")
+        : "标记叫货缺货";
+    warehouseRepository.reviewRequisition(
+        user.tenantId(), requisitionId, nextStatus, total, user.id(), request.note());
+    warehouseRepository.logAction(
+        user.tenantId(), user.id(), user.displayName(), action,
+        requisitionId, requisition.storeId(), request.note());
+  }
+
+  private void rejectRequisition(
+      AuthUser user,
+      WarehouseRequisitionResponse requisition,
+      String reason
+  ) {
+    if (reason == null || reason.isBlank()) {
+      throw new BusinessException(
+          "REJECTION_REASON_REQUIRED",
+          "驳回叫货单必须填写业务原因",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+    if (requisition.lines().stream().anyMatch(line -> amount(line.shippedQuantity()).signum() > 0)) {
+      throw new BusinessException(
+          "REQUISITION_ALREADY_PARTIALLY_SHIPPED",
+          "已部分发货的叫货单不能整单驳回",
+          HttpStatus.CONFLICT
+      );
+    }
+    for (WarehouseRequisitionLineResponse line : requisition.lines()) {
+      warehouseRepository.updateApprovedQuantity(
+          user.tenantId(), requisition.id(), line.itemId(), BigDecimal.ZERO);
+    }
+    warehouseRepository.reviewRequisition(
+        user.tenantId(), requisition.id(), "REJECTED", BigDecimal.ZERO, user.id(), reason);
+    warehouseRepository.logAction(
+        user.tenantId(), user.id(), user.displayName(), "驳回叫货",
+        requisition.id(), requisition.storeId(), reason);
+  }
+
+  private void markRequisitionBackordered(
+      AuthUser user,
+      WarehouseRequisitionResponse requisition,
+      WarehouseRequisitionHandlingMode mode,
+      String note
+  ) {
+    BigDecimal total = BigDecimal.ZERO;
+    for (WarehouseRequisitionLineResponse line : requisition.lines()) {
+      BigDecimal shipped = amount(line.shippedQuantity());
+      warehouseRepository.updateApprovedQuantity(
+          user.tenantId(), requisition.id(), line.itemId(), shipped);
+      total = total.add(shipped.multiply(line.unitPrice()));
+    }
+    String status = mode == WarehouseRequisitionHandlingMode.WAIT_REPLENISHMENT
+        ? "WAITING_REPLENISHMENT"
+        : "BACKORDERED";
+    String resolvedNote = note == null || note.isBlank()
+        ? (mode == WarehouseRequisitionHandlingMode.WAIT_REPLENISHMENT
+            ? "等待补货后继续发货"
+            : "已标记缺货，待安排补货")
+        : note.trim();
+    warehouseRepository.reviewRequisition(
+        user.tenantId(), requisition.id(), status, total, user.id(), resolvedNote);
+    warehouseRepository.logAction(
+        user.tenantId(), user.id(), user.displayName(),
+        mode == WarehouseRequisitionHandlingMode.WAIT_REPLENISHMENT ? "叫货等待补货" : "标记叫货缺货",
+        requisition.id(), requisition.storeId(), resolvedNote);
+  }
+
+  private BigDecimal legacyAvailableStock(long tenantId, long itemId) {
+    return warehouseRepository.positiveBatchesForUpdate(tenantId, itemId).stream()
+        .map(WarehouseStockBatchRow::quantity)
+        .reduce(BigDecimal.ZERO, BigDecimal::add)
+        .setScale(2, RoundingMode.HALF_UP);
   }
 
   @Transactional
@@ -899,27 +1020,52 @@ public class WarehouseService {
     if (!(supplyWarehouse == null ? List.of("SUBMITTED", "APPROVED") : List.of("APPROVED")).contains(requisition.status())) {
       throw new BusinessException("BAD_STATUS", "只有已审核的叫货单可以配货", HttpStatus.CONFLICT);
     }
+    Map<Long, BigDecimal> shipmentQuantities = new HashMap<>();
+    boolean hasBackorder = false;
     for (WarehouseRequisitionLineResponse line : requisition.lines()) {
-      BigDecimal quantity = line.approvedQuantity().compareTo(BigDecimal.ZERO) > 0
-          ? line.approvedQuantity()
-          : line.requestedQuantity();
+      BigDecimal shipped = amount(line.shippedQuantity());
+      BigDecimal approvedTarget = "SUBMITTED".equals(requisition.status())
+          ? amount(line.requestedQuantity())
+          : amount(line.approvedQuantity());
+      BigDecimal quantity = approvedTarget.subtract(shipped).setScale(2, RoundingMode.HALF_UP);
+      if (quantity.signum() <= 0) {
+        hasBackorder = hasBackorder || shipped.compareTo(line.requestedQuantity()) < 0;
+        continue;
+      }
       if (supplyWarehouse == null) {
         deductStock(user, requisition, line.itemId(), quantity);
       } else {
         shipReservedRequisitionStock(user, supplyWarehouse, requisition, line, quantity);
       }
-      warehouseRepository.updateShippedQuantity(user.tenantId(), requisitionId, line.itemId(), quantity);
+      BigDecimal cumulativeShipped = shipped.add(quantity).setScale(2, RoundingMode.HALF_UP);
+      warehouseRepository.updateShippedQuantity(
+          user.tenantId(), requisitionId, line.itemId(), cumulativeShipped);
+      shipmentQuantities.put(line.itemId(), quantity);
+      hasBackorder = hasBackorder || cumulativeShipped.compareTo(line.requestedQuantity()) < 0;
     }
-    warehouseRepository.markShipped(user.tenantId(), requisitionId, user.id());
-    createDeliveryForRequisition(user, requireRequisition(user.tenantId(), requisitionId),
-        supplyWarehouse == null ? null : supplyWarehouse.id());
-    warehouseRepository.logAction(user.tenantId(), user.id(), user.displayName(), "完成配货", requisitionId, requisition.storeId(), "仓库出库");
+    if (shipmentQuantities.isEmpty()) {
+      throw new BusinessException("NOTHING_TO_SHIP", "当前没有已批准且可发出的商品", HttpStatus.CONFLICT);
+    }
+    String shipmentStatus = hasBackorder ? "PARTIALLY_SHIPPED" : "SHIPPED";
+    warehouseRepository.markShipped(user.tenantId(), requisitionId, shipmentStatus, user.id());
+    createDeliveryForShipment(
+        user,
+        requisition,
+        supplyWarehouse == null ? null : supplyWarehouse.id(),
+        shipmentQuantities,
+        hasBackorder
+    );
+    warehouseRepository.logAction(
+        user.tenantId(), user.id(), user.displayName(),
+        hasBackorder ? "部分配货" : "完成配货",
+        requisitionId, requisition.storeId(),
+        hasBackorder ? "已按可用库存发货，剩余数量待补货" : "仓库出库");
     warehouseRepository.insertTodoAction(
         "todo-act-" + UUID.randomUUID(),
         user.tenantId(),
         "warehouse-" + requisitionId,
         "WAREHOUSE_SHIP",
-        "仓库已发货，仓库待办已完成",
+        hasBackorder ? "仓库已部分发货，剩余数量转为缺货待处理" : "仓库已发货，仓库待办已完成",
         user.id(),
         user.displayName(),
         user.role()
@@ -934,7 +1080,7 @@ public class WarehouseService {
     if ("RECEIVED".equals(requisition.status())) {
       return;
     }
-    if (!"SHIPPED".equals(requisition.status())) {
+    if (!List.of("SHIPPED", "PARTIALLY_SHIPPED").contains(requisition.status())) {
       throw new BusinessException("BAD_STATUS", "这张叫货单还没有发货，不能确认收货", HttpStatus.CONFLICT);
     }
     FacilityRow supplyWarehouse = topologyService == null ? null
@@ -967,14 +1113,21 @@ public class WarehouseService {
       );
     }
     warehouseRepository.markReceived(user.tenantId(), delivery.id(), user.id());
-    warehouseRepository.markRequisitionReceived(user.tenantId(), requisitionId, user.id(), request.note());
-    warehouseRepository.logAction(user.tenantId(), user.id(), user.displayName(), "门店确认收货", requisitionId, requisition.storeId(), request.note());
+    boolean hasBackorder = requisition.lines().stream()
+        .anyMatch(line -> amount(line.shippedQuantity()).compareTo(line.requestedQuantity()) < 0);
+    String nextStatus = hasBackorder ? "BACKORDERED" : "RECEIVED";
+    warehouseRepository.markRequisitionReceived(
+        user.tenantId(), requisitionId, nextStatus, user.id(), request.note());
+    warehouseRepository.logAction(
+        user.tenantId(), user.id(), user.displayName(),
+        hasBackorder ? "门店确认部分收货" : "门店确认收货",
+        requisitionId, requisition.storeId(), request.note());
     warehouseRepository.insertTodoAction(
         "todo-act-" + UUID.randomUUID(),
         user.tenantId(),
         "store-receipt-" + requisitionId,
         "STORE_RECEIVE",
-        "门店已确认收货，叫货流程完成",
+        hasBackorder ? "门店已确认本次收货，剩余数量待仓库补发" : "门店已确认收货，叫货流程完成",
         user.id(),
         user.displayName(),
         user.role()
@@ -1088,6 +1241,49 @@ public class WarehouseService {
         .orElseGet(() -> repairDeliveryForShippedRequisition(user, requisition, warehouseId));
   }
 
+  private WarehouseDeliveryResponse createDeliveryForShipment(
+      AuthUser user,
+      WarehouseRequisitionResponse requisition,
+      Long warehouseId,
+      Map<Long, BigDecimal> shipmentQuantities,
+      boolean partial
+  ) {
+    String deliveryId = "DO" + System.currentTimeMillis() + "-"
+        + UUID.randomUUID().toString().substring(0, 6);
+    String note = partial ? "门店叫货部分发货" : "门店叫货发货";
+    if (warehouseId == null) {
+      warehouseRepository.insertDelivery(
+          user.tenantId(), deliveryId, requisition.id(), requisition.storeId(), user.id(), note);
+    } else {
+      warehouseRepository.insertDelivery(
+          user.tenantId(), warehouseId, deliveryId, requisition.id(),
+          requisition.storeId(), user.id(), note);
+    }
+    int createdLines = 0;
+    for (WarehouseRequisitionLineResponse line : requisition.lines()) {
+      BigDecimal quantity = amount(shipmentQuantities.get(line.itemId()));
+      if (quantity.signum() <= 0) {
+        continue;
+      }
+      warehouseRepository.insertDeliveryLine(
+          user.tenantId(), deliveryId, line.id(), line.itemId(), quantity, line.unitPrice());
+      createdLines++;
+    }
+    if (createdLines == 0) {
+      throw new BusinessException(
+          "REQUISITION_LINES_MISSING",
+          "叫货单缺少本次发货明细",
+          HttpStatus.CONFLICT
+      );
+    }
+    return warehouseRepository.deliveryByRequisition(user.tenantId(), requisition.id())
+        .orElseThrow(() -> new BusinessException(
+            "DELIVERY_CREATE_FAILED",
+            "配送单创建失败，请刷新后重试",
+            HttpStatus.CONFLICT
+        ));
+  }
+
   private WarehouseDeliveryResponse repairDeliveryForShippedRequisition(AuthUser user, WarehouseRequisitionResponse requisition) {
     return repairDeliveryForShippedRequisition(user, requisition, null);
   }
@@ -1095,7 +1291,7 @@ public class WarehouseService {
   private WarehouseDeliveryResponse repairDeliveryForShippedRequisition(
       AuthUser user, WarehouseRequisitionResponse requisition, Long warehouseId
   ) {
-    if (!"SHIPPED".equals(requisition.status())) {
+    if (!List.of("SHIPPED", "PARTIALLY_SHIPPED").contains(requisition.status())) {
       throw new BusinessException("BAD_STATUS", "这张叫货单还没有发货，不能确认收货", HttpStatus.CONFLICT);
     }
     Map<Long, BigDecimal> movementQuantities = warehouseRepository.shippedQuantitiesFromMovements(user.tenantId(), requisition.id());
@@ -1132,14 +1328,22 @@ public class WarehouseService {
         .orElseThrow(() -> new BusinessException("DELIVERY_REPAIR_FAILED", "叫货单配送明细修复失败，请联系仓库管理员", HttpStatus.CONFLICT));
   }
 
-  private void reserveRequisitionStock(
+  private BigDecimal reserveRequisitionStock(
       AuthUser user,
       FacilityRow facility,
       String requisitionId,
       WarehouseRequisitionLineResponse line,
-      BigDecimal quantity
+      BigDecimal requestedQuantity,
+      boolean capToAvailable
   ) {
     InventoryRow inventory = topologyRepository.lockInventory(user.tenantId(), facility.id(), line.itemId());
+    BigDecimal quantity = amount(requestedQuantity);
+    if (capToAvailable) {
+      quantity = quantity.min(inventory.available()).setScale(2, RoundingMode.HALF_UP);
+    }
+    if (quantity.signum() <= 0) {
+      return amount(BigDecimal.ZERO);
+    }
     if (inventory.available().compareTo(quantity) < 0) {
       throw new BusinessException("INSUFFICIENT_STOCK", line.itemName() + "可用库存不足", HttpStatus.CONFLICT);
     }
@@ -1166,6 +1370,7 @@ public class WarehouseService {
     topologyRepository.insertMovement(user.tenantId(), facility.id(), line.itemId(), null, "RESERVE",
         BigDecimal.ZERO, quantity, BigDecimal.ZERO, inventory.unitCost(), "REQUISITION", requisitionId,
         null, "门店叫货审批预占", user.id());
+    return quantity;
   }
 
   private void shipReservedRequisitionStock(

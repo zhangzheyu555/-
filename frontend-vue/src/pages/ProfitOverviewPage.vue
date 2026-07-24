@@ -38,7 +38,10 @@ const brandIncomeCards = computed(() => {
     const theme = getBrandTheme(name)
     if (!groups.has(name)) groups.set(name, { name, income: 0, net: 0, stores: 0, totalStores: 0, color: theme.dark, soft: theme.soft })
   }
-  for (const entry of profit.entries) {
+  // Always aggregate from all-brand entries so the side cards show real data
+  // even when a specific brandId filter is active.
+  const sourceEntries = profit.allBrandEntries.length ? profit.allBrandEntries : profit.entries
+  for (const entry of sourceEntries) {
     const key = normalizeBrandName(entry.brandName || '未分品牌')
     if (!key || /[?�]/.test(key)) continue
     const theme = getBrandTheme(key)

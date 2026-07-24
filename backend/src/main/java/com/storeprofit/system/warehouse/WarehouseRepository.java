@@ -899,6 +899,24 @@ public class WarehouseRepository {
       Long reviewedBy,
       String note
   ) {
+    reviewRequisition(
+        tenantId,
+        requisitionId,
+        approved ? "APPROVED" : "REJECTED",
+        totalAmount,
+        reviewedBy,
+        note
+    );
+  }
+
+  public void reviewRequisition(
+      long tenantId,
+      String requisitionId,
+      String status,
+      BigDecimal totalAmount,
+      Long reviewedBy,
+      String note
+  ) {
     jdbcTemplate.update("""
         update store_requisition
         set status = ?,
@@ -909,7 +927,7 @@ public class WarehouseRepository {
             updated_at = current_timestamp
         where tenant_id = ? and id = ?
         """,
-        approved ? "APPROVED" : "REJECTED",
+        status,
         totalAmount.setScale(2, RoundingMode.HALF_UP),
         reviewedBy,
         blankToNull(note),
@@ -935,26 +953,40 @@ public class WarehouseRepository {
   }
 
   public void markShipped(long tenantId, String requisitionId, Long shippedBy) {
+    markShipped(tenantId, requisitionId, "SHIPPED", shippedBy);
+  }
+
+  public void markShipped(long tenantId, String requisitionId, String status, Long shippedBy) {
     jdbcTemplate.update("""
         update store_requisition
-        set status = 'SHIPPED',
+        set status = ?,
             shipped_by = ?,
             shipped_at = current_timestamp,
             updated_at = current_timestamp
         where tenant_id = ? and id = ?
-        """, shippedBy, tenantId, requisitionId);
+        """, status, shippedBy, tenantId, requisitionId);
   }
 
   public void markRequisitionReceived(long tenantId, String requisitionId, Long receivedBy, String note) {
+    markRequisitionReceived(tenantId, requisitionId, "RECEIVED", receivedBy, note);
+  }
+
+  public void markRequisitionReceived(
+      long tenantId,
+      String requisitionId,
+      String status,
+      Long receivedBy,
+      String note
+  ) {
     jdbcTemplate.update("""
         update store_requisition
-        set status = 'RECEIVED',
+        set status = ?,
             received_by = ?,
             received_at = current_timestamp,
             received_note = ?,
             updated_at = current_timestamp
         where tenant_id = ? and id = ?
-        """, receivedBy, blankToNull(note), tenantId, requisitionId);
+        """, status, receivedBy, blankToNull(note), tenantId, requisitionId);
   }
 
   public void updateShippedQuantity(long tenantId, String requisitionId, long itemId, BigDecimal quantity) {
@@ -1113,7 +1145,8 @@ public class WarehouseRepository {
   public int pendingRequisitionCount(long tenantId) {
     Integer count = jdbcTemplate.queryForObject("""
         select count(*) from store_requisition
-        where tenant_id = ? and status in ('SUBMITTED', 'APPROVED')
+        where tenant_id = ?
+          and status in ('SUBMITTED', 'APPROVED', 'BACKORDERED', 'WAITING_REPLENISHMENT')
         """, Integer.class, tenantId);
     return count == null ? 0 : count;
   }
@@ -1121,7 +1154,8 @@ public class WarehouseRepository {
   public int pendingRequisitionCount(long tenantId, Long warehouseId) {
     Integer count = jdbcTemplate.queryForObject("""
         select count(*) from store_requisition
-        where tenant_id = ? and status in ('SUBMITTED', 'APPROVED')
+        where tenant_id = ?
+          and status in ('SUBMITTED', 'APPROVED', 'BACKORDERED', 'WAITING_REPLENISHMENT')
           and (? is null or supply_warehouse_id = ?)
         """, Integer.class, tenantId, warehouseId, warehouseId);
     return count == null ? 0 : count;
@@ -1914,7 +1948,7 @@ public class WarehouseRepository {
 
   public Optional<WarehouseMovementPrintRow> movementPrintRow(long tenantId, long movementId) {
     return jdbcTemplate.query("""
-        select m.id as movement_id, m.item_id, m.batch_id, i.name as item_name, i.spec, i.unit,
+        select m.id as movement_id, m.item_id, m.batch_id, i.code as item_code, i.name as item_name, i.spec, i.unit,
                m.movement_type, m.quantity_delta, m.source_type, m.source_id, m.store_id,
                s.name as store_name, m.note, u.display_name as operator_name, m.created_at,
                b.batch_no, b.expiry_date, b.unit_cost
@@ -2367,6 +2401,7 @@ public class WarehouseRepository {
     return new WarehouseMovementPrintRow(
         rs.getLong("movement_id"),
         rs.getLong("item_id"),
+        rs.getString("item_code"),
         rs.getObject("batch_id", Long.class),
         rs.getString("item_name"),
         rs.getString("spec"),
@@ -2490,6 +2525,9 @@ public class WarehouseRepository {
     return switch (status) {
       case "SUBMITTED" -> "待仓库处理";
       case "APPROVED" -> "待发货";
+      case "BACKORDERED" -> "缺货待处理";
+      case "WAITING_REPLENISHMENT" -> "待补货";
+      case "PARTIALLY_SHIPPED" -> "部分发货 / 待补货";
       case "SHIPPED" -> "待门店收货";
       case "RECEIVED" -> "门店已收货";
       case "REJECTED" -> "已驳回";
@@ -2725,6 +2763,7 @@ public class WarehouseRepository {
   public record WarehouseMovementPrintRow(
       long movementId,
       long itemId,
+      String itemCode,
       Long batchId,
       String itemName,
       String spec,

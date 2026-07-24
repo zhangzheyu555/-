@@ -346,20 +346,34 @@ public class WarehousePrintService {
   }
 
   private String receiptFilename(WarehouseReceiptPrintRow row) {
-    return "入库单-" + dateCompact(row.createdAt()) + "-" + safeName(row.itemName()) + "-" + safeName(row.batchNo()) + ".pdf";
+    return "入库单-" + WarehouseDocumentNumbers.receipt(row.createdAt(), row.batchId()) + ".pdf";
   }
 
   private String deliveryFilename(WarehouseDeliveryPrintHeader header) {
-    return "出库单-" + dateCompact(header.shippedAt()) + "-" + safeName(header.storeName()) + "-" + safeName(header.requisitionId()) + ".pdf";
+    return "配送单-" + WarehouseDocumentNumbers.delivery(
+        header.shippedAt(),
+        header.deliveryId(),
+        header.requisitionId()
+    ) + ".pdf";
   }
 
   private String movementFilename(WarehouseMovementPrintRow row) {
-    String prefix = "IN".equals(row.movementType()) ? "入库单" : "库存流水单";
+    if ("IN".equals(row.movementType())) {
+      return "入库单-" + WarehouseDocumentNumbers.receipt(
+          row.createdAt(),
+          row.movementId()
+      ) + ".pdf";
+    }
+    String prefix = "库存流水单";
     return prefix + "-" + dateCompact(row.createdAt()) + "-" + safeName(row.itemName()) + "-" + safeName(row.sourceId()) + ".pdf";
   }
 
   private String returnFilename(WarehouseReturnResponse order) {
-    return "配送退货单-" + dateCompact(order.returnDate()) + "-" + safeName(order.returnNo()) + ".pdf";
+    return "配送退货单-" + WarehouseDocumentNumbers.returnOrder(
+        order.returnDate(),
+        order.returnNo(),
+        order.id()
+    ) + ".pdf";
   }
 
   private String dateCompact(String value) {

@@ -239,8 +239,46 @@ export const useWarehouseStore = defineStore('warehouse', {
             approvedQuantity: Number(line.approvedQuantity || line.requestedQuantity || 0),
           })),
           note: '仓库管理员审核通过',
+          handlingMode: 'FULL',
         })
         this.actionMessage = '叫货单已审核通过'
+      })
+    },
+    async fulfillAvailableRequisition(requisitionId: string) {
+      const requisition = this.overview?.requisitions.find((row) => row.id === requisitionId)
+      if (!requisition) throw new Error('叫货单不存在')
+      await this.runAction(requisitionId, async () => {
+        await reviewWarehouseRequisition(requisitionId, {
+          approved: true,
+          lines: requisition.lines.map((line) => ({
+            itemId: line.itemId,
+            approvedQuantity: Number(line.requestedQuantity || 0),
+          })),
+          note: '按当前可用库存发货，缺货数量转待补货',
+          handlingMode: 'AVAILABLE_ONLY',
+        })
+        await shipWarehouseRequisition(requisitionId)
+        this.actionMessage = '已按可用库存发货，缺货数量转待补货'
+      })
+    },
+    async markRequisitionBackordered(
+      requisitionId: string,
+      mode: 'MARK_BACKORDER' | 'WAIT_REPLENISHMENT',
+      note?: string,
+    ) {
+      const requisition = this.overview?.requisitions.find((row) => row.id === requisitionId)
+      if (!requisition) throw new Error('叫货单不存在')
+      await this.runAction(requisitionId, async () => {
+        await reviewWarehouseRequisition(requisitionId, {
+          approved: true,
+          lines: requisition.lines.map((line) => ({
+            itemId: line.itemId,
+            approvedQuantity: Number(line.shippedQuantity || 0),
+          })),
+          note: note || (mode === 'WAIT_REPLENISHMENT' ? '等待补货后继续发货' : '已标记缺货，待安排补货'),
+          handlingMode: mode,
+        })
+        this.actionMessage = mode === 'WAIT_REPLENISHMENT' ? '叫货单已转为待补货' : '缺货明细已记录'
       })
     },
     async rejectRequisition(requisitionId: string, note?: string) {
@@ -253,7 +291,7 @@ export const useWarehouseStore = defineStore('warehouse', {
             itemId: line.itemId,
             approvedQuantity: 0,
           })),
-          note: note || '仓库管理员驳回叫货单',
+          note,
         })
         this.actionMessage = '叫货单已驳回'
       })

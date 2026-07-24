@@ -98,7 +98,13 @@ public class RoleTodoRepository {
   }
 
   public List<WarehouseTodoRow> pendingWarehouseRequisitions(long tenantId, Long brandId, String storeId, int limit) {
-    return pendingWarehouseRequisitions(tenantId, brandId, storeId, List.of("SUBMITTED", "APPROVED"), limit);
+    return pendingWarehouseRequisitions(
+        tenantId,
+        brandId,
+        storeId,
+        List.of("SUBMITTED", "APPROVED", "BACKORDERED", "WAITING_REPLENISHMENT"),
+        limit
+    );
   }
 
   public List<WarehouseTodoRow> pendingWarehouseRequisitions(

@@ -8,6 +8,9 @@ import com.storeprofit.system.platform.auth.AuthUser;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -34,17 +37,40 @@ class WarehousePrintServiceTest {
   void receiptPdfUsesMysqlBatchDataAndWritesDownloadLog() throws Exception {
     WarehousePrintDocument document = service.receiptPdf(warehouseManager(), 1L);
 
-    assertThat(document.filename()).contains("入库单", "鲜奶", "B001").endsWith(".pdf");
+    assertThat(document.filename()).isEqualTo("入库单-RKD260708000000001.pdf");
     assertPdfBytes(document.bytes());
+    assertThat(pdfText(document.bytes()).replaceAll("\\s+", ""))
+        .contains("单据号：RKD260708000000001");
     assertThat(operationLogCount("下载入库单", "batch-1")).isEqualTo(1);
+  }
+
+  @Test
+  void inboundMovementPdfUsesCompactReceiptTemplateAndKeepsDownloadContract() throws Exception {
+    WarehousePrintDocument document = service.movementPdf(warehouseManager(), 1L);
+    String text = pdfText(document.bytes());
+
+    assertThat(document.filename()).isEqualTo("入库单-RKD260708000000001.pdf");
+    assertThat(text).contains(
+        "入库单", "单据号", "日期", "部门", "供应商名称", "金额", "备注",
+        "序号", "物品名称", "内部编号", "规格", "数量", "单位", "单价", "小计",
+        "鲜奶", "MILK", "状态：已核对"
+    );
+    assertThat(text).doesNotContain(
+        "AI Profit OS 仓库入库单", "商品明细", "说明：", "签字区",
+        "仓库经办人", "复核人"
+    );
+    assertThat(operationLogCount("下载入库单", "movement-1")).isEqualTo(1);
   }
 
   @Test
   void deliveryPdfUsesWholeRequisitionAndWritesDownloadLog() throws Exception {
     WarehousePrintDocument document = service.deliveryPdf(warehouseManager(), "REQ1");
 
-    assertThat(document.filename()).contains("出库单", "日广店", "REQ1").endsWith(".pdf");
+    assertThat(document.filename()).isEqualTo("配送单-PSD260708000000001.pdf");
     assertPdfBytes(document.bytes());
+    assertThat(pdfText(document.bytes()).replaceAll("\\s+", ""))
+        .contains("单据号：PSD260708000000001")
+        .doesNotContain("单据号：REQ1", "单据号：DO1");
     assertThat(operationLogCount("下载出库单", "REQ1")).isEqualTo(1);
   }
 
@@ -52,8 +78,10 @@ class WarehousePrintServiceTest {
   void returnPdfUsesMysqlReturnOrderAndWritesDownloadLog() throws Exception {
     WarehousePrintDocument document = service.returnPdf(warehouseManager(), "PSTH1");
 
-    assertThat(document.filename()).contains("配送退货单", "PSTH1").endsWith(".pdf");
+    assertThat(document.filename()).isEqualTo("配送退货单-PSTH260708000000001.pdf");
     assertPdfBytes(document.bytes());
+    assertThat(pdfText(document.bytes()).replaceAll("\\s+", ""))
+        .contains("单据号：PSTH260708000000001");
     assertThat(operationLogCount("下载配送退货单", "PSTH1")).isEqualTo(1);
   }
 
@@ -75,7 +103,7 @@ class WarehousePrintServiceTest {
   @Test
   void storeManagerCanOnlyDownloadOwnStoreDelivery() {
     WarehousePrintDocument ownStore = service.deliveryPdf(storeManager(), "REQ1");
-    assertThat(ownStore.filename()).contains("出库单");
+    assertThat(ownStore.filename()).contains("配送单");
 
     assertThatThrownBy(() -> service.deliveryPdf(storeManager(), "REQ-OTHER"))
         .isInstanceOf(BusinessException.class)
@@ -98,6 +126,12 @@ class WarehousePrintServiceTest {
   private void assertPdfBytes(byte[] bytes) {
     assertThat(new String(bytes, 0, 4, StandardCharsets.US_ASCII)).isEqualTo("%PDF");
     assertThat(bytes.length).isGreaterThan(10_000);
+  }
+
+  private String pdfText(byte[] bytes) throws Exception {
+    try (PDDocument document = Loader.loadPDF(bytes)) {
+      return new PDFTextStripper().getText(document);
+    }
   }
 
   private int operationLogCount(String action, String targetId) {

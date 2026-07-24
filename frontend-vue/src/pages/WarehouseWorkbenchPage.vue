@@ -18,6 +18,7 @@ import WarehouseTransferPanel from '../components/warehouse/WarehouseTransferPan
 import { useWarehouseStore, type WarehouseTab } from '../stores/warehouse'
 import { useAuthStore } from '../stores/auth'
 import { PERMISSIONS } from '../permissions/permissions'
+import { getStores, type StoreInfo } from '../api/operations'
 import type {
   WarehouseInfo,
   WarehouseItem,
@@ -30,6 +31,9 @@ import type {
 type WarehouseConfirmation =
   | { kind: 'reject-requisition'; id: string }
   | { kind: 'ship-requisition'; id: string }
+  | { kind: 'fulfill-available-requisition'; id: string }
+  | { kind: 'mark-backorder-requisition'; id: string }
+  | { kind: 'wait-replenishment-requisition'; id: string }
   | { kind: 'reject-return'; id: string }
   | { kind: 'receive-return'; id: string }
   | { kind: 'approve-transfer'; id: string }
@@ -53,12 +57,16 @@ const editorItem = ref<WarehouseItem | null>(null)
 const pendingConfirmation = ref<WarehouseConfirmation | null>(null)
 const confirmationNote = ref('')
 const confirmationBusy = ref(false)
+const requisitionStores = ref<StoreInfo[]>([])
+const requisitionStoresAttempted = ref(false)
 
 const overview = computed(() => warehouse.overview)
 const items = computed(() => overview.value?.items || [])
 const activeItems = computed(() => items.value.filter((item) => item.active !== false))
 const requisitions = computed(() => overview.value?.requisitions || [])
-const pendingRequisitions = computed(() => requisitions.value.filter((row) => ['SUBMITTED', 'APPROVED'].includes(row.status)))
+const pendingRequisitions = computed(() => requisitions.value.filter((row) => (
+  ['SUBMITTED', 'APPROVED', 'BACKORDERED', 'WAITING_REPLENISHMENT'].includes(row.status)
+)))
 const stockBatches = computed(() => overview.value?.stockBatches || [])
 const suppliers = computed(() => overview.value?.suppliers || [])
 const purchaseOrders = computed(() => overview.value?.purchaseOrders || [])
@@ -112,7 +120,7 @@ const confirmationCopy = computed(() => {
     case 'reject-requisition':
       return {
         title: '驳回叫货单',
-        message: '请输入驳回原因。',
+        message: '驳回仅用于重复申请、门店误填或申请不合理，请填写具体业务原因。',
         confirmLabel: '确认驳回',
         confirmVariant: 'danger' as const,
         noteLabel: '驳回原因',
@@ -124,6 +132,30 @@ const confirmationCopy = computed(() => {
         confirmLabel: '确认发货',
         confirmVariant: 'primary' as const,
         noteLabel: '',
+      }
+    case 'fulfill-available-requisition':
+      return {
+        title: '按可用库存发货',
+        message: '系统将重新校验并预占当前可用库存，只扣减实际发出数量，未发数量转为缺货待处理。',
+        confirmLabel: '确认部分发货',
+        confirmVariant: 'primary' as const,
+        noteLabel: '',
+      }
+    case 'mark-backorder-requisition':
+      return {
+        title: '标记缺货',
+        message: '本次不生成出库单，未发数量保留为缺货明细。',
+        confirmLabel: '确认标记缺货',
+        confirmVariant: 'primary' as const,
+        noteLabel: '缺货说明（选填）',
+      }
+    case 'wait-replenishment-requisition':
+      return {
+        title: '等待补货后再发',
+        message: '叫货单将保持待补货状态，库存补充后可继续按可用数量发货。',
+        confirmLabel: '转为待补货',
+        confirmVariant: 'primary' as const,
+        noteLabel: '补发说明（选填）',
       }
     case 'reject-return':
       return {
@@ -191,9 +223,15 @@ const confirmationCopy = computed(() => {
       }
   }
 })
+const confirmationNoteRequired = computed(() => pendingConfirmation.value?.kind === 'reject-requisition')
 
 const transferRoute = computed<RouteLocationRaw>(() => ({
   path: '/warehouse/transfers',
+  query: warehouse.selectedWarehouseId ? { warehouseId: String(warehouse.selectedWarehouseId) } : undefined,
+}))
+
+const requisitionRoute = computed<RouteLocationRaw>(() => ({
+  path: '/warehouse/requests',
   query: warehouse.selectedWarehouseId ? { warehouseId: String(warehouse.selectedWarehouseId) } : undefined,
 }))
 
@@ -266,7 +304,7 @@ const priorityItems = computed(() => {
       title: '门店叫货单',
       detail: '请处理门店提交的叫货需求。',
       count: pendingRequisitions.value.length,
-      to: { path: '/warehouse/requests' },
+      to: requisitionRoute.value,
     })
   }
   return rows
@@ -278,7 +316,7 @@ const tabs = computed<Array<{ key: string; label: string; badge?: number; to: Ro
   if (hasTransferRoute.value) {
     rows.push({ key: 'transfers', label: '调拨', badge: pendingTransfers.value, to: transferRoute.value })
   }
-  rows.push({ key: 'requisitions', label: '门店叫货', badge: pendingRequisitions.value.length, to: '/warehouse/requests' })
+  rows.push({ key: 'requisitions', label: '门店叫货', badge: pendingRequisitions.value.length, to: requisitionRoute.value })
   if (canPurchase.value && selectedWarehouse.value?.type === 'CENTRAL') {
     rows.push({ key: 'purchase', label: '外部采购', to: '/warehouse/purchase' })
   }
@@ -310,7 +348,7 @@ function routeTab() {
     ? metaTab
     : (Array.isArray(route.query.tab) ? route.query.tab[0] : route.query.tab)
   if (raw === 'alerts') return 'inventory'
-  if (raw === 'receipts' || raw === 'prints') return 'purchase'
+  if (raw === 'receipts' || raw === 'prints') return 'movements'
   return raw
 }
 
@@ -318,9 +356,26 @@ function currentTab() {
   return warehouse.activeTab
 }
 
+async function ensureRequisitionStoresLoaded() {
+  if (requisitionStoresAttempted.value) return
+  requisitionStoresAttempted.value = true
+  try {
+    requisitionStores.value = await getStores()
+  } catch {
+    // 兼容没有门店档案读取权限的旧仓管账号；面板仍会从可见叫货单生成安全的门店选项。
+    requisitionStores.value = []
+  }
+}
+
 async function setTab(tab: WarehouseTab) {
   try {
-    await router.push(tab === 'transfers' ? transferRoute.value : (tab === 'warehouse' || tab === 'inventory' ? warehouseHomeRoute.value : tabRoutes[tab]))
+    await router.push(
+      tab === 'transfers'
+        ? transferRoute.value
+        : tab === 'requisitions'
+          ? requisitionRoute.value
+          : (tab === 'warehouse' || tab === 'inventory' ? warehouseHomeRoute.value : tabRoutes[tab]),
+    )
   } catch {
     // 当前路由已是目标页时无需提示。
   }
@@ -339,14 +394,21 @@ async function selectWarehouse(event: Event) {
   const warehouseId = (event.target as HTMLSelectElement).value
   const target = accessibleWarehouses.value.find((row) => String(row.id) === warehouseId)
   if (!target) return
-  if (route.name === 'warehouse-transfers') {
+  const queryRoutePath = currentWarehouseQueryRoutePath()
+  if (queryRoutePath) {
     await router.replace({
-      path: '/warehouse/transfers',
+      path: queryRoutePath,
       query: { ...route.query, warehouseId: String(target.id) },
     })
     return
   }
   await openWarehouse(target)
+}
+
+function currentWarehouseQueryRoutePath() {
+  if (route.name === 'warehouse-transfers') return '/warehouse/transfers'
+  if (route.name === 'warehouse-requests') return '/warehouse/requests'
+  return ''
 }
 
 async function syncWarehouseFromRoute() {
@@ -357,10 +419,11 @@ async function syncWarehouseFromRoute() {
     ? route.query.warehouseId[0]
     : route.query.warehouseId
   const isTransferRoute = route.name === 'warehouse-transfers'
-  const warehouseCode = isTransferRoute ? '' : String(route.meta.warehouseCode || '')
+  const queryRoutePath = currentWarehouseQueryRoutePath()
+  const warehouseCode = queryRoutePath ? '' : String(route.meta.warehouseCode || '')
   const target = routeWarehouseParam
     ? accessibleWarehouses.value.find((row) => String(row.id) === String(routeWarehouseParam))
-    : isTransferRoute && routeWarehouseId
+    : queryRoutePath && routeWarehouseId
     ? accessibleWarehouses.value.find((row) => String(row.id) === String(routeWarehouseId))
     : accessibleWarehouses.value.find((row) => row.code === warehouseCode)
   if (target && String(target.id) !== String(warehouse.selectedWarehouseId)) {
@@ -370,18 +433,19 @@ async function syncWarehouseFromRoute() {
       // 无权访问时由后端和路由守卫保持当前范围。
     }
   }
-  if (!isTransferRoute || !warehouse.selectedWarehouseId) return
+  if (!queryRoutePath || !warehouse.selectedWarehouseId) return
   const selected = accessibleWarehouses.value.find((row) => (
     String(row.id) === String(warehouse.selectedWarehouseId)
   ))
   if (!selected) return
   if (String(routeWarehouseId || '') !== String(selected.id)) {
     await router.replace({
-      path: '/warehouse/transfers',
+      path: queryRoutePath,
       query: { ...route.query, warehouseId: String(selected.id) },
     })
     return
   }
+  if (!isTransferRoute) return
   try {
     await Promise.all([
       warehouse.loadTransfers(selected.id),
@@ -476,7 +540,7 @@ async function approveRequisition(id: string) {
 
 function rejectRequisition(id: string) {
   if (confirmationBusy.value) return
-  confirmationNote.value = '库存不足或叫货信息需要重新确认'
+  confirmationNote.value = ''
   pendingConfirmation.value = { kind: 'reject-requisition', id }
 }
 
@@ -484,6 +548,24 @@ function shipRequisition(id: string) {
   if (confirmationBusy.value) return
   confirmationNote.value = ''
   pendingConfirmation.value = { kind: 'ship-requisition', id }
+}
+
+function fulfillAvailableRequisition(id: string) {
+  if (confirmationBusy.value) return
+  confirmationNote.value = ''
+  pendingConfirmation.value = { kind: 'fulfill-available-requisition', id }
+}
+
+function markBackorderRequisition(id: string) {
+  if (confirmationBusy.value) return
+  confirmationNote.value = '已标记缺货，待安排补货'
+  pendingConfirmation.value = { kind: 'mark-backorder-requisition', id }
+}
+
+function waitReplenishmentRequisition(id: string) {
+  if (confirmationBusy.value) return
+  confirmationNote.value = '等待补货后继续发货'
+  pendingConfirmation.value = { kind: 'wait-replenishment-requisition', id }
 }
 
 async function createPurchaseOrder(payload: Omit<WarehousePurchaseOrderCreatePayload, 'warehouseId'>) {
@@ -556,6 +638,15 @@ async function confirmWarehouseAction() {
       case 'ship-requisition':
         await warehouse.shipRequisition(action.id)
         break
+      case 'fulfill-available-requisition':
+        await warehouse.fulfillAvailableRequisition(action.id)
+        break
+      case 'mark-backorder-requisition':
+        await warehouse.markRequisitionBackordered(action.id, 'MARK_BACKORDER', confirmationNote.value)
+        break
+      case 'wait-replenishment-requisition':
+        await warehouse.markRequisitionBackordered(action.id, 'WAIT_REPLENISHMENT', confirmationNote.value)
+        break
       case 'reject-return':
         await warehouse.reviewReturn(action.id, false, confirmationNote.value)
         break
@@ -600,15 +691,16 @@ async function downloadReceipt(batchId: number, itemName: string, batchNo: strin
 
 async function downloadDelivery(requisitionId: string) {
   try {
-    await warehouse.downloadPdf('delivery', `/api/warehouse/print/requisitions/${encodeURIComponent(requisitionId)}/delivery`, `出库单-${requisitionId}.pdf`)
+    await warehouse.downloadPdf('delivery', `/api/warehouse/print/requisitions/${encodeURIComponent(requisitionId)}/delivery`, `配送单-${requisitionId}.pdf`)
   } catch {
     // store 已保留业务错误提示。
   }
 }
 
-async function downloadMovement(movementId: number, itemName: string) {
+async function downloadMovement(movementId: number, itemName: string, movementType = '') {
   try {
-    await warehouse.downloadPdf('movement', `/api/warehouse/print/movements/${movementId}`, `库存流水单-${itemName}-${movementId}.pdf`)
+    const prefix = movementType === 'IN' ? '入库单' : '库存流水单'
+    await warehouse.downloadPdf('movement', `/api/warehouse/print/movements/${movementId}`, `${prefix}-${itemName}-${movementId}.pdf`)
   } catch {
     // store 已保留业务错误提示。
   }
@@ -624,7 +716,11 @@ async function downloadReturn(returnId: string, returnNo: string) {
 
 watch(
   () => route.fullPath,
-  () => warehouse.setTab(routeTab()),
+  () => {
+    const tab = routeTab()
+    warehouse.setTab(tab)
+    if (tab === 'requisitions') void ensureRequisitionStoresLoaded()
+  },
   { immediate: true },
 )
 watch(
@@ -800,10 +896,15 @@ watch(
     <WarehouseRequisitionPanel
       v-else-if="currentTab() === 'requisitions'"
       :requisitions="requisitions"
+      :items="items"
+      :stores="requisitionStores"
       :actioning-id="warehouse.actioningId"
       :downloading-id="warehouse.downloadingId"
       :can-manage="canProcessRequisition"
       @approve="approveRequisition"
+      @fulfill-available="fulfillAvailableRequisition"
+      @mark-backorder="markBackorderRequisition"
+      @wait-replenishment="waitReplenishmentRequisition"
       @reject="rejectRequisition"
       @ship="shipRequisition"
       @download-delivery="downloadDelivery"
@@ -885,18 +986,6 @@ watch(
       @save="saveAlert"
     />
 
-    <WarehousePurchaseReceivePanel
-      v-else-if="currentTab() === 'receipts' || currentTab() === 'prints'"
-      :items="activeItems"
-      :batches="stockBatches"
-      :actioning-id="warehouse.actioningId"
-      :downloading-id="warehouse.downloadingId"
-      :can-manage="false"
-      :warehouse-name="centralWarehouse?.name || '荆州总仓'"
-      mode="records"
-      @download-receipt="downloadReceipt"
-    />
-
     <WarehouseMaterialEditor
       v-if="editorOpen"
       :item="editorItem"
@@ -914,6 +1003,7 @@ watch(
       :confirm-label="confirmationCopy.confirmLabel"
       :confirm-variant="confirmationCopy.confirmVariant"
       :note-label="confirmationCopy.noteLabel"
+      :note-required="confirmationNoteRequired"
       :busy="confirmationBusy"
       @cancel="cancelWarehouseConfirmation"
       @confirm="confirmWarehouseAction"

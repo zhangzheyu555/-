@@ -153,6 +153,12 @@ export interface WarehouseRequisition {
   lines: WarehouseRequisitionLine[]
 }
 
+export type WarehouseRequisitionHandlingMode =
+  | 'FULL'
+  | 'AVAILABLE_ONLY'
+  | 'MARK_BACKORDER'
+  | 'WAIT_REPLENISHMENT'
+
 export interface WarehouseOverview {
   warehouse?: WarehouseInfo
   summary: WarehouseSummary
@@ -579,7 +585,12 @@ export function receiveWarehouseRequisition(requisitionId: string, note?: string
 
 export function reviewWarehouseRequisition(
   requisitionId: string,
-  payload: { approved: boolean; lines: Array<{ itemId: number; approvedQuantity: number }>; note?: string },
+  payload: {
+    approved: boolean
+    lines: Array<{ itemId: number; approvedQuantity: number }>
+    note?: string
+    handlingMode?: WarehouseRequisitionHandlingMode
+  },
 ) {
   return apiPost<void, typeof payload>(`/api/warehouse/requisitions/${encodeURIComponent(requisitionId)}/review`, payload)
 }

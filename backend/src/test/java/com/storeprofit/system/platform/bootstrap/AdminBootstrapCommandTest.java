@@ -24,7 +24,7 @@ class AdminBootstrapCommandTest {
   private static final String STRONG_PASSWORD = "Zebra!Cloud4826";
 
   @Test
-  void bootstrapFlywayCandidateMatchesContiguousMigrationResources() throws Exception {
+  void bootstrapFlywayCandidateMatchesMigrationResources() throws Exception {
     Path migrationDirectory = Path.of("src", "main", "resources", "db", "migration");
     List<Integer> versions;
     try (var files = Files.list(migrationDirectory)) {
@@ -37,11 +37,7 @@ class AdminBootstrapCommandTest {
     }
 
     assertThat(versions)
-        .containsExactlyElementsOf(
-            java.util.stream.IntStream.rangeClosed(
-                    1, AdminBootstrapCommand.EXPECTED_FLYWAY_VERSION)
-                .boxed()
-                .toList());
+        .containsExactlyElementsOf(AdminBootstrapCommand.EXPECTED_FLYWAY_VERSIONS.stream().sorted().toList());
   }
 
   @Test

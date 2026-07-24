@@ -31,7 +31,7 @@ const emit = defineEmits<{
   createItem: []
   editItem: [item: WarehouseItem]
   setItemEnabled: [item: WarehouseItem, enabled: boolean]
-  downloadMovement: [movementId: number, itemName: string]
+  downloadMovement: [movementId: number, itemName: string, movementType: string]
 }>()
 
 const searchText = ref('')
@@ -86,6 +86,10 @@ function batchesFor(itemId: number) {
 
 function latestMovement(itemId: number) {
   return props.movements.find((row) => row.itemId === itemId)
+}
+
+function documentLabel(row: WarehouseStockMovement | undefined) {
+  return row?.movementType === 'IN' ? '下载入库单' : '下载流水单'
 }
 
 function qty(value: number | undefined, unit?: string) {
@@ -203,9 +207,14 @@ function statusTone(status?: string) {
                     </button>
                     <WarehousePrintButtons
                       v-if="latestMovement(item.id)"
-                      label="下载流水单"
+                      :label="documentLabel(latestMovement(item.id))"
                       :disabled="downloadingId.includes(`/movements/${latestMovement(item.id)?.id}`)"
-                      @download="emit('downloadMovement', Number(latestMovement(item.id)?.id), item.name)"
+                      @download="emit(
+                        'downloadMovement',
+                        Number(latestMovement(item.id)?.id),
+                        item.name,
+                        String(latestMovement(item.id)?.movementType || ''),
+                      )"
                     />
                   </div>
                 </td>

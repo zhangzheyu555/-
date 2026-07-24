@@ -58,7 +58,9 @@ const activeItems = computed(() => (overview.value?.items || []).filter((item) =
 const supplyWarehouse = computed(() => warehouse.warehouses[0] || overview.value?.warehouse || null)
 const supplyWarehouseName = computed(() => supplyWarehouse.value?.name || '供货仓待配置')
 const requisitions = computed(() => overview.value?.requisitions || [])
-const shippedRequisitions = computed(() => requisitions.value.filter((row) => row.status === 'SHIPPED'))
+const shippedRequisitions = computed(() => requisitions.value.filter((row) => (
+  ['SHIPPED', 'PARTIALLY_SHIPPED'].includes(row.status)
+)))
 const filteredItems = computed(() => activeItems.value.filter(matchesSelectedCategory))
 const selectedCategoryLabel = computed(() => categoryLabel(warehouse.selectedCategory))
 
@@ -78,7 +80,7 @@ function warehouseForCurrentRoute() {
   if (warehouseCode) {
     return rows.find((row) => row.code === warehouseCode) || null
   }
-  if (route.name === 'warehouse-transfers') {
+  if (route.name === 'warehouse-transfers' || route.name === 'warehouse-requests') {
     const warehouseId = Array.isArray(route.query.warehouseId)
       ? route.query.warehouseId[0]
       : route.query.warehouseId
