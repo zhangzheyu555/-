@@ -76,7 +76,7 @@ class TrainingVideoCategoryEncodingMigrationTest {
     Flyway.configure()
         .dataSource(dataSource)
         .locations("classpath:db/migration-h2")
-        .target("96")
+        .target("102")
         .load()
         .migrate();
 
