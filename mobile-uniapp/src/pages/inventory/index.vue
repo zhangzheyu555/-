@@ -5,6 +5,7 @@ import { getMobileWarehouseOverview } from '../../api/business'
 import SafeActionBar from '../../components/SafeActionBar.vue'
 import { canUseMobileCapability, useSessionStore } from '../../stores'
 import { MOBILE_PERMISSIONS, type WarehouseOverview } from '../../types/business'
+import { isBoss } from '@/permissions'
 
 const session = useSessionStore()
 const overview = ref<WarehouseOverview | null>(null)
@@ -52,7 +53,7 @@ function openMovements() {
 }
 
 function openBusiness() {
-  if (session.user?.role !== 'STORE_MANAGER' || !session.hasPermission('finance.profit.read')) return
+  if (!isBoss(session.user) && (session.user?.role !== 'STORE_MANAGER' || !session.hasPermission('finance.profit.read'))) return
   uni.navigateTo({ url: '/pkg-store/business/index' })
 }
 
@@ -106,7 +107,7 @@ function riskLabel(level:string){return({OUT:'缺货',LOW:'低库存',EXPIRING:'
           <text class="metric-label">待确认收货</text>
         </view>
       </view>
-      <view class="quick-links"><button v-if="session.user?.role==='STORE_MANAGER'&&session.hasPermission('finance.profit.read')" @click="openBusiness">本店经营详情</button><button @click="openMovements">查看库存流水</button></view>
+      <view class="quick-links"><button v-if="(isBoss(session.user)||session.user?.role==='STORE_MANAGER')&&session.hasPermission('finance.profit.read')" @click="openBusiness">本店经营详情</button><button @click="openMovements">查看库存流水</button></view>
 
       <view v-if="errorMessage" class="message error">{{ errorMessage }}</view>
       <view v-if="loading && !overview" class="state-card"><text>正在读取真实库存…</text></view>

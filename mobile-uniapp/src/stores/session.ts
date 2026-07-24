@@ -3,12 +3,9 @@ import { currentSession, login as loginApi, logout as logoutApi, weChatLogin } f
 import { ApiError } from '@/api/client'
 import { clearSessionToken, readSessionToken, writeSessionToken } from '@/platform/session'
 import type { LoginRequest, LoginResponse, SessionDataScope, SessionUser } from '@/types/auth'
+import { dataScope, hasAnyPermission, hasPermission } from '@/permissions'
 
 const NONE_SCOPE: SessionDataScope = { mode: 'NONE', storeIds: [], warehouseIds: [] }
-
-function normalizeCode(value: string): string {
-  return value.trim().toLowerCase()
-}
 
 export const useSessionStore = defineStore('mobile-session', {
   state: () => ({
@@ -21,15 +18,12 @@ export const useSessionStore = defineStore('mobile-session', {
   }),
   getters: {
     isAuthenticated: (state) => Boolean(state.token && state.user),
-    hasPermission: (state) => (permission: string) => {
-      const expected = normalizeCode(permission)
-      return Boolean(expected && state.user?.permissions.some((item) => normalizeCode(item) === expected))
-    },
+    hasPermission: (state) => (permission: string) => hasPermission(state.user, permission),
     hasAnyPermission(): (permissions: string[]) => boolean {
-      return (permissions) => permissions.some((permission) => this.hasPermission(permission))
+      return (permissions) => hasAnyPermission(this.user, permissions)
     },
     dataScope: (state) => (domain: string): SessionDataScope => (
-      state.user?.dataScopes[domain.trim().toUpperCase()] || NONE_SCOPE
+      dataScope(state.user, domain) || NONE_SCOPE
     ),
     scopeLabel(): string {
       const scope = this.dataScope('STORE')

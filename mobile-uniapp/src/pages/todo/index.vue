@@ -2,11 +2,11 @@
 import { computed, ref } from 'vue'
 import { onPullDownRefresh, onShow } from '@dcloudio/uni-app'
 import StatusChip from '@/components/StatusChip.vue'
-import { closeMobileBossTodo, escalateMobileRoleTodo, getMobileRoleTodos, resolveMobileRoleTodo } from '@/api/business'
+import { closeMobileBossTodo, escalateMobileRoleTodo, getMobileBossTodoDashboard, getMobileRequisitions, getMobileRoleTodos, resolveMobileRoleTodo } from '@/api/business'
 import { useSessionStore } from '@/stores'
 import type { RoleTodoItem } from '@/types/business'
 import { canPerformMobileAction } from '@/permissions'
-import { chooseMedia } from '@/platform'
+import { chooseImages } from '@/platform'
 import { createEdgeSwipeToHomeHandlers } from '@/platform/edgeSwipeHome'
 import { todoAttachmentsFromMedia } from '@/utils/todoAttachment'
 import { todoStage, todoStatusLabel, todoStatusTone } from '@/utils/todoStatus'
@@ -18,21 +18,29 @@ const loading = ref(false)
 const error = ref('')
 const activeStatus = ref('')
 const actingId = ref('')
+const isBoss = computed(() => session.user?.role === 'BOSS')
 const canResolve = computed(() => canPerformMobileAction(session.user, 'todo.resolve'))
 const canEscalate = computed(() => canPerformMobileAction(session.user, 'todo.escalate'))
 const canClose = computed(() => canPerformMobileAction(session.user, 'todo.close'))
-const statusTabs = [
-  { value: '', label: '全部' },
-  { value: 'PENDING', label: '待处理' },
-  { value: 'IN_PROGRESS', label: '处理中' },
-  { value: 'PENDING_REVIEW', label: '待复核' },
-  { value: 'COMPLETED', label: '已完成' },
-]
+const statusTabs = computed(() => isBoss.value
+  ? [
+      { value: '', label: '全部' },
+      { value: 'PENDING', label: '待处理' },
+      { value: 'IN_PROGRESS', label: '处理中' },
+    ]
+  : [
+      { value: '', label: '全部' },
+      { value: 'PENDING', label: '待处理' },
+      { value: 'IN_PROGRESS', label: '处理中' },
+      { value: 'PENDING_REVIEW', label: '待复核' },
+      { value: 'COMPLETED', label: '已完成' },
+    ])
 const filteredTodos = computed(() => activeStatus.value
   ? todos.value.filter((todo) => todoStage(todo) === activeStatus.value)
   : todos.value)
 const pendingCount = computed(() => todos.value.filter((todo) => !['COMPLETED', 'REJECTED'].includes(todoStage(todo))).length)
 const completedCount = computed(() => todos.value.filter((todo) => todoStage(todo) === 'COMPLETED').length)
+const bossHighPriorityCount = computed(() => todos.value.filter((todo) => Number(todo.priority || 0) >= 3).length)
 
 onShow(() => { void refresh() })
 onPullDownRefresh(async () => { await refresh(); uni.stopPullDownRefresh() })
@@ -41,13 +49,55 @@ async function refresh() {
   if (loading.value) return
   if (!session.user && !await session.restore()) { uni.reLaunch({ url: '/pages/login/index' }); return }
   loading.value = true; error.value = ''
-  try { todos.value = (await getMobileRoleTodos(session.user?.role || '', true)).items || [] }
+  try {
+    const role = String(session.user?.role || '').toUpperCase()
+    if (role === 'BOSS') {
+      const dashboard = await getMobileBossTodoDashboard()
+      todos.value = dashboard.needsBossAction || []
+      return
+    }
+    const response = await getMobileRoleTodos(role, true)
+    const roleTodos = response.items || []
+    if (role !== 'WAREHOUSE') {
+      todos.value = roleTodos
+    } else {
+      const requisitions = await getMobileRequisitions()
+      const existingRecords = new Set(roleTodos.map(item => String(item.sourceRecordId || '')))
+      const requisitionTodos: RoleTodoItem[] = requisitions
+        .filter(record => ['SUBMITTED', 'APPROVED'].includes(record.status) && !existingRecords.has(record.id))
+        .map(record => ({
+          id: `warehouse-requisition-${record.id}`,
+          title: record.status === 'SUBMITTED' ? `审核门店叫货：${record.storeName}` : `确认叫货发货：${record.storeName}`,
+          summary: `${record.lines.length} 种物料${record.note ? ` · ${record.note}` : ''}`,
+          status: record.status === 'SUBMITTED' ? 'PENDING' : 'IN_PROGRESS',
+          processStatus: record.status === 'SUBMITTED' ? '待仓库审核' : '待仓库发货',
+          priority: record.status === 'SUBMITTED' ? 80 : 85,
+          storeId: record.storeId,
+          storeName: record.storeName,
+          sourceModule: '仓库叫货',
+          sourceRecordId: record.id,
+          occurredAt: record.submittedAt,
+          updatedAt: record.reviewedAt || record.submittedAt,
+          action: { target: 'warehouse', label: record.status === 'SUBMITTED' ? '进入审核' : '进入发货', params: { id: record.id } },
+        }))
+      todos.value = [...requisitionTodos, ...roleTodos]
+    }
+  }
   catch (cause) { error.value = Number((cause as { status?: number })?.status) === 403 ? '当前账号暂无待办查看权限。' : '待办暂时无法加载，请检查网络后重试。' }
   finally { loading.value = false }
 }
 
 function open(todo: RoleTodoItem) {
+  if (isWarehouseRequisition(todo)) {
+    uni.navigateTo({ url: `/pkg-store/requisition-detail/index?id=${encodeURIComponent(String(todo.sourceRecordId || ''))}` })
+    return
+  }
   uni.navigateTo({ url: `/pages/todo-detail/index?id=${encodeURIComponent(todo.id)}` })
+}
+
+function isWarehouseRequisition(todo: RoleTodoItem) {
+  const source = String(todo.sourceModule || '')
+  return todo.id.startsWith('warehouse-requisition-') || source.includes('叫货') || source.includes('仓库叫货')
 }
 
 async function transition(todo: RoleTodoItem, action: 'resolve' | 'escalate' | 'close') {
@@ -61,7 +111,7 @@ async function transition(todo: RoleTodoItem, action: 'resolve' | 'escalate' | '
     if (action === 'escalate') await escalateMobileRoleTodo(session.user?.role || '', todo.id, note)
     else if (action === 'close') await closeMobileBossTodo(todo.id, note)
     else {
-      const files = await chooseMedia({ count: 3, source: 'both', kinds: ['image'] })
+      const files = await chooseImages({ count: 3, source: 'both' })
       const attachments = files.length ? await todoAttachmentsFromMedia(files) : []
       await resolveMobileRoleTodo(session.user?.role || '', todo.id, note, attachments)
     }
@@ -79,8 +129,8 @@ function askNote(title: string) {
 <template>
   <view class="mobile-page todo-page" @touchstart="onTouchStart" @touchend="onTouchEnd">
     <view class="todo-topbar"><text>待办中心</text><button class="refresh-button" :loading="loading" :disabled="loading" @click="refresh">刷新</button></view>
-    <view class="todo-heading"><view><text class="todo-heading__eyebrow">我的任务</text><text class="todo-heading__title">今日待办</text><text class="todo-heading__description">按优先级处理，复杂事项将跳转至对应业务中心</text></view></view>
-    <view class="todo-summary"><view class="todo-summary__item todo-summary__item--main"><text>待处理</text><text>{{ pendingCount }}<text> 项</text></text></view><view class="todo-summary__item"><text>全部待办</text><text>{{ todos.length }}<text> 项</text></text></view><view class="todo-summary__item"><text>已完成</text><text>{{ completedCount }}<text> 项</text></text></view></view>
+    <view class="todo-heading"><view><text class="todo-heading__eyebrow">我的任务</text><text class="todo-heading__title">今日待办</text><text class="todo-heading__description">{{ isBoss ? '只显示必须由老板确认、拍板或关闭的事项' : '按优先级处理，复杂事项将跳转至对应业务中心' }}</text></view></view>
+    <view class="todo-summary"><view class="todo-summary__item todo-summary__item--main"><text>{{ isBoss ? '需我处理' : '待处理' }}</text><text>{{ pendingCount }}<text> 项</text></text></view><view class="todo-summary__item"><text>{{ isBoss ? '老板待办' : '全部待办' }}</text><text>{{ todos.length }}<text> 项</text></text></view><view class="todo-summary__item"><text>{{ isBoss ? '高优先级' : '已完成' }}</text><text>{{ isBoss ? bossHighPriorityCount : completedCount }}<text> 项</text></text></view></view>
     <scroll-view scroll-x class="status-scroll" :show-scrollbar="false">
       <view class="status-tabs">
         <button v-for="tab in statusTabs" :key="tab.value" class="status-tab" :class="{ active: activeStatus === tab.value }" @click="activeStatus = tab.value">{{ tab.label }}</button>
@@ -94,7 +144,7 @@ function askNote(title: string) {
         <view class="todo-top"><text class="todo-title">{{ todo.title }}</text><StatusChip :label="todoStatusLabel(todo)" :tone="todoStatusTone(todo)" /></view>
         <text class="todo-copy">{{ todo.summary || '请进入对应应用处理' }}</text>
         <view class="todo-foot"><text class="todo-meta">{{ todo.storeName || todo.storeId || '权限范围内事项' }}</text><text v-if="todo.dueAt" class="todo-meta">{{ todo.dueAt }}</text></view>
-        <view v-if="(canResolve || canEscalate || canClose) && !['COMPLETED','REJECTED'].includes(todoStage(todo))" class="todo-actions" @click.stop>
+        <view v-if="!isWarehouseRequisition(todo) && (canResolve || canEscalate || canClose) && !['COMPLETED','REJECTED'].includes(todoStage(todo))" class="todo-actions" @click.stop>
           <button v-if="canResolve" :disabled="Boolean(actingId)" @click.stop="transition(todo,'resolve')">完成并留证</button>
           <button v-if="canEscalate && !todo.escalatedToBoss" :disabled="Boolean(actingId)" @click.stop="transition(todo,'escalate')">升级</button>
           <button v-if="canClose" :disabled="Boolean(actingId)" @click.stop="transition(todo,'close')">关闭</button>

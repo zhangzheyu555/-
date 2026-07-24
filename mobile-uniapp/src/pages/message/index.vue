@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { onPullDownRefresh, onShow } from '@dcloudio/uni-app'
-import { getMobileRoleTodos } from '@/api/business'
+import { getMobileBossTodoDashboard, getMobileRoleTodos } from '@/api/business'
 import PageHeader from '@/components/PageHeader.vue'
 import StatePanel from '@/components/StatePanel.vue'
 import StatusChip from '@/components/StatusChip.vue'
@@ -16,6 +16,7 @@ const { onTouchStart, onTouchEnd } = createEdgeSwipeToHomeHandlers()
 const items = ref<RoleTodoItem[]>([])
 const loading = ref(false)
 const error = ref('')
+const isBoss = computed(() => session.user?.role === 'BOSS')
 const attentionItems = computed(() => items.value.filter((item) => !isTodoResult(item)))
 const resultItems = computed(() => items.value
   .filter(isTodoResult)
@@ -29,7 +30,15 @@ async function refresh() {
   if (!session.user && !await session.restore()) { uni.reLaunch({ url: '/pages/login/index' }); return }
   loading.value = true
   error.value = ''
-  try { items.value = (await getMobileRoleTodos(session.user?.role || '', true)).items || [] }
+  try {
+    const role = String(session.user?.role || '').toUpperCase()
+    if (role === 'BOSS') {
+      const dashboard = await getMobileBossTodoDashboard()
+      items.value = dashboard.needsBossAction || []
+    } else {
+      items.value = (await getMobileRoleTodos(role, true)).items || []
+    }
+  }
   catch (cause) {
     error.value = Number((cause as { status?: number })?.status) === 403
       ? '当前账号暂无业务动态查看权限。'
@@ -49,20 +58,20 @@ function businessTime(item: RoleTodoItem): string {
 
 <template>
   <view class="mobile-page message-page" @touchstart="onTouchStart" @touchend="onTouchEnd">
-    <PageHeader eyebrow="服务端实时同步" title="业务动态" description="查看业务变化和处理结果，点击后直接进入对应业务页面">
+    <PageHeader eyebrow="服务端实时同步" title="业务动态" :description="isBoss ? '只显示必须由老板确认、拍板或关闭的业务提醒' : '查看业务变化和处理结果，点击后直接进入对应业务页面'">
       <template #action><button class="mobile-ghost-button refresh-button" :loading="loading" :disabled="loading" @click="refresh">刷新</button></template>
     </PageHeader>
     <StatePanel v-if="loading && !items.length" type="loading" title="正在读取业务动态" />
     <StatePanel v-else-if="error" type="error" title="业务动态加载失败" :description="error" action-text="重新加载" @action="refresh" />
-    <StatePanel v-else-if="!items.length" type="empty" title="暂无业务动态" description="新的业务提醒和处理结果会显示在这里。" />
+    <StatePanel v-else-if="!items.length" type="empty" title="暂无业务动态" :description="isBoss ? '当前没有需要老板处理的业务提醒。' : '新的业务提醒和处理结果会显示在这里。'" />
     <template v-else>
-      <view class="summary-grid">
-        <view class="summary-card summary-card--attention"><text>需要关注</text><text class="summary-card__value">{{ attentionItems.length }}</text></view>
-        <view class="summary-card"><text>处理结果</text><text class="summary-card__value">{{ resultItems.length }}</text></view>
+      <view class="summary-grid" :class="{ 'summary-grid--single': isBoss }">
+        <view class="summary-card summary-card--attention"><text>{{ isBoss ? '需要老板处理' : '需要关注' }}</text><text class="summary-card__value">{{ attentionItems.length }}</text></view>
+        <view v-if="!isBoss" class="summary-card"><text>处理结果</text><text class="summary-card__value">{{ resultItems.length }}</text></view>
       </view>
-      <view class="scope-note">这里用于查看业务变化；审批、收货、发货等操作仍在对应业务页面完成。</view>
+      <view class="scope-note">{{ isBoss ? '岗位日常事项由对应岗位处理，只有升级到老板的事项才会显示在这里。' : '这里用于查看业务变化；审批、收货、发货等操作仍在对应业务页面完成。' }}</view>
       <view class="section">
-        <view class="section-head"><text>需要关注</text><text>{{ attentionItems.length }} 项</text></view>
+        <view class="section-head"><text>{{ isBoss ? '需要我处理' : '需要关注' }}</text><text>{{ attentionItems.length }} 项</text></view>
         <button v-for="item in attentionItems" :key="item.id" class="message-card mobile-feedback" @click="open(item)">
           <view class="message-card__top"><text class="message-card__title">{{ item.title }}</text><StatusChip :label="todoStatusLabel(item)" :tone="todoStatusTone(item)" /></view>
           <text class="message-card__copy">{{ item.summary || '请进入对应业务中心处理' }}</text>
@@ -70,7 +79,7 @@ function businessTime(item: RoleTodoItem): string {
         </button>
         <view v-if="!attentionItems.length" class="empty-line">当前没有需要关注的业务动态</view>
       </view>
-      <view class="section">
+      <view v-if="!isBoss" class="section">
         <view class="section-head"><text>处理结果</text><text>{{ resultItems.length }} 项</text></view>
         <button v-for="item in resultItems.slice(0, 20)" :key="item.id" class="message-card result-card mobile-feedback" @click="open(item)">
           <view class="message-card__top"><text class="message-card__title">{{ item.title }}</text><StatusChip :label="todoStatusLabel(item)" :tone="todoStatusTone(item)" /></view>
@@ -87,6 +96,7 @@ function businessTime(item: RoleTodoItem): string {
 .message-page { display: flex; flex-direction: column; gap: 24rpx; }
 .refresh-button { min-width: 116rpx; padding: 0 20rpx; }
 .summary-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14rpx; }
+.summary-grid--single { grid-template-columns: minmax(0, 1fr); }
 .summary-card { display: flex; min-height: 116rpx; padding: 20rpx 22rpx; flex-direction: column; justify-content: space-between; background: #fff; border: 1rpx solid $mobile-line; border-radius: 16rpx; }
 .summary-card text { color: $mobile-muted; font-size: 22rpx; }
 .summary-card__value { color: $mobile-ink; font-size: 38rpx; font-weight: 850; }

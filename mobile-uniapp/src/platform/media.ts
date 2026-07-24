@@ -76,6 +76,11 @@ export async function chooseMedia(options: ChooseMediaOptions = {}): Promise<Med
   const count = Math.max(1, Math.min(options.count || 1, 9))
 
   // #ifdef MP-WEIXIN
+  // All current mobile business flows request images only. uni.chooseImage is
+  // supported across older and newer WeChat base libraries and avoids calling
+  // wx.chooseMedia on devices where that API is unavailable.
+  if (kinds.length === 1 && kinds[0] === 'image') return chooseImages(options)
+
   try {
     const wechat = wechatMediaApi()
     if (wechat && typeof wechat.chooseMedia === 'function') {
@@ -120,6 +125,12 @@ export async function chooseMedia(options: ChooseMediaOptions = {}): Promise<Med
   // #endif
 
   return []
+}
+
+export async function chooseImages(options: ChooseMediaOptions = {}): Promise<MediaAsset[]> {
+  const source = options.source || 'both'
+  const count = Math.max(1, Math.min(options.count || 1, 9))
+  return chooseUniImages(count, source)
 }
 
 // #ifdef MP-WEIXIN

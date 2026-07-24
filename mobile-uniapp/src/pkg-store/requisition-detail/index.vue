@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { onLoad, onPullDownRefresh } from '@dcloudio/uni-app'
-import { getMobileRequisitions, receiveMobileRequisition } from '@/api/business'
+import { getMobileRequisitions, receiveMobileRequisition, reviewMobileRequisition } from '@/api/business'
 import StatusTimeline, { type TimelineItem } from '@/components/StatusTimeline.vue'
-import { hasPermission } from '@/permissions'
+import { canPerformMobileAction, hasPermission } from '@/permissions'
 import { openProtectedFile } from '@/platform'
 import { canUseMobileCapability, useSessionStore } from '@/stores'
 import { MOBILE_PERMISSIONS, type WarehouseRequisition } from '@/types/business'
@@ -14,8 +14,9 @@ const record = ref<WarehouseRequisition | null>(null)
 const loading = ref(false)
 const receiving = ref(false)
 const message = ref('')
-const canRead = computed(() => canUseMobileCapability(session.user, 'requisition'))
+const canRead = computed(() => canUseMobileCapability(session.user, 'requisition') || canUseMobileCapability(session.user, 'warehouse'))
 const canReceive = computed(() => canRead.value && session.hasPermission(MOBILE_PERMISSIONS.requisitionReceive))
+const canReview = computed(() => canPerformMobileAction(session.user, 'warehouse.requisition.review'))
 const canReadFiles = computed(() => hasPermission(session.user, 'attachment.read'))
 const timeline = computed<TimelineItem[]>(() => {
   const row = record.value
@@ -55,6 +56,24 @@ async function receive() {
   finally { receiving.value = false }
 }
 
+async function review(approved: boolean) {
+  const row = record.value
+  if (!row || !canReview.value || row.status !== 'SUBMITTED' || receiving.value) return
+  const note = approved ? '移动端仓库审核通过' : await promptText('请填写驳回原因')
+  if (!approved && !note) return
+  receiving.value = true
+  message.value = ''
+  try {
+    await reviewMobileRequisition(row.id, approved, note || undefined, row.lines.map(line => ({
+      itemId: line.itemId,
+      approvedQuantity: approved ? Number(line.requestedQuantity) : 0,
+    })))
+    message.value = approved ? '叫货单已审核通过，可继续确认发货。' : '叫货单已驳回。'
+    await refresh()
+  } catch (cause) { message.value = friendlyError(cause, '审核失败，请刷新后重试。') }
+  finally { receiving.value = false }
+}
+
 async function openDelivery() {
   const row = record.value
   if (!row) return
@@ -63,6 +82,7 @@ async function openDelivery() {
 }
 
 function confirmAction(content: string) { return new Promise<boolean>(resolve => uni.showModal({ title: '确认收货', content, confirmText: '确认', success: result => resolve(Boolean(result.confirm)), fail: () => resolve(false) })) }
+function promptText(placeholder: string) { return new Promise<string>(resolve => uni.showModal({ title: '驳回叫货单', editable: true, placeholderText: placeholder, success: result => resolve(result.confirm ? String(result.content || '').trim() : ''), fail: () => resolve('') })) }
 function formatQuantity(value: number | undefined) { const number = Number(value || 0); return Number.isInteger(number) ? String(number) : number.toFixed(2) }
 function friendlyError(cause: unknown, fallback: string) { const status = Number((cause as { status?: number })?.status || 0); return status === 403 ? '当前账号无权查看或操作该叫货单。' : status === 409 ? '单据状态已变化，请刷新后重试。' : status === 401 ? '登录已过期，请重新登录。' : fallback }
 </script>
@@ -76,7 +96,7 @@ function friendlyError(cause: unknown, fallback: string) { const status = Number
       <view class="section"><text class="section-title">物料明细</text><view v-for="line in record.lines" :key="line.itemId" class="line"><text class="name">{{ line.itemName }}</text><view class="quantities"><text>申请 {{ formatQuantity(line.requestedQuantity) }}</text><text>核定 {{ formatQuantity(line.approvedQuantity) }}</text><text>实发 {{ formatQuantity(line.shippedQuantity) }}</text><text>已收 {{ formatQuantity(line.receivedQuantity) }}</text></view><text v-if="line.warningText" class="warning">{{ line.warningText }}</text></view></view>
       <view v-if="record.note" class="section"><text class="section-title">叫货备注</text><text class="copy note">{{ record.note }}</text></view>
       <view class="section"><text class="section-title">处理进度</text><StatusTimeline :items="timeline"/></view>
-      <view class="actions"><button v-if="canReadFiles&&['SHIPPED','RECEIVED'].includes(record.status)" @click="openDelivery">查看配送出库单</button><button v-if="canReceive&&record.status==='SHIPPED'" class="primary" :loading="receiving" :disabled="receiving" @click="receive">确认收货</button></view>
+      <view class="actions"><button v-if="canReview&&record.status==='SUBMITTED'" :loading="receiving" :disabled="receiving" @click="review(false)">驳回</button><button v-if="canReview&&record.status==='SUBMITTED'" class="primary" :loading="receiving" :disabled="receiving" @click="review(true)">审核通过</button><button v-if="canReadFiles&&['SHIPPED','RECEIVED'].includes(record.status)" @click="openDelivery">查看配送出库单</button><button v-if="canReceive&&record.status==='SHIPPED'" class="primary" :loading="receiving" :disabled="receiving" @click="receive">确认收货</button></view>
     </template>
   </view>
 </template>

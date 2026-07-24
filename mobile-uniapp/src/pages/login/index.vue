@@ -68,11 +68,11 @@ function requestWeChatCode(): Promise<string> {
   <view class="login-page">
     <view class="login-intro">
       <view class="brand-lockup">
-        <view class="brand-mark" aria-hidden="true"><text>门</text></view>
-        <text class="brand-name">门店经营</text>
+        <view class="brand-mark" aria-hidden="true"><text>茹</text></view>
+        <text class="brand-name">茹菓*</text>
       </view>
-      <text class="login-intro__eyebrow">AI PROFIT OS · 移动工作台</text>
-      <text class="login-intro__title">多门店经营管理</text>
+      <text class="login-intro__eyebrow">ifnot* · 移动工作台</text>
+      <text class="login-intro__title">茹菓* 多门店经营管理</text>
       <text class="login-intro__copy">库存、叫货、巡检、整改与学习任务，统一在这里处理。</text>
     </view>
 

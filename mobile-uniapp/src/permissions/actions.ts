@@ -26,7 +26,7 @@ const WAREHOUSE_SCOPE = ['ALL', 'WAREHOUSE_LIST', 'CENTRAL_WAREHOUSE', 'STORE_LI
 
 export const MOBILE_ACTION_RULES: Record<MobileAction, ActionRule> = {
   'todo.resolve': { roles: ['FINANCE', 'STORE_MANAGER', 'WAREHOUSE', 'SUPERVISOR'], permission: 'todo.transition' },
-  'todo.escalate': { roles: ['FINANCE', 'STORE_MANAGER', 'WAREHOUSE', 'SUPERVISOR'], permission: 'todo.transition', denyBoss: true },
+  'todo.escalate': { roles: ['FINANCE', 'STORE_MANAGER', 'WAREHOUSE', 'SUPERVISOR'], permission: 'todo.transition' },
   'todo.close': { roles: ['BOSS'], permission: 'todo.transition', bossOnly: true },
   'expense.create': { roles: ['STORE_MANAGER', 'FINANCE'], permission: 'expense.create', scopeDomain: 'FINANCE', scopeModes: STORE_SCOPE },
   'expense.review': { roles: ['FINANCE'], permission: 'expense.review', scopeDomain: 'FINANCE', scopeModes: STORE_SCOPE },

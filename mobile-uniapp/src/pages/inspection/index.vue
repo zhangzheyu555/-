@@ -13,7 +13,7 @@ import {
   uploadMobileInspectionAttachment,
 } from '../../api/business'
 import SafeActionBar from '../../components/SafeActionBar.vue'
-import { chooseMedia } from '../../platform'
+import { chooseImages } from '../../platform/media'
 import { canUseMobileCapability, useSessionStore } from '../../stores'
 import {
   MOBILE_PERMISSIONS,
@@ -198,9 +198,9 @@ async function addPhotos() {
   uploading.value = true
   errorMessage.value = ''
   actionMessage.value = ''
-  let assets: Awaited<ReturnType<typeof chooseMedia>>
+  let assets: Awaited<ReturnType<typeof chooseImages>>
   try {
-    assets = await chooseMedia({ count: Math.max(1, 3 - photos.value.length), source: 'both', kinds: ['image'] })
+    assets = await chooseImages({ count: Math.max(1, 3 - photos.value.length), source: 'both' })
   } catch (error) {
     errorMessage.value = friendlyError(error, '无法打开相机或相册，请检查微信权限后重试。')
     uploading.value = false
@@ -226,7 +226,7 @@ async function addPhotos() {
       }
       photos.value.push(photo)
       try {
-        photo.detection = await detectMobileInspectionPhoto(asset.path)
+        photo.detection = await detectMobileInspectionPhoto(asset.path, selectedStoreId.value)
       } catch {
         photo.detectionError = 'AI 识别暂不可用，请人工选择条款关联照片。'
       }

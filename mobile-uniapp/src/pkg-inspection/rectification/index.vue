@@ -4,7 +4,7 @@ import { onPullDownRefresh, onShow } from '@dcloudio/uni-app'
 import { getMobileRectificationReviews, getMyMobileRectifications, reviewMobileRectification, submitMobileRectification, uploadMobileRectificationEvidence } from '@/api/business'
 import ProtectedAttachmentList, { type ProtectedAttachment } from '@/components/ProtectedAttachmentList.vue'
 import { normalizeRole } from '@/permissions'
-import { chooseMedia } from '@/platform'
+import { chooseImages } from '@/platform'
 import { canUseMobileCapability, useSessionStore } from '@/stores'
 import type { InspectionRectification } from '@/types/business'
 
@@ -33,7 +33,7 @@ async function refresh() {
 async function addEvidence(task: InspectionRectification) {
   if (acting.value) return
   acting.value = task.recordId; error.value = ''
-  try { const files = await chooseMedia({ count: 3, source: 'both', kinds: ['image'] }); for (const file of files) { const uploaded = await uploadMobileRectificationEvidence(task.recordId, file.path); evidence.value[task.recordId] = [...(evidence.value[task.recordId] || task.evidenceAttachmentIds || []), uploaded.attachmentId] }; notice.value = '证据已上传，提交后进入运营复核。' }
+  try { const files = await chooseImages({ count: 3, source: 'both' }); for (const file of files) { const uploaded = await uploadMobileRectificationEvidence(task.recordId, file.path); evidence.value[task.recordId] = [...(evidence.value[task.recordId] || task.evidenceAttachmentIds || []), uploaded.attachmentId] }; notice.value = '证据已上传，提交后进入运营复核。' }
   catch { error.value = '证据上传失败，请检查网络后重试。' }
   finally { acting.value = '' }
 }

@@ -157,8 +157,8 @@ export function uploadMobileInspectionAttachment(filePath: string, storeId: stri
   })
 }
 
-export function detectMobileInspectionPhoto(filePath: string) {
-  return apiUpload<InspectionDetection>('/api/inspections/detect', filePath)
+export function detectMobileInspectionPhoto(filePath: string, storeId: string) {
+  return apiUpload<InspectionDetection>('/api/inspections/detect', filePath, 'file', { storeId })
 }
 
 export function confirmMobileInspectionSuggestion(detectionKey: string, evidence: Record<string, unknown>) {

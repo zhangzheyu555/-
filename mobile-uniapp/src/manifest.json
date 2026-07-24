@@ -1,5 +1,5 @@
 {
-    "name" : "AI Profit OS",
+    "name" : "ifnot*",
     "appid" : "__UNI__82794DE",
     "description" : "多门店经营任务移动工作台",
     "versionName" : "0.1.0",
@@ -38,7 +38,7 @@
         }
     },
     "h5" : {
-        "title" : "AI Profit OS 移动工作台"
+        "title" : "ifnot* 移动工作台"
     },
     "mp-weixin" : {
         "appid" : "wxdf901a8d6fb3cf65",

@@ -4,10 +4,11 @@ import { onPullDownRefresh, onShow } from '@dcloudio/uni-app'
 import { completeMobileFinanceCheck, getMobileFinanceWorkbench } from '@/api/business'
 import { useContextStore, useSessionStore } from '@/stores'
 import type { FinanceWorkbench, RoleTodoItem } from '@/types/business'
+import { isBoss } from '@/permissions'
 
 const session=useSessionStore(),context=useContextStore(),workbench=ref<FinanceWorkbench|null>(null),loading=ref(false),message=ref(''),acting=ref('')
 const month=ref(new Date().toISOString().slice(0,7)),storeId=ref(''),tab=ref<'action'|'profit'|'expense'|'salary'|'data'>('action')
-const canRead=computed(()=>session.user?.role==='FINANCE'&&session.hasPermission('finance.profit.read'))
+const canRead=computed(()=> (isBoss(session.user) || session.user?.role==='FINANCE') && session.hasPermission('finance.profit.read'))
 const storeOptions=computed(()=>[{id:'',name:'全部授权门店'},...context.stores]),storeIndex=computed(()=>Math.max(0,storeOptions.value.findIndex(item=>item.id===storeId.value)))
 const tabs=[{key:'action',label:'待处理'},{key:'profit',label:'利润风险'},{key:'expense',label:'报销'},{key:'salary',label:'工资核对'},{key:'data',label:'数据核对'}] as const
 onShow(async()=>{if(!context.stores.length&&session.user)await context.load(session.user);await refresh()});onPullDownRefresh(async()=>{await refresh();uni.stopPullDownRefresh()})

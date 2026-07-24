@@ -50,7 +50,10 @@
       { "path": "assistant/index", "style": { "navigationBarTitleText": "经营助手" } }
     ] },
     { "root": "pkg-boss", "pages": [
-      { "path": "audit/index", "style": { "navigationBarTitleText": "操作日志", "enablePullDownRefresh": true } }
+      { "path": "audit/index", "style": { "navigationBarTitleText": "操作日志", "enablePullDownRefresh": true } },
+      { "path": "stores/index", "style": { "navigationBarTitleText": "门店管理", "enablePullDownRefresh": true } },
+      { "path": "users/index", "style": { "navigationBarTitleText": "账号权限", "enablePullDownRefresh": true } }
+      ,{ "path": "employees/index", "style": { "navigationBarTitleText": "员工档案", "enablePullDownRefresh": true } }
     ] }
   ],
   "tabBar": {
@@ -74,7 +77,7 @@
   },
   "globalStyle": {
     "navigationBarTextStyle": "white",
-    "navigationBarTitleText": "AI Profit OS",
+    "navigationBarTitleText": "ifnot*",
     "navigationBarBackgroundColor": "#27655f",
     "backgroundColor": "#F2F6F5",
     "backgroundTextStyle": "dark"

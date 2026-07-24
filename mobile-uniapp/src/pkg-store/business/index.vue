@@ -4,6 +4,7 @@ import { onPullDownRefresh, onShow } from '@dcloudio/uni-app'
 import { getMobileFinanceMonths, getMobileProfitEntries, getMobileStoreManagerWorkbench, getMobileStores } from '@/api/business'
 import { useSessionStore } from '@/stores'
 import type { ProfitEntry, StoreInfo, StoreManagerWorkbench } from '@/types/business'
+import { isBoss } from '@/permissions'
 
 const session = useSessionStore()
 const workbench = ref<StoreManagerWorkbench | null>(null)
@@ -16,7 +17,7 @@ const previousEntry = ref<ProfitEntry | null>(null)
 const storeInfo = ref<StoreInfo | null>(null)
 const monthLoading = ref(false)
 let monthRequestId = 0
-const canRead = computed(() => session.user?.role === 'STORE_MANAGER' && session.hasPermission('finance.profit.read'))
+const canRead = computed(() => (isBoss(session.user) || session.user?.role === 'STORE_MANAGER') && session.hasPermission('finance.profit.read'))
 const selectedEntry = computed(() => entries.value.find((entry) => entry.month === selectedMonth.value) || null)
 const incomeChangeRate = computed(() => {
   if (!selectedEntry.value || !previousEntry.value || Number(previousEntry.value.income) === 0) return null

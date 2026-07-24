@@ -20,6 +20,9 @@ export type MobileCapabilityKey =
   | 'businessAssistant'
   | 'business'
   | 'trainingProgress'
+  | 'storeManagement'
+  | 'userManagement'
+  | 'employeeManagement'
 
 interface MobileCapabilityRule {
   roles: string[]
@@ -42,19 +45,19 @@ const CAPABILITY_RULES: Record<MobileCapabilityKey, MobileCapabilityRule> = {
     allowedScopeModes: ['ALL', 'WAREHOUSE_LIST', 'STORE_LIST', 'OWN_STORE'],
   },
   warehouse: {
-    roles: ['WAREHOUSE'],
-    anyPermission: ['warehouse.requisition.process', 'warehouse.requisition.review', 'warehouse.central.read', 'warehouse.purchase', 'warehouse.configure', 'warehouse.transfer.request', 'warehouse.transfer.approve', 'warehouse.transfer.ship', 'warehouse.transfer.receive'],
+    roles: ['BOSS', 'WAREHOUSE'],
+    anyPermission: ['warehouse.read', 'inventory.read', 'warehouse.store.read', 'warehouse.requisition.process', 'warehouse.requisition.review', 'warehouse.central.read', 'warehouse.purchase', 'warehouse.configure', 'warehouse.transfer.request', 'warehouse.transfer.approve', 'warehouse.transfer.ship', 'warehouse.transfer.receive'],
     scopeDomain: 'WAREHOUSE',
     allowedScopeModes: ['ALL', 'WAREHOUSE_LIST', 'CENTRAL_WAREHOUSE'],
   },
   inspection: {
-    roles: ['SUPERVISOR'],
+    roles: ['BOSS', 'SUPERVISOR'],
     anyPermission: ['inspection.manage', 'inspection.read'],
     scopeDomain: 'INSPECTION',
     allowedScopeModes: ['ALL', 'STORE_LIST', 'OWN_STORE'],
   },
   rectification: {
-    roles: ['STORE_MANAGER', 'SUPERVISOR'],
+    roles: ['BOSS', 'STORE_MANAGER', 'SUPERVISOR'],
     anyPermission: ['todo.transition', 'inspection.manage'],
     scopeDomain: 'INSPECTION',
     allowedScopeModes: ['ALL', 'STORE_LIST', 'OWN_STORE'],
@@ -82,29 +85,29 @@ const CAPABILITY_RULES: Record<MobileCapabilityKey, MobileCapabilityRule> = {
     allowedScopeModes: ['ALL', 'STORE_LIST', 'OWN_STORE'],
   },
   expenses: {
-    roles: ['STORE_MANAGER', 'FINANCE'],
+    roles: ['BOSS', 'STORE_MANAGER', 'FINANCE'],
     anyPermission: ['expense.read', 'expense.create', 'expense.review'],
     scopeDomain: 'FINANCE',
     allowedScopeModes: ['ALL', 'STORE_LIST', 'OWN_STORE'],
   },
   salary: {
-    roles: ['STORE_MANAGER', 'FINANCE'],
+    roles: ['BOSS', 'STORE_MANAGER', 'FINANCE'],
     anyPermission: ['salary.read', 'salary.review', 'salary.pay'],
     scopeDomain: 'SALARY',
     allowedScopeModes: ['ALL', 'STORE_LIST', 'OWN_STORE', 'SELF'],
   },
   dailyLoss: {
-    roles: ['STORE_MANAGER', 'SUPERVISOR', 'FINANCE'],
+    roles: ['BOSS', 'STORE_MANAGER', 'SUPERVISOR', 'FINANCE'],
     anyPermission: ['daily_loss.read', 'daily_loss.create', 'daily_loss.review'],
     scopeDomain: 'WAREHOUSE',
     allowedScopeModes: ['ALL', 'WAREHOUSE_LIST', 'STORE_LIST', 'OWN_STORE'],
   },
   operations: {
-    roles: ['SUPERVISOR'],
+    roles: ['BOSS', 'SUPERVISOR'],
     anyPermission: ['operations.dashboard.read', 'inventory.read', 'inventory.manage', 'inventory.review', 'exam.report', 'platform.read', 'employee_assistant.handoff_manage'],
   },
   operationsMonitor: {
-    roles: ['SUPERVISOR'],
+    roles: ['BOSS', 'SUPERVISOR'],
     anyPermission: ['exam.report', 'platform.read', 'employee_assistant.handoff_manage'],
   },
   audit: {
@@ -122,11 +125,14 @@ const CAPABILITY_RULES: Record<MobileCapabilityKey, MobileCapabilityRule> = {
     allowedScopeModes: ['ALL', 'STORE_LIST', 'OWN_STORE'],
   },
   trainingProgress: {
-    roles: ['STORE_MANAGER'],
+    roles: ['BOSS', 'STORE_MANAGER'],
     anyPermission: ['exam.report'],
     scopeDomain: 'EXAM',
     allowedScopeModes: ['ALL', 'STORE_LIST', 'OWN_STORE'],
   },
+  storeManagement: { roles: ['BOSS'], anyPermission: ['store.manage'] },
+  userManagement: { roles: ['BOSS'], anyPermission: ['system.user.manage'] },
+  employeeManagement: { roles: ['BOSS'], anyPermission: ['employee.manage', 'employee.read'] },
 }
 
 /**

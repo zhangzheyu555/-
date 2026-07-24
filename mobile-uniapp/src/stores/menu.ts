@@ -55,6 +55,9 @@ const RULES: MenuRule[] = [
   { key: 'operationsMonitor', group: 'operations', label: '培训与平台监测', description: '查看学习进度和平台连接状态', path: '/pkg-operations/monitor/index', tone: 'green', icon: '▦' },
   { key: 'businessAssistant', group: 'operations', label: '经营助手', description: '查询经营问题与建议', path: '/pkg-operations/assistant/index', tone: 'slate', icon: '?' },
   { key: 'audit', group: 'system', label: '操作日志', description: '查看全局关键操作记录', path: '/pkg-boss/audit/index', tone: 'slate', icon: '≡' },
+  { key: 'storeManagement', group: 'system', label: '门店管理', description: '新增、编辑和停用门店', path: '/pkg-boss/stores/index', tone: 'green', icon: '店' },
+  { key: 'userManagement', group: 'system', label: '账号权限', description: '维护账号角色和启用状态', path: '/pkg-boss/users/index', tone: 'orange', icon: '人' },
+  { key: 'employeeManagement', group: 'system', label: '员工档案', description: '维护员工资料和员工账号', path: '/pkg-boss/employees/index', tone: 'blue', icon: '员' },
 ]
 
 const GROUP_LABELS: Record<MenuRule['group'], string> = {

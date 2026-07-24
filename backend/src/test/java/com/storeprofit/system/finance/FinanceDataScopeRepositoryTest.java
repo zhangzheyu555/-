@@ -43,6 +43,8 @@ class FinanceDataScopeRepositoryTest {
           cost_other decimal(14,2) default 0, rent decimal(14,2) default 0,
           labor decimal(14,2) default 0, utility decimal(14,2) default 0,
           property decimal(14,2) default 0, commission decimal(14,2) default 0,
+          meituan decimal(14,2) default 0, eleme decimal(14,2) default 0,
+          douyin decimal(14,2) default 0, amap decimal(14,2) default 0,
           promo decimal(14,2) default 0, repair decimal(14,2) default 0,
           equip decimal(14,2) default 0, exp_other decimal(14,2) default 0, note varchar(255)
         )

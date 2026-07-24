@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { onPullDownRefresh, onShow } from '@dcloudio/uni-app'
+import BossHomeDashboard from '@/components/BossHomeDashboard.vue'
 import StatePanel from '@/components/StatePanel.vue'
 import {
   getMobileExamOverview,
@@ -15,6 +16,8 @@ import type { ExamOverview, ProfitDashboard, ProfitEntry, RoleTodoItem, Warehous
 const session = useSessionStore()
 const menu = useMenuStore()
 const context = useContextStore()
+const isBoss = computed(() => session.user?.role === 'BOSS')
+const bossDashboardRef = ref<InstanceType<typeof BossHomeDashboard> | null>(null)
 const storeNames = computed(() => context.stores.map((store) => store.name))
 const currentStoreLabel = computed(() => context.currentStore?.name || session.user?.boundStoreName || '请选择当前门店')
 const currentStoreInfo = computed(() => context.currentStore)
@@ -31,9 +34,13 @@ const exams = ref<ExamOverview | null>(null)
 const managerEntries = ref<ProfitEntry[]>([])
 let workspaceRequestId = 0
 
-onShow(initializeHome)
+onShow(async () => {
+  await initializeHome()
+  if (isBoss.value) await bossDashboardRef.value?.refresh()
+})
 onPullDownRefresh(async () => {
-  await initializeHome(true)
+  if (isBoss.value) await bossDashboardRef.value?.refresh()
+  else await initializeHome(true)
   uni.stopPullDownRefresh()
 })
 
@@ -44,6 +51,7 @@ async function initializeHome(force = false): Promise<void> {
   }
   menu.rebuild(session.user)
   if (!context.stores.length && !context.loading) await context.load(session.user)
+  if (isBoss.value) return
   if (force || (!todos.value.length && !workspaceLoading.value)) await loadWorkspace()
 }
 
@@ -194,6 +202,8 @@ function storeStatusLabel(status: string | undefined): string {
 
 <template>
   <view class="mobile-page home-page">
+    <BossHomeDashboard v-if="isBoss" ref="bossDashboardRef" />
+    <template v-else>
     <view class="topbar">
       <view class="topbar__date"><text class="topbar__calendar">▦</text><text>{{ todayLabel }}</text></view>
       <button class="profile-link" aria-label="打开我的账号" @click="openProfile">我的</button>
@@ -265,6 +275,7 @@ function storeStatusLabel(status: string | undefined): string {
       <view class="section-card__head"><view><text class="section-card__eyebrow">本店经营</text><text class="section-card__title">{{ latestManagerEntry.month }} 经营明细</text></view><button class="text-button" @click="openBusiness">查看全部</button></view>
       <view class="business-preview__grid"><view><text>实收收入</text><b>{{ money(latestManagerEntry.income) }}</b></view><view><text>成本合计</text><b>{{ money(latestManagerEntry.costSum) }}</b></view><view><text>费用合计</text><b>{{ money(latestManagerEntry.expenseSum) }}</b></view><view><text>净利润 · 净利率</text><b :class="{ negative: latestManagerEntry.net < 0 }">{{ money(latestManagerEntry.net) }} · {{ percent(latestManagerEntry.margin) }}</b></view></view>
     </view>
+    </template>
   </view>
 </template>
 

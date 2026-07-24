@@ -11,7 +11,7 @@ import {
 } from '@/api/business'
 import ProtectedAttachmentList, { type ProtectedAttachment } from '@/components/ProtectedAttachmentList.vue'
 import { canPerformMobileAction } from '@/permissions'
-import { chooseMedia, showOperationFailure, showOperationSuccess } from '@/platform'
+import { chooseImages, showOperationFailure, showOperationSuccess } from '@/platform'
 import { useContextStore, useSessionStore } from '@/stores'
 import type { ExpenseClaim } from '@/types/business'
 
@@ -126,7 +126,7 @@ async function supplement(row: ExpenseClaim) {
     showOperationFailure('无法补充材料', new Error(content))
     return
   }
-  const files = await chooseMedia({ count: 3, source: 'both', kinds: ['image'] })
+  const files = await chooseImages({ count: 3, source: 'both' })
   if (!files.length) return
   acting.value = row.id
   try {
@@ -149,7 +149,7 @@ function resetForm() {
 }
 async function chooseReceipts() {
   if (acting.value) return
-  const files = await chooseMedia({ count: Math.max(1, 6 - pendingFiles.value.length), source: 'both', kinds: ['image'] })
+  const files = await chooseImages({ count: Math.max(1, 6 - pendingFiles.value.length), source: 'both' })
   pendingFiles.value = [...pendingFiles.value, ...files].slice(0, 6)
 }
 function removeReceipt(index: number) { pendingFiles.value.splice(index, 1) }

@@ -4,7 +4,7 @@ import { onPullDownRefresh, onShow } from '@dcloudio/uni-app'
 import { approveMobileDailyLoss, createMobileDailyLoss, getMobileDailyLossRecords, getMobileWarehouseOverview, submitMobileDailyLoss, uploadMobileDailyLossAttachment } from '@/api/business'
 import ProtectedAttachmentList from '@/components/ProtectedAttachmentList.vue'
 import { canPerformMobileAction, normalizeRole } from '@/permissions'
-import { chooseMedia, openProtectedFile, showOperationFailure, showOperationSuccess } from '@/platform'
+import { chooseImages, openProtectedFile, showOperationFailure, showOperationSuccess } from '@/platform'
 import { useContextStore, useSessionStore } from '@/stores'
 import type { DailyLossItem, DailyLossRecord } from '@/types/business'
 
@@ -36,7 +36,7 @@ async function refresh() {
     message.value = errors.join('；')
   } finally { loading.value = false }
 }
-async function selectPhotos() { photos.value = await chooseMedia({ count: 3, source: 'both', kinds: ['image'] }) }
+async function selectPhotos() { photos.value = await chooseImages({ count: 3, source: 'both' }) }
 async function create() {
   if (!canCreate.value || acting.value) return
   const storeId = context.currentStoreId || session.user?.boundStoreId || ''; const item = selectedItem.value; const quantity = Number(qty.value)
