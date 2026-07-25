@@ -3368,4 +3368,173 @@ public class WarehouseRepository {
 
   public record PurchaseLockRow(String id, long warehouseId, String status) {
   }
+
+  // ─── Movement Report Query Methods ─────────────────────────────────────────
+
+  public List<WarehouseStockMovementResponse> movementsFiltered(
+      long tenantId, long warehouseId, java.time.LocalDate startDate, java.time.LocalDate endDate,
+      List<String> storeIds, List<Long> itemIds, List<String> directions,
+      List<String> sourceTypes, int offset, int limit
+  ) {
+    MovementFilteredQuery q = buildMovementQuery(false, false, tenantId, warehouseId,
+        startDate, endDate, storeIds, itemIds, directions, sourceTypes);
+    String sql = q.sql + " order by m.created_at desc limit ?, ?";
+    q.params.add(offset);
+    q.params.add(limit);
+    return jdbcTemplate.query(sql, this::mapMovement, q.params.toArray());
+  }
+
+  public long movementsFilteredCount(
+      long tenantId, long warehouseId, java.time.LocalDate startDate, java.time.LocalDate endDate,
+      List<String> storeIds, List<Long> itemIds, List<String> directions, List<String> sourceTypes
+  ) {
+    MovementFilteredQuery q = buildMovementQuery(true, false, tenantId, warehouseId,
+        startDate, endDate, storeIds, itemIds, directions, sourceTypes);
+    Long count = jdbcTemplate.queryForObject(q.sql, Long.class, q.params.toArray());
+    return count == null ? 0 : count;
+  }
+
+  public record MovementSummary(BigDecimal totalIn, BigDecimal totalOut, BigDecimal netChange) {}
+
+  public MovementSummary movementsFilteredSummary(
+      long tenantId, long warehouseId, java.time.LocalDate startDate, java.time.LocalDate endDate,
+      List<String> storeIds, List<Long> itemIds, List<String> directions, List<String> sourceTypes
+  ) {
+    MovementFilteredQuery q = buildMovementQuery(false, true, tenantId, warehouseId,
+        startDate, endDate, storeIds, itemIds, directions, sourceTypes);
+    return jdbcTemplate.queryForObject(q.sql, (rs, n) -> new MovementSummary(
+        rs.getBigDecimal("total_in"),
+        rs.getBigDecimal("total_out"),
+        rs.getBigDecimal("net_change")
+    ), q.params.toArray());
+  }
+
+  public List<WarehouseMovementFilterOptionsResponse.StoreOption> movementFilterStores(
+      long tenantId, long warehouseId
+  ) {
+    String sql = """
+        select s.id, s.name, s.code, s.area, s.status
+        from store_branch s
+        where s.tenant_id = ? and s.supply_warehouse_id = ?
+        order by s.name
+        """;
+    return jdbcTemplate.query(sql, (rs, n) -> new WarehouseMovementFilterOptionsResponse.StoreOption(
+        rs.getString("id"),
+        rs.getString("name"),
+        rs.getString("code"),
+        rs.getString("area"),
+        rs.getString("status")
+    ), tenantId, warehouseId);
+  }
+
+  public List<WarehouseMovementFilterOptionsResponse.ItemOption> movementFilterItems(
+      long tenantId, long warehouseId
+  ) {
+    String sql = """
+        select i.id, i.name, i.code, ic.name as category, i.unit, i.active
+        from warehouse_item i
+        left join warehouse_item_category ic on ic.tenant_id = i.tenant_id and ic.id = i.category_id
+        where i.tenant_id = ?
+        order by i.sort_order, i.name
+        """;
+    return jdbcTemplate.query(sql, (rs, n) -> new WarehouseMovementFilterOptionsResponse.ItemOption(
+        rs.getLong("id"),
+        rs.getString("name"),
+        rs.getString("code"),
+        rs.getString("category"),
+        rs.getString("unit"),
+        rs.getBoolean("active")
+    ), tenantId);
+  }
+
+  private record MovementFilteredQuery(String sql, java.util.ArrayList<Object> params) {}
+
+  private MovementFilteredQuery buildMovementQuery(
+      boolean countOnly, boolean summaryOnly,
+      long tenantId, long warehouseId, java.time.LocalDate startDate, java.time.LocalDate endDate,
+      List<String> storeIds, List<Long> itemIds, List<String> directions, List<String> sourceTypes
+  ) {
+    String select;
+    if (countOnly) {
+      select = "select count(*) ";
+    } else if (summaryOnly) {
+      select = """
+          select coalesce(sum(case when m.quantity_delta > 0 then m.quantity_delta else 0 end), 0) as total_in,
+                 coalesce(sum(case when m.quantity_delta < 0 then abs(m.quantity_delta) else 0 end), 0) as total_out,
+                 coalesce(sum(m.quantity_delta), 0) as net_change
+          """;
+    } else {
+      select = """
+          select m.id, m.item_id, m.batch_id, i.name as item_name, m.movement_type, m.quantity_delta,
+                 m.source_type, m.source_id, m.store_id, s.name as store_name, m.note,
+                 u.display_name as operator_name, m.created_at, b.batch_no,
+                 m.warehouse_id, facility.name as warehouse_name,
+                 case when transfer_order.id is not null then transfer_order.source_warehouse_id
+                      when m.quantity_delta < 0 then m.warehouse_id else null end as source_warehouse_id,
+                 case when transfer_order.id is not null then source_facility.name
+                      when m.quantity_delta < 0 then facility.name else null end as source_warehouse_name,
+                 case when transfer_order.id is not null then transfer_order.target_warehouse_id
+                      when m.quantity_delta > 0 then m.warehouse_id else null end as target_warehouse_id,
+                 case when transfer_order.id is not null then target_facility.name
+                      when m.quantity_delta > 0 then facility.name else null end as target_warehouse_name
+          """;
+    }
+    String from;
+    if (countOnly || summaryOnly) {
+      from = """
+          from warehouse_stock_movement m
+          join warehouse_item i on i.tenant_id = m.tenant_id and i.id = m.item_id
+          """;
+    } else {
+      from = """
+          from warehouse_stock_movement m
+          join warehouse_item i on i.tenant_id = m.tenant_id and i.id = m.item_id
+          left join warehouse_stock_batch b on b.tenant_id = m.tenant_id and b.id = m.batch_id
+          left join store_branch s on s.tenant_id = m.tenant_id and s.id = m.store_id
+          left join auth_user u on u.tenant_id = m.tenant_id and u.id = m.operator_id
+          join warehouse_facility facility on facility.tenant_id = m.tenant_id and facility.id = m.warehouse_id
+          left join warehouse_transfer_order transfer_order
+            on transfer_order.tenant_id = m.tenant_id
+           and m.source_type = 'WAREHOUSE_TRANSFER' and transfer_order.id = m.source_id
+          left join warehouse_facility source_facility
+            on source_facility.tenant_id = transfer_order.tenant_id
+           and source_facility.id = transfer_order.source_warehouse_id
+          left join warehouse_facility target_facility
+            on target_facility.tenant_id = transfer_order.tenant_id
+           and target_facility.id = transfer_order.target_warehouse_id
+          """;
+    }
+
+    StringBuilder where = new StringBuilder("where m.tenant_id = ? and m.warehouse_id = ?\n");
+    where.append("  and m.created_at >= ? and m.created_at < ?\n");
+    java.util.ArrayList<Object> params = new java.util.ArrayList<>();
+    params.add(tenantId);
+    params.add(warehouseId);
+    params.add(java.sql.Timestamp.valueOf(startDate.atStartOfDay()));
+    params.add(java.sql.Timestamp.valueOf(endDate.plusDays(1).atStartOfDay()));
+
+    if (storeIds != null && !storeIds.isEmpty()) {
+      where.append("  and m.store_id in (").append(placeholders(storeIds.size())).append(")\n");
+      params.addAll(storeIds);
+    }
+    if (itemIds != null && !itemIds.isEmpty()) {
+      where.append("  and m.item_id in (").append(placeholders(itemIds.size())).append(")\n");
+      params.addAll(itemIds);
+    }
+    if (directions != null && !directions.isEmpty()) {
+      where.append("  and m.movement_type in (").append(placeholders(directions.size())).append(")\n");
+      params.addAll(directions);
+    }
+    if (sourceTypes != null && !sourceTypes.isEmpty()) {
+      where.append("  and m.source_type in (").append(placeholders(sourceTypes.size())).append(")\n");
+      params.addAll(sourceTypes);
+    }
+
+    return new MovementFilteredQuery(select + from + where, params);
+  }
+
+  private static String placeholders(int count) {
+    if (count <= 0) return "";
+    return String.join(",", java.util.Collections.nCopies(count, "?"));
+  }
 }

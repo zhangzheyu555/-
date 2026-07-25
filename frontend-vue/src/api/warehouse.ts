@@ -729,3 +729,70 @@ export async function downloadWarehousePdf(url: string, fallbackName: string) {
   const filename = decodeFilename(disposition) || fallbackName
   downloadBlob(response.data, filename)
 }
+
+// ─── Movement Report API ─────────────────────────────────────────────────────
+
+export interface MovementFilterStoreOption {
+  id: string
+  name: string
+  code: string
+  area: string
+  status: string
+}
+
+export interface MovementFilterItemOption {
+  id: number
+  name: string
+  code: string
+  category: string
+  unit: string
+  active: boolean
+}
+
+export interface MovementFilterOptions {
+  stores: MovementFilterStoreOption[]
+  items: MovementFilterItemOption[]
+}
+
+export interface MovementQueryRequest {
+  warehouseId: string | number
+  startDate: string
+  endDate: string
+  storeIds?: string[]
+  itemIds?: number[]
+  directions?: string[]
+  sourceTypes?: string[]
+  page?: number
+  pageSize?: number
+}
+
+export interface MovementQueryResponse {
+  rows: WarehouseStockMovement[]
+  total: number
+  page: number
+  pageSize: number
+  totalIn: number
+  totalOut: number
+  netChange: number
+}
+
+export function getMovementFilterOptions(warehouseId: string | number) {
+  return apiGet<MovementFilterOptions>(`/api/warehouse/movements/filter-options?warehouseId=${encodeURIComponent(warehouseId)}`)
+}
+
+export function queryMovements(request: MovementQueryRequest) {
+  return apiPost<MovementQueryResponse, MovementQueryRequest>('/api/warehouse/movements/query', request)
+}
+
+export async function downloadMovementExport(
+  request: Omit<MovementQueryRequest, 'page' | 'pageSize'>,
+  fallbackName: string,
+) {
+  const response = await http.post<Blob>('/api/warehouse/movements/export', request, {
+    responseType: 'blob',
+  })
+  const disposition = String(response.headers['content-disposition'] || '')
+  const filename = decodeFilename(disposition) || fallbackName
+  downloadBlob(response.data, filename)
+  return filename
+}
