@@ -1,9 +1,14 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { Plus } from 'lucide-vue-next'
 import type { InspectionDeductionForm } from '../../composables/useInspectionDraft'
 import type { InspectionStandardClause } from '../../data/inspectionStandards'
+import SearchableSingleSelect, {
+  type SearchableSelectOption,
+  type SearchableSelectValue,
+} from '../common/SearchableSingleSelect.vue'
 
-defineProps<{
+const props = defineProps<{
   form: InspectionDeductionForm
   dimensions: string[]
   clauses: InspectionStandardClause[]
@@ -15,8 +20,31 @@ const emit = defineEmits<{
   add: []
 }>()
 
-function clauseOptionLabel(clause: InspectionStandardClause) {
-  return (clause.code ? clause.code + ' ' : '') + clause.item + '（建议' + clause.score + '分）'
+const clauseOptions = computed<SearchableSelectOption[]>(() => props.clauses.map((clause) => ({
+  value: clause.id,
+  label: [clause.code, clause.item].filter(Boolean).join(' · '),
+  description: `${clause.categoryName} · 建议 ${clause.score} 分 · ${riskLabel(clause)}`,
+  searchText: [
+    clause.code,
+    clause.item,
+    clause.categoryName,
+    clause.method,
+    clause.description,
+    clause.riskLevel,
+    riskLabel(clause),
+    `建议 ${clause.score} 分`,
+  ].filter(Boolean).join(' '),
+})))
+
+function selectClause(value: SearchableSelectValue) {
+  const clauseId = Number(value)
+  props.form.clauseId = Number.isInteger(clauseId) && clauseId > 0 ? clauseId : null
+}
+
+function riskLabel(clause: InspectionStandardClause) {
+  if (clause.riskLevel === 'RED') return '红线'
+  if (clause.riskLevel === 'YELLOW') return '黄线'
+  return '普通项'
 }
 </script>
 
@@ -37,11 +65,16 @@ function clauseOptionLabel(clause: InspectionStandardClause) {
       </label>
       <label v-if="clauses.length">
         <span>检查条款</span>
-        <select v-model="form.clauseKey">
-          <option v-for="(clause, index) in clauses" :key="(clause.code || clause.item) + '-' + index" :value="String(index)">
-            {{ clauseOptionLabel(clause) }}
-          </option>
-        </select>
+        <SearchableSingleSelect
+          :model-value="form.clauseId"
+          :options="clauseOptions"
+          placeholder="搜索并选择检查条款"
+          search-placeholder="搜索编号、名称、检查方法或评分规则"
+          aria-label="搜索选择检查条款"
+          empty-message="当前维度没有匹配的检查条款"
+          :disabled="!standardReady"
+          @update:model-value="selectClause"
+        />
       </label>
       <label v-else>
         <span>检查条款</span>
@@ -64,7 +97,7 @@ function clauseOptionLabel(clause: InspectionStandardClause) {
 </template>
 
 <style>
-.inspection-add-card { overflow: hidden; }
+.inspection-add-card { overflow: visible; }
 .inspection-add-card .inspection-add-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .inspection-add-card .inspection-add-form label { display: grid; gap: 6px; }
 .inspection-add-card .inspection-add-form label span { color: var(--muted); font-size: 12px; font-weight: 800; }

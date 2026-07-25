@@ -65,7 +65,7 @@ function actionText(row: WarehouseRequisition) {
     <div class="table-heading">
       <div>
         <h3>我的叫货单</h3>
-        <span>刷新后从后端重新读取，不在浏览器保存叫货单。</span>
+        <span>叫货单会在页面进入和业务操作完成后从后端自动更新，不在浏览器保存。</span>
       </div>
     </div>
     <div class="table-wrap">

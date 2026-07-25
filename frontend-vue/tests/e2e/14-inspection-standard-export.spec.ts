@@ -227,6 +227,19 @@ test('latest 200-point standard calculates 180/179 and red-line result while sav
   await expect(page.getByText('不合格（命中红线）', { exact: true })).toBeVisible()
   await expect(page.getByText('179 / 200')).toBeVisible()
 
+  const clausePicker = page.getByRole('combobox', { name: '搜索选择检查条款' })
+  const manualDeduct = page.locator('.inspection-add-form input[type="number"]')
+  await expect(manualDeduct).toHaveValue('')
+  await clausePicker.fill('M-01 判定说明')
+  await expect(manualDeduct).toHaveValue('')
+  await page.getByRole('option').filter({ hasText: 'M-01 · M-01 检查条款' }).click()
+  await expect(clausePicker).toHaveValue('M-01 · M-01 检查条款')
+  await expect(manualDeduct).toHaveValue('37')
+  await manualDeduct.fill('1')
+  await page.getByLabel('问题描述').fill('物料手工扣分使用稳定条款 ID')
+  await page.getByRole('button', { name: '添加', exact: true }).click()
+  await expect(page.locator('.inspection-deduction-card').getByRole('row', { name: /M-01 M-01 检查条款/ })).toContainText('1分')
+
   await page.getByLabel('督导人').fill('测试督导')
   await page.getByRole('button', { name: '保存巡检' }).first().click()
   await expect.poll(() => savedPayload).toBeTruthy()
@@ -234,6 +247,9 @@ test('latest 200-point standard calculates 180/179 and red-line result while sav
   const itemResults = savedPayload?.itemResults as Array<Record<string, unknown>>
   expect(itemResults).toHaveLength(105)
   expect(itemResults.find((item) => item.standardItemId === 1)?.issueFound).toBe(true)
+  expect(itemResults.find((item) => item.standardItemId === 2)?.actualScore).toBe(36)
+  expect(itemResults.find((item) => item.standardItemId === 2)?.deductionReason).toBe('物料手工扣分使用稳定条款 ID')
+  expect(itemResults.find((item) => item.standardItemId === 3)?.actualScore).toBe(0)
   expect(itemResults.find((item) => item.standardItemId === 88)?.actualScore).toBe(79)
   expect(itemResults.find((item) => item.standardItemId === 88)?.deductionReason).toBe('服务动作不规范')
   expect(itemResults.find((item) => item.standardItemId === 88)?.photoAttachmentIds).toEqual([501])
@@ -296,6 +312,20 @@ test('manual review appears before the clause list and clause search filters all
   await expect(page.locator('[data-category="MATERIAL"] tbody tr')).toHaveCount(40)
   await expect(page.locator('[data-category="HYGIENE"] tbody tr')).toHaveCount(47)
   await expect(page.locator('[data-category="SERVICE"] tbody tr')).toHaveCount(18)
+
+  const standardCatalog = page.locator('.inspection-standards-view')
+  const standardSearch = standardCatalog.getByRole('searchbox', { name: '搜索标准条款' })
+  await expect(standardSearch).toBeVisible()
+  await expect(standardCatalog.getByText('显示 105 / 105 条', { exact: true })).toBeVisible()
+  await standardCatalog.getByRole('button', { name: '卫生', exact: true }).click()
+  await standardSearch.fill('H-01 判定说明')
+  await expect(standardCatalog.locator('.standards-table tbody tr')).toHaveCount(1)
+  await expect(standardCatalog.getByText('显示 1 / 105 条', { exact: true })).toBeVisible()
+  await standardSearch.fill('S-01')
+  await expect(standardCatalog.locator('.standards-table tbody tr')).toHaveCount(0)
+  await expect(standardCatalog.getByText('当前维度没有包含“S-01”的标准条款。')).toBeVisible()
+  await standardCatalog.getByRole('button', { name: '全部维度', exact: true }).click()
+  await expect(standardCatalog.locator('.standards-table tbody tr')).toHaveCount(1)
 })
 
 test('canonical E2E red-line fixture uses a complete formal standard and downloads xlsx with an authenticated request', async ({ page }) => {
@@ -404,11 +434,11 @@ test('inspection export preserves 409 score-repair details and requires manual s
 
   await page.getByRole('button', { name: '导出Excel' }).click()
   await expect(page.getByText('该巡检记录评分数据不完整，缺失项：标准快照版本、标准快照条款 ID。需人工修复评分后导出。')).toBeVisible()
-  await expect(page.getByText('数据已发生变化，请刷新后重试')).toHaveCount(0)
+  await expect(page.getByText('数据已发生变化，请重新打开当前记录后再试')).toHaveCount(0)
   await expect(page.getByText('巡检报告导出失败，请稍后重试。')).toHaveCount(0)
 })
 
-test('inspection export labels only an optimistic-lock conflict as refresh and retry', async ({ page }) => {
+test('inspection export labels only an optimistic-lock conflict as reopen and retry', async ({ page }) => {
   const completeRecord = {
     id: 'INS-EXPORT-CONFLICT',
     storeId: 'STORE-1',
@@ -445,7 +475,7 @@ test('inspection export labels only an optimistic-lock conflict as refresh and r
   await page.getByRole('row', { name: /测试门店/ }).click()
 
   await page.getByRole('button', { name: '导出Excel' }).click()
-  await expect(page.getByText('数据已发生变化，请刷新后重试')).toBeVisible()
+  await expect(page.getByText('数据已发生变化，请重新打开当前记录后再试')).toBeVisible()
   await expect(page.getByText(/需人工修复评分后导出/)).toHaveCount(0)
 })
 
@@ -468,7 +498,7 @@ test('invalid 105-item standard remains visible with category diagnostics and bl
   await expect(page.locator('[data-category="HYGIENE"] tbody tr')).toHaveCount(47)
   await expect(page.locator('[data-category="SERVICE"] tbody tr')).toHaveCount(15)
   await expect(page.getByRole('button', { name: '保存巡检' }).first()).toBeDisabled()
-  await expect(page.getByRole('button', { name: '刷新标准' }).first()).toBeEnabled()
+  await expect(page.getByRole('button', { name: '重试获取标准' }).first()).toBeEnabled()
 })
 
 test('record list, result and average all use the backend 200-point contract', async ({ page }) => {
@@ -544,7 +574,7 @@ test('only an inspection record conflict is labelled as another-user concurrent 
   await page.getByLabel('督导人').fill('测试督导')
 
   await page.getByRole('button', { name: '保存巡检' }).first().click()
-  await expect(page.getByText('当前巡检标准校验未通过，已禁止保存。请刷新标准后再试。')).toBeVisible()
+  await expect(page.getByText('当前巡检标准校验未通过，已禁止保存。请重试获取标准后再试。')).toBeVisible()
   await expect(page.getByText(/其他人更新/)).toHaveCount(0)
 
   failure = {
@@ -552,7 +582,7 @@ test('only an inspection record conflict is labelled as another-user concurrent 
     message: '巡检标准已更新',
   }
   await page.getByRole('button', { name: '保存巡检' }).first().click()
-  await expect(page.getByText('巡检标准已更新，请点击“刷新标准”后重新评分。')).toBeVisible()
+  await expect(page.getByText('巡检标准已更新，请清空当前草稿并重试获取标准后重新评分。')).toBeVisible()
   await expect(page.getByText(/其他人更新/)).toHaveCount(0)
 
   failure = {
@@ -560,7 +590,7 @@ test('only an inspection record conflict is labelled as another-user concurrent 
     message: '巡检记录版本冲突',
   }
   await page.getByRole('button', { name: '保存巡检' }).first().click()
-  await expect(page.getByText('这条巡检已被其他人更新，请刷新记录后再提交。')).toBeVisible()
+  await expect(page.getByText('这条巡检已被其他人更新，请重新打开当前记录后再提交。')).toBeVisible()
 })
 
 test('read-only store manager is routed to records and cannot see manage tabs', async ({ page }) => {

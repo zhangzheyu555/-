@@ -120,7 +120,6 @@ export const useWarehouseStore = defineStore('warehouse', {
         }
       } catch (error) {
         if (!sameWarehouseId(selectedId, this.selectedWarehouseId)) return
-        this.transferContext = null
         this.error = error instanceof Error ? error.message : '调拨工作台加载失败'
         throw error
       }

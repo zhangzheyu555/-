@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { AlertTriangle } from 'lucide-vue-next'
+import SearchableSingleSelect from '../common/SearchableSingleSelect.vue'
 import StatusBadge from '../common/StatusBadge.vue'
 import WarehousePrintButtons from './WarehousePrintButtons.vue'
 import type { WarehouseItem, WarehouseRequisition, WarehouseRequisitionLine } from '../../api/warehouse'
@@ -46,6 +47,19 @@ const storeOptions = computed(() => {
   return Array.from(stores, ([id, name]) => ({ id, name }))
     .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'))
 })
+const searchableStoreOptions = computed(() => storeOptions.value.map((store) => {
+  const source = props.stores.find((candidate) => String(candidate.id) === store.id)
+  return {
+    value: store.id,
+    label: store.name,
+    description: source
+      ? [source.code, source.area || source.regionCode, source.status].filter(Boolean).join(' · ')
+      : store.id,
+    searchText: source
+      ? [source.name, source.code, source.area, source.regionCode, source.status, source.brandName].filter(Boolean).join(' ')
+      : `${store.name} ${store.id}`,
+  }
+}))
 
 const filteredRequisitions = computed(() => props.requisitions.filter((row) => {
   if (selectedStoreId.value && String(row.storeId) !== selectedStoreId.value) return false
@@ -153,12 +167,15 @@ function shortageSummary(row: WarehouseRequisition) {
       <div class="requisition-filters" aria-label="叫货单筛选">
         <label class="filter-field">
           <span>叫货门店</span>
-          <select v-model="selectedStoreId" aria-label="叫货门店">
-            <option value="">全部门店</option>
-            <option v-for="store in storeOptions" :key="store.id" :value="store.id">
-              {{ store.name }}
-            </option>
-          </select>
+          <SearchableSingleSelect
+            v-model="selectedStoreId"
+            :options="searchableStoreOptions"
+            empty-option-label="全部门店"
+            empty-value=""
+            placeholder="全部门店"
+            search-placeholder="搜索叫货门店名称或编号"
+            aria-label="叫货门店"
+          />
         </label>
         <label class="filter-field">
           <span>提交日期</span>
@@ -351,6 +368,14 @@ function shortageSummary(row: WarehouseRequisition) {
   color: var(--ink);
   font: inherit;
   font-weight: 500;
+}
+
+.filter-field :deep(.searchable-single-select) {
+  width: 100%;
+}
+
+.filter-field :deep(.searchable-single-select__control) {
+  min-height: 36px;
 }
 
 .filter-summary {

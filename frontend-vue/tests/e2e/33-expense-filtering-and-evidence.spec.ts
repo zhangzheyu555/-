@@ -140,7 +140,7 @@ function querySnapshot(url: URL) {
   }
 }
 
-test('报销筛选和审核后的刷新始终携带当前服务器查询参数', async ({ page }) => {
+test('报销筛选和审核后的自动更新始终携带当前服务器查询参数', async ({ page }) => {
   const expenseRequests: URL[] = []
   const mutationEvents: string[] = []
   await prepareExpensePage(page, {
@@ -165,8 +165,8 @@ test('报销筛选和审核后的刷新始终携带当前服务器查询参数',
   await expect.poll(() => expenseRequests.some((request) => request.searchParams.get('status') === '待审核')).toBe(true)
 
   const expectedQuery = { month: '2026-08', brandId: '2', storeId: 'store-b', status: '待审核' }
-  await page.getByRole('button', { name: '刷新' }).click()
   await expect.poll(() => querySnapshot(expenseRequests[expenseRequests.length - 1]!)).toEqual(expectedQuery)
+  await expect(page.getByRole('button', { name: /刷新|重新加载|重新读取/ })).toHaveCount(0)
 
   const requestCountBeforeApprove = expenseRequests.length
   await page.getByRole('button', { name: '通过' }).click()
@@ -177,7 +177,8 @@ test('报销筛选和审核后的刷新始终携带当前服务器查询参数',
   await expect(page.getByText('财务已核对凭证和金额。')).toBeVisible()
 })
 
-test('今日状态清晰显示且刷新后同步最新报销统计', async ({ page }) => {
+test('今日状态清晰显示且满 60 秒后在前台自动同步最新统计', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-07-25T00:00:00Z') })
   const expenseRequests: URL[] = []
   const rows = [expense()]
   await prepareExpensePage(page, { rows, expenseRequests })
@@ -189,19 +190,29 @@ test('今日状态清晰显示且刷新后同步最新报销统计', async ({ pa
   await expect(todayStatus.locator('b')).toHaveCSS('color', 'rgb(255, 255, 255)')
   await expect(recordCount).toContainText('1')
 
-  const now = new Date()
-  const localToday = [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, '0'),
-    String(now.getDate()).padStart(2, '0'),
-  ].join('-')
-  rows.push(expense('expense-today', { expenseDate: localToday, amount: 20 }))
+  rows.push(expense('expense-today', { expenseDate: '2026-07-25', amount: 20 }))
 
   const requestCount = expenseRequests.length
-  await page.getByRole('button', { name: '刷新', exact: true }).click()
-  await expect.poll(() => expenseRequests.length).toBeGreaterThan(requestCount)
+  await page.clock.runFor(59_000)
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('focus'))
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  await page.waitForTimeout(100)
+  expect(expenseRequests).toHaveLength(requestCount)
+  await expect(todayStatus).toContainText('0 单')
+  await expect(recordCount).toContainText('1')
+
+  await page.clock.runFor(1_000)
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('focus'))
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  await expect.poll(() => expenseRequests.length).toBe(requestCount + 1)
   await expect(todayStatus).toContainText('1 单')
   await expect(recordCount).toContainText('2')
+  await page.waitForTimeout(100)
+  expect(expenseRequests).toHaveLength(requestCount + 1)
 })
 
 test('审核和要求补资料说明都限制为 255 个字符并给出中文提示', async ({ page }) => {

@@ -212,7 +212,8 @@ async function fillRequiredArchive(page: Page, name = '新增测试店', code = 
   await dialog.getByLabel('负责人').selectOption('e1')
   await dialog.getByLabel('联系方式').fill('13800138000')
   await dialog.getByLabel('经营状态').selectOption('营业中')
-  await dialog.getByLabel('成本账归属').selectOption('SELF')
+  await dialog.getByRole('combobox', { name: '成本账归属' }).fill('本门店')
+  await dialog.getByRole('option', { name: /本门店独立成本账/ }).click()
   return dialog
 }
 

@@ -2,7 +2,9 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { Plus, Trash2 } from 'lucide-vue-next'
 import StatusBadge from '../common/StatusBadge.vue'
+import SearchableSingleSelect from '../common/SearchableSingleSelect.vue'
 import type {
+  WarehouseItem,
   WarehouseTransfer,
   WarehouseTransferContext,
   WarehouseTransferCreatePayload,
@@ -13,9 +15,11 @@ import type {
 
 const props = withDefaults(defineProps<{
   transfers: WarehouseTransfer[]
+  items?: WarehouseItem[]
   context?: WarehouseTransferContext | null
   actioningId?: string
 }>(), {
+  items: () => [],
   context: null,
   actioningId: '',
 })
@@ -34,7 +38,6 @@ interface DraftLine {
   itemId: number
   quantity: number
   note: string
-  materialQuery: string
 }
 
 type TransferAction = keyof WarehouseTransferRouteActions
@@ -51,6 +54,32 @@ const activeRoute = computed(() => (
   || createRoutes.value[0]
   || null
 ))
+const itemMetadataById = computed(() => new Map(props.items.map((item) => [Number(item.id), item])))
+const materialOptions = computed(() => (activeRoute.value?.materials || []).map((material) => {
+  const metadata = itemMetadataById.value.get(Number(material.itemId))
+  const category = metadata?.categoryName || metadata?.category
+  const unit = material.unit || metadata?.stockUnit || metadata?.unit
+  return {
+    value: material.itemId,
+    label: material.itemName,
+    description: [
+      material.itemCode || metadata?.code,
+      category,
+      unit,
+      `可发 ${qty(material.availableQuantity, unit)}`,
+    ].filter(Boolean).join(' · '),
+    searchText: [
+      material.itemName,
+      material.itemCode,
+      metadata?.name,
+      metadata?.code,
+      category,
+      unit,
+      metadata?.purchaseUnit,
+      metadata?.ingredientUnit,
+    ].filter(Boolean).join(' '),
+  }
+}))
 const isProactiveAllocation = computed(() => props.context?.mode === 'PROACTIVE_ALLOCATION')
 const canChooseTargetWarehouse = computed(() => (
   isProactiveAllocation.value && createRoutes.value.length > 1
@@ -119,7 +148,7 @@ function resetDraft() {
 }
 
 function addLine() {
-  draft.lines.push({ itemId: 0, quantity: 1, note: '', materialQuery: '' })
+  draft.lines.push({ itemId: 0, quantity: 1, note: '' })
 }
 
 function removeLine(index: number) {
@@ -128,18 +157,6 @@ function removeLine(index: number) {
 
 function materialFor(line: DraftLine): WarehouseTransferMaterial | null {
   return activeRoute.value?.materials.find((item) => item.itemId === Number(line.itemId)) || null
-}
-
-function filteredMaterials(line: DraftLine) {
-  const materials = activeRoute.value?.materials || []
-  const query = line.materialQuery.trim().toLocaleLowerCase('zh-CN')
-  if (!query) return materials
-  return materials.filter((item) => (
-    item.itemId === Number(line.itemId)
-    || [item.itemName, item.itemCode, item.unit]
-      .filter(Boolean)
-      .some((value) => String(value).toLocaleLowerCase('zh-CN').includes(query))
-  ))
 }
 
 function shortageFor(line: DraftLine) {
@@ -275,23 +292,17 @@ function detailText(row: WarehouseTransfer) {
           <label>
             物料
             <div class="material-picker">
-              <input
-                v-model="line.materialQuery"
-                type="search"
-                placeholder="搜索物料名称或编码"
-                aria-label="搜索调拨物料"
-                autocomplete="off"
+              <SearchableSingleSelect
+                :model-value="line.itemId"
+                :options="materialOptions"
+                :disabled="Boolean(actioningId)"
+                :empty-option-label="'请选择物料'"
+                :empty-value="0"
+                placeholder="请选择物料"
+                search-placeholder="搜索物料名称、编码、分类或单位"
+                aria-label="调拨物料"
+                @update:model-value="line.itemId = Number($event)"
               />
-              <select v-model.number="line.itemId" required aria-label="调拨物料">
-                <option :value="0" disabled>请选择物料</option>
-                <option v-if="line.materialQuery.trim() && !filteredMaterials(line).length" :value="0" disabled>没有匹配的物料</option>
-                <option v-for="item in filteredMaterials(line)" :key="item.itemId" :value="item.itemId">
-                  {{ item.itemName }}{{ item.itemCode ? ` · ${item.itemCode}` : '' }} · 可发 {{ qty(item.availableQuantity, item.unit) }}
-                </option>
-              </select>
-              <small v-if="line.materialQuery.trim()" class="material-filter-count">
-                找到 {{ filteredMaterials(line).length }} 条，共 {{ activeRoute.materials.length }} 条物料
-              </small>
             </div>
             <small v-if="materialFor(line)" :class="{ 'stock-shortage': shortageFor(line) }">
               实时可发 {{ qty(materialFor(line)?.availableQuantity, materialFor(line)?.unit) }}
@@ -484,10 +495,6 @@ function detailText(row: WarehouseTransfer) {
 .material-picker {
   display: grid;
   gap: 6px;
-}
-
-.material-picker .material-filter-count {
-  color: var(--ds-primary-hover);
 }
 
 .transfer-line .stock-shortage {

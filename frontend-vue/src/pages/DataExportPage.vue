@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { Download, ReceiptText, RefreshCw, WalletCards } from 'lucide-vue-next'
+import { Download, ReceiptText, WalletCards } from 'lucide-vue-next'
 import { useRoute } from 'vue-router'
 import { getStores, type StoreInfo } from '../api/operations'
 import { downloadExpenseCsv, downloadProfitRankingCsv, downloadSalaryCsv } from '../api/reports'
 import BrandSelect from '../components/common/BrandSelect.vue'
 import PageHeader from '../components/common/PageHeader.vue'
 import { useBusinessScope } from '../composables/useBusinessScope'
+import { useForegroundReload } from '../composables/useForegroundReload'
 import { useProfitStore } from '../stores/profit'
 
 const route = useRoute()
@@ -24,6 +25,13 @@ const error = ref('')
 const rangeNotice = ref('')
 const initialized = ref(false)
 let loadSerial = 0
+
+const { markFresh } = useForegroundReload(async () => {
+  const loaded = await reloadExportScope()
+  if (!loaded) throw new Error(error.value || '导出范围加载失败')
+}, {
+  canReload: () => initialized.value && !loadingScope.value && !profit.loading && !downloading.value,
+})
 
 const monthOptions = computed(() => profit.months)
 const brandOptions = computed(() => profit.brands)
@@ -79,13 +87,15 @@ const hasProfitData = computed(() => profit.entries.length > 0)
 const exportDisabled = computed(() => loadingScope.value || profit.loading || !exportMonth.value)
 const profitTaskTitle = computed(() => selectedStoreId.value ? `${selectedStoreName.value}月度利润明细` : '全部门店月度利润汇总')
 
-async function ensureStoresLoaded(force = false) {
-  if ((storesLoaded.value && !force) || scope.isStoreManager.value) return
+async function ensureStoresLoaded() {
+  if (storesLoaded.value || scope.isStoreManager.value) return true
   try {
     scopedStores.value = await getStores()
     storesLoaded.value = true
+    return true
   } catch {
     // Range text can still fall back to the dashboard entry or the selected store ID.
+    return false
   }
 }
 
@@ -98,7 +108,7 @@ function clearPageMessages() {
   error.value = ''
 }
 
-async function reloadExportScope(options: { announce?: boolean; refreshed?: boolean } = {}) {
+async function reloadExportScope(options: { announce?: boolean } = {}) {
   const serial = ++loadSerial
   loadingScope.value = true
   clearPageMessages()
@@ -112,9 +122,10 @@ async function reloadExportScope(options: { announce?: boolean; refreshed?: bool
 
   profit.setFilters({ month, brandId: brandIdBeforeLoad, storeId })
   try {
-    await Promise.all([profit.load(), ensureStoresLoaded(Boolean(options.refreshed))])
-    if (serial !== loadSerial) return
-    if (profit.error) throw new Error(profit.error)
+    const [profitLoaded, storeCatalogLoaded] = await Promise.all([profit.load(), ensureStoresLoaded()])
+    if (serial !== loadSerial) return false
+    if (!profitLoaded || profit.error) throw new Error(profit.error || '利润数据加载失败，请稍后重试。')
+    if (!storeCatalogLoaded) throw new Error('门店目录加载失败，请稍后重试。')
 
     selectedMonth.value = profit.month || profit.months[0] || month
     const resolvedBrandId = scope.isStoreManager.value
@@ -124,12 +135,14 @@ async function reloadExportScope(options: { announce?: boolean; refreshed?: bool
     profit.setFilters({ month: selectedMonth.value, brandId: resolvedBrandId, storeId })
 
     if (options.announce) announceRangeUpdated()
-    if (options.refreshed) message.value = '已刷新当前导出范围。'
+    markFresh()
+    return true
   } catch (loadError) {
-    if (serial !== loadSerial) return
+    if (serial !== loadSerial) return false
     error.value = loadError instanceof Error && loadError.message
       ? loadError.message
       : '导出筛选项加载失败，请稍后重试。'
+    return false
   } finally {
     if (serial === loadSerial) loadingScope.value = false
   }
@@ -142,10 +155,6 @@ async function handleMonthChange() {
 async function handleBrandChange(brandId: string) {
   selectedBrandId.value = brandId
   await reloadExportScope({ announce: true })
-}
-
-async function refreshExportScope() {
-  await reloadExportScope({ announce: true, refreshed: true })
 }
 
 function exportParams() {
@@ -183,10 +192,10 @@ async function runExport(key: 'profit' | 'expenses' | 'salary') {
   }
 }
 
-onMounted(() => {
-  initialized.value = true
+onMounted(async () => {
   selectedBrandId.value = scope.isStoreManager.value ? scope.scopedBrandId() : ''
-  void reloadExportScope()
+  await reloadExportScope()
+  initialized.value = true
 })
 
 watch(
@@ -202,13 +211,7 @@ watch(
 
 <template>
   <section class="page-panel export-page">
-    <PageHeader :title="scope.isStoreManager.value ? '本店数据导出' : undefined">
-      <template #actions>
-        <button class="ghost-button" type="button" :disabled="loadingScope || profit.loading" @click="refreshExportScope">
-          <RefreshCw :size="16" />{{ loadingScope || profit.loading ? '正在刷新...' : '刷新' }}
-        </button>
-      </template>
-    </PageHeader>
+    <PageHeader :title="scope.isStoreManager.value ? '本店数据导出' : undefined" />
 
     <aside class="desktop-workflow-notice" role="note">
       <strong>请在电脑端完成</strong>

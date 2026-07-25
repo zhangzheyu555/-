@@ -90,12 +90,17 @@ export const useProfitStore = defineStore('profit', {
       const requestSerial = ++this.requestSerial
       this.loading = true
       this.error = ''
+      const filterParams = {
+        month: this.month || undefined,
+        brandId: this.brandId || undefined,
+        storeId: this.storeId || undefined,
+      }
+      const filtersStillCurrent = () => (
+        this.month === (filterParams.month || '')
+        && this.brandId === (filterParams.brandId || '')
+        && this.storeId === (filterParams.storeId || '')
+      )
       try {
-        const filterParams = {
-          month: this.month || undefined,
-          brandId: this.brandId || undefined,
-          storeId: this.storeId || undefined,
-        }
         // Fetch both the filtered dashboard and the all-brand entries in parallel.
         // When no brandId is set the two calls are identical; skip the duplicate.
         const allBrandPromise = this.brandId
@@ -105,14 +110,16 @@ export const useProfitStore = defineStore('profit', {
           getProfitDashboard(filterParams),
           allBrandPromise,
         ])
-        if (requestSerial !== this.requestSerial) return
+        if (requestSerial !== this.requestSerial || !filtersStillCurrent()) return false
         this.dashboard = data
         this.allBrandEntries = allBrandData?.entries
           ?? (this.brandId ? [] : data.entries)
         this.month = data.summary?.month || this.month || data.months?.[0] || ''
+        return true
       } catch (error) {
-        if (requestSerial !== this.requestSerial) return
+        if (requestSerial !== this.requestSerial || !filtersStillCurrent()) return false
         this.error = normalizeProfitError(error)
+        return false
       } finally {
         if (requestSerial === this.requestSerial) this.loading = false
       }

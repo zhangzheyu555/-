@@ -37,7 +37,7 @@ interface State {
   consoleErrors: string[]
 }
 
-const stores = [{ id: 'EMP_A', code: 'EMP-A', name: '合成员工门店', brandId: 1, brandName: '合成品牌', status: '营业中' }]
+const stores = [{ id: 'EMP_A', code: 'EMP-A', name: '合成员工门店', brandId: 1, brandName: '茹菓', status: '营业中' }]
 
 function session(role: string, permissions: string[], id: number, defaultWorkspace: string): Session {
   return {
@@ -186,10 +186,11 @@ test('store manager completes employee archive create, account, offboarding and 
   await page.goto('/staff')
 
   await page.getByRole('button', { name: '新增员工' }).click()
-  const dialog = page.locator('.modal-box')
-  await dialog.getByLabel(/门店/).selectOption('EMP_A')
+  const dialog = page.getByRole('dialog', { name: '新增员工' })
+  await dialog.getByRole('combobox', { name: '员工所属门店' }).fill('合成')
+  await dialog.getByRole('option', { name: /合成员工门店/ }).click()
   await dialog.getByLabel(/姓名/).fill('新员工')
-  await dialog.getByLabel(/职位/).fill('店员')
+  await dialog.getByLabel(/职位/).selectOption('营业员')
   await dialog.getByRole('button', { name: '保存' }).click()
   await expect(page.getByRole('cell', { name: '新员工' })).toBeVisible()
 
@@ -204,7 +205,8 @@ test('store manager completes employee archive create, account, offboarding and 
   await expect.poll(() => state.employees.find((item) => item.name === '新员工')?.status).toBe('离职')
 
   await page.getByRole('button', { name: '新增员工' }).click()
-  await dialog.getByLabel(/门店/).selectOption('EMP_A')
+  await dialog.getByRole('combobox', { name: '员工所属门店' }).fill('EMP_A')
+  await dialog.getByRole('option', { name: /合成员工门店/ }).click()
   await dialog.getByLabel(/姓名/).fill('新员工')
   await dialog.getByRole('button', { name: '保存' }).click()
   await expect(page.getByText('该门店已有同名员工：新员工')).toBeVisible()

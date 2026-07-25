@@ -6,13 +6,13 @@ import {
   ClipboardPlus,
   Maximize2,
   Minimize2,
-  RefreshCcw,
   Send,
   Sparkles,
   X,
 } from 'lucide-vue-next'
 import { useRoute } from 'vue-router'
 import PageHeader from '../components/common/PageHeader.vue'
+import SearchableSingleSelect from '../components/common/SearchableSingleSelect.vue'
 import ModalFooter from '../components/ui/ModalFooter.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import {
@@ -31,6 +31,7 @@ import { getStores, type StoreInfo } from '../api/operations'
 import { ApiError } from '../api/http'
 import { createManualBusinessTodo } from '../api/todos'
 import { useBusinessScope } from '../composables/useBusinessScope'
+import { useForegroundReload } from '../composables/useForegroundReload'
 import { useAuthStore } from '../stores/auth'
 
 type AssistantMode = 'AUTO' | 'LOCAL' | 'AI'
@@ -105,9 +106,8 @@ let documentOverflow = ''
 let todoDialogTrigger: HTMLElement | null = null
 let runId = 0
 let initialized = false
-let assistantStatusRequest: Promise<void> | null = null
+let assistantStatusRequest: Promise<boolean> | null = null
 let assistantStatusRetryTimer: number | null = null
-let lastAssistantStatusFocusRefreshAt = 0
 let assistantStatusUnconfiguredRetryUsed = false
 let pageDisposed = false
 let progressTimer: number | null = null
@@ -115,7 +115,6 @@ let progressTimer: number | null = null
 // A fresh backend process does not inherit the previous Java process environment. Recheck once
 // after a known "not configured" result and whenever the operator returns to this page, without
 // polling continuously or creating duplicate status requests.
-const ASSISTANT_STATUS_FOCUS_DEBOUNCE_MS = 1_500
 const ASSISTANT_STATUS_UNCONFIGURED_RECHECK_DELAY_MS = 15_000
 
 const financeScope = computed(() => auth.dataScope('FINANCE') || auth.dataScope('STORE'))
@@ -128,6 +127,12 @@ const accessibleStores = computed(() => {
   if (ids.length) return stores.value.filter((store) => ids.includes(store.id))
   return stores.value
 })
+const accessibleStoreOptions = computed(() => accessibleStores.value.map((store) => ({
+  value: store.id,
+  label: `${store.brandName ? `${store.brandName} · ` : ''}${store.name || store.id}`,
+  description: [store.code, store.area || store.regionCode, store.status].filter(Boolean).join(' · '),
+  searchText: [store.name, store.code, store.area, store.regionCode, store.status, store.brandName].filter(Boolean).join(' '),
+})))
 const effectiveStoreId = computed(() =>
   businessScope.isBoss.value ? '' : businessScope.scopedStoreId(selectedStoreId.value)
 )
@@ -149,10 +154,12 @@ const quickQuestions = computed(() => [
   `${selectedMonthText()}净利润为什么变化`,
   `${selectedStoreName.value}最近三个月有什么风险`,
 ])
+const { markFresh: markAssistantStatusFresh } = useForegroundReload(loadAssistantStatusInForeground, {
+  canReload: () => !pageLoading.value && !sending.value && !todoSubmitting.value,
+})
 
 onMounted(() => {
   document.addEventListener('keydown', handlePageKeydown)
-  window.addEventListener('focus', refreshAssistantStatusOnFocus)
   void loadPage()
 })
 
@@ -160,7 +167,6 @@ onBeforeUnmount(() => {
   pageDisposed = true
   snapshotAbortController?.abort()
   document.removeEventListener('keydown', handlePageKeydown)
-  window.removeEventListener('focus', refreshAssistantStatusOnFocus)
   clearAssistantStatusRetryTimer()
   stopProgressClock()
   releaseFullscreenLayout(false)
@@ -190,10 +196,11 @@ async function loadPage() {
     // Let the selection watcher consume the initial values while initialization is still gated;
     // otherwise it would issue a second identical snapshot request after this first load.
     await nextTick()
-    await Promise.all([loadCurrentEntry(), loadAssistantStatus(), loadOperatingSnapshot()])
+    const [, statusLoaded] = await Promise.all([loadCurrentEntry(), loadAssistantStatus(), loadOperatingSnapshot()])
+    if (statusLoaded) markAssistantStatusFresh()
     initialized = true
   } catch (error) {
-    pageError.value = normalizeError(error, '经营助手初始化失败，请刷新后重试。')
+    pageError.value = normalizeError(error, '经营助手初始化失败，请稍后重试。')
   } finally {
     pageLoading.value = false
   }
@@ -260,11 +267,12 @@ function loadAssistantStatus() {
     try {
       const nextStatus = await getAssistantStatus()
       if (!pageDisposed) assistantStatus.value = nextStatus
+      return true
     } catch {
-      if (!pageDisposed) assistantStatus.value = null
+      return false
     } finally {
       assistantStatusRequest = null
-      if (!pageDisposed) scheduleUnconfiguredAssistantStatusRefresh()
+      if (!pageDisposed) scheduleUnconfiguredAssistantStatusRetry()
     }
   })()
 
@@ -272,23 +280,16 @@ function loadAssistantStatus() {
   return request
 }
 
-function refreshAssistantStatusOnFocus() {
-  if (pageDisposed || pageLoading.value || document.visibilityState !== 'visible') return
-
-  const now = Date.now()
-  if (now - lastAssistantStatusFocusRefreshAt < ASSISTANT_STATUS_FOCUS_DEBOUNCE_MS) return
-  lastAssistantStatusFocusRefreshAt = now
-
-  // A focus refresh is the single retry for an already-known unconfigured state. Cancel the
-  // deferred retry so rapidly returning to the page cannot make a second request.
+async function loadAssistantStatusInForeground() {
+  if (pageDisposed) return false
   if (assistantStatus.value?.configured === false) {
     assistantStatusUnconfiguredRetryUsed = true
     clearAssistantStatusRetryTimer()
   }
-  void loadAssistantStatus()
+  return loadAssistantStatus()
 }
 
-function scheduleUnconfiguredAssistantStatusRefresh() {
+function scheduleUnconfiguredAssistantStatusRetry() {
   if (assistantStatus.value?.configured !== false) {
     assistantStatusUnconfiguredRetryUsed = false
     clearAssistantStatusRetryTimer()
@@ -393,7 +394,7 @@ async function loadCurrentEntry() {
     currentEntry.value = null
     entryState.value = 'error'
     if (error instanceof ApiError) {
-      if (error.status === 401) entryError.value = '登录已失效，请刷新后重新登录'
+      if (error.status === 401) entryError.value = '登录已失效，请重新登录'
       else if (error.status === 403) entryError.value = '无权查看该门店的经营数据'
       else entryError.value = error.message || '经营数据加载失败，请稍后重试'
       entryRequestId.value = error.requestId || ''
@@ -463,7 +464,7 @@ async function submitQuestion(preset?: string) {
     run.status = run.response ? 'partial-error' : 'error'
     run.error = normalizeError(error, '经营助手暂时无法完成请求，请稍后重试。')
   } finally {
-    refreshAssistantStatusAfterAnalysis(requestMode === 'LOCAL' ? 'LOCAL' : 'AI', run.response)
+    reloadAssistantStatusAfterAnalysis(requestMode === 'LOCAL' ? 'LOCAL' : 'AI', run.response)
     sending.value = false
     stopProgressClock()
     await nextTick(() => focusCompletedAnswer(run))
@@ -497,7 +498,7 @@ async function requestAiAnalysis(run: AssistantRun) {
     run.status = run.response ? 'partial-error' : 'error'
     run.error = normalizeError(error, 'AI分析请求失败，请稍后重试。')
   } finally {
-    refreshAssistantStatusAfterAnalysis('AI', run.response)
+    reloadAssistantStatusAfterAnalysis('AI', run.response)
     sending.value = false
     stopProgressClock()
     await nextTick(() => focusCompletedAnswer(run))
@@ -543,7 +544,7 @@ async function retryRun(run: AssistantRun) {
     run.status = run.response ? 'partial-error' : 'error'
     run.error = normalizeError(error, '经营助手暂时无法完成请求，请稍后重试。')
   } finally {
-    refreshAssistantStatusAfterAnalysis(requestMode === 'LOCAL' ? 'LOCAL' : 'AI', run.response)
+    reloadAssistantStatusAfterAnalysis(requestMode === 'LOCAL' ? 'LOCAL' : 'AI', run.response)
     sending.value = false
     stopProgressClock()
     await nextTick(() => focusCompletedAnswer(run))
@@ -594,13 +595,13 @@ function focusCompletedAnswer(run: AssistantRun) {
   })
 }
 
-function refreshAssistantStatusAfterAnalysis(
+function reloadAssistantStatusAfterAnalysis(
   requestMode: AssistantMode,
   response?: AssistantChatResponse,
 ) {
   // A configured key is not proof that the last model response passed the quality gate.
-  // Refresh after every possible AI path so a rejected response cannot coexist with a stale
-  // green health marker after the user retries or refreshes this page.
+  // Reload after every possible AI path so a rejected response cannot coexist with a stale
+  // green health marker after the user retries or returns to this page.
   if (requestMode !== 'AI' && response?.selectedMode !== 'AI') return
   if (assistantStatus.value && response?.selectedMode === 'AI') {
     if (response.aiAnalysis.available) {
@@ -1070,10 +1071,15 @@ function normalizeError(value: unknown, fallback: string) {
       </label>
       <label v-else-if="!businessScope.isStoreManager.value" class="context-field">
         <span>门店</span>
-        <select v-model="selectedStoreId" :disabled="pageLoading || financeScope?.mode === 'OWN_STORE'">
-          <option v-if="!accessibleStores.length" value="">暂无可选门店</option>
-          <option v-for="store in accessibleStores" :key="store.id" :value="store.id">{{ store.name }}</option>
-        </select>
+        <SearchableSingleSelect
+          v-model="selectedStoreId"
+          :options="accessibleStoreOptions"
+          :disabled="pageLoading || financeScope?.mode === 'OWN_STORE'"
+          placeholder="请选择门店"
+          search-placeholder="搜索门店名称、编号或区域"
+          aria-label="门店"
+          empty-message="暂无可选门店"
+        />
       </label>
       <label class="context-field month-field">
         <span>经营月份</span>
@@ -1228,7 +1234,7 @@ function normalizeError(value: unknown, fallback: string) {
               <div><AlertTriangle :size="18" /><strong>经营数据已保留，AI 分析未完成</strong></div>
               <p>{{ run.error }}</p>
               <button type="button" :disabled="sending" @click="requestAiAnalysis(run)">
-                <RefreshCcw :size="15" />重新分析
+                <Sparkles :size="15" />重新分析
               </button>
             </section>
 
@@ -1248,7 +1254,7 @@ function normalizeError(value: unknown, fallback: string) {
               <footer class="data-meta">
                 <span>经营数据不足，未调用 AI。</span>
                 <button type="button" :disabled="snapshotLoading || sending" @click="loadOperatingSnapshot({ announce: true })">
-                  <RefreshCcw :size="15" />重新分析
+                  <Sparkles :size="15" />重新分析
                 </button>
               </footer>
             </section>
@@ -1339,7 +1345,7 @@ function normalizeError(value: unknown, fallback: string) {
               <div><AlertTriangle :size="18" /><strong>{{ aiUnavailableTitle(run) }}</strong></div>
               <p>{{ aiUnavailableMessage(run) }}</p>
               <button type="button" :disabled="sending" @click="requestAiAnalysis(run)">
-                <RefreshCcw :size="15" />重新分析
+                <Sparkles :size="15" />重新分析
               </button>
             </section>
 
@@ -1530,6 +1536,9 @@ function normalizeError(value: unknown, fallback: string) {
 .context-field { display: grid; gap: 6px; }
 .context-field span { color: var(--ds-secondary); font-size: 13px; font-weight: 600; }
 .context-field select { width: 100%; padding: 0 12px; outline: none; }
+.context-field :deep(.searchable-single-select) { width: 100%; }
+.context-field :deep(.searchable-single-select__control) { min-height: 44px; }
+.context-field :deep(.searchable-single-select__control input) { height: 42px; }
 .context-field select:focus,
 .question-form input:focus { border-color: var(--ds-primary-hover); box-shadow: 0 0 0 3px var(--ds-primary-soft); }
 

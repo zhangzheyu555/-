@@ -25,12 +25,13 @@ test('普通账号进入知识库即可看到自己有权查看的已发布资�
 
   await expect(page.getByRole('heading', { name: '我可查看的资料' })).toBeVisible()
   await expect(page.getByText('门店交接班规范', { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: '刷新资料' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /刷新|重新加载|重新读取/ })).toHaveCount(0)
   expect(storeRequests).toBe(0)
   await expect(page.getByRole('heading', { name: '上传资料' })).toHaveCount(0)
 })
 
-test('资料目录支持手动刷新和窗口重新聚焦刷新', async ({ page }) => {
+test('资料目录满 60 秒后前台自动更新并合并焦点与可见性事件', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-07-25T00:00:00Z') })
   await mockKnowledgeBase(page, regularUser())
   let availableRequests = 0
   await page.route('**/api/knowledge-base/documents/available', async (route) => {
@@ -44,14 +45,24 @@ test('资料目录支持手动刷新和窗口重新聚焦刷新', async ({ page 
 
   await expect(page.getByText('门店交接班规范 v1', { exact: true })).toBeVisible()
   const requestsAfterInitialLoad = availableRequests
-  await page.getByRole('button', { name: '刷新资料' }).click()
-  await expect.poll(() => availableRequests).toBe(requestsAfterInitialLoad + 1)
-  await expect(page.getByText(`门店交接班规范 v${availableRequests}`, { exact: true })).toBeVisible()
+  await page.clock.runFor(59_000)
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('focus'))
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  await page.waitForTimeout(100)
+  expect(availableRequests).toBe(requestsAfterInitialLoad)
+  await expect(page.getByText('门店交接班规范 v1', { exact: true })).toBeVisible()
 
-  const requestsBeforeFocus = availableRequests
-  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
-  await expect.poll(() => availableRequests).toBe(requestsBeforeFocus + 1)
-  await expect(page.getByText(`门店交接班规范 v${availableRequests}`, { exact: true })).toBeVisible()
+  await page.clock.runFor(1_000)
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('focus'))
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  await expect.poll(() => availableRequests).toBe(requestsAfterInitialLoad + 1)
+  await expect(page.getByText('门店交接班规范 v2', { exact: true })).toBeVisible()
+  await page.waitForTimeout(100)
+  expect(availableRequests).toBe(requestsAfterInitialLoad + 1)
 })
 
 test('老板配置指定门店时通过可搜索复选框选择门店', async ({ page }) => {

@@ -11,6 +11,7 @@ import {
 } from '../../api/todos'
 import { useAuthStore } from '../../stores/auth'
 import { isBossRole } from '../../permissions/roles'
+import { useForegroundReload } from '../../composables/useForegroundReload'
 import StatusBadge from '../common/StatusBadge.vue'
 import UiButton from '../ui/UiButton.vue'
 import UnsavedChangesDialog from '../ui/UnsavedChangesDialog.vue'
@@ -48,6 +49,9 @@ const isGlobalRole = computed(() => isBossRole(auth.role))
 const isAssignee = computed(() => Boolean(todo.value?.assigneeRole && todo.value.assigneeRole === auth.roleLabel))
 const isReviewer = computed(() => Boolean(todo.value?.reviewRole && todo.value.reviewRole === auth.roleLabel))
 const dirty = computed(() => Boolean(note.value.trim() || files.value.length))
+const { markFresh } = useForegroundReload(loadTodo, {
+  canReload: () => !dirty.value && !submitting.value && !loading.value,
+})
 
 const availableActions = computed<WorkflowAction[]>(() => {
   const current = todo.value
@@ -119,13 +123,17 @@ function discardAndClose() {
 }
 
 async function loadTodo() {
+  if (loading.value && todo.value) return false
   loading.value = true
   error.value = ''
   try {
     todo.value = await getBusinessTodo(props.todoId)
+    markFresh()
+    return true
   } catch (loadError) {
     console.error('[Todo] workflow detail load failed', loadError)
     error.value = loadError instanceof Error ? loadError.message : '待办详情加载失败'
+    return false
   } finally {
     loading.value = false
   }
@@ -181,6 +189,7 @@ async function submit(status: TransitionStatus) {
     note.value = ''
     files.value = []
     emit('updated', updated)
+    markFresh()
   } catch (submitError) {
     console.error('[Todo] workflow transition failed', submitError)
     error.value = submitError instanceof Error ? submitError.message : '待办处理失败，请重试'
@@ -234,7 +243,7 @@ function formatSize(bytes: number) {
           </UiButton>
         </header>
 
-        <div v-if="loading" class="drawer-loading">
+        <div v-if="loading && !todo" class="drawer-loading">
           <LoaderCircle class="spin" :size="24" />
           正在加载...
         </div>
@@ -351,7 +360,7 @@ function formatSize(bytes: number) {
 
         <div v-else class="drawer-load-error">
           <div class="error-box">{{ error || '待办详情加载失败' }}</div>
-          <button class="ghost-button" type="button" @click="loadTodo">重新加载</button>
+          <button class="ghost-button" type="button" @click="loadTodo">重试</button>
         </div>
       </aside>
     </div>

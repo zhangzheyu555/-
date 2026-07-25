@@ -82,7 +82,6 @@ export const useInspectionStore = defineStore('inspection', {
         this.applyWorkbench(data)
       } catch (error) {
         this.error = error instanceof Error ? error.message : '督导工作台加载失败'
-        this.applyWorkbench(emptyWorkbench())
       } finally {
         this.loading = false
       }
@@ -180,19 +179,6 @@ async function aggregateInspectionWorkbench(): Promise<InspectionWorkbench> {
     reviews,
     escalatedItems,
     doneItems,
-  }
-}
-
-function emptyWorkbench(): InspectionWorkbench {
-  return {
-    summary: emptySummary,
-    todoItems: [],
-    tasks: [],
-    records: [],
-    issues: [],
-    reviews: [],
-    escalatedItems: [],
-    doneItems: [],
   }
 }
 

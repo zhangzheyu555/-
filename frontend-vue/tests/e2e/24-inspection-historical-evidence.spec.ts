@@ -100,7 +100,10 @@ test('老板手工关联已入库证据后，历史条款显示受认证缩略�
   const currentRecord = () => baseRecord(
     recordId,
     JSON.stringify([{ attachmentId: 701, fileName: '微信原图.jpg', contentType: 'image/jpeg' }]),
-    [clause(41, 'H-01', linked ? [701] : [])],
+    [
+      { ...clause(1041, 'H-01', linked ? [701] : []), snapshotId: 41 },
+      { ...clause(41, 'H-02'), snapshotId: undefined },
+    ],
   )
   await page.route((url) => url.pathname.startsWith('/api/'), async (route) => {
     const request = route.request()
@@ -109,12 +112,12 @@ test('老板手工关联已入库证据后，历史条款显示受认证缩略�
     if (pathname === '/api/inspections' && request.method() === 'GET') return json(route, [currentRecord()])
     if (pathname === `/api/inspections/${recordId}` && request.method() === 'GET') return json(route, currentRecord())
     if (pathname === `/api/inspections/${recordId}/evidence/attachments` && request.method() === 'GET') {
-      return json(route, { recordId, storeId: 'STORE-1', candidates: [{ attachmentId: 701, photoIndex: 0, fileName: '微信原图.jpg', contentType: 'image/jpeg', status: linked ? 'LINKED' : 'UNLINKED', linkedClauseIds: linked ? [41] : [] }] })
+      return json(route, { recordId, storeId: 'STORE-1', candidates: [{ attachmentId: 701, photoIndex: 0, fileName: '微信原图.jpg', contentType: 'image/jpeg', status: linked ? 'LINKED' : 'UNLINKED', linkedClauseIds: linked ? [1041, 41] : [] }] })
     }
     if (pathname === `/api/inspections/${recordId}/evidence/link` && request.method() === 'POST') {
       submitted = request.postDataJSON()
       linked = true
-      return json(route, { recordId, attachmentIds: [701], clauseIds: [41], action: 'ASSOCIATE', record: currentRecord() })
+      return json(route, { recordId, attachmentIds: [701], clauseIds: [1041, 41], action: 'ASSOCIATE', record: currentRecord() })
     }
     if (pathname === '/api/storage/attachments/701') return route.fulfill({ status: 200, contentType: 'image/png', body: tinyPng })
     if (pathname === '/api/inspection/standards') return json(route, { id: 1, version: '测试标准', fullScore: 200, passScore: 180, valid: true, saveAllowed: true, items: [] })
@@ -127,16 +130,27 @@ test('老板手工关联已入库证据后，历史条款显示受认证缩略�
 
   await seed(page)
   await page.goto(`/operations/inspection/records?recordId=${recordId}`)
-  await expect(page.getByText('未关联现场证据')).toBeVisible()
+  await expect(page.getByText('未关联现场证据').first()).toBeVisible()
   await expect(page.getByRole('button', { name: '预览 微信原图.jpg' })).toHaveCount(0)
   await page.locator('.unlinked-evidence-list').getByRole('button', { name: '关联已有证据' }).click()
 
   const dialog = page.getByRole('dialog', { name: '补传并关联证据' })
   await expect(dialog.getByText('微信原图.jpg')).toBeVisible()
   await expect(dialog.locator('.evidence-candidate input')).toBeChecked()
-  await dialog.getByRole('checkbox', { name: /H-01 历史条款/ }).check()
+  const clauseSearch = dialog.getByRole('searchbox', { name: '搜索并选择历史条款' })
+  await clauseSearch.fill('H-01')
+  await dialog.getByRole('checkbox', { name: /H-01.*历史条款/ }).check()
+  await expect(dialog.getByText('已选择 1 条', { exact: true })).toBeVisible()
+  await clauseSearch.fill('H-02')
+  await dialog.getByRole('checkbox', { name: /H-02.*历史条款/ }).check()
+  await expect(dialog.getByText('已选择 2 条', { exact: true })).toBeVisible()
+  await dialog.getByRole('button', { name: '清空已选条款', exact: true }).click()
+  await expect(dialog.getByText('已选择 0 条', { exact: true })).toBeVisible()
+  await clauseSearch.fill('历史卫生扣分')
+  await dialog.getByRole('button', { name: '全选当前结果', exact: true }).click()
+  await expect(dialog.getByText('已选择 2 条', { exact: true })).toBeVisible()
   await dialog.getByRole('button', { name: '确认关联' }).click()
-  await expect.poll(() => submitted).toEqual({ attachmentIds: [701], clauseIds: [], historicalSnapshotIds: [41] })
+  await expect.poll(() => submitted).toEqual({ attachmentIds: [701], clauseIds: [41], historicalSnapshotIds: [41] })
 
   await expect(page.getByText('已将所选证据关联到历史条款；历史评分和整改状态未改动。')).toBeVisible()
   const preview = page.getByRole('button', { name: '预览 微信原图.jpg' })

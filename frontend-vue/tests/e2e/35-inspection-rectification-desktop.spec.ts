@@ -123,6 +123,61 @@ test('store manager submits rectification evidence through authenticated APIs wi
   expect(consoleErrors).toEqual([])
 })
 
+test('foreground task response does not replace rectification text entered while the request is in flight', async ({ page }) => {
+  const task = pendingSubmission()
+  const replacementTask: Task = {
+    ...pendingSubmission(),
+    recordId: 'INS-RECT-DESKTOP-2',
+    requirement: '整理前厅物料并补充现场照片。',
+  }
+  let mineRequests = 0
+  let signalForegroundRequest: (() => void) | undefined
+  let releaseForegroundRequest: (() => void) | undefined
+  const foregroundRequestStarted = new Promise<void>((resolve) => {
+    signalForegroundRequest = resolve
+  })
+  const foregroundRequestGate = new Promise<void>((resolve) => {
+    releaseForegroundRequest = resolve
+  })
+
+  await seed(page, manager)
+  await page.route(/^https?:\/\/[^/]+\/api\//, async (route: Route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/auth/me') return route.fulfill(ok(manager))
+    if (path === '/api/inspections/rectifications/mine') {
+      mineRequests += 1
+      if (mineRequests === 2) {
+        signalForegroundRequest?.()
+        await foregroundRequestGate
+        return route.fulfill(ok([replacementTask]))
+      }
+      return route.fulfill(ok([task]))
+    }
+    return route.fulfill(ok([]))
+  })
+
+  await page.goto('/store/inspection/rectifications')
+  const noteInput = page.getByLabel('整改说明')
+  await expect(noteInput).toBeVisible()
+
+  await page.evaluate(() => {
+    const staleNow = Date.now() + 61_000
+    Date.now = () => staleNow
+    window.dispatchEvent(new Event('focus'))
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  await foregroundRequestStarted
+
+  await noteInput.fill('请求期间开始填写的整改说明')
+  releaseForegroundRequest?.()
+  await expect.poll(() => mineRequests).toBe(2)
+  await page.waitForTimeout(100)
+
+  await expect(noteInput).toHaveValue('请求期间开始填写的整改说明')
+  await expect(page.getByText('清洁后厨地面并补充现场照片。').first()).toBeVisible()
+  await expect(page.getByText('整理前厅物料并补充现场照片。')).toHaveCount(0)
+})
+
 test('supervisor approves one pending rectification and removes it from the review queue', async ({ page }) => {
   const task: Task = {
     ...pendingSubmission(),

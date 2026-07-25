@@ -916,6 +916,7 @@ watch(
     <WarehouseTransferPanel
       v-else-if="currentTab() === 'transfers'"
       :transfers="warehouse.transfers"
+      :items="items"
       :context="warehouse.transferContext"
       :actioning-id="warehouse.actioningId"
       @create="createTransfer"

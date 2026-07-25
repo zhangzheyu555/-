@@ -62,7 +62,7 @@ export interface InspectionDeductionDetail {
 
 export interface InspectionDeductionForm {
   dimension: string
-  clauseKey: string
+  clauseId: number | null
   manualItem: string
   deduct: number | null
   issue: string
@@ -102,7 +102,7 @@ export function useInspectionDraft(options: {
 
   const deductionForm = reactive<InspectionDeductionForm>({
     dimension: '',
-    clauseKey: '',
+    clauseId: null,
     manualItem: '',
     deduct: null,
     issue: '',
@@ -134,7 +134,7 @@ export function useInspectionDraft(options: {
     globalStandard.value.groups.find((group) => group.dim === deductionForm.dimension)?.items || []
   ))
   const selectedClause = computed<InspectionStandardClause | undefined>(() => (
-    clausesForDimension.value[Number(deductionForm.clauseKey)]
+    clausesForDimension.value.find((clause) => clause.id === deductionForm.clauseId)
   ))
   const hasGlobalStandard = computed(() => globalStandard.value.groups.length > 0 || globalStandard.value.redlines.length > 0)
   const standardReady = computed(() => (
@@ -225,7 +225,7 @@ export function useInspectionDraft(options: {
   })
   const saveBlockedReason = computed(() => {
     if (!standardReady.value) return hasGlobalStandard.value
-      ? '当前标准未通过校验，请刷新标准后再保存'
+      ? '当前标准未通过校验，请重试获取标准后再保存'
       : '最新巡检标准尚未加载完成'
     if (!draft.itemResults.length) return '最新巡检条款尚未初始化'
     if (!draft.photos.length) return '请先上传现场照片并完成识别'
@@ -263,15 +263,8 @@ export function useInspectionDraft(options: {
     const dimensions = draftDimensions.value
     if (!dimensions.includes(deductionForm.dimension)) deductionForm.dimension = dimensions[0] || ''
     const clauses = clausesForDimension.value
-    if (clauses.length) {
-      const clauseIndex = Number(deductionForm.clauseKey)
-      if (!Number.isInteger(clauseIndex) || clauseIndex < 0 || clauseIndex >= clauses.length) {
-        deductionForm.clauseKey = '0'
-      }
-      fillDeductionFromClause()
-    } else {
-      deductionForm.clauseKey = ''
-      if (!deductionForm.deduct || deductionForm.deduct <= 0) deductionForm.deduct = 1
+    if (!clauses.some((clause) => clause.id === deductionForm.clauseId)) {
+      deductionForm.clauseId = null
     }
   }
 
@@ -339,6 +332,7 @@ export function useInspectionDraft(options: {
     options.resetDraftReviewState()
     deductionForm.manualItem = ''
     deductionForm.issue = ''
+    deductionForm.clauseId = null
     deductionForm.deduct = null
     ensureDraftStore()
     ensureDeductionForm()

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Archive, Download, FileSearch, FileUp, RefreshCw, Search } from 'lucide-vue-next'
+import { computed, onMounted, ref, watch } from 'vue'
+import { Archive, Download, FileSearch, FileUp, Search } from 'lucide-vue-next'
 import {
   archiveKnowledgeBaseDocument,
   availableKnowledgeBaseDocuments,
@@ -16,8 +16,10 @@ import {
 } from '../api/knowledgeBase'
 import { ApiError } from '../api/http'
 import { getStores, type StoreInfo } from '../api/operations'
+import SearchableMultiSelect from '../components/common/SearchableMultiSelect.vue'
 import { PERMISSIONS } from '../permissions/permissions'
 import { useAuthStore } from '../stores/auth'
+import { useForegroundReload } from '../composables/useForegroundReload'
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 const auth = useAuthStore()
@@ -33,13 +35,14 @@ const savingMode = ref<'publish' | 'draft' | null>(null)
 const file = ref<File | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 const error = ref('')
+const availableRecordsLoadError = ref('')
+const recordsLoadError = ref('')
 const success = ref('')
 const busyDocumentId = ref<number | null>(null)
 const stores = ref<StoreInfo[]>([])
 const storesLoaded = ref(false)
 const storesLoading = ref(false)
 const storesLoadError = ref('')
-const storeQuery = ref('')
 const isBoss = computed(() => auth.role === 'BOSS')
 const isSupervisor = computed(() => auth.role === 'SUPERVISOR')
 const canManage = computed(() => (
@@ -47,7 +50,11 @@ const canManage = computed(() => (
   && auth.hasPermission(PERMISSIONS.KNOWLEDGE_BASE_MANAGE)
 ))
 const saving = computed(() => savingMode.value !== null)
-let availableRecordsRequest: Promise<void> | null = null
+const loadError = computed(() => Array.from(new Set([
+  availableRecordsLoadError.value,
+  recordsLoadError.value,
+].filter(Boolean))).join('；'))
+let availableRecordsRequest: Promise<boolean> | null = null
 const form = ref({
   title: '',
   category: '门店运营',
@@ -55,20 +62,27 @@ const form = ref({
   roleScopes: [] as string[],
   storeScopes: [] as string[],
 })
-const filteredStores = computed(() => {
-  const normalizedQuery = storeQuery.value.trim().toLocaleLowerCase()
-  if (!normalizedQuery) return stores.value
-  return stores.value.filter((store) => [
-    store.name,
-    store.code,
-    store.area,
-    store.regionCode,
-  ].some((value) => String(value || '').toLocaleLowerCase().includes(normalizedQuery)))
-})
+const storeScopeOptions = computed(() => stores.value.map((store) => ({
+  value: store.id,
+  label: store.name,
+  description: `${store.code || store.id} · ${storeRegion(store)} · ${storeStatus(store.status)}`,
+  searchText: [store.name, store.code, store.area, store.regionCode, store.status, store.brandName].filter(Boolean).join(' '),
+})))
 const storeSelectionUnavailable = computed(() => (
   form.value.visibility === 'STORE'
   && (!storesLoaded.value || storesLoading.value || Boolean(storesLoadError.value))
 ))
+const hasPendingUpload = computed(() => Boolean(
+  saving.value
+  || busyDocumentId.value
+  || file.value
+  || form.value.title.trim()
+  || form.value.roleScopes.length
+  || form.value.storeScopes.length,
+))
+const { markFresh } = useForegroundReload(() => loadKnowledgePage(), {
+  canReload: () => !hasPendingUpload.value && !loadingAvailableRecords.value && !loadingRecords.value,
+})
 
 const roles = [
   { code: 'EMPLOYEE', label: '员工' },
@@ -87,25 +101,28 @@ watch([() => form.value.visibility, canManage], ([visibility, manageable]) => {
   if (visibility !== 'ROLE') form.value.roleScopes = []
   if (visibility !== 'STORE') {
     form.value.storeScopes = []
-    storeQuery.value = ''
     return
   }
   if (!manageable) return
   void loadStores()
 }, { immediate: true })
 
-async function loadAvailableRecords(force = false): Promise<void> {
+async function loadAvailableRecords(force = false): Promise<boolean> {
   if (availableRecordsRequest) {
     const activeRequest = availableRecordsRequest
-    await activeRequest
-    return force ? loadAvailableRecords(false) : undefined
+    const succeeded = await activeRequest
+    return force ? loadAvailableRecords(false) : succeeded
   }
   const request = (async () => {
     loadingAvailableRecords.value = true
+    availableRecordsLoadError.value = ''
     try {
       availableRecords.value = await availableKnowledgeBaseDocuments()
+      availableRecordsLoadError.value = ''
+      return true
     } catch (reason) {
-      error.value = message(reason)
+      availableRecordsLoadError.value = message(reason)
+      return false
     } finally {
       loadingAvailableRecords.value = false
     }
@@ -118,15 +135,30 @@ async function loadAvailableRecords(force = false): Promise<void> {
 }
 
 async function loadRecords() {
-  if (!canManage.value || loadingRecords.value) return
+  if (!canManage.value) {
+    recordsLoadError.value = ''
+    return true
+  }
+  if (loadingRecords.value) return false
   loadingRecords.value = true
+  recordsLoadError.value = ''
   try {
     records.value = await knowledgeBaseDocuments()
+    recordsLoadError.value = ''
+    return true
   } catch (reason) {
-    error.value = message(reason)
+    recordsLoadError.value = message(reason)
+    return false
   } finally {
     loadingRecords.value = false
   }
+}
+
+async function loadKnowledgePage(forceAvailable = false) {
+  const results = await Promise.all([loadAvailableRecords(forceAvailable), loadRecords()])
+  const succeeded = results.every(Boolean)
+  if (succeeded) markFresh()
+  return succeeded
 }
 
 async function loadStores(force = false) {
@@ -138,8 +170,6 @@ async function loadStores(force = false) {
     stores.value = await getStores({ knowledgeBaseScope: true })
     storesLoaded.value = true
   } catch {
-    stores.value = []
-    storesLoaded.value = false
     storesLoadError.value = '门店列表加载失败，暂时不能按指定门店提交。请重试。'
   } finally {
     storesLoading.value = false
@@ -221,7 +251,7 @@ async function upload(publishNow: boolean) {
       success.value = `“${uploadedDocument.title}”已保存为草稿，普通账号暂不可见。`
     }
     resetForm()
-    await Promise.all([loadRecords(), loadAvailableRecords(true)])
+    await loadKnowledgePage(true)
   } catch (reason) {
     error.value = message(reason)
   } finally {
@@ -239,9 +269,9 @@ async function publish(knowledgeDocument: KnowledgeBaseDocument) {
     if (publishedDocument.status === 'PUBLISHED') {
       success.value = `“${knowledgeDocument.title}”已发布，符合范围的账号现在可以查看。`
     } else {
-      error.value = `“${knowledgeDocument.title}”仍是草稿，未完成发布，请刷新后重试。`
+      error.value = `“${knowledgeDocument.title}”仍是草稿，未完成发布，请稍后重试。`
     }
-    await Promise.all([loadRecords(), loadAvailableRecords(true)])
+    await loadKnowledgePage(true)
   } catch (reason) {
     error.value = message(reason)
   } finally {
@@ -256,7 +286,7 @@ async function archive(knowledgeDocument: KnowledgeBaseDocument) {
   try {
     await archiveKnowledgeBaseDocument(knowledgeDocument.id)
     success.value = `“${knowledgeDocument.title}”已下架。`
-    await Promise.all([loadRecords(), loadAvailableRecords(true)])
+    await loadKnowledgePage(true)
   } catch (reason) {
     error.value = message(reason)
   } finally {
@@ -276,17 +306,6 @@ async function download(knowledgeDocument: Pick<KnowledgeBaseDocument, 'id' | 'o
   }
 }
 
-function selectAllFilteredStores() {
-  form.value.storeScopes = Array.from(new Set([
-    ...form.value.storeScopes,
-    ...filteredStores.value.map((store) => store.id),
-  ]))
-}
-
-function clearStoreScopes() {
-  form.value.storeScopes = []
-}
-
 function confirmTenantPublish() {
   return window.confirm(
     '确认发布到全企业？发布后，本企业内拥有知识库权限且未被单独禁止的账号均可查看和检索。',
@@ -303,7 +322,6 @@ function resetForm() {
     roleScopes: [],
     storeScopes: [],
   }
-  storeQuery.value = ''
 }
 
 function scopeLabel(knowledgeDocument: KnowledgeBaseDocument) {
@@ -342,23 +360,8 @@ function message(reason: unknown) {
   return reason instanceof ApiError ? reason.message : '操作未完成，请稍后重试。'
 }
 
-function refreshWhenVisible() {
-  if (document.visibilityState === 'visible') void loadAvailableRecords()
-}
-
-function refreshWhenFocused() {
-  void loadAvailableRecords()
-}
-
 onMounted(() => {
-  void Promise.all([loadAvailableRecords(), loadRecords()])
-  window.addEventListener('focus', refreshWhenFocused)
-  document.addEventListener('visibilitychange', refreshWhenVisible)
-})
-
-onBeforeUnmount(() => {
-  window.removeEventListener('focus', refreshWhenFocused)
-  document.removeEventListener('visibilitychange', refreshWhenVisible)
+  void loadKnowledgePage()
 })
 </script>
 
@@ -371,6 +374,7 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
+    <p v-if="loadError" class="notice notice-error" role="alert">{{ loadError }}</p>
     <p v-if="error" class="notice notice-error" role="alert">{{ error }}</p>
     <p v-if="success" class="notice notice-success" role="status">{{ success }}</p>
 
@@ -394,16 +398,12 @@ onBeforeUnmount(() => {
     </section>
 
     <section class="content-card available-card" aria-labelledby="knowledge-available-title">
-      <div class="section-title section-title-with-action">
+      <div class="section-title">
         <FileSearch :size="20" aria-hidden="true" />
         <div>
           <h2 id="knowledge-available-title">我可查看的资料</h2>
           <p>这里仅显示已经发布且适用于你当前角色和门店范围的资料。</p>
         </div>
-        <button type="button" class="refresh-button" :disabled="loadingAvailableRecords" @click="loadAvailableRecords(true)">
-          <RefreshCw :size="15" aria-hidden="true" />
-          {{ loadingAvailableRecords ? '刷新中…' : '刷新资料' }}
-        </button>
       </div>
       <p v-if="loadingAvailableRecords && !availableRecords.length" class="empty-copy">正在加载可查看的资料…</p>
       <p v-else-if="!availableRecords.length" class="empty-copy">暂无已发布且适用于你的资料。</p>
@@ -444,31 +444,21 @@ onBeforeUnmount(() => {
           <fieldset v-if="form.visibility === 'ROLE'" class="role-scopes"><legend>适用角色</legend><label v-for="role in roles" :key="role.code" class="check-option"><input v-model="form.roleScopes" type="checkbox" :value="role.code">{{ role.label }}</label></fieldset>
           <fieldset v-if="form.visibility === 'STORE'" class="store-scopes">
             <legend>适用门店</legend>
-            <label class="store-search">搜索门店
-              <input v-model.trim="storeQuery" type="search" placeholder="输入门店名称、编号或区域">
-            </label>
-            <div class="store-scope-toolbar">
-              <span>已选择 {{ form.storeScopes.length }} 家门店</span>
-              <div>
-                <button type="button" :disabled="storesLoading || !filteredStores.length" @click="selectAllFilteredStores">全选当前结果</button>
-                <button type="button" :disabled="!form.storeScopes.length" @click="clearStoreScopes">清空</button>
-              </div>
-            </div>
             <p v-if="storesLoading" class="scope-help">正在加载有权选择的门店…</p>
             <div v-else-if="storesLoadError" class="store-load-error" role="alert">
               <span>{{ storesLoadError }}</span>
-              <button type="button" @click="loadStores(true)">重新加载</button>
+              <button type="button" @click="loadStores(true)">重试</button>
             </div>
-            <p v-else-if="!filteredStores.length" class="scope-help">没有符合当前搜索条件的门店。</p>
-            <div v-else class="store-options">
-              <label v-for="store in filteredStores" :key="store.id" class="store-option">
-                <input v-model="form.storeScopes" type="checkbox" :value="store.id">
-                <span>
-                  <strong>{{ store.name }}</strong>
-                  <small>{{ store.code }} · {{ storeRegion(store) }} · {{ storeStatus(store.status) }}</small>
-                </span>
-              </label>
-            </div>
+            <SearchableMultiSelect
+              v-else
+              :model-value="form.storeScopes"
+              :options="storeScopeOptions"
+              selected-noun="家门店"
+              search-placeholder="搜索门店名称、编号、区域或状态"
+              aria-label="搜索门店"
+              clear-label="清空"
+              @update:model-value="form.storeScopes = $event.map(String)"
+            />
           </fieldset>
           <div class="upload-actions">
             <button class="primary-button" type="submit" :disabled="saving || storeSelectionUnavailable">
@@ -506,15 +496,14 @@ onBeforeUnmount(() => {
 .section-title p, .document-main p, .document-main small, .empty-copy, .scope-help { color: var(--ds-muted, #607576); }
 .content-card { border: 1px solid var(--ds-line, #dbe8e6); border-radius: 12px; background: #fff; padding: 20px; box-shadow: 0 8px 24px rgba(20, 71, 68, .035); }
 .section-title { display: flex; align-items: flex-start; gap: 10px; color: var(--ds-primary, #126c68); }
-.section-title-with-action > div { min-width: 0; }
 .section-title h2 { font-size: 18px; }
 .section-title p { margin: 4px 0 0; font-size: 13px; }
 .search-form { display: flex; gap: 10px; margin-top: 18px; }
 .search-form input, .upload-card input, .upload-card select { min-width: 0; width: 100%; border: 1px solid var(--ds-line, #dbe8e6); border-radius: 8px; background: #fff; color: var(--ds-text, #183434); font: inherit; }
 .search-form input { min-height: 42px; padding: 0 13px; }
-.search-form button, .primary-button, .draft-button, .refresh-button, .download-button, .document-actions button, .store-scope-toolbar button, .store-load-error button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: 8px; border: 1px solid var(--ds-line, #dbe8e6); background: #fff; color: var(--ds-primary, #126c68); font: inherit; font-weight: 800; cursor: pointer; }
+.search-form button, .primary-button, .draft-button, .download-button, .document-actions button, .store-scope-toolbar button, .store-load-error button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: 8px; border: 1px solid var(--ds-line, #dbe8e6); background: #fff; color: var(--ds-primary, #126c68); font: inherit; font-weight: 800; cursor: pointer; }
 .search-form button { min-width: 94px; padding: 0 14px; }
-.search-form button:hover, .draft-button:hover, .refresh-button:hover, .download-button:hover, .document-actions button:hover, .store-scope-toolbar button:hover, .store-load-error button:hover { background: #eff9f7; }
+.search-form button:hover, .draft-button:hover, .download-button:hover, .document-actions button:hover, .store-scope-toolbar button:hover, .store-load-error button:hover { background: #eff9f7; }
 button:disabled { cursor: not-allowed; opacity: .55; }
 .search-results { display: grid; gap: 10px; margin-top: 16px; }
 .search-result { border-left: 3px solid var(--ds-primary, #126c68); border-radius: 6px; background: #f7fbfa; padding: 12px 14px; }
@@ -523,7 +512,6 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .result-meta span { padding: 2px 7px; border-radius: 20px; background: #e7f3f0; }
 .result-meta small { margin-left: auto; color: var(--ds-primary, #126c68); font-weight: 800; }
 .search-result p { margin: 8px 0 0; white-space: pre-wrap; line-height: 1.65; color: #354d4d; }
-.refresh-button { min-height: 34px; margin-left: auto; padding: 0 11px; white-space: nowrap; }
 .available-card { display: grid; gap: 13px; }
 .available-document { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; border-top: 1px solid var(--ds-line, #dbe8e6); padding-top: 14px; }
 .available-document .document-main > strong { color: var(--ds-text, #183434); overflow-wrap: anywhere; }
@@ -569,5 +557,5 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .notice { margin: 0; border-radius: 8px; padding: 10px 13px; font-size: 14px; }.notice-error { border: 1px solid #f2c9c9; background: #fff4f4; color: #a13131; }.notice-success { border: 1px solid #b7e1cf; background: #f0fbf6; color: #087447; }
 .empty-copy { margin: 14px 0 0; font-size: 14px; }.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 @media (max-width: 960px) { .knowledge-layout { grid-template-columns: 1fr; }.document-row { grid-template-columns: 1fr; }.document-actions { justify-content: flex-start; } }
-@media (max-width: 620px) { .page-head { display: block; }.content-card { padding: 15px; }.search-form { flex-direction: column; }.search-form button { min-height: 40px; }.result-meta small { margin-left: 0; }.section-title-with-action { flex-wrap: wrap; }.refresh-button { margin-left: 30px; }.available-document { grid-template-columns: 1fr; }.download-button { width: 100%; }.store-scope-toolbar, .store-load-error { align-items: stretch; flex-direction: column; }.store-scope-toolbar > div, .store-scope-toolbar button, .store-load-error button { width: 100%; }.upload-actions { grid-template-columns: 1fr; }.document-actions button { flex: 1; } }
+@media (max-width: 620px) { .page-head { display: block; }.content-card { padding: 15px; }.search-form { flex-direction: column; }.search-form button { min-height: 40px; }.result-meta small { margin-left: 0; }.available-document { grid-template-columns: 1fr; }.download-button { width: 100%; }.store-scope-toolbar, .store-load-error { align-items: stretch; flex-direction: column; }.store-scope-toolbar > div, .store-scope-toolbar button, .store-load-error button { width: 100%; }.upload-actions { grid-template-columns: 1fr; }.document-actions button { flex: 1; } }
 </style>

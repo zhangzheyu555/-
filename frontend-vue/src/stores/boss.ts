@@ -93,9 +93,10 @@ export const useBossStore = defineStore('boss-dashboard', {
           dashboard = await fallbackDashboardFromBossTodos()
         }
         this.applyDashboard(dashboard || emptyDashboard())
+        return true
       } catch (error) {
         this.error = error instanceof Error ? error.message : '老板驾驶舱加载失败，请稍后重试。'
-        this.applyDashboard(emptyDashboard())
+        return false
       } finally {
         this.loading = false
       }

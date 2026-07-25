@@ -167,7 +167,7 @@ test('mobile store manager edits a requisition card and submits without page ove
 
   const form = page.locator('#store-requisition-form')
   await expect(form).toBeVisible()
-  const material = form.locator('select')
+  const material = form.getByRole('combobox', { name: '叫货物料', exact: true })
   const requestedQuantity = form.locator('input[type="number"]')
   const lineNote = form.locator('input[maxlength="500"]')
   const addButton = form.getByRole('button', { name: '添加', exact: true })
@@ -176,7 +176,8 @@ test('mobile store manager edits a requisition card and submits without page ove
     expect(box?.height, `${await control.getAttribute('aria-label') || await control.textContent() || '叫货控件'} 的点击高度`).toBeGreaterThanOrEqual(44)
   }
 
-  await material.selectOption('11')
+  await material.fill('MILK-01')
+  await form.getByRole('option', { name: /鲜牛奶.*MILK-01.*箱/ }).click()
   await requestedQuantity.fill('2')
   await lineNote.fill('首批叫货备注')
   await addButton.click()
@@ -202,7 +203,8 @@ test('mobile store manager edits a requisition card and submits without page ove
 
   await remove.click()
   await expect(requisitionCard).toHaveCount(0)
-  await material.selectOption('11')
+  await material.fill('MILK-01')
+  await form.getByRole('option', { name: /鲜牛奶.*MILK-01.*箱/ }).click()
   await requestedQuantity.fill('1')
   await lineNote.fill('再次添加')
   await addButton.click()

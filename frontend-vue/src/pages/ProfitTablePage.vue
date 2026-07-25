@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { Download } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import type { ProfitEntry } from '../api/profit'
@@ -8,7 +8,9 @@ import BrandBadge from '../components/common/BrandBadge.vue'
 import BrandSelect from '../components/common/BrandSelect.vue'
 import BusinessScopeBar from '../components/common/BusinessScopeBar.vue'
 import PageHeader from '../components/common/PageHeader.vue'
+import SearchableSingleSelect from '../components/common/SearchableSingleSelect.vue'
 import { useBusinessScope } from '../composables/useBusinessScope'
+import { useForegroundReload } from '../composables/useForegroundReload'
 import { amount, money, percent, useProfitStore } from '../stores/profit'
 import { getBrandIdLike, normalizeBrandName, STANDARD_BRANDS } from '../utils/brand'
 
@@ -25,6 +27,9 @@ const scope = useBusinessScope()
 const reportMode = ref<ReportMode>(scope.isStoreManager.value ? 'single' : (isSummaryMode(route.query.mode) ? 'summary' : 'single'))
 const summaryPage = ref(Math.max(1, Number(route.query.page || 1) || 1))
 const SUMMARY_PAGE_SIZE = 20
+const initialized = ref(false)
+const loadedDataScopeKey = ref<string | null>(null)
+let loadSerial = 0
 
 const dataEntryNotice = computed(() => {
   const notice = route.query.notice
@@ -85,6 +90,12 @@ const selectedBrandId = computed(() => {
   return ''
 })
 const storeOptions = computed(() => storesForBrand(selectedBrandId.value))
+const searchableStoreOptions = computed(() => storeOptions.value.map((store) => ({
+  value: store.storeId,
+  label: `${store.normalizedBrandName} · ${store.storeName || store.storeCode || store.storeId}`,
+  description: store.storeCode && store.storeCode !== store.storeId ? store.storeCode : '',
+  searchText: [store.storeName, store.storeCode, store.storeId, store.brandName].filter(Boolean).join(' '),
+})))
 const selectedStoreId = computed(() => {
   if (scope.isStoreManager.value) return scope.boundStoreId.value
   const requestedStoreId = String(route.query.storeId || '')
@@ -101,7 +112,15 @@ const selectedStore = computed(() => storeOptions.value.find((store) => store.st
     normalizedBrandName: scope.brandName.value,
     month: selectedMonth.value,
   } as StoreOption : storeOptions.value[0]))
-const monthRows = computed(() => profit.allEntries.filter((entry) => !selectedMonth.value || entry.month === selectedMonth.value))
+const dataMatchesCurrentScope = computed(() => (
+  initialized.value
+  && loadedDataScopeKey.value === currentDataScopeKey()
+))
+const monthRows = computed(() => (
+  dataMatchesCurrentScope.value
+    ? profit.allEntries.filter((entry) => !selectedMonth.value || entry.month === selectedMonth.value)
+    : []
+))
 const brandRows = computed(() => monthRows.value.filter((entry) => matchesBrand(entry, selectedBrandId.value)))
 const singleEntry = computed(() => brandRows.value.find((entry) => entry.storeId === selectedStoreId.value) || null)
 const allRows = computed(() => [...brandRows.value].sort((a, b) => amount(b.net) - amount(a.net)))
@@ -114,16 +133,52 @@ const summaryRows = computed(() => {
 const totalRow = computed(() => summarize(allRows.value))
 const visibleRows = computed(() => (reportMode.value === 'single' ? (singleEntry.value ? [singleEntry.value] : []) : allRows.value))
 
-async function refresh() {
+function queryValue(value: unknown) {
+  return Array.isArray(value) ? String(value[0] || '') : String(value || '')
+}
+
+const { markFresh } = useForegroundReload(() => loadProfitTableData(), {
+  canReload: () => initialized.value && !profit.loading,
+})
+
+async function loadProfitTableData() {
+  const serial = ++loadSerial
+  reportMode.value = scope.isStoreManager.value
+    ? 'single'
+    : (isSummaryMode(route.query.mode) ? 'summary' : 'single')
+
   if (scope.isStoreManager.value) {
-    reportMode.value = 'single'
     profit.setFilters({
       month: selectedMonth.value || profit.month,
       brandId: scope.scopedBrandId(),
       storeId: scope.boundStoreId.value,
     })
+  } else {
+    profit.setFilters({
+      month: selectedMonth.value || profit.month,
+      brandId: queryValue(route.query.brandId),
+      storeId: reportMode.value === 'single' ? queryValue(route.query.storeId) : '',
+    })
   }
   await profit.load()
+  if (serial !== loadSerial || profit.error) return false
+  loadedDataScopeKey.value = currentDataScopeKey()
+  markFresh()
+  return true
+}
+
+function currentDataScopeKey() {
+  const mode = scope.isStoreManager.value
+    ? 'single'
+    : (isSummaryMode(route.query.mode) ? 'summary' : 'single')
+  return JSON.stringify({
+    month: String(route.query.month || profit.month || profit.summary.month || ''),
+    brandId: scope.isStoreManager.value ? scope.scopedBrandId() : String(route.query.brandId || ''),
+    storeId: scope.isStoreManager.value
+      ? scope.boundStoreId.value
+      : mode === 'single' ? String(route.query.storeId || '') : '',
+    mode,
+  })
 }
 
 function updateMonth(value: string) {
@@ -298,8 +353,21 @@ onMounted(async () => {
   if (scope.isStoreManager.value && (route.query.brandId || route.query.storeId || route.query.mode !== 'single')) {
     await router.replace({ path: '/profit-table', query: { month: selectedMonth.value || undefined, mode: 'single' } })
   }
-  await refresh()
+  await loadProfitTableData()
+  initialized.value = true
 })
+
+watch(
+  () => [
+    queryValue(route.query.month),
+    queryValue(route.query.brandId),
+    queryValue(route.query.storeId),
+    queryValue(route.query.mode),
+  ].join('|'),
+  () => {
+    if (initialized.value) void loadProfitTableData()
+  },
+)
 </script>
 
 <template>
@@ -313,19 +381,27 @@ onMounted(async () => {
       </template>
     </PageHeader>
 
-    <div v-if="profit.error" class="error-box">{{ profit.error }}</div>
+    <div v-if="profit.error" class="error-box">
+      {{ profit.error }}
+      <button class="ghost-button" type="button" :disabled="profit.loading" @click="loadProfitTableData">重试</button>
+    </div>
     <div v-if="dataEntryNotice" class="notice-box">{{ dataEntryNotice }}</div>
 
     <section class="report-filter-card">
       <div class="filter-left">
         <BusinessScopeBar v-if="scope.isStoreManager.value" />
         <BrandSelect v-if="!scope.isStoreManager.value" :model-value="selectedBrandId" :brands="brandOptions" :allow-all="reportMode === 'summary'" @change="updateBrand" />
-        <select v-if="!scope.isStoreManager.value && reportMode === 'single'" :value="selectedStoreId" aria-label="门店" @change="updateStore(selectValue($event))">
-          <option v-if="!storeOptions.length" value="">暂无门店</option>
-          <option v-for="store in storeOptions" :key="store.storeId" :value="store.storeId">
-            {{ store.normalizedBrandName }} · {{ store.storeName || store.storeCode || store.storeId }}
-          </option>
-        </select>
+        <SearchableSingleSelect
+          v-if="!scope.isStoreManager.value && reportMode === 'single'"
+          :model-value="selectedStoreId"
+          :options="searchableStoreOptions"
+          :disabled="!searchableStoreOptions.length"
+          placeholder="请选择门店"
+          search-placeholder="搜索门店名称或编号"
+          aria-label="门店"
+          empty-message="当前品牌暂无门店"
+          @update:model-value="updateStore(String($event))"
+        />
         <select :value="selectedMonth" aria-label="月份" @change="updateMonth(selectValue($event))">
           <option v-for="month in monthOptions" :key="month" :value="month">{{ month }}</option>
         </select>
@@ -529,8 +605,12 @@ onMounted(async () => {
   font-weight: 900;
 }
 
-.report-filter-card select[aria-label="门店"] {
+.report-filter-card :deep(.searchable-single-select) {
   min-width: 220px;
+}
+
+.report-filter-card :deep(.searchable-single-select__control) {
+  min-height: 40px;
 }
 
 .brand-tag {
@@ -745,6 +825,7 @@ onMounted(async () => {
   .report-filter-card,
   .filter-left,
   .report-filter-card select,
+  .report-filter-card :deep(.searchable-single-select),
   .report-export-button,
   .report-mode-seg {
     align-items: stretch;

@@ -21,6 +21,34 @@ shortage handling and is not a rejection.
 The termination of an unreasonable, duplicate, or incorrectly submitted requisition. Inventory
 shortage alone is not a valid rejection reason.
 
+## Persistent Project Environment Memory
+
+### 2026-07-24 — Canonical 38-Store Database
+
+- User instruction: all future project startup, development, browser verification, manual QA, and
+  end-to-end testing must use the 38-store MySQL database by default.
+- Canonical local database identity: database `ai_profit_os_real_qa`, Docker container
+  `ai-profit-os-qa-38-mysql`, Docker volume `ai-profit-os-qa-38-mysql-data`, and loopback port
+  `13308`.
+- The persisted volume is authoritative; the container's stale `MYSQL_DATABASE` environment value
+  is not. Verify the connected schema with `database()` or `SHOW DATABASES`.
+- Do not silently substitute an empty development database, `ai-profit-os-dev` volume,
+  `ai-profit-os-dev-next` volume, or another QA database. If the canonical database cannot start or
+  fails validation, stop and report the problem before using any alternative.
+- Before project verification, confirm the database identity and that the business store set is 38
+  `营业中` stores. Preserve the 5 `已闭店` historical store rows; they are not part of the active
+  38-store count. Credentials must continue to come from local environment or container
+  configuration and must not be written into project memory.
+- Preserve this database and volume. Never run `down -v`, clear, reinitialize, repair Flyway
+  history, or otherwise replace its data unless the user explicitly authorizes that exact action.
+- Preflight on 2026-07-24 found two successful pre-merge migrations recorded under their old
+  versions: warehouse item scope at V97 and store archive management at V98. Current source places
+  those same migrations at V103 and V104 because remote V97-V102 were merged later. Do not run
+  Flyway `repair`; current-source startup requires a backup and an explicitly authorized,
+  verified history-version alignment before applying the real V97-V102 migrations.
+- The isolated empty database created under Compose project `ai-profit-os-dev-20260724` is
+  temporary and is not the canonical project database.
+
 ## Verification Memory
 
 ### 2026-07-24 — Warehouse Requisition Shortage Flow: PASSED
@@ -113,3 +141,34 @@ shortage alone is not a valid rejection reason.
   H2 fixture error in `FinanceDataScopeRepositoryTest` because its local `profit_entry` fixture lacks
   delivery-platform columns already queried by production code.
 - No knowledge-base database schema change and no new Flyway migration were added.
+
+### 2026-07-25 — Canonical Migration History Alignment and Latest Runtime: PASSED
+
+- The user explicitly authorized aligning the canonical 38-store database migration history and
+  deploying the latest local version.
+- A fresh full backup was created before any history change:
+  `/private/tmp/ai_profit_os_real_qa_pre_alignment_20260725_091843.sql.gz`, SHA-256
+  `ffe76285e19170eca52787cf6e521d48629bfbb193e95344caa491650d1a275a`. Gzip integrity and the
+  completed dump footer were verified.
+- The full history audit found both the known V97/V98 renumbering and an older combined daily-loss
+  migration. The alignment preserved installed ranks and execution metadata while mapping the old
+  combined V93/V94 records, the V96 checksum, and old V97/V98 to current V93/V94/V96/V103/V104.
+- The exact procedure was first rehearsed against a restored copy of the fresh backup. With
+  one-time QA out-of-order execution, Flyway then ran the idempotent V91/V92 split migrations and
+  the real V97-V102 migrations. A second strict startup with out-of-order disabled validated 105
+  migrations, reported current version V104, and reported no pending migration.
+- The same audited transaction and migration run then completed on canonical
+  `ai_profit_os_real_qa`. Final history is 105 rows, maximum installed rank 105, zero failures, and
+  strict startup validates 105 migrations at V104 with no pending migration.
+- Business data remained 38 `营业中` stores plus 5 `已闭店` stores, 45 accounts, and 49 published
+  knowledge-base documents. The V97-V102 permission and encoding repairs reached their expected
+  state.
+- Runtime `http://127.0.0.1:8188` now serves commit `2ac6177` through backend image
+  `ai-profit-os-dev-backend:head-2ac6177` and frontend image
+  `ai-profit-os-dev-frontend:head-2ac6177`. Both use `unless-stopped`; the prior compatible
+  backend/frontend containers are stopped and retained for historical reference.
+- API verification passed for BOSS permissions, 49 available published documents, and 43 selectable
+  stores. Visible browser verification passed for the new available-document section, separate
+  upload-and-publish/draft actions, and selecting two stores with the checkbox selector.
+- No `flyway repair` was used. No migration source file was added or modified during the alignment
+  and deployment.

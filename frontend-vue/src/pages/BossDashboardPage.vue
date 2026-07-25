@@ -1,6 +1,6 @@
 ﻿<script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
-import { AlertTriangle, ArrowRight, ClipboardCheck, RefreshCw, Store, TrendingUp, WalletCards } from 'lucide-vue-next'
+import { AlertTriangle, ArrowRight, ClipboardCheck, Store, TrendingUp, WalletCards } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import { getProfitEntries, getProfitMonths, type ProfitEntry } from '../api/finance'
 import { getBusinessTodos, type BusinessTodo } from '../api/todos'
@@ -21,6 +21,7 @@ import { useAuthStore } from '../stores/auth'
 import { PERMISSIONS } from '../permissions/permissions'
 import type { RoleTodoItem } from '../api/todos'
 import { roleTodoActionRoute } from '../utils/roleTodoNavigation'
+import { useForegroundReload } from '../composables/useForegroundReload'
 
 const route = useRoute()
 const router = useRouter()
@@ -97,8 +98,8 @@ function isAuthError(err: unknown) {
   return err instanceof Error && (err.message.includes('登录已失效') || err.message.includes('请先登录') || err.message.includes('UNAUTHORIZED'))
 }
 
-async function refresh() {
-  if (!canAccess.value) return
+async function loadDashboard(scrollAfterLoad = false) {
+  if (!canAccess.value) return false
 
   const results = await Promise.allSettled([
     boss.load(),
@@ -109,19 +110,36 @@ async function refresh() {
 
   for (const result of results) {
     if (result.status === 'rejected' && isAuthError(result.reason)) {
-      return
+      return false
     }
   }
 
-  await scrollToSection()
+  const succeeded = results.every((result) => result.status === 'fulfilled' && result.value !== false)
+    && !boss.error
+    && !profitError.value
+    && !trendError.value
+    && !workflowError.value
+  if (succeeded) markFresh()
+  if (scrollAfterLoad) await scrollToSection()
+  return succeeded
 }
+
+const { markFresh } = useForegroundReload(() => loadDashboard(false), {
+  canReload: () => (
+    canAccess.value
+    && !boss.loading
+    && !profitLoading.value
+    && !workflowLoading.value
+    && !actionConfirmation.open
+    && !activeTodoId.value
+  ),
+})
 
 async function loadProfitSnapshot() {
   const requestId = ++profitRequestId
   profitError.value = ''
   trendError.value = ''
   profitLoading.value = true
-  profitLoaded.value = false
   try {
     const requestedMonth = validMonth(queryValue(route.query.month))
     let months: string[] = []
@@ -147,9 +165,8 @@ async function loadProfitSnapshot() {
       }
     }
     if (requestId !== profitRequestId) return
-    profitMonth.value = selectedMonth
-
     if (!selectedMonth) {
+      profitMonth.value = ''
       profitEntries.value = []
       profitTrend.value = []
       profitLoaded.value = true
@@ -171,12 +188,12 @@ async function loadProfitSnapshot() {
     const selectedSnapshot = snapshots.find((item) => item.month === selectedMonth)
 
     if (selectedSnapshot) {
+      profitMonth.value = selectedMonth
       profitEntries.value = selectedSnapshot.entries
       profitLoaded.value = true
     } else {
       const selectedFailure = results[snapshotMonths.indexOf(selectedMonth)]
       if (selectedFailure?.status === 'rejected') console.error('[Boss] current profit metric load failed', selectedFailure.reason)
-      profitEntries.value = []
       profitError.value = '暂时无法获取'
     }
 
@@ -194,8 +211,6 @@ async function loadProfitSnapshot() {
     console.error('[Boss] profit snapshot load failed', error)
     profitError.value = '暂时无法获取'
     trendError.value = '趋势数据暂时无法获取'
-    profitEntries.value = []
-    profitTrend.value = []
   } finally {
     if (requestId === profitRequestId) profitLoading.value = false
   }
@@ -204,15 +219,14 @@ async function loadProfitSnapshot() {
 async function loadWorkflowTodos() {
   workflowError.value = ''
   workflowLoading.value = true
-  workflowLoaded.value = false
   try {
-    workflowTodos.value = await getBusinessTodos()
+    const nextTodos = await getBusinessTodos()
+    workflowTodos.value = nextTodos
     workflowLoaded.value = true
   } catch (error) {
     if (isAuthError(error)) return
     console.error('[Boss] business workflow load failed', error)
     workflowError.value = '待复核事项加载失败，请稍后重试'
-    workflowTodos.value = []
   } finally {
     workflowLoading.value = false
   }
@@ -254,6 +268,14 @@ async function handleWorkflowUpdated() {
   const results = await Promise.allSettled([loadWorkflowTodos(), loadProfitSnapshot()])
   for (const result of results) {
     if (result.status === 'rejected' && isAuthError(result.reason)) return
+  }
+  if (
+    results.every((result) => result.status === 'fulfilled')
+    && !workflowError.value
+    && !profitError.value
+    && !trendError.value
+  ) {
+    markFresh()
   }
 }
 
@@ -338,6 +360,7 @@ async function confirmBossAction() {
     } else {
       await boss.close(item.id, actionConfirmation.note || '事情没有很大影响，已默认处理。')
     }
+    if (!boss.error) markFresh()
     resetActionConfirmation()
   } catch {
     // boss store 已保留业务错误，弹窗保持打开以便重试。
@@ -373,55 +396,56 @@ watch(activeSection, async (section) => {
 })
 
 onMounted(() => {
-  void refresh()
+  void loadDashboard(true)
 })
 </script>
 
 <template>
   <section class="page-panel boss-page">
-    <PageHeader>
-      <template #actions>
-        <button v-if="canAccess" class="ghost-button" type="button" :disabled="boss.loading" @click="refresh">
-          <RefreshCw :size="16" />刷新数据
-        </button>
-      </template>
-    </PageHeader>
+    <PageHeader />
 
     <div v-if="!canAccess" class="error-box">当前账号无权访问老板工作台。</div>
 
     <template v-else>
-      <div v-if="boss.error" class="error-box">{{ boss.error }}</div>
+      <div v-if="boss.error" class="error-box dashboard-load-error">
+        <span>{{ boss.error }}</span>
+        <button class="ghost-button" type="button" :disabled="boss.loading" @click="loadDashboard(false)">重试</button>
+      </div>
+      <div v-else-if="profitError || workflowError" class="error-box dashboard-load-error">
+        <span>部分经营数据暂时不可用，请稍后重试。</span>
+        <button class="ghost-button" type="button" :disabled="profitLoading || workflowLoading" @click="loadDashboard(false)">重试</button>
+      </div>
       <div v-if="boss.actionMessage" class="success-box">{{ boss.actionMessage }}</div>
       <section class="boss-kpi-strip" aria-label="经营数据摘要">
         <div class="kpi-item">
           <span class="kpi-icon revenue"><TrendingUp :size="19" /></span>
           <span class="kpi-label">营业额</span>
-          <span v-if="profitLoading" class="metric-skeleton" aria-label="营业额加载中" />
-          <span v-else-if="profitError || !profitLoaded" class="kpi-unavailable">暂时无法获取</span>
+          <span v-if="profitLoading && !profitLoaded" class="metric-skeleton" aria-label="营业额加载中" />
+          <span v-else-if="!profitLoaded" class="kpi-unavailable">暂时无法获取</span>
           <b v-else class="kpi-value">{{ formatMoney(totalRevenue) }}</b>
           <small>{{ profitError ? '请稍后重试' : profitMonth || '暂无月份' }}</small>
         </div>
         <div class="kpi-item">
           <span class="kpi-icon profit"><WalletCards :size="19" /></span>
           <span class="kpi-label">净利润</span>
-          <span v-if="profitLoading" class="metric-skeleton" aria-label="净利润加载中" />
-          <span v-else-if="profitError || !profitLoaded" class="kpi-unavailable">暂时无法获取</span>
+          <span v-if="profitLoading && !profitLoaded" class="metric-skeleton" aria-label="净利润加载中" />
+          <span v-else-if="!profitLoaded" class="kpi-unavailable">暂时无法获取</span>
           <b v-else class="kpi-value profit-value" :class="{ negative: totalNet < 0 }">{{ formatMoney(totalNet) }}</b>
           <small>{{ profitError ? '请稍后重试' : `净利率 ${formatPercent(netMargin)}` }}</small>
         </div>
         <div class="kpi-item">
           <span class="kpi-icon review"><ClipboardCheck :size="19" /></span>
           <span class="kpi-label">待复核</span>
-          <span v-if="workflowLoading" class="metric-skeleton" aria-label="待复核加载中" />
-          <span v-else-if="workflowError || !workflowLoaded" class="kpi-unavailable">暂时无法获取</span>
+          <span v-if="workflowLoading && !workflowLoaded" class="metric-skeleton" aria-label="待复核加载中" />
+          <span v-else-if="!workflowLoaded" class="kpi-unavailable">暂时无法获取</span>
           <b v-else class="kpi-value">{{ pendingReviewTodos.length }}</b>
           <small>{{ workflowError ? '请稍后重试' : '等待老板确认' }}</small>
         </div>
         <div class="kpi-item">
           <span class="kpi-icon risk"><AlertTriangle :size="19" /></span>
           <span class="kpi-label">风险提醒</span>
-          <span v-if="riskMetricLoading" class="metric-skeleton" aria-label="风险提醒加载中" />
-          <span v-else-if="riskMetricError || !profitLoaded || !workflowLoaded" class="kpi-unavailable">暂时无法获取</span>
+          <span v-if="riskMetricLoading && (!profitLoaded || !workflowLoaded)" class="metric-skeleton" aria-label="风险提醒加载中" />
+          <span v-else-if="!profitLoaded || !workflowLoaded" class="kpi-unavailable">暂时无法获取</span>
           <b v-else class="kpi-value risk-value">{{ riskStores.length }}</b>
           <small>{{ riskMetricError ? '请稍后重试' : (riskStores.length ? riskStores.slice(0, 2).join('、') : '经营状态正常') }}</small>
         </div>
@@ -460,7 +484,7 @@ onMounted(() => {
               </div>
               <button class="text-button" type="button" @click="router.push('/profit')">查看详情 <ArrowRight :size="15" /></button>
             </div>
-            <div v-if="profitLoading" class="trend-skeleton" aria-label="营业额趋势加载中" />
+            <div v-if="profitLoading && !profitTrend.length" class="trend-skeleton" aria-label="营业额趋势加载中" />
             <div v-else-if="trendError && !profitTrend.length" class="empty-state compact">{{ trendError }}</div>
             <template v-else>
               <RevenueTrendChart :points="profitTrend" />
@@ -499,8 +523,8 @@ onMounted(() => {
 
           <section v-else-if="activeSection === 'review'" id="workflow-review" class="boss-panel tab-panel">
             <div v-if="workflowError" class="error-box compact-error">{{ workflowError }}</div>
-            <div v-else-if="!pendingReviewTodos.length" class="empty-state compact">当前没有等待复核的经营事项</div>
-            <div v-else class="workflow-review-list">
+            <div v-if="workflowLoaded && !pendingReviewTodos.length" class="empty-state compact">当前没有等待复核的经营事项</div>
+            <div v-else-if="pendingReviewTodos.length" class="workflow-review-list">
               <article v-for="item in pendingReviewTodos" :key="item.id">
                 <BusinessTodoEvidence :todo="item" />
                 <div>
@@ -555,6 +579,13 @@ onMounted(() => {
 .boss-page {
   display: grid;
   gap: 18px;
+}
+
+.dashboard-load-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .boss-business-overview {

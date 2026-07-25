@@ -7,6 +7,7 @@ import {
   type WarehouseRequisitionSummaryPeriodType,
 } from '../../api/warehouse'
 import type { StoreInfo } from '../../api/operations'
+import SearchableMultiSelect from '../common/SearchableMultiSelect.vue'
 
 const props = defineProps<{
   warehouseId?: string | number
@@ -46,10 +47,35 @@ const storeOptions = computed(() => {
     ))
     .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'))
 })
+const searchableStoreOptions = computed(() => storeOptions.value.map((store) => ({
+  value: String(store.id),
+  label: store.name || store.code || String(store.id),
+  description: [store.code || store.id, store.area || store.regionCode, store.status].filter(Boolean).join(' · '),
+  searchText: [store.name, store.code, store.id, store.area, store.regionCode, store.status, store.brandName].filter(Boolean).join(' '),
+})))
 
 const productOptions = computed(() => [...props.items]
   .filter((item) => Number.isFinite(Number(item.id)))
   .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN')))
+const searchableProductOptions = computed(() => productOptions.value.map((item) => {
+  const category = item.categoryName || item.category
+  const unit = item.purchaseUnit || item.stockUnit || item.unit || item.ingredientUnit
+  return {
+    value: Number(item.id),
+    label: item.name || item.code || String(item.id),
+    description: [item.code, category, unit].filter(Boolean).join(' · '),
+    searchText: [
+      item.name,
+      item.code,
+      category,
+      item.purchaseUnit,
+      item.stockUnit,
+      item.unit,
+      item.ingredientUnit,
+      item.spec,
+    ].filter(Boolean).join(' '),
+  }
+}))
 
 watch(
   () => storeOptions.value.map((store) => String(store.id)),
@@ -155,20 +181,26 @@ async function exportSummary() {
       <div class="scope-fields">
         <label class="summary-field">
           <span>门店（可多选）</span>
-          <select v-model="selectedStoreIds" aria-label="报表门店" multiple size="4">
-            <option v-for="store in storeOptions" :key="store.id" :value="String(store.id)">
-              {{ store.name }}（{{ store.code || store.id }}）
-            </option>
-          </select>
+          <SearchableMultiSelect
+            :model-value="selectedStoreIds"
+            :options="searchableStoreOptions"
+            selected-noun="家门店"
+            search-placeholder="搜索门店名称、编号或区域"
+            aria-label="报表门店"
+            @update:model-value="selectedStoreIds = $event.map(String)"
+          />
           <small>不选择表示全部授权门店</small>
         </label>
         <label class="summary-field">
           <span>物料（可多选）</span>
-          <select v-model="selectedProductIds" aria-label="报表物料" multiple size="4">
-            <option v-for="item in productOptions" :key="item.id" :value="item.id">
-              {{ item.name }}（{{ item.code }}）
-            </option>
-          </select>
+          <SearchableMultiSelect
+            :model-value="selectedProductIds"
+            :options="searchableProductOptions"
+            selected-noun="项物料"
+            search-placeholder="搜索物料名称、编号、分类或单位"
+            aria-label="报表物料"
+            @update:model-value="selectedProductIds = $event.map(Number)"
+          />
           <small>不选择表示全部可见物料</small>
         </label>
       </div>
@@ -309,14 +341,8 @@ async function exportSummary() {
   min-width: 0;
 }
 
-.summary-field select[multiple] {
-  min-height: 112px;
-  padding: 6px;
-}
-
-.summary-field select[multiple] option {
-  padding: 7px 8px;
-  border-radius: 5px;
+.summary-field :deep(.searchable-multi-select) {
+  width: 100%;
 }
 
 .summary-field small {
