@@ -26,6 +26,8 @@
 
 当前推荐部署方式是由 Nginx 托管 `frontend-vue/dist`，`backend/` 仅提供 `/api/**`。旧 HTML 只部署到外置的 `/legacy/` 回退路径，不能作为默认入口或由 Spring Boot 根路径直接提供。
 
+GitHub Actions + GHCR 的生产发布与服务器一命令更新说明见 [生产一命令部署](./deploy/PRODUCTION_ONE_COMMAND.md)。
+
 ### 本地 Docker 一键部署
 
 源码根目录提供 `docker-compose.dev.yml`，用于本地开发和联调；它会从源码构建 Vue3 前端、Spring Boot 后端和巡检识别服务，并同时启动 MySQL、Redis、PostgreSQL 及本地 Nginx 网关。微信小程序不包含在 Docker 部署中。
