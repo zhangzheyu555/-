@@ -42,10 +42,11 @@ stages:
           - cd frontend-vue
           - npm ci
           - npm run build
+          - tar -czf ../frontend-release.tar.gz dist
         artifacts:
           - name: FRONTEND_ARTIFACT
             path:
-              - frontend-vue/dist
+              - frontend-release.tar.gz
         caches:
           - ~/.npm
           - ~/.yarn
