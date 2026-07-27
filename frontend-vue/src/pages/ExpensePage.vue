@@ -19,6 +19,13 @@ import { useFinanceStore } from '../stores/finance'
 import { useAuthStore } from '../stores/auth'
 import { PERMISSIONS } from '../permissions/permissions'
 import { normalizeBrandName } from '../utils/brand'
+import {
+  EXPENSE_STATUS_OPTIONS,
+  isExpenseCompleted,
+  isExpenseReviewable,
+  isExpenseUnfinished,
+  needsExpenseSubmission,
+} from '../utils/expenseStatus'
 
 const finance = useFinanceStore()
 const actions = useFinanceActions()
@@ -86,12 +93,9 @@ const currentExpenseQueryKey = computed(() => expenseQueryKey(expenseQuery.value
 const filteredExpenses = computed(() => loadedExpenseQueryKey.value === currentExpenseQueryKey.value
   ? finance.expenseReviews
   : [])
-const statusOptions = computed(() => Array.from(new Set([
-  ...filteredExpenses.value.map((item) => item.status || ''),
-  selectedStatus.value,
-].filter(Boolean))))
-const pendingCount = computed(() => filteredExpenses.value.filter((item) => !['已完成', '已通过', 'APPROVED', '已驳回', 'REJECTED'].includes(item.status)).length)
-const doneCount = computed(() => filteredExpenses.value.filter((item) => ['已完成', '已通过', 'APPROVED'].includes(item.status)).length)
+const statusOptions = EXPENSE_STATUS_OPTIONS
+const pendingCount = computed(() => filteredExpenses.value.filter((item) => isExpenseUnfinished(item.status)).length)
+const doneCount = computed(() => filteredExpenses.value.filter((item) => isExpenseCompleted(item.status)).length)
 const totalAmount = computed(() => filteredExpenses.value.reduce((total, item) => total + Number(item.amount || 0), 0))
 const today = computed(() => {
   const now = new Date()
@@ -101,8 +105,10 @@ const todayExpenses = computed(() => filteredExpenses.value.filter((item) => ite
 const todayStatusText = computed(() => {
   if (!scope.isStoreManager.value) return `${todayExpenses.value.length} 单`
   if (!todayExpenses.value.length) return '未报'
-  if (todayExpenses.value.some((item) => ['草稿', '已驳回', 'REJECTED'].includes(item.status))) return '待提交'
-  return '已报'
+  if (todayExpenses.value.some((item) => needsExpenseSubmission(item.status))) return '待提交'
+  if (todayExpenses.value.some((item) => isExpenseReviewable(item.status))) return '审核中'
+  if (todayExpenses.value.every((item) => isExpenseCompleted(item.status))) return '已完成'
+  return '处理中'
 })
 
 const { markFresh } = useForegroundReload(async () => {
@@ -338,7 +344,7 @@ watch([selectedMonth, selectedBrand, selectedStore, selectedStatus], () => {
         状态筛选
         <select v-model="selectedStatus">
           <option value="">全部状态</option>
-          <option v-for="status in statusOptions" :key="status" :value="status">{{ status }}</option>
+          <option v-for="status in statusOptions" :key="status.value" :value="status.value">{{ status.label }}</option>
         </select>
       </label>
     </section>

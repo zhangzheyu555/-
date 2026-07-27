@@ -96,14 +96,14 @@ class DataScopeServiceTest {
   }
 
   @Test
-  void configuredScopeRejectsLegacySupervisorAllAssignment() {
+  void configuredScopeHonorsExplicitSupervisorAllAssignment() {
     AuthUser supervisor = user("SUPERVISOR");
     when(repository.assignmentsForUser(1L, 7L)).thenReturn(List.of(
         new DataScopeAssignmentRow(DataScopeDomains.STORE, DataScopeModes.ALL, null)
     ));
 
     assertThat(service.configuredScope(supervisor, DataScopeDomains.STORE))
-        .isEqualTo(DataScope.none());
+        .isEqualTo(DataScope.all());
   }
 
   @Test

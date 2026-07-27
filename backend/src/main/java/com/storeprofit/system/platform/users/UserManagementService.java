@@ -637,12 +637,12 @@ public class UserManagementService {
     }
     if ("SUPERVISOR".equals(role)) {
       boolean valid = SUPERVISOR_SCOPE_DOMAINS.contains(domain)
-          ? Set.of(DataScopeModes.STORE_LIST, DataScopeModes.NONE).contains(mode)
+          ? Set.of(DataScopeModes.ALL, DataScopeModes.STORE_LIST, DataScopeModes.NONE).contains(mode)
           : DataScopeModes.NONE.equals(mode);
       if (!valid) {
         throw new BusinessException(
             "SUPERVISOR_SCOPE_BOUNDARY",
-            "督导角色只能配置已授权门店范围，不能配置仓库范围",
+            "督导角色只能在督导业务域配置全部门店、指定门店或无权限",
             HttpStatus.BAD_REQUEST
         );
       }
@@ -854,6 +854,12 @@ public class UserManagementService {
 
   private List<String> accountStoreScope(AuthUser user) {
     if ("SUPERVISOR".equals(AccessControlService.canonicalRole(user.role()))) {
+      if (dataScopeService != null) {
+        DataScope configured = dataScopeService.configuredScope(user, DataScopeDomains.STORE);
+        if (configured != null && configured.allowsAllStores()) {
+          return List.of("all");
+        }
+      }
       return authRepository.assignedStoreScope(user.tenantId(), user.id());
     }
     return authRepository.storeScope(user.tenantId(), user.id(), user.role(), user.storeId());

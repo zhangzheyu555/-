@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Package, PackagePlus, Pencil, ToggleLeft, ToggleRight } from 'lucide-vue-next'
+import { Package, PackagePlus, Pencil, ToggleLeft, ToggleRight, Trash2 } from 'lucide-vue-next'
 import SearchInput from '../common/SearchInput.vue'
 import StatusBadge from '../common/StatusBadge.vue'
 import WarehouseBatchDrawer from './WarehouseBatchDrawer.vue'
@@ -31,6 +31,7 @@ const emit = defineEmits<{
   createItem: []
   editItem: [item: WarehouseItem]
   setItemEnabled: [item: WarehouseItem, enabled: boolean]
+  deleteItem: [item: WarehouseItem]
   downloadMovement: [movementId: number, itemName: string, movementType: string]
 }>()
 
@@ -216,6 +217,17 @@ function statusTone(status?: string) {
                         String(latestMovement(item.id)?.movementType || ''),
                       )"
                     />
+                    <button
+                      v-if="canManage"
+                      class="mini-button danger-action"
+                      type="button"
+                      :aria-label="`删除物料 ${item.name}`"
+                      :disabled="actioningId === `item-delete:${item.id}`"
+                      @click="emit('deleteItem', item)"
+                    >
+                      <Trash2 :size="14" />
+                      删除
+                    </button>
                   </div>
                 </td>
               </tr>
@@ -326,8 +338,59 @@ function statusTone(status?: string) {
   flex-wrap: wrap;
 }
 
+.danger-action {
+  border-color: #efc2c7;
+  color: #b83243;
+}
+
+.danger-action:hover:not(:disabled) {
+  border-color: #c33f4d;
+  background: #fff5f5;
+  color: #9b2c3a;
+}
+
 tr.disabled td {
   color: #98a3af;
   background: #fbfcfd;
+}
+
+@media (max-width: 768px) {
+  .inventory-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .inventory-heading {
+    align-items: stretch;
+  }
+
+  .inventory-heading .compact-button {
+    width: 100%;
+    min-height: 44px;
+    justify-content: center;
+  }
+
+  .inventory-filters {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .inventory-filters > .inventory-search {
+    width: 100%;
+    flex: 1 1 100%;
+  }
+
+  .filter-check {
+    min-height: 44px;
+    flex: 1 1 120px;
+    padding: 0 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #fff;
+  }
+
+  .inventory-filters > .mini-button {
+    width: 100%;
+    min-height: 44px;
+  }
 }
 </style>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Package, PackagePlus, Pencil, ToggleLeft, ToggleRight } from 'lucide-vue-next'
+import { Package, PackagePlus, Pencil, ToggleLeft, ToggleRight, Trash2 } from 'lucide-vue-next'
 import SearchInput from '../common/SearchInput.vue'
 import StatusBadge from '../common/StatusBadge.vue'
 import WarehouseCategoryTree from './WarehouseCategoryTree.vue'
@@ -24,6 +24,7 @@ const emit = defineEmits<{
   createItem: []
   editItem: [item: WarehouseItem]
   setItemEnabled: [item: WarehouseItem, enabled: boolean]
+  deleteItem: [item: WarehouseItem]
 }>()
 
 const searchText = ref('')
@@ -134,6 +135,16 @@ function units(item: WarehouseItem) {
                     <ToggleLeft v-else :size="15" />
                     {{ item.active ? '停用' : '启用' }}
                   </button>
+                  <button
+                    class="mini-button danger-action"
+                    type="button"
+                    :aria-label="`删除物料 ${item.name}`"
+                    :disabled="actioningId === `item-delete:${item.id}`"
+                    @click="emit('deleteItem', item)"
+                  >
+                    <Trash2 :size="14" />
+                    删除
+                  </button>
                 </div>
                 <span v-else class="readonly-text">只读</span>
               </td>
@@ -242,6 +253,17 @@ td small {
 .row-actions {
   gap: 7px;
   flex-wrap: wrap;
+}
+
+.danger-action {
+  border-color: #efc2c7;
+  color: #b83243;
+}
+
+.danger-action:hover:not(:disabled) {
+  border-color: #c33f4d;
+  background: #fff5f5;
+  color: #9b2c3a;
 }
 
 .readonly-text {

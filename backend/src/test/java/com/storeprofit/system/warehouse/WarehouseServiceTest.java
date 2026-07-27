@@ -52,6 +52,9 @@ class WarehouseServiceTest {
     assertThatThrownBy(() -> service.saveItem(storeManager(), itemRequest("NEW", "新品")))
         .isInstanceOf(BusinessException.class)
         .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
+    assertThatThrownBy(() -> service.deleteItem(storeManager(), 1L))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
 
     BigDecimal stockBeforeRequisition = itemStock(1L);
     WarehouseRequisitionResponse created = service.createRequisition(
@@ -767,6 +770,54 @@ class WarehouseServiceTest {
     assertThatThrownBy(() -> service.deleteItemCategory(warehouseManager(), 1L))
         .isInstanceOf(BusinessException.class)
         .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("CATEGORY_IN_USE"));
+  }
+
+  @Test
+  void warehouseManagerDeletesOnlyUnusedItemsAndCleansOwnedMetadata() {
+    service.saveItem(warehouseManager(), itemRequest("DELETE-ME", "待删除物料"));
+    WarehouseItemResponse item = service.items(warehouseManager()).stream()
+        .filter(row -> "DELETE-ME".equals(row.code()))
+        .findFirst()
+        .orElseThrow();
+    jdbcTemplate.update("""
+        insert into warehouse_item_department(
+          tenant_id, item_id, department_name, department_code, department_group,
+          purchase_method, supplier_name, created_at
+        ) values (1, ?, '采购部', 'CG', '总部', '自购', '测试供应商', current_timestamp)
+        """, item.id());
+
+    assertThat(jdbcTemplate.queryForObject(
+        "select count(*) from warehouse_item_requisition_policy where tenant_id = 1 and item_id = ?",
+        Integer.class,
+        item.id()
+    )).isEqualTo(1);
+    assertThat(jdbcTemplate.queryForObject(
+        "select count(*) from warehouse_item_department where tenant_id = 1 and item_id = ?",
+        Integer.class,
+        item.id()
+    )).isEqualTo(1);
+
+    service.deleteItem(warehouseManager(), item.id());
+
+    assertThat(itemCountByCode("DELETE-ME")).isZero();
+    assertThat(jdbcTemplate.queryForObject(
+        "select count(*) from warehouse_item_requisition_policy where tenant_id = 1 and item_id = ?",
+        Integer.class,
+        item.id()
+    )).isZero();
+    assertThat(jdbcTemplate.queryForObject(
+        "select count(*) from warehouse_item_department where tenant_id = 1 and item_id = ?",
+        Integer.class,
+        item.id()
+    )).isZero();
+    assertThat(operationLogCount("删除物料", String.valueOf(item.id()))).isEqualTo(1);
+
+    assertThatThrownBy(() -> service.deleteItem(warehouseManager(), 1L))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> {
+          assertThat(((BusinessException) error).getCode()).isEqualTo("ITEM_IN_USE");
+          assertThat(error).hasMessageContaining("停用");
+        });
   }
 
   @Test

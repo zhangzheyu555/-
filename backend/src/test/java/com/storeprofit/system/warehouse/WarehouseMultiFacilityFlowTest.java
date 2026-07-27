@@ -25,6 +25,7 @@ import com.storeprofit.system.platform.authorization.DataScopeModes;
 import com.storeprofit.system.platform.authorization.PermissionCodes;
 import java.lang.reflect.RecordComponent;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
@@ -843,6 +844,66 @@ class WarehouseMultiFacilityFlowTest {
         centralManager, draft.id(), new WarehouseTransferReviewRequest(true, "仍由后端校验库存")))
         .isInstanceOfSatisfying(BusinessException.class,
             error -> assertThat(error.getCode()).isEqualTo("WAREHOUSE_STOCK_INSUFFICIENT"));
+  }
+
+  @Test
+  void movementReportFiltersByStoreDateItemAndBusinessDirection() {
+    jdbc.update("""
+        insert into warehouse_stock_movement(
+          tenant_id, warehouse_id, item_id, movement_type, quantity_delta,
+          source_type, source_id, store_id, created_at
+        ) values
+          (1, ?, ?, 'TRANSFER_RECEIVE', 4, 'TEST', 'movement-in', 'sd-store-1', timestamp '2026-07-20 09:00:00'),
+          (1, ?, ?, 'LOSS_OUT', -2, 'TEST', 'movement-out', 'sd-store-1', timestamp '2026-07-21 10:00:00'),
+          (1, ?, ?, 'ADJUST_IN', 1, 'TEST', 'movement-adjust', 'sd-store-1', timestamp '2026-07-22 11:00:00'),
+          (1, ?, ?, 'IN', 9, 'TEST', 'movement-other-store', null, timestamp '2026-07-20 12:00:00'),
+          (1, ?, ?, 'OUT', -7, 'TEST', 'movement-old', 'sd-store-1', timestamp '2026-06-30 12:00:00'),
+          (1, ?, ?, 'RESERVE', 0, 'TEST', 'movement-zero', 'sd-store-1', timestamp '2026-07-23 12:00:00')
+        """,
+        regionalWarehouseId, itemId,
+        regionalWarehouseId, itemId,
+        regionalWarehouseId, itemId,
+        regionalWarehouseId, itemId,
+        regionalWarehouseId, itemId,
+        regionalWarehouseId, itemId);
+
+    LocalDate start = LocalDate.of(2026, 7, 1);
+    LocalDate end = LocalDate.of(2026, 7, 31);
+
+    assertThat(warehouseRepository.movementsFiltered(
+        TENANT_ID, regionalWarehouseId, start, end,
+        List.of("sd-store-1"), List.of(itemId), List.of("IN"), List.of(), 0, 50))
+        .extracting(WarehouseStockMovementResponse::sourceId)
+        .containsExactly("movement-in");
+
+    assertThat(warehouseRepository.movementsFiltered(
+        TENANT_ID, regionalWarehouseId, start, end,
+        List.of("sd-store-1"), List.of(itemId), List.of("OUT"), List.of(), 0, 50))
+        .extracting(WarehouseStockMovementResponse::sourceId)
+        .containsExactly("movement-out");
+
+    assertThat(warehouseRepository.movementsFiltered(
+        TENANT_ID, regionalWarehouseId, start, end,
+        List.of("sd-store-1"), List.of(itemId), List.of("ADJUST"), List.of(), 0, 50))
+        .extracting(WarehouseStockMovementResponse::sourceId)
+        .containsExactly("movement-adjust");
+
+    WarehouseRepository.MovementSummary summary = warehouseRepository.movementsFilteredSummary(
+        TENANT_ID, regionalWarehouseId, start, end,
+        List.of("sd-store-1"), List.of(itemId), List.of(), List.of());
+    assertThat(warehouseRepository.movementsFilteredCount(
+        TENANT_ID, regionalWarehouseId, start, end,
+        List.of("sd-store-1"), List.of(itemId), List.of(), List.of())).isEqualTo(3);
+    assertThat(summary.totalIn()).isEqualByComparingTo("5");
+    assertThat(summary.totalOut()).isEqualByComparingTo("2");
+    assertThat(summary.netChange()).isEqualByComparingTo("3");
+
+    jdbc.update(
+        "update store_branch set supply_warehouse_id = ? where tenant_id = 1 and id = 'sd-store-1'",
+        centralWarehouseId);
+    assertThat(warehouseRepository.movementFilterStores(TENANT_ID, regionalWarehouseId))
+        .extracting(WarehouseMovementFilterOptionsResponse.StoreOption::id)
+        .contains("sd-store-1");
   }
 
   private WarehouseTransferResponse createAndSubmitTransfer(String key, String quantity) {

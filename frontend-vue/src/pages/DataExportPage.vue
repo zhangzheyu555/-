@@ -41,7 +41,7 @@ function queryValue(value: unknown) {
   return Array.isArray(value) ? String(value[0] || '') : String(value || '')
 }
 
-// The route is the single source of truth for a non-manager's selected store.
+// A routed store is the single source of truth for a non-manager's selected store.
 // scopedStoreId deliberately replaces any URL value for a store manager.
 const selectedStoreId = computed(() => scope.scopedStoreId(queryValue(route.query.storeId)))
 const selectedStore = computed(() => {
@@ -202,7 +202,7 @@ watch(
   () => queryValue(route.query.storeId),
   () => {
     if (!initialized.value) return
-    // Switching the global store must not leave either another store's or another page's brand behind.
+    // A routed store change must not leave another store's or another page's brand behind.
     selectedBrandId.value = scope.isStoreManager.value ? scope.scopedBrandId() : ''
     void reloadExportScope({ announce: true })
   },
@@ -212,11 +212,6 @@ watch(
 <template>
   <section class="page-panel export-page">
     <PageHeader :title="scope.isStoreManager.value ? '本店数据导出' : undefined" />
-
-    <aside class="desktop-workflow-notice" role="note">
-      <strong>请在电脑端完成</strong>
-      <span>大批量数据导出涉及门店范围核对和敏感经营数据，请使用电脑端完成。</span>
-    </aside>
 
     <p v-if="rangeNotice" class="export-range-notice" role="status" aria-live="polite">{{ rangeNotice }}</p>
     <div v-if="message" class="success-box" role="status" aria-live="polite">{{ message }}</div>
@@ -303,10 +298,6 @@ watch(
 .export-page {
   display: grid;
   gap: var(--space-4);
-}
-
-.desktop-workflow-notice {
-  display: none;
 }
 
 .export-range-notice,
@@ -470,25 +461,6 @@ watch(
 .export-download-button {
   min-width: 132px;
   white-space: nowrap;
-}
-
-@media (max-width: 768px) {
-  .desktop-workflow-notice {
-    display: grid;
-    gap: var(--space-1);
-    padding: var(--space-3);
-    border: 1px solid #efd19f;
-    border-radius: var(--radius-md);
-    background: #fff8ed;
-    color: #73450f;
-    font-size: 13px;
-    line-height: 1.5;
-  }
-
-  .desktop-workflow-notice strong {
-    color: #73450f;
-    font-size: 14px;
-  }
 }
 
 @media (max-width: 820px) {

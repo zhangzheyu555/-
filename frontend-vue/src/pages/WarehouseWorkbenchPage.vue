@@ -7,7 +7,7 @@ import ActionConfirmDialog from '../components/ui/ActionConfirmDialog.vue'
 import WarehouseAlertPanel from '../components/warehouse/WarehouseAlertPanel.vue'
 import WarehouseInventoryPanel from '../components/warehouse/WarehouseInventoryPanel.vue'
 import WarehouseMaterialCatalogPanel from '../components/warehouse/WarehouseMaterialCatalogPanel.vue'
-import WarehouseMaterialEditor from '../components/warehouse/WarehouseMaterialEditor.vue'
+import WarehouseMaterialEditor, { type MaterialSubmitError } from '../components/warehouse/WarehouseMaterialEditor.vue'
 import WarehouseMovementPanel from '../components/warehouse/WarehouseMovementPanel.vue'
 import WarehousePurchaseReceivePanel from '../components/warehouse/WarehousePurchaseReceivePanel.vue'
 import WarehouseRequisitionPanel from '../components/warehouse/WarehouseRequisitionPanel.vue'
@@ -17,6 +17,7 @@ import WarehouseStatCards from '../components/warehouse/WarehouseStatCards.vue'
 import WarehouseNetworkOverview from '../components/warehouse/WarehouseNetworkOverview.vue'
 import WarehouseTransferPanel from '../components/warehouse/WarehouseTransferPanel.vue'
 import { useWarehouseStore, type WarehouseTab } from '../stores/warehouse'
+import { ApiError } from '../api/http'
 import { useAuthStore } from '../stores/auth'
 import { PERMISSIONS } from '../permissions/permissions'
 import { getStores, type StoreInfo } from '../api/operations'
@@ -44,6 +45,7 @@ type WarehouseConfirmation =
   | { kind: 'ship-transfer'; id: string }
   | { kind: 'receive-transfer'; id: string }
   | { kind: 'cancel-transfer'; id: string }
+  | { kind: 'delete-item'; item: WarehouseItem }
 
 const props = withDefaults(defineProps<{
   canManage?: boolean
@@ -60,11 +62,48 @@ const editorItem = ref<WarehouseItem | null>(null)
 const pendingConfirmation = ref<WarehouseConfirmation | null>(null)
 const confirmationNote = ref('')
 const confirmationBusy = ref(false)
+const confirmationError = ref('')
 const requisitionStores = ref<StoreInfo[]>([])
 const requisitionStoresAttempted = ref(false)
 const itemScopeContext = ref<WarehouseItemRequisitionScopeContext | null>(null)
 const itemScopeContextAttempted = ref(false)
 const movementPanelRef = ref<InstanceType<typeof WarehouseMovementPanel> | null>(null)
+const materialSubmitError = ref<MaterialSubmitError | null>(null)
+
+function mapErrorCodeToTarget(code?: string, status?: number): MaterialSubmitError['target'] {
+  if (status === 403) return 'form'
+  switch (code) {
+    case 'CATEGORY_REQUIRED':
+    case 'CATEGORY_DISABLED':
+      return 'category'
+    case 'REQUISITION_SCOPE_REQUIRED':
+    case 'REQUISITION_SCOPE_INVALID':
+    case 'REQUISITION_SCOPE_TARGET_REQUIRED':
+      return 'scope'
+    case 'REQUISITION_REGION_INVALID':
+      return 'region'
+    case 'REQUISITION_STORE_INVALID':
+      return 'store'
+    case 'REQUISITION_CAMPAIGN_TOO_LONG':
+    case 'REQUISITION_TIME_RANGE_INVALID':
+      return 'time'
+    case 'BAD_ITEM_IMAGE':
+    case 'ITEM_IMAGE_TOO_LARGE':
+      return 'image'
+    case 'VALIDATION_ERROR':
+    case 'BAD_REQUEST':
+    case 'REQUEST_TIMEOUT':
+    default:
+      return 'form'
+  }
+}
+
+function isRetryableError(code?: string, status?: number): boolean {
+  if (status === 403) return false
+  if (code === 'REQUEST_TIMEOUT') return true
+  if (status && status >= 500) return true
+  return code !== 'VALIDATION_ERROR' && code !== 'BAD_REQUEST' && code !== 'FORBIDDEN'
+}
 
 const overview = computed(() => warehouse.overview)
 const items = computed(() => overview.value?.items || [])
@@ -140,6 +179,14 @@ const pendingTransfers = computed(() => {
 })
 const confirmationCopy = computed(() => {
   switch (pendingConfirmation.value?.kind) {
+    case 'delete-item':
+      return {
+        title: `删除物料“${pendingConfirmation.value.item.name}”？`,
+        message: '删除后无法恢复。仅没有库存、批次、叫货、采购、调拨或报损记录的物料可以删除；已有业务记录请使用“停用”。',
+        confirmLabel: '确认删除',
+        confirmVariant: 'danger' as const,
+        noteLabel: '',
+      }
     case 'reject-requisition':
       return {
         title: '驳回叫货单',
@@ -513,6 +560,7 @@ async function submitTransfer(id: string) {
 function requestTransferAction(kind: WarehouseConfirmation['kind'], id: string) {
   if (confirmationBusy.value) return
   confirmationNote.value = kind === 'reject-transfer' ? '当前申请需要调整后重新提交' : ''
+  confirmationError.value = ''
   pendingConfirmation.value = { kind, id } as WarehouseConfirmation
 }
 
@@ -522,22 +570,39 @@ function statusClass(severity: string) {
 
 async function openCreateItem() {
   await ensureItemScopeContextLoaded()
+  materialSubmitError.value = null
   editorItem.value = null
   editorOpen.value = true
 }
 
 async function openEditItem(item: WarehouseItem) {
   await ensureItemScopeContextLoaded()
+  materialSubmitError.value = null
   editorItem.value = item
   editorOpen.value = true
 }
 
 async function saveItem(payload: WarehouseItemPayload) {
+  materialSubmitError.value = null
   try {
     await warehouse.saveItem(payload)
     editorOpen.value = false
-  } catch {
-    // store 已保留业务错误提示。
+    materialSubmitError.value = null
+  } catch (error: unknown) {
+    if (error instanceof ApiError) {
+      materialSubmitError.value = {
+        message: error.message,
+        code: error.code,
+        status: error.status,
+        target: mapErrorCodeToTarget(error.code, error.status),
+        retryable: isRetryableError(error.code, error.status),
+      }
+    } else {
+      materialSubmitError.value = {
+        message: error instanceof Error ? error.message : '物料保存失败',
+        retryable: true,
+      }
+    }
   }
 }
 
@@ -547,6 +612,13 @@ async function setItemEnabled(item: WarehouseItem, enabled: boolean) {
   } catch {
     // store 已保留业务错误提示。
   }
+}
+
+function requestDeleteItem(item: WarehouseItem) {
+  if (confirmationBusy.value) return
+  confirmationNote.value = ''
+  confirmationError.value = ''
+  pendingConfirmation.value = { kind: 'delete-item', item }
 }
 
 async function saveCategory(payload: { id?: number; name: string; parentId?: number | null; sortOrder?: number; enabled?: boolean }) {
@@ -660,14 +732,20 @@ function cancelWarehouseConfirmation() {
   if (confirmationBusy.value) return
   pendingConfirmation.value = null
   confirmationNote.value = ''
+  confirmationError.value = ''
 }
 
 async function confirmWarehouseAction() {
   const action = pendingConfirmation.value
   if (!action || confirmationBusy.value) return
   confirmationBusy.value = true
+  confirmationError.value = ''
+  let keepOpen = false
   try {
     switch (action.kind) {
+      case 'delete-item':
+        await warehouse.deleteItem(action.item.id, action.item.name)
+        break
       case 'reject-requisition':
         await warehouse.rejectRequisition(action.id, confirmationNote.value)
         break
@@ -708,13 +786,19 @@ async function confirmWarehouseAction() {
         await warehouse.cancelTransfer(action.id, `cancel-${crypto.randomUUID()}`, confirmationNote.value || undefined)
         break
     }
-  } catch {
-    // store 已保留业务错误提示。
+  } catch (error) {
+    if (action.kind === 'delete-item') {
+      confirmationError.value = error instanceof Error ? error.message : '物料删除失败，请稍后重试。'
+      keepOpen = true
+    }
   } finally {
     confirmationBusy.value = false
-    pendingConfirmation.value = null
-    confirmationNote.value = ''
-    movementPanelRef.value?.refresh()
+    if (!keepOpen) {
+      pendingConfirmation.value = null
+      confirmationNote.value = ''
+      confirmationError.value = ''
+      movementPanelRef.value?.refresh()
+    }
   }
 }
 
@@ -913,6 +997,7 @@ watch(
       @create-item="openCreateItem"
       @edit-item="openEditItem"
       @set-item-enabled="setItemEnabled"
+      @delete-item="requestDeleteItem"
       @download-movement="downloadMovement"
     />
 
@@ -993,6 +1078,7 @@ watch(
       @create-item="openCreateItem"
       @edit-item="openEditItem"
       @set-item-enabled="setItemEnabled"
+      @delete-item="requestDeleteItem"
     />
 
     <section v-else-if="currentTab() === 'movements'" class="section-stack">
@@ -1002,7 +1088,6 @@ watch(
         :warehouse-name="selectedWarehouse?.name"
         :downloading-id="warehouse.downloadingId"
         @download-movement="downloadMovement"
-        @download-delivery="downloadDelivery"
       />
       <WarehouseReturnPanel
         :returns="returns"
@@ -1044,7 +1129,8 @@ watch(
       :regions="itemScopeRegions"
       :scope-context-available="Boolean(itemScopeContext)"
       :saving="warehouse.actioningId.startsWith('item:')"
-      @close="editorOpen = false"
+      :submit-error="materialSubmitError"
+      @close="editorOpen = false; materialSubmitError = null; warehouse.error = ''"
       @save="saveItem"
     />
 
@@ -1057,6 +1143,7 @@ watch(
       :confirm-variant="confirmationCopy.confirmVariant"
       :note-label="confirmationCopy.noteLabel"
       :note-required="confirmationNoteRequired"
+      :error="confirmationError"
       :busy="confirmationBusy"
       @cancel="cancelWarehouseConfirmation"
       @confirm="confirmWarehouseAction"

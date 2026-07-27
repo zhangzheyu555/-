@@ -30,7 +30,6 @@
 | 今日待办 | `/todos` | `TodayTodoPage.vue` | 角色待办、筛选、状态流转、附件 | `/api/*/todos`、`/api/todos/*` | 按角色/门店 | 统一表格与抽屉 |
 | 利润概览 | `/profit` | `ProfitOverviewPage.vue` | 月份、品牌、门店、利润指标 | `/api/finance/dashboard`、`/api/finance/months` | 老板/财务/授权店长 | 统一 KPI 与表格 |
 | 利润表 | `/profit-table` | `ProfitTablePage.vue` | 利润明细、月份筛选 | `/api/finance/entries` | 老板/财务/门店范围 | 统一紧凑表格 |
-| 门店详情 | `/store-detail` | `StoreDetailPage.vue` | 基础资料、经营明细、工资入口 | 门店与财务接口 | 按门店范围 | 统一详情布局 |
 | 数据录入 | `/data-entry` | `DataEntryPage.vue` | 手工录入、识别、导入、保存 | `/api/import/*`、`/api/finance/*` | 老板/财务/授权角色 | 统一左右工作区 |
 | 财务工作台 | `/finance` | `FinanceWorkbenchPage.vue` | 财务待办、异常、处理入口 | `/api/finance/workbench`、`/api/finance/todos` | BOSS/FINANCE | 统一工作台 |
 | 报销 | `/expenses` | `ExpensePage.vue` | 新增、附件、提交、补充、审核、驳回 | `/api/finance/expenses/*`、`/api/storage/upload` | 财务/门店范围 | 统一表格与抽屉 |

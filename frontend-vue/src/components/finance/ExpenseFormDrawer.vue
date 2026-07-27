@@ -11,6 +11,7 @@ import {
   type ExpenseClaimPayload,
 } from '../../api/finance'
 import type { StoreInfo } from '../../api/operations'
+import { normalizeExpenseStatus } from '../../utils/expenseStatus'
 import SearchableSingleSelect from '../common/SearchableSingleSelect.vue'
 import ModalFooter from '../ui/ModalFooter.vue'
 import UiButton from '../ui/UiButton.vue'
@@ -42,7 +43,7 @@ const createIdempotencyKey = ref('')
 let selectionGeneration = 0
 
 const title = computed(() => props.claim ? '编辑报销' : '新增报销')
-const submitLabel = computed(() => props.claim?.status === '草稿' ? '提交审核' : '保存并提交')
+const submitLabel = computed(() => normalizeExpenseStatus(props.claim?.status) === '草稿' ? '提交审核' : '保存并提交')
 const storeOptions = computed(() => props.stores)
 const searchableStoreOptions = computed(() => storeOptions.value.map((store) => ({
   value: store.id,

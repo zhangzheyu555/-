@@ -44,6 +44,7 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -463,6 +464,40 @@ public class WarehouseService {
     boolean enabled = request == null || request.enabled() == null || request.enabled();
     warehouseRepository.setItemEnabled(user.tenantId(), itemId, enabled);
     warehouseRepository.logAction(user.tenantId(), user.id(), user.displayName(), enabled ? "启用商品" : "停用商品", String.valueOf(itemId), null, "");
+  }
+
+  @Transactional
+  public void deleteItem(AuthUser user, long itemId) {
+    requireWarehouseConfigure(user);
+    WarehouseItemResponse item = warehouseRepository.item(user.tenantId(), itemId)
+        .orElseThrow(() -> new BusinessException("ITEM_NOT_FOUND", "物料不存在", HttpStatus.NOT_FOUND));
+    if (warehouseRepository.itemHasBusinessReferences(user.tenantId(), itemId)) {
+      throw itemInUse();
+    }
+    try {
+      if (warehouseRepository.deleteItem(user.tenantId(), itemId) != 1) {
+        throw new BusinessException("ITEM_NOT_FOUND", "物料不存在", HttpStatus.NOT_FOUND);
+      }
+    } catch (DataIntegrityViolationException error) {
+      throw itemInUse();
+    }
+    warehouseRepository.logAction(
+        user.tenantId(),
+        user.id(),
+        user.displayName(),
+        "删除物料",
+        String.valueOf(itemId),
+        null,
+        item.code() + " · " + item.name()
+    );
+  }
+
+  private BusinessException itemInUse() {
+    return new BusinessException(
+        "ITEM_IN_USE",
+        "该物料已有库存或业务记录，不能删除；请改为停用。",
+        HttpStatus.CONFLICT
+    );
   }
 
   @Transactional
@@ -958,7 +993,7 @@ public class WarehouseService {
 
   public WarehouseMovementQueryResponse queryMovements(AuthUser user, WarehouseMovementQueryRequest request) {
     validateMovementScope(user, request.warehouseId(), request.startDate(), request.endDate(),
-        request.storeIds(), request.itemIds());
+        request.storeIds(), request.itemIds(), request.directions());
     long total = warehouseRepository.movementsFilteredCount(
         user.tenantId(), request.warehouseId(), request.startDate(), request.endDate(),
         request.storeIds(), request.itemIds(), request.directions(), request.sourceTypes());
@@ -979,7 +1014,7 @@ public class WarehouseService {
 
   public WarehouseMovementExport exportMovements(AuthUser user, WarehouseMovementExportRequest request) {
     validateMovementScope(user, request.warehouseId(), request.startDate(), request.endDate(),
-        request.storeIds(), request.itemIds());
+        request.storeIds(), request.itemIds(), request.directions());
     long total = warehouseRepository.movementsFilteredCount(
         user.tenantId(), request.warehouseId(), request.startDate(), request.endDate(),
         request.storeIds(), request.itemIds(), request.directions(), request.sourceTypes());
@@ -1028,7 +1063,7 @@ public class WarehouseService {
 
   private void validateMovementScope(
       AuthUser user, Long warehouseId, java.time.LocalDate startDate, java.time.LocalDate endDate,
-      List<String> storeIds, List<Long> itemIds
+      List<String> storeIds, List<Long> itemIds, List<String> directions
   ) {
     if (topologyService == null) {
       throw new BusinessException("WAREHOUSE_TOPOLOGY_REQUIRED", "仓库拓扑未启用", HttpStatus.SERVICE_UNAVAILABLE);
@@ -1045,6 +1080,11 @@ public class WarehouseService {
     if (java.time.temporal.ChronoUnit.DAYS.between(startDate, endDate) > 366) {
       throw new BusinessException("MOVEMENT_DATE_RANGE_EXCEEDED",
           "查询范围不能超过 366 天，请缩小日期范围", HttpStatus.BAD_REQUEST);
+    }
+    if (directions != null && directions.stream()
+        .anyMatch(direction -> !List.of("IN", "OUT", "ADJUST").contains(direction))) {
+      throw new BusinessException("MOVEMENT_DIRECTION_INVALID",
+          "出入库方向不正确，请重新选择", HttpStatus.BAD_REQUEST);
     }
     // Validate explicit storeIds
     if (storeIds != null && !storeIds.isEmpty()) {

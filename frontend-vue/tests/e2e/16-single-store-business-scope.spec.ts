@@ -170,16 +170,15 @@ test('店长业务页只使用登录会话中的唯一门店范围', async ({ pa
   await expect(page.getByText('本店月度利润明细')).toBeVisible()
 })
 
-test('老板仍保留品牌、门店和全部范围选择', async ({ page }) => {
+test('老板使用页面内品牌和门店筛选，顶部不再重复显示全局门店', async ({ page }) => {
   await prepare(page, bossSession, [])
   await page.goto('/profit?month=2026-07')
 
   await expect(page.getByRole('heading', { name: '利润概览', level: 1 })).toBeVisible()
-  await expect(page.getByLabel('全局门店')).toBeVisible()
+  await expect(page.getByLabel('全局门店')).toHaveCount(0)
   await expect(page.getByLabel('品牌', { exact: true })).toBeVisible()
-  await expect(page.getByLabel('门店', { exact: true })).toBeVisible()
+  await expect(page.getByRole('combobox', { name: '搜索门店' })).toHaveValue('全部门店')
   await expect(page.getByLabel('品牌', { exact: true }).locator('option', { hasText: '全部品牌' })).toHaveCount(1)
-  await expect(page.getByLabel('门店', { exact: true }).locator('option', { hasText: '全部门店' })).toHaveCount(1)
   await expect(page.getByText('品牌卡片')).toBeVisible()
   await expect(page.getByText(/各店净利率排名/)).toBeVisible()
 })

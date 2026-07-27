@@ -816,8 +816,8 @@ public class AccessControlService {
   }
 
   /**
-   * Uses the account's persisted STORE assignment rather than the supervisor compatibility
-   * shortcut that grants global scope to other operational modules.
+   * Uses the supervisor's persisted STORE assignment. Explicit ALL and STORE_LIST scopes are both
+   * valid; the role boundary still prevents financial and warehouse permissions from being added.
    */
   public DataScope knowledgeBaseManagementStoreScope(AuthUser user) {
     if (isBoss(user)) {
@@ -831,8 +831,8 @@ public class AccessControlService {
 
   /**
    * Resolves STORE visibility for every knowledge-base read path. Supervisors deliberately use
-   * their persisted STORE_LIST instead of the legacy role-wide ALL shortcut; other roles retain
-   * their existing operational data scope and direct store binding.
+   * their persisted ALL or STORE_LIST assignment instead of a role-wide compatibility shortcut;
+   * other roles retain their existing operational data scope and direct store binding.
    */
   public DataScope knowledgeBaseReadStoreScope(AuthUser user) {
     if (isBoss(user)) {
@@ -857,7 +857,10 @@ public class AccessControlService {
   private DataScope configuredKnowledgeBaseSupervisorScope(AuthUser user) {
     if (dataScopeService != null) {
       DataScope configured = dataScopeService.configuredScope(user, DataScopeDomains.STORE);
-      return DataScopeModes.STORE_LIST.equals(configured.mode()) ? configured : DataScope.none();
+      return configured != null
+          && (configured.allowsAllStores() || DataScopeModes.STORE_LIST.equals(configured.mode()))
+              ? configured
+              : DataScope.none();
     }
     LinkedHashSet<String> storeIds = new LinkedHashSet<>();
     if (user.storeId() != null && !user.storeId().isBlank()) {

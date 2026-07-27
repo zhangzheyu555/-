@@ -295,7 +295,9 @@ public class InspectionService {
           Map.of()
       );
     }
-    if (!outboundAllowed(healthUrl)) {
+    if (!outboundAllowed(healthUrl)
+        || !outboundAllowed(detectUrl)
+        || (exportUrl != null && !exportUrl.isBlank() && !outboundAllowed(exportUrl))) {
       return new InspectionServiceHealthResponse(
           "OUTBOUND_BLOCKED",
           false,
@@ -2988,6 +2990,7 @@ public class InspectionService {
         .version(HttpClient.Version.HTTP_1_1)
         .connectTimeout(Duration.ofSeconds(5))
         .followRedirects(HttpClient.Redirect.NEVER)
+        .version(HttpClient.Version.HTTP_1_1)
         .build();
     JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(client);
     factory.setReadTimeout(readTimeout == null ? Duration.ofSeconds(60) : readTimeout);

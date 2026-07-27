@@ -259,5 +259,19 @@ defineExpose({ focus: openMenu, close: closeMenu })
 .searchable-single-select__status { padding: 14px 12px; color: var(--ds-muted, #6f817f); font-size: 13px; text-align: center; }
 .searchable-single-select.is-disabled .searchable-single-select__control { background: var(--ds-surface-muted, #f3f7f6); color: #879693; cursor: not-allowed; }
 .searchable-single-select.is-disabled input { cursor: not-allowed; }
+@media (max-width: 768px) {
+  .searchable-single-select__control {
+    min-height: 44px;
+  }
+
+  .searchable-single-select__control input {
+    height: 44px;
+    min-height: 44px;
+  }
+
+  .searchable-single-select__option {
+    min-height: 44px;
+  }
+}
 @media (prefers-reduced-motion: reduce) { .searchable-single-select__control, .searchable-single-select__chevron { transition: none; } }
 </style>

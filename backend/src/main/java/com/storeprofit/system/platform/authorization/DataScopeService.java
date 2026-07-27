@@ -115,7 +115,11 @@ public class DataScopeService {
         String mode = normalizeMode(row.scopeType());
         if ("SUPERVISOR".equals(AccessControlService.canonicalRole(user.role()))
             && (!SUPERVISOR_SCOPE_DOMAINS.contains(domain)
-            || !Set.of(DataScopeModes.STORE_LIST, DataScopeModes.NONE).contains(mode))) {
+            || !Set.of(
+                DataScopeModes.ALL,
+                DataScopeModes.STORE_LIST,
+                DataScopeModes.NONE
+            ).contains(mode))) {
           return DataScope.none();
         }
         return materialize(mode, row.scopeValueJson(), user.storeId());
