@@ -82,7 +82,6 @@ const detailReport = ref<DailyLossReport | null>(null)
 const approvalNotes = ref<Record<string, string>>({})
 const approvingId = ref('')
 const lines = ref<LossLineForm[]>([emptyLine()])
-const supplierCompensation = ref('0')
 const formRef = ref<HTMLElement | null>(null)
 const recordsRef = ref<HTMLElement | null>(null)
 const recordFilter = ref<'ALL' | 'NOT_REPORTED' | 'SUBMITTED' | 'REVIEWED'>('ALL')
@@ -155,8 +154,6 @@ const expectedLossAmount = computed(() => lines.value.reduce((total, line) => {
   const price = Number(item?.unitPrice || 0)
   return total + (Number.isFinite(quantity) && quantity > 0 && factor > 0 ? quantity / factor * price : 0)
 }, 0))
-const expectedSupplierCompensation = computed(() => Math.max(0, Number(supplierCompensation.value) || 0))
-const expectedStoreBorneAmount = computed(() => Math.max(0, expectedLossAmount.value - expectedSupplierCompensation.value))
 const categoryTabs = computed<CategoryTab[]>(() => {
   const grouped = new Map<string, CategoryTab>()
   for (const item of items.value) {
@@ -454,10 +451,6 @@ async function submitReport() {
     pageError.value = '请至少选择一个报损品类，并填写大于零的数量。'
     return
   }
-  if (expectedSupplierCompensation.value > expectedLossAmount.value + 0.005) {
-    pageError.value = '厂商赔付金额不能超过报损总金额。'
-    return
-  }
   if (!selectedFiles.value.length && !(todayReport.value?.attachments?.length)) {
     pageError.value = '请至少上传一张报损照片。'
     return
@@ -471,7 +464,6 @@ async function submitReport() {
       storeId: effectiveStoreId.value,
       lossDate: localDate(),
       details,
-      supplierCompensationAmount: expectedSupplierCompensation.value,
     })
     if (selectedFiles.value.length && saved.id) {
       await uploadDailyLossReportAttachments(saved.id, selectedFiles.value, (percent) => { uploadProgress.value = percent })
@@ -479,7 +471,6 @@ async function submitReport() {
     if (saved.id) await submitDailyLossReport(saved.id)
     actionMessage.value = '今日报损已提交，等待督导复核。'
     lines.value = [emptyLine()]
-    supplierCompensation.value = '0'
     selectedFiles.value = []
     releaseSelectedPreviews()
     await refreshData()
@@ -712,8 +703,7 @@ function currentMonth() {
       </header>
       <div class="archive-amounts">
         <div><span>源表总损耗</span><strong>¥{{ formatMoney(monthlyArchive.declaredTotalLossAmount) }}</strong></div>
-        <div><span>厂商赔付</span><strong>¥{{ formatMoney(monthlyArchive.supplierCompensationAmount) }}</strong></div>
-        <div><span>系统计算店铺承担</span><strong>¥{{ formatMoney(monthlyArchive.calculatedStoreBorneAmount) }}</strong></div>
+        <div><span>系统明细损耗</span><strong>¥{{ formatMoney(monthlyArchive.detailTotalLossAmount) }}</strong></div>
       </div>
       <p v-if="monthlyArchive.reconciliationStatus === 'SOURCE_VARIANCE'" class="archive-note">
         原始值已完整保留：{{ monthlyArchive.sourceNote }}
@@ -725,7 +715,7 @@ function currentMonth() {
         <PackageMinus :size="20" />
         <div>
           <h2>今日报损</h2>
-          <p>按实际单位录入数量，系统自动折算计价，并分别核算厂商赔付与店铺承担。</p>
+          <p>按实际单位录入数量，系统自动折算计价并汇总报损金额。</p>
         </div>
       </div>
 
@@ -783,12 +773,7 @@ function currentMonth() {
       <button class="text-button" type="button" @click="addLine"><Plus :size="15" />增加品类</button>
 
       <section class="settlement-block" aria-label="报损结算">
-        <label>
-          <span>厂商赔付金额</span>
-          <span class="money-control"><em>¥</em><input v-model="supplierCompensation" type="number" min="0" step="0.01" inputmode="decimal" /></span>
-        </label>
         <div><span>总计损耗金额</span><strong>¥{{ formatMoney(expectedLossAmount) }}</strong></div>
-        <div><span>店铺承担</span><strong>¥{{ formatMoney(expectedStoreBorneAmount) }}</strong></div>
       </section>
 
       <section class="photo-upload-block" aria-label="报损照片上传">
@@ -855,7 +840,7 @@ function currentMonth() {
               <span class="status-pill" :class="`status-${statusKey(report).toLowerCase()}`">{{ statusLabel(report) }}</span>
             </div>
             <p v-if="report.reported">
-              {{ report.detailCount || 0 }} 项明细 · 损耗 ¥{{ formatMoney(report.totalAmount) }} · 厂商赔付 ¥{{ formatMoney(report.supplierCompensationAmount) }} · 店铺承担 ¥{{ formatMoney(report.storeBorneAmount) }}
+              {{ report.detailCount || 0 }} 项明细 · 损耗 ¥{{ formatMoney(report.totalAmount) }}
             </p>
             <p v-if="report.reported && ['REVIEWED', 'APPROVED'].includes(statusKey(report))" class="inventory-result">
               {{ report.inventoryStatusLabel || (report.inventoryDeducted ? '库存已准确扣减' : '库存扣减状态异常') }}
@@ -967,8 +952,6 @@ function currentMonth() {
         <div v-else class="detail-body">
           <section class="detail-settlement">
             <div><span>总计损耗金额</span><strong>¥{{ formatMoney(detailReport.totalAmount) }}</strong></div>
-            <div><span>厂商赔付金额</span><strong>¥{{ formatMoney(detailReport.supplierCompensationAmount) }}</strong></div>
-            <div><span>店铺承担</span><strong>¥{{ formatMoney(detailReport.storeBorneAmount) }}</strong></div>
           </section>
           <section>
             <h3>报损明细</h3>

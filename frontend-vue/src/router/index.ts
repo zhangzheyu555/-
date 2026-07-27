@@ -24,6 +24,7 @@ const EmployeeWorkbenchPage = () => import('../pages/EmployeeWorkbenchPage.vue')
 const EmployeeProfilePage = () => import('../pages/EmployeeProfilePage.vue')
 const KnowledgeBasePage = () => import('../pages/KnowledgeBasePage.vue')
 const DailyLossPage = () => import('../pages/DailyLossPage.vue')
+const InventoryCheckPage = () => import('../pages/InventoryCheckPage.vue')
 const OperationLogPage = () => import('../pages/OperationLogPage.vue')
 const NoPermissionPage = () => import('../pages/NoPermissionPage.vue')
 const PlatformLoginPage = () => import('../pages/PlatformLoginPage.vue')
@@ -68,6 +69,16 @@ const appChildren: RouteRecordRaw[] = [
   { path: 'employee-assistant/knowledge', redirect: '/employee-assistant' },
   { path: 'employee-assistant/handoffs', redirect: '/employee-assistant' },
   { path: 'daily-loss', name: 'daily-loss', component: DailyLossPage, meta: permissionMeta(PERMISSIONS.DAILY_LOSS_READ, { menuKey: 'daily-loss', title: '每日报损', allowedRoles: ['STORE_MANAGER', 'SUPERVISOR'] }) },
+  {
+    path: 'inventory-checks',
+    name: 'inventory-checks',
+    component: InventoryCheckPage,
+    meta: permissionMeta(PERMISSIONS.INVENTORY_READ, {
+      menuKey: 'inventory-checks',
+      title: '店铺盘存',
+      allowedRoles: ['FINANCE', 'SUPERVISOR', 'WAREHOUSE', 'STORE_MANAGER'],
+    }),
+  },
   { path: 'profit', name: 'profit', component: ProfitOverviewPage, meta: permissionMeta(PERMISSIONS.FINANCE_PROFIT_READ, { menuKey: 'profit-overview', title: '利润概览' }) },
   { path: 'profit-table', name: 'profit-table', component: ProfitTablePage, meta: permissionMeta(PERMISSIONS.FINANCE_PROFIT_READ, { menuKey: 'profit-table', title: '利润表' }) },
   { path: 'data-entry', name: 'data-entry', component: DataEntryPage, meta: permissionMeta(PERMISSIONS.FINANCE_PROFIT_WRITE, { menuKey: 'data-entry', title: '数据录入' }) },

@@ -235,12 +235,8 @@ public class DailyLossService {
           reason == null ? "日常报损" : reason,
           user.id());
     }
-    BigDecimal supplierCompensation = nonNegativeAmount(
-        request.supplierCompensationAmount(), "厂商赔付金额不能小于零");
-    if (supplierCompensation.compareTo(totalAmount) > 0) {
-      throw badRequest("DAILY_LOSS_COMPENSATION_EXCEEDS_TOTAL", "厂商赔付金额不能超过报损总金额");
-    }
-    repository.updateSupplierCompensation(user.tenantId(), reportId, supplierCompensation);
+    // 厂商赔付已退出每日报损流程。保留数据库兼容字段，但新保存的日报损固定为零。
+    repository.updateSupplierCompensation(user.tenantId(), reportId, ZERO);
     if (files != null && !files.isEmpty()) {
       uploadReportFiles(user, reportId, storeId, files);
     }
@@ -649,7 +645,7 @@ public class DailyLossService {
         Sheet summary = workbook.createSheet("每日汇总");
         Sheet detail = workbook.createSheet("报损明细");
         String[] summaryHeaders = {"日期", "门店编码", "门店名称", "报损品类数", "报损总数量", "报损总金额",
-            "厂商赔付金额", "店铺承担", "上报状态", "提交人", "提交时间", "复核人", "复核时间", "复核意见"};
+            "上报状态", "提交人", "提交时间", "复核人", "复核时间", "复核意见"};
         String[] detailHeaders = {"日期", "门店编码", "门店名称", "物料编码", "物料名称", "品类",
             "报损数量", "录入单位", "折算量", "计价单位", "计价数量", "计价单价", "报损金额",
             "报损原因", "上报状态", "提交人", "提交时间", "复核人", "复核时间", "复核意见"};
@@ -667,8 +663,6 @@ public class DailyLossService {
                 .filter(java.util.Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
             BigDecimal amount = reportDetails.stream().map(DailyLossRepository.MonthlyExportDetailRow::amount)
                 .filter(java.util.Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
-            BigDecimal compensation = report == null || report.supplierCompensationAmount() == null
-                ? ZERO : report.supplierCompensationAmount();
             Row row = summary.createRow(summaryRowIndex++);
             writeDate(row, 0, day, styles.date());
             writeText(row, 1, store.code(), styles.text());
@@ -676,14 +670,12 @@ public class DailyLossService {
             writeNumber(row, 3, BigDecimal.valueOf(reportDetails.size()), styles.integer());
             writeNumber(row, 4, quantity, styles.quantity());
             writeNumber(row, 5, amount, styles.amount());
-            writeNumber(row, 6, compensation, styles.amount());
-            writeNumber(row, 7, amount.subtract(compensation).max(ZERO), styles.amount());
-            writeText(row, 8, report == null ? "未报" : reportStatusLabel(normalizeStatus(report.status())), styles.text());
-            writeText(row, 9, report == null ? null : report.submittedByName(), styles.text());
-            writeDateTime(row, 10, report == null ? null : report.submittedAt(), styles.dateTime());
-            writeText(row, 11, report == null ? null : report.reviewedByName(), styles.text());
-            writeDateTime(row, 12, report == null ? null : report.reviewedAt(), styles.dateTime());
-            writeText(row, 13, report == null ? null : report.reviewNote(), styles.text());
+            writeText(row, 6, report == null ? "未报" : reportStatusLabel(normalizeStatus(report.status())), styles.text());
+            writeText(row, 7, report == null ? null : report.submittedByName(), styles.text());
+            writeDateTime(row, 8, report == null ? null : report.submittedAt(), styles.dateTime());
+            writeText(row, 9, report == null ? null : report.reviewedByName(), styles.text());
+            writeDateTime(row, 10, report == null ? null : report.reviewedAt(), styles.dateTime());
+            writeText(row, 11, report == null ? null : report.reviewNote(), styles.text());
           }
         }
 
@@ -789,18 +781,12 @@ public class DailyLossService {
     }
 
     BigDecimal totalAmount = amountByItem.values().stream().reduce(ZERO, BigDecimal::add);
-    BigDecimal compensation = reportsByStoreDay.values().stream()
-        .map(DailyLossRepository.DailyLossReportRow::supplierCompensationAmount)
-        .filter(java.util.Objects::nonNull)
-        .reduce(ZERO, BigDecimal::add);
-    String[] labels = {"合计（总量）", "总量", "价格", "总计损耗金额", "厂商赔付金额", "店铺承担"};
+    String[] labels = {"合计（总量）", "总量", "价格", "总计损耗金额"};
     for (int offset = 0; offset < labels.length; offset++) {
       Row row = sheet.createRow(rowIndex++);
       writeText(row, 0, labels[offset], styles.matrixSummary());
       BigDecimal overall = switch (offset) {
         case 3 -> totalAmount;
-        case 4 -> compensation;
-        case 5 -> totalAmount.subtract(compensation).max(ZERO);
         default -> BigDecimal.ZERO;
       };
       if (offset >= 3) writeNumber(row, 1, overall, styles.matrixSummaryAmount());

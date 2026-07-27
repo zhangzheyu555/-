@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
 import java.util.List;
 import java.util.Set;
@@ -100,6 +101,42 @@ class AuthorizationServiceTest {
   }
 
   @Test
+  void inventoryReviewRolesKeepReviewButNeverSurfaceEntryManageEvenWithPersonalAllow() {
+    when(repository.enabledPermissionCodes()).thenReturn(Set.of(
+        PermissionCodes.INVENTORY_READ,
+        PermissionCodes.INVENTORY_MANAGE,
+        PermissionCodes.INVENTORY_REVIEW
+    ));
+    List<AuthUser> readOnlyUsers = List.of(
+        user(31L, "FINANCE"),
+        user(32L, "SUPERVISOR"),
+        user(33L, "WAREHOUSE")
+    );
+    for (AuthUser readOnly : readOnlyUsers) {
+      String role = AccessControlService.canonicalRole(readOnly.role());
+      when(repository.roleTemplatePermissions(1L, role)).thenReturn(Set.of(
+          PermissionCodes.INVENTORY_READ,
+          PermissionCodes.INVENTORY_MANAGE,
+          PermissionCodes.INVENTORY_REVIEW
+      ));
+      when(repository.userOverrides(1L, readOnly.id())).thenReturn(List.of(
+          new UserPermissionOverride(PermissionCodes.INVENTORY_MANAGE, PermissionEffect.ALLOW),
+          new UserPermissionOverride(PermissionCodes.INVENTORY_REVIEW, PermissionEffect.ALLOW)
+      ));
+
+      assertThat(service.roleTemplatePermissions(1L, role))
+          .contains(PermissionCodes.INVENTORY_READ, PermissionCodes.INVENTORY_REVIEW)
+          .doesNotContain(PermissionCodes.INVENTORY_MANAGE);
+      assertThat(service.effectivePermissions(readOnly))
+          .contains(PermissionCodes.INVENTORY_READ, PermissionCodes.INVENTORY_REVIEW)
+          .doesNotContain(PermissionCodes.INVENTORY_MANAGE);
+      assertThat(AuthorizationService.legacyTemplatePermissions(role))
+          .contains(PermissionCodes.INVENTORY_READ, PermissionCodes.INVENTORY_REVIEW)
+          .doesNotContain(PermissionCodes.INVENTORY_MANAGE);
+    }
+  }
+
+  @Test
   void storeManagerCompatibilityTemplateIncludesDailyLossReadAndCreateOnly() {
     assertThat(AuthorizationService.legacyTemplatePermissions("STORE_MANAGER"))
         .contains(PermissionCodes.DAILY_LOSS_READ, PermissionCodes.DAILY_LOSS_CREATE)
@@ -158,6 +195,7 @@ class AuthorizationServiceTest {
             PermissionCodes.OPERATIONS_DASHBOARD_READ,
             PermissionCodes.PLATFORM_MANAGE,
             PermissionCodes.INVENTORY_MANAGE,
+            PermissionCodes.INVENTORY_REVIEW,
             PermissionCodes.EXAM_MANAGE,
             PermissionCodes.FINANCE_PROFIT_WRITE,
             PermissionCodes.EXPENSE_CREATE,
@@ -180,6 +218,7 @@ class AuthorizationServiceTest {
         PermissionCodes.OPERATIONS_DASHBOARD_READ,
         PermissionCodes.PLATFORM_MANAGE,
         PermissionCodes.INVENTORY_MANAGE,
+        PermissionCodes.INVENTORY_REVIEW,
         PermissionCodes.EXAM_MANAGE,
         PermissionCodes.FINANCE_PROFIT_WRITE,
         PermissionCodes.EXPENSE_CREATE,
@@ -210,39 +249,43 @@ class AuthorizationServiceTest {
         .contains(PermissionCodes.INSPECTION_READ, PermissionCodes.INSPECTION_MANAGE, PermissionCodes.ATTACHMENT_READ,
             PermissionCodes.OPERATIONS_DASHBOARD_READ,
             PermissionCodes.PLATFORM_MANAGE,
-            PermissionCodes.INVENTORY_MANAGE,
             PermissionCodes.EXAM_MANAGE,
             PermissionCodes.EMPLOYEE_READ,
-            PermissionCodes.EMPLOYEE_MANAGE)
+            PermissionCodes.EMPLOYEE_MANAGE,
+            PermissionCodes.INVENTORY_REVIEW)
         .doesNotContain(PermissionCodes.FINANCE_PROFIT_WRITE, PermissionCodes.SALARY_EDIT,
             PermissionCodes.WAREHOUSE_CENTRAL_MANAGE, PermissionCodes.STORE_MANAGE,
             PermissionCodes.SYSTEM_USER_MANAGE, PermissionCodes.EXPENSE_CREATE,
             PermissionCodes.EXPENSE_READ, PermissionCodes.EXPENSE_REVIEW,
             PermissionCodes.WAREHOUSE_READ, PermissionCodes.WAREHOUSE_STORE_READ,
             PermissionCodes.ASSISTANT_USE,
-            PermissionCodes.EMPLOYEE_ASSISTANT_USE);
+            PermissionCodes.EMPLOYEE_ASSISTANT_USE,
+            PermissionCodes.INVENTORY_MANAGE);
     assertThat(service.effectivePermissions(supervisor))
         .contains(PermissionCodes.INSPECTION_READ, PermissionCodes.INSPECTION_MANAGE, PermissionCodes.TODO_READ,
             PermissionCodes.OPERATIONS_DASHBOARD_READ,
             PermissionCodes.PLATFORM_MANAGE,
-            PermissionCodes.INVENTORY_MANAGE,
             PermissionCodes.EXAM_MANAGE,
-            PermissionCodes.EMPLOYEE_READ)
+            PermissionCodes.EMPLOYEE_READ,
+            PermissionCodes.INVENTORY_REVIEW)
         .doesNotContain(PermissionCodes.FINANCE_PROFIT_WRITE, PermissionCodes.SALARY_EDIT,
             PermissionCodes.WAREHOUSE_CENTRAL_MANAGE, PermissionCodes.STORE_MANAGE,
             PermissionCodes.SYSTEM_USER_MANAGE, PermissionCodes.EXPENSE_CREATE,
             PermissionCodes.EXPENSE_READ, PermissionCodes.EXPENSE_REVIEW,
             PermissionCodes.WAREHOUSE_READ, PermissionCodes.WAREHOUSE_STORE_READ,
             PermissionCodes.ASSISTANT_USE,
-            PermissionCodes.EMPLOYEE_ASSISTANT_USE);
+            PermissionCodes.EMPLOYEE_ASSISTANT_USE,
+            PermissionCodes.INVENTORY_MANAGE);
     assertThat(AuthorizationService.legacyTemplatePermissions("SUPERVISOR"))
         .contains(PermissionCodes.INSPECTION_READ, PermissionCodes.INSPECTION_MANAGE, PermissionCodes.TODO_TRANSITION,
             PermissionCodes.OPERATIONS_DASHBOARD_READ, PermissionCodes.PLATFORM_MANAGE,
             PermissionCodes.DAILY_LOSS_READ, PermissionCodes.DAILY_LOSS_REVIEW, PermissionCodes.DAILY_LOSS_EXPORT,
-            PermissionCodes.EMPLOYEE_READ, PermissionCodes.EMPLOYEE_MANAGE)
+            PermissionCodes.EMPLOYEE_READ, PermissionCodes.EMPLOYEE_MANAGE,
+            PermissionCodes.INVENTORY_READ, PermissionCodes.INVENTORY_REVIEW)
         .doesNotContain(PermissionCodes.WAREHOUSE_READ, PermissionCodes.WAREHOUSE_STORE_READ,
             PermissionCodes.ASSISTANT_USE, PermissionCodes.EMPLOYEE_ASSISTANT_USE,
-            PermissionCodes.EMPLOYEE_ASSISTANT_HANDOFF_MANAGE);
+            PermissionCodes.EMPLOYEE_ASSISTANT_HANDOFF_MANAGE,
+            PermissionCodes.INVENTORY_MANAGE);
   }
 
   @Test
@@ -252,14 +295,18 @@ class AuthorizationServiceTest {
         .thenReturn(Set.of(
             PermissionCodes.OPERATIONS_DASHBOARD_READ,
             PermissionCodes.PLATFORM_MANAGE,
+            PermissionCodes.INVENTORY_READ,
             PermissionCodes.INVENTORY_MANAGE,
+            PermissionCodes.INVENTORY_REVIEW,
             PermissionCodes.EXAM_MANAGE,
             PermissionCodes.TODO_READ
         ));
     when(repository.enabledPermissionCodes()).thenReturn(Set.of(
         PermissionCodes.OPERATIONS_DASHBOARD_READ,
         PermissionCodes.PLATFORM_MANAGE,
+        PermissionCodes.INVENTORY_READ,
         PermissionCodes.INVENTORY_MANAGE,
+        PermissionCodes.INVENTORY_REVIEW,
         PermissionCodes.EXAM_MANAGE,
         PermissionCodes.TODO_READ
     ));
@@ -269,17 +316,21 @@ class AuthorizationServiceTest {
         .contains(
             PermissionCodes.OPERATIONS_DASHBOARD_READ,
             PermissionCodes.PLATFORM_MANAGE,
-            PermissionCodes.INVENTORY_MANAGE,
+            PermissionCodes.INVENTORY_READ,
+            PermissionCodes.INVENTORY_REVIEW,
             PermissionCodes.EXAM_MANAGE,
             PermissionCodes.TODO_READ
-        );
+        )
+        .doesNotContain(PermissionCodes.INVENTORY_MANAGE);
     assertThat(AuthorizationService.legacyTemplatePermissions("OPERATIONS"))
         .contains(
             PermissionCodes.OPERATIONS_DASHBOARD_READ,
             PermissionCodes.PLATFORM_MANAGE,
-            PermissionCodes.INVENTORY_MANAGE,
+            PermissionCodes.INVENTORY_READ,
+            PermissionCodes.INVENTORY_REVIEW,
             PermissionCodes.EXAM_MANAGE
-        );
+        )
+        .doesNotContain(PermissionCodes.INVENTORY_MANAGE);
   }
 
   @Test

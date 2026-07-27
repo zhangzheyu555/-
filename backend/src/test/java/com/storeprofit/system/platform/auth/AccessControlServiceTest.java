@@ -463,6 +463,77 @@ class AccessControlServiceTest {
   }
 
   @Test
+  void inventoryRolesShareReadReviewAndExportWhileEntryAndPriceMutationsRemainBounded() {
+    AuthorizationService authorizationService = mock(AuthorizationService.class);
+    AccessControlService inventoryAccess = new AccessControlService(
+        authService,
+        authRepository,
+        auditRepository,
+        authorizationService,
+        mock(DataScopeService.class)
+    );
+    AuthUser boss = user("BOSS", null);
+    AuthUser manager = user("STORE_MANAGER", "rg1");
+    AuthUser finance = user("FINANCE", null);
+    AuthUser supervisor = user("SUPERVISOR", null);
+    AuthUser warehouse = user("WAREHOUSE", null);
+    AuthUser employee = user("EMPLOYEE", "rg1");
+    List<AuthUser> ordinaryUsers = List.of(manager, finance, supervisor, warehouse, employee);
+    for (AuthUser account : ordinaryUsers) {
+      when(authorizationService.hasPermission(account, PermissionCodes.INVENTORY_READ))
+          .thenReturn(true);
+      when(authorizationService.hasPermission(account, PermissionCodes.INVENTORY_MANAGE))
+          .thenReturn(true);
+      when(authorizationService.hasPermission(account, PermissionCodes.INVENTORY_REVIEW))
+          .thenReturn(true);
+    }
+
+    for (AuthUser reader : List.of(boss, manager, finance, supervisor, warehouse)) {
+      inventoryAccess.requireInventoryRead(reader);
+    }
+    inventoryAccess.requireInventoryManage(manager);
+    for (AuthUser reviewer : List.of(boss, finance, supervisor, warehouse)) {
+      inventoryAccess.requireInventoryReview(reviewer);
+    }
+    inventoryAccess.requireInventoryPriceManage(boss);
+    for (AuthUser exporter : List.of(boss, finance, supervisor, warehouse)) {
+      inventoryAccess.requireInventoryExport(exporter);
+    }
+
+    assertThatThrownBy(() -> inventoryAccess.requireInventoryRead(employee))
+        .isInstanceOfSatisfying(BusinessException.class, error -> {
+          assertThat(error.getCode()).isEqualTo("FORBIDDEN");
+          assertThat(error.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+        });
+
+    for (AuthUser reviewer : List.of(finance, supervisor, warehouse)) {
+      assertThatThrownBy(() -> inventoryAccess.requireInventoryManage(reviewer))
+          .isInstanceOf(BusinessException.class);
+      assertThatThrownBy(() -> inventoryAccess.requireInventoryPriceManage(reviewer))
+          .isInstanceOf(BusinessException.class);
+    }
+    assertThatThrownBy(() -> inventoryAccess.requireInventoryManage(boss))
+        .isInstanceOf(BusinessException.class);
+    assertThatThrownBy(() -> inventoryAccess.requireInventoryReview(manager))
+        .isInstanceOf(BusinessException.class);
+    assertThatThrownBy(() -> inventoryAccess.requireInventoryPriceManage(manager))
+        .isInstanceOf(BusinessException.class);
+    assertThatThrownBy(() -> inventoryAccess.requireInventoryExport(manager))
+        .isInstanceOf(BusinessException.class);
+    assertThatThrownBy(() -> inventoryAccess.requireInventoryExport(employee))
+        .isInstanceOf(BusinessException.class);
+
+    verify(auditRepository, atLeastOnce()).writePermissionDenied(
+        any(AuthUser.class),
+        any(String.class),
+        org.mockito.ArgumentMatchers.eq("API"),
+        any(String.class),
+        isNull(),
+        any(String.class)
+    );
+  }
+
+  @Test
   void employeeCanUseOwnLearningAndAssistantButCannotEnterHighRiskModules() {
     AuthUser employee = user("EMPLOYEE", "rg1");
 

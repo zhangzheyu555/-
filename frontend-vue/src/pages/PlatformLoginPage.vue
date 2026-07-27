@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ExternalLink, X } from 'lucide-vue-next'
 import PageHeader from '../components/common/PageHeader.vue'
-import { apiGet, apiPut, http } from '../api/http'
+import { apiGet, apiPost, apiPut, http } from '../api/http'
 import { downloadBlob } from '../api/reports'
 import { useAuthStore } from '../stores/auth'
 
@@ -167,24 +167,6 @@ interface TurnoverSummary {
   items: ItemRow[]
 }
 
-interface QmaiRevenueRow {
-  storeId: string
-  orderCount: number
-  revenue: number
-  refund: number
-  cost: number
-}
-
-interface QmaiProductRow {
-  storeId: string
-  itemName: string
-  categoryName: string
-  quantity: number
-  refundQuantity: number
-  revenue: number
-  refund: number
-}
-
 const turnover = ref<TurnoverSummary | null>(null)
 const turnoverLoading = ref(false)
 const turnoverError = ref('')
@@ -213,7 +195,7 @@ const income = ref<ConsoleIncome | null>(null)
 const incomeLoading = ref(false)
 const incomeError = ref('')
 const anyLoading = computed(() =>
-  turnoverLoading.value || incomeLoading.value)
+  turnoverLoading.value || incomeLoading.value || posLoading.value)
 
 async function loadIncome() {
   if (!qmai.value?.consoleTokenSet) {
@@ -309,8 +291,65 @@ const sortArrow = (key: SortKey) =>
   sortKey.value === key ? (sortAsc.value ? ' ▲' : ' ▼') : ''
 
 /* ---------------- 企迈商品销售（同一次刷新的数据，切标签即看） ---------------- */
-const activeTab = ref<'turnover' | 'items' | 'usage'>('turnover')
+const activeTab = ref<'turnover' | 'items' | 'usage' | 'pos'>('turnover')
 const qmaiRecipeEnabled = import.meta.env.VITE_QMAI_RECIPE_ENABLED === 'true'
+
+/* ---------------- POS：企迈优惠券核销 ---------------- */
+const posLoading = ref(false)
+const posError = ref('')
+const posResult = ref<Record<string, unknown> | null>(null)
+const posConfirmed = ref(false)
+const posPayload = ref(JSON.stringify({
+  amount: 0,
+  bizId: '',
+  channelType: 0,
+  couponsCardList: [],
+  customerId: 0,
+  familyCardNo: '',
+  multiMark: '',
+  orderAmount: 0,
+  orderNo: '',
+  orderSource: 0,
+  orderTotalAmount: 0,
+  perCouponUseDetailList: [{ amount: 0, cardId: '' }],
+  reason: '',
+  tradeMarks: [],
+  type: 0,
+  useCount: 0,
+}, null, 2))
+
+async function submitPosWriteOff() {
+  posError.value = ''
+  posResult.value = null
+  if (!posConfirmed.value) {
+    posError.value = '请先确认这是一次真实核销操作。'
+    return
+  }
+  let body: Record<string, unknown>
+  try {
+    body = JSON.parse(posPayload.value) as Record<string, unknown>
+  } catch {
+    posError.value = '请求 JSON 格式不正确。'
+    return
+  }
+  if (!String(body.bizId || '').trim() || !String(body.orderNo || '').trim()) {
+    posError.value = 'bizId 和 orderNo 不能为空。'
+    return
+  }
+  posLoading.value = true
+  try {
+    posResult.value = await apiPost<Record<string, unknown>>(
+      `/api/qmai/pos/write-off-coupon?brand=${encodeURIComponent(brand.value)}`,
+      body,
+      { timeout: 60000 },
+    )
+    posConfirmed.value = false
+  } catch (e) {
+    posError.value = e instanceof Error ? e.message : '企迈优惠券核销失败。'
+  } finally {
+    posLoading.value = false
+  }
+}
 
 // 门店筛选：'' = 全部门店
 const itemShopFilter = ref('')
@@ -517,33 +556,20 @@ function refreshActive() {
 }
 
 async function loadTurnover() {
+  if (!qmai.value?.configured) {
+    turnover.value = null
+    turnoverError.value = '请先配置完整的企迈凭证。'
+    return
+  }
   turnoverLoading.value = true
   turnoverError.value = ''
   try {
-    const query = `month=${encodeURIComponent(month.value)}&brand=${encodeURIComponent(brand.value)}`
-    const [revenueRows, productRows] = await Promise.all([
-      apiGet<QmaiRevenueRow[]>(`/api/qmai/revenue?${query}`),
-      apiGet<QmaiProductRow[]>(`/api/qmai/products?${query}`),
-    ])
-    const shops = revenueRows.map((row) => ({
-      shopCode: row.storeId, shopName: row.storeId, bizDate: month.value,
-      validOrderCount: row.orderCount, totalAmountSum: row.revenue, incomeSum: row.revenue,
-      costSum: row.cost, refundSum: row.refund, profitSum: row.revenue - row.cost - row.refund,
-    }))
-    const items = productRows.map((row) => ({
-      shopCode: row.storeId, shopName: row.storeId, itemName: row.itemName,
-      categoryName: row.categoryName, num: row.quantity, incomeSum: row.revenue,
-      costSum: 0, refundSum: row.refund, refundNum: row.refundQuantity,
-    }))
-    turnover.value = {
-      mode: 'SNAPSHOT', note: '已读取本地企迈导入快照，未发起外网请求。', days: 0,
-      generatedAt: new Date().toISOString(),
-      totalAmount: shops.reduce((sum, row) => sum + row.totalAmountSum, 0),
-      income: shops.reduce((sum, row) => sum + row.incomeSum, 0),
-      cost: shops.reduce((sum, row) => sum + row.costSum, 0),
-      refund: shops.reduce((sum, row) => sum + row.refundSum, 0),
-      profit: shops.reduce((sum, row) => sum + row.profitSum, 0),
-      orderCount: shops.reduce((sum, row) => sum + row.validOrderCount, 0), shops, items,
+    turnover.value = await apiGet<TurnoverSummary>(
+      `/api/qmai/summary?month=${encodeURIComponent(month.value)}&brand=${encodeURIComponent(brand.value)}`,
+      { timeout: 300000 },
+    )
+    if (turnover.value?.mode === 'ERROR') {
+      turnoverError.value = turnover.value.note || '企迈接口暂时不可用。'
     }
   } catch (e) {
     turnoverError.value = e instanceof Error ? e.message : '拉取营业额失败。'
@@ -594,6 +620,8 @@ function exportActive() {
     exportItemsExcel()
   } else if (activeTab.value === 'usage') {
     exportUsageExcel()
+  } else if (activeTab.value === 'pos') {
+    return
   } else {
     exportExcel()
   }
@@ -659,8 +687,11 @@ onMounted(loadQmai)
           <button v-if="!isConsoleBrand && qmaiRecipeEnabled" :class="{ active: activeTab === 'usage' }" @click="activeTab = 'usage'">
             物料用量
           </button>
+          <button v-if="!isConsoleBrand" :class="{ active: activeTab === 'pos' }" @click="activeTab = 'pos'">
+            POS
+          </button>
         </div>
-        <div class="range-tabs">
+        <div v-if="activeTab !== 'pos'" class="range-tabs">
           <button :disabled="anyLoading" @click="shiftMonth(-12)">◀◀ 上一年</button>
           <button :disabled="anyLoading" @click="shiftMonth(-1)">◀ 上一月</button>
           <span class="month-label">{{ monthLabel }}</span>
@@ -754,11 +785,11 @@ onMounted(loadQmai)
         </div>
       </div>
 
-      <p v-if="turnoverError" class="msg warn-text">{{ turnoverError }}</p>
-      <p v-else-if="turnoverLoading" class="msg muted">
+      <p v-if="activeTab !== 'pos' && turnoverError" class="msg warn-text">{{ turnoverError }}</p>
+      <p v-else-if="activeTab !== 'pos' && turnoverLoading" class="msg muted">
         正在拉取 {{ monthLabel }} 全部门店营业额与商品销量…（整月门店多，约需 1~3 分钟，请稍候）
       </p>
-      <p v-else-if="!turnover" class="msg muted">
+      <p v-else-if="activeTab !== 'pos' && !turnover" class="msg muted">
         选择月份后点「刷新」查询该月全部门店营业额与商品销量（整月约需 1~3 分钟）。
       </p>
 
@@ -910,6 +941,34 @@ onMounted(loadQmai)
           </table>
         </template>
         <p v-else-if="!recipeUsageLoading && !recipeUsageError" class="msg muted">点击上方按钮后，系统会以服务端受管目录和授权范围内销量生成不可编辑的用量快照。</p>
+      </template>
+
+      <template v-else-if="activeTab === 'pos'">
+        <div class="pos-panel">
+          <div>
+            <h4 class="usage-title">企迈 POS · 优惠券核销</h4>
+            <p class="msg muted">请求由完整项目后端签名发送，企迈密钥不会暴露到浏览器。</p>
+          </div>
+          <label class="pos-json-label">
+            核销请求 JSON
+            <textarea v-model="posPayload" class="pos-json" spellcheck="false" />
+          </label>
+          <label class="pos-confirm">
+            <input v-model="posConfirmed" type="checkbox" />
+            我确认以上信息无误，并执行真实优惠券核销
+          </label>
+          <div>
+            <button class="refresh danger-action" :disabled="posLoading || !canManage" @click="submitPosWriteOff">
+              {{ posLoading ? '核销中…' : '提交核销' }}
+            </button>
+            <span v-if="!canManage" class="msg muted">仅老板或授权的平台管理员可执行。</span>
+          </div>
+          <p v-if="posError" class="msg warn-text">{{ posError }}</p>
+          <div v-if="posResult" class="pos-result">
+            <strong>企迈响应</strong>
+            <pre>{{ JSON.stringify(posResult, null, 2) }}</pre>
+          </div>
+        </div>
       </template>
 
       </template>
@@ -1472,6 +1531,55 @@ td.muted {
 .btn.primary:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+.pos-panel {
+  display: grid;
+  gap: 14px;
+  max-width: 900px;
+}
+
+.pos-json-label {
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.pos-json {
+  width: 100%;
+  min-height: 360px;
+  padding: 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  resize: vertical;
+  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.pos-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #92400e;
+}
+
+.danger-action {
+  background: #b91c1c !important;
+}
+
+.pos-result {
+  padding: 12px;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid #d1d5db;
+}
+
+.pos-result pre {
+  margin: 8px 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
 }
 
 @media (max-width: 1000px) {

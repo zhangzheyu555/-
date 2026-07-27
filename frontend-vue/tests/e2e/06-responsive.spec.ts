@@ -11,6 +11,8 @@ const pages: Array<{ role: RoleKey | null; path: string; name: string }> = [
   { role: 'boss', path: '/store-detail', name: 'store-detail' },
   { role: 'boss', path: '/users', name: 'users' },
   { role: 'boss', path: '/export', name: 'export' },
+  { role: 'boss', path: '/inventory-checks', name: 'boss-inventory-checks' },
+  { role: 'store', path: '/inventory-checks', name: 'store-inventory-checks' },
   { role: 'finance', path: '/expenses', name: 'finance-expenses' },
   { role: 'warehouse', path: '/warehouse', name: 'warehouse' },
   { role: 'warehouse', path: '/warehouse/items', name: 'warehouse-items' },

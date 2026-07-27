@@ -108,6 +108,84 @@ class WarehouseWorkspacePermissionMigrationTest {
         """, String.class)).isEmpty();
   }
 
+  @Test
+  void v105MakesFinanceSupervisorAndWarehouseInventoryReadOnlyAndRevokesOldSessions() {
+    DataSource dataSource = dataSource("v105");
+    migrate(dataSource, "104");
+    JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+    jdbc.update("insert into tenant(id, name) values (105, '盘存权限迁移租户')");
+
+    String[] roles = {"FINANCE", "SUPERVISOR", "WAREHOUSE"};
+    for (int index = 0; index < roles.length; index++) {
+      long userId = 10501L + index;
+      String role = roles[index];
+      jdbc.update("""
+          insert into auth_user(
+            id, tenant_id, username, password_hash, display_name, role,
+            enabled, permission_version, created_at
+          ) values (?, 105, ?, 'hash', ?, ?, 1, 7, current_timestamp)
+          """, userId, "inventory-readonly-" + role.toLowerCase(), role, role);
+      jdbc.update("""
+          insert into auth_token(
+            token_hash, tenant_id, user_id, permission_version, expires_at, created_at
+          ) values (?, 105, ?, 7, timestamp '2099-01-01 00:00:00', current_timestamp)
+          """, String.format("%064x", userId), userId);
+      jdbc.update("""
+          insert into role_permission(tenant_id, role_code, permission_code, created_at)
+          values (105, ?, 'inventory.manage', current_timestamp),
+                 (105, ?, 'inventory.review', current_timestamp)
+          """, role, role);
+      jdbc.update("""
+          insert into user_permission_override(
+            tenant_id, user_id, permission_code, effect, created_at
+          ) values (105, ?, 'inventory.manage', 'ALLOW', current_timestamp),
+                   (105, ?, 'inventory.review', 'ALLOW', current_timestamp)
+          """, userId, userId);
+    }
+
+    migrate(dataSource, "105");
+
+    assertThat(jdbc.queryForList("""
+        select role_code
+        from role_permission
+        where tenant_id = 105
+          and permission_code = 'inventory.read'
+        order by role_code
+        """, String.class)).containsExactly("FINANCE", "SUPERVISOR", "WAREHOUSE");
+    assertThat(jdbc.queryForObject("""
+        select count(*)
+        from role_permission
+        where upper(role_code) in ('FINANCE', 'SUPERVISOR', 'WAREHOUSE')
+          and permission_code in ('inventory.manage', 'inventory.review')
+        """, Integer.class)).isZero();
+    assertThat(jdbc.queryForObject("""
+        select count(*)
+        from user_permission_override
+        where tenant_id = 105
+          and effect = 'ALLOW'
+          and permission_code in ('inventory.manage', 'inventory.review')
+        """, Integer.class)).isZero();
+    assertThat(jdbc.queryForList("""
+        select permission_version
+        from auth_user
+        where tenant_id = 105
+        order by id
+        """, Long.class)).containsExactly(8L, 8L, 8L);
+    assertThat(jdbc.queryForObject(
+        "select count(*) from auth_token where tenant_id = 105", Integer.class)).isZero();
+    assertThat(jdbc.queryForObject("""
+        select count(*)
+        from tenant tenant_row
+        where not exists (
+          select 1
+          from role_permission permission_row
+          where permission_row.tenant_id = tenant_row.id
+            and upper(permission_row.role_code) = 'WAREHOUSE'
+            and permission_row.permission_code = 'inventory.read'
+        )
+        """, Integer.class)).isZero();
+  }
+
   private void migrate(DataSource dataSource, String target) {
     var result = Flyway.configure()
         .dataSource(dataSource)

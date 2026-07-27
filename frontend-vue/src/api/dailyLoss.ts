@@ -120,7 +120,6 @@ export interface DailyLossReportSaveRequest {
   storeId: string
   lossDate: string
   details: DailyLossReportLinePayload[]
-  supplierCompensationAmount?: number
 }
 
 export interface DailyLossRecordQuery {
