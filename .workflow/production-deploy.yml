@@ -36,7 +36,7 @@ stages:
       - step: build@nodejs
         name: build_frontend
         displayName: 构建前端
-        nodeVersion: 22.3.0
+        nodeVersion: 22.22.0
         commands:
           - cd frontend-vue
           - npm ci
