@@ -109,9 +109,9 @@ class WarehouseWorkspacePermissionMigrationTest {
   }
 
   @Test
-  void v105MakesFinanceSupervisorAndWarehouseInventoryReadOnlyAndRevokesOldSessions() {
-    DataSource dataSource = dataSource("v105");
-    migrate(dataSource, "104");
+  void v108MakesFinanceSupervisorAndWarehouseInventoryReadOnlyAndRevokesOldSessions() {
+    DataSource dataSource = dataSource("v108");
+    migrate(dataSource, "107");
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);
     jdbc.update("insert into tenant(id, name) values (105, '盘存权限迁移租户')");
 
@@ -143,7 +143,7 @@ class WarehouseWorkspacePermissionMigrationTest {
           """, userId, userId);
     }
 
-    migrate(dataSource, "105");
+    migrate(dataSource, "108");
 
     assertThat(jdbc.queryForList("""
         select role_code

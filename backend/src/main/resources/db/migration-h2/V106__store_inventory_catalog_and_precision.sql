@@ -1,4 +1,4 @@
--- H2 verification equivalent of MySQL V103.
+-- H2 verification equivalent of MySQL V106.
 create table if not exists store_inventory_item (
   id bigint not null auto_increment primary key,
   tenant_id bigint not null,

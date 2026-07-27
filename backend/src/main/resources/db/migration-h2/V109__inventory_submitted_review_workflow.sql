@@ -1,4 +1,4 @@
--- H2 verification equivalent of MySQL V106.
+-- H2 verification equivalent of MySQL V109.
 alter table store_inventory_check
   add column reviewed_by_name varchar(120) null;
 alter table store_inventory_check

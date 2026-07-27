@@ -36,27 +36,27 @@ class StoreInventoryCatalogMigrationTest {
     Flyway.configure()
         .dataSource(dataSource)
         .locations("classpath:db/migration-h2")
-        .target("103")
+        .target("106")
         .load()
         .migrate();
 
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);
-    String storeId = "V104-HISTORY-STORE";
+    String storeId = "V107-HISTORY-STORE";
     jdbc.update("""
         insert into store_branch(id, tenant_id, code, name, status, created_at)
-        values (?, 1, 'V104-HISTORY', '历史盘存门店', '营业中', current_timestamp)
+        values (?, 1, 'V107-HISTORY', '历史盘存门店', '营业中', current_timestamp)
         """, storeId);
     jdbc.update("""
         insert into store_inventory_check(
           tenant_id, check_no, store_id, store_name, check_date, status,
           total_amount, created_at
-        ) values (1, 'PDC-V104-HISTORY', ?, '历史盘存门店', current_date, 'REVIEWED', 0,
+        ) values (1, 'PDC-V107-HISTORY', ?, '历史盘存门店', current_date, 'REVIEWED', 0,
           current_timestamp)
         """, storeId);
     Long historicalCheckId = jdbc.queryForObject("""
         select id
         from store_inventory_check
-        where tenant_id = 1 and check_no = 'PDC-V104-HISTORY'
+        where tenant_id = 1 and check_no = 'PDC-V107-HISTORY'
         """, Long.class);
     jdbc.update("""
         insert into store_inventory_check_line(
@@ -65,7 +65,7 @@ class StoreInventoryCatalogMigrationTest {
           amount, note, created_at
         ) values (
           1, ?, '安心贴', 'PD-HC-032', '耗材', '卷', '卷',
-          1, 0, null, 2, 0, 'V104 历史快照保留验证', current_timestamp
+          1, 0, null, 2, 0, 'V107 历史快照保留验证', current_timestamp
         )
         """, historicalCheckId);
 
@@ -87,7 +87,7 @@ class StoreInventoryCatalogMigrationTest {
     Flyway.configure()
         .dataSource(dataSource)
         .locations("classpath:db/migration-h2")
-        .target("104")
+        .target("107")
         .load()
         .migrate();
 

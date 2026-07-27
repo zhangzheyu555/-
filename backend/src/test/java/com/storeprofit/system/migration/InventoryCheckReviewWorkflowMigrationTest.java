@@ -10,7 +10,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 class InventoryCheckReviewWorkflowMigrationTest {
   @Test
-  void v106ConvertsDraftsPreservesCancelledHistoryBackfillsReviewerAndGrantsReview() {
+  void v109ConvertsDraftsPreservesCancelledHistoryBackfillsReviewerAndGrantsReview() {
     JdbcDataSource dataSource = new JdbcDataSource();
     dataSource.setURL(("""
         jdbc:h2:mem:inventory-review-workflow-%s;
@@ -22,26 +22,26 @@ class InventoryCheckReviewWorkflowMigrationTest {
         """).formatted(UUID.randomUUID()).replaceAll("\\s+", ""));
     dataSource.setUser("sa");
     dataSource.setPassword("");
-    migrate(dataSource, "105");
+    migrate(dataSource, "108");
 
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);
     jdbc.update("""
         insert into store_branch(id, tenant_id, code, name, status, created_at)
-        values ('V106-INVENTORY-STORE', 1, 'V106-INVENTORY', 'V106 盘存门店', '营业中',
+        values ('V109-INVENTORY-STORE', 1, 'V109-INVENTORY', 'V109 盘存门店', '营业中',
           current_timestamp)
         """);
     jdbc.update("""
         insert into auth_user(
           id, tenant_id, username, password_hash, display_name, role,
           enabled, permission_version, created_at
-        ) values (10601, 1, 'v106-inventory-finance', 'hash', '历史财务负责人', 'FINANCE',
+        ) values (10901, 1, 'v109-inventory-finance', 'hash', '历史财务负责人', 'FINANCE',
           1, 3, current_timestamp)
         """);
     jdbc.update("""
         insert into auth_token(
           token_hash, tenant_id, user_id, permission_version, expires_at, created_at
-        ) values ('1060000000000000000000000000000000000000000000000000000000000001',
-          1, 10601, 3, timestamp '2099-01-01 00:00:00', current_timestamp)
+        ) values ('1090000000000000000000000000000000000000000000000000000000000001',
+          1, 10901, 3, timestamp '2099-01-01 00:00:00', current_timestamp)
         """);
     jdbc.update("""
         insert into store_inventory_check(
@@ -49,31 +49,31 @@ class InventoryCheckReviewWorkflowMigrationTest {
           total_amount, submitted_by, reviewed_by, reviewed_at, created_by,
           created_at, updated_at
         ) values
-          (1, 'PDC-V106-DRAFT', 'V106-INVENTORY-STORE', 'V106 盘存门店', current_date,
-            'DRAFT', 10, null, null, null, 10601, current_timestamp, current_timestamp),
-          (1, 'PDC-V106-CANCELLED', 'V106-INVENTORY-STORE', 'V106 盘存门店', current_date,
-            'CANCELLED', 20, 10601, null, null, 10601, current_timestamp, current_timestamp),
-          (1, 'PDC-V106-REVIEWED', 'V106-INVENTORY-STORE', 'V106 盘存门店', current_date,
-            'REVIEWED', 30, 10601, 10601, current_timestamp, 10601,
+          (1, 'PDC-V109-DRAFT', 'V109-INVENTORY-STORE', 'V109 盘存门店', current_date,
+            'DRAFT', 10, null, null, null, 10901, current_timestamp, current_timestamp),
+          (1, 'PDC-V109-CANCELLED', 'V109-INVENTORY-STORE', 'V109 盘存门店', current_date,
+            'CANCELLED', 20, 10901, null, null, 10901, current_timestamp, current_timestamp),
+          (1, 'PDC-V109-REVIEWED', 'V109-INVENTORY-STORE', 'V109 盘存门店', current_date,
+            'REVIEWED', 30, 10901, 10901, current_timestamp, 10901,
             current_timestamp, current_timestamp)
         """);
 
-    migrate(dataSource, "106");
+    migrate(dataSource, "109");
 
     assertThat(jdbc.queryForMap("""
         select status, submitted_by
         from store_inventory_check
-        where check_no = 'PDC-V106-DRAFT'
-        """)).containsEntry("status", "SUBMITTED").containsEntry("submitted_by", 10601L);
+        where check_no = 'PDC-V109-DRAFT'
+        """)).containsEntry("status", "SUBMITTED").containsEntry("submitted_by", 10901L);
     assertThat(jdbc.queryForObject("""
         select status
         from store_inventory_check
-        where check_no = 'PDC-V106-CANCELLED'
+        where check_no = 'PDC-V109-CANCELLED'
         """, String.class)).isEqualTo("CANCELLED");
     assertThat(jdbc.queryForMap("""
         select reviewed_by_name, reviewed_by_role
         from store_inventory_check
-        where check_no = 'PDC-V106-REVIEWED'
+        where check_no = 'PDC-V109-REVIEWED'
         """))
         .containsEntry("reviewed_by_name", "历史财务负责人")
         .containsEntry("reviewed_by_role", "FINANCE");
@@ -81,13 +81,13 @@ class InventoryCheckReviewWorkflowMigrationTest {
     jdbc.update("""
         insert into store_inventory_check(
           tenant_id, check_no, store_id, store_name, check_date, total_amount, created_at
-        ) values (1, 'PDC-V106-DEFAULT', 'V106-INVENTORY-STORE', 'V106 盘存门店',
+        ) values (1, 'PDC-V109-DEFAULT', 'V109-INVENTORY-STORE', 'V109 盘存门店',
           current_date, 0, current_timestamp)
         """);
     assertThat(jdbc.queryForObject("""
         select status
         from store_inventory_check
-        where check_no = 'PDC-V106-DEFAULT'
+        where check_no = 'PDC-V109-DEFAULT'
         """, String.class)).isEqualTo("SUBMITTED");
     assertThat(jdbc.queryForList("""
         select role_code
@@ -98,9 +98,9 @@ class InventoryCheckReviewWorkflowMigrationTest {
         order by role_code
         """, String.class)).containsExactly("FINANCE", "SUPERVISOR", "WAREHOUSE");
     assertThat(jdbc.queryForObject(
-        "select permission_version from auth_user where id = 10601", Long.class)).isEqualTo(4L);
+        "select permission_version from auth_user where id = 10901", Long.class)).isEqualTo(4L);
     assertThat(jdbc.queryForObject(
-        "select count(*) from auth_token where user_id = 10601", Integer.class)).isZero();
+        "select count(*) from auth_token where user_id = 10901", Integer.class)).isZero();
   }
 
   private void migrate(JdbcDataSource dataSource, String target) {

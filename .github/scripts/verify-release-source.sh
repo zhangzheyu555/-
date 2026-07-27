@@ -4,8 +4,8 @@ set -Eeuo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
-readonly expected_mysql_flyway_latest=106
-readonly expected_h2_flyway_latest=106
+readonly expected_mysql_flyway_latest=109
+readonly expected_h2_flyway_latest=109
 
 required_exam_and_training_files=(
   backend/src/main/resources/db/migration/V28__exam_training_seed_data.sql
