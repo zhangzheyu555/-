@@ -122,7 +122,9 @@ test('brand cards filter the overview and preserve URL navigation state', async 
   await expect(page.getByRole('cell', { name: '荆州之星店' })).toBeVisible()
   await expect(page.locator('.profit-metric-grid')).toContainText('¥210,000')
 
-  await page.getByLabel('门店', { exact: true }).selectOption('rg1')
+  const scopedStore = page.getByRole('combobox', { name: '搜索门店' })
+  await scopedStore.fill('荆州')
+  await page.getByRole('option', { name: /荆州之星店/ }).click()
   await expect(page).toHaveURL(/storeId=rg1/)
   await bawang.click()
   await expect(page).toHaveURL(/brandId=2/)
@@ -143,7 +145,7 @@ test('brand cards filter the overview and preserve URL navigation state', async 
   await expect(page).toHaveURL(/brandId=1/)
   await expect(page).toHaveURL(/storeId=rg1/)
   await page.reload()
-  await expect(page.getByLabel('门店', { exact: true })).toHaveValue('rg1')
+  await expect(scopedStore).toHaveValue(/荆州之星店/)
   await expect(ruguo).toHaveClass(/selected/)
 
   await page.getByRole('button', { name: '查看利润表' }).click()
@@ -317,9 +319,10 @@ test('primary metric card is opaque and compact topbar search keeps assistant ha
   await expect(page.getByRole('button', { name: '打开全局搜索' })).toBeVisible()
   await expect(page.getByRole('search')).toHaveCount(0)
 
-  await page.getByLabel('全局门店').focus()
-  await expect(page.getByLabel('全局门店').locator('option')).toHaveCount(3)
-  await page.getByLabel('全局门店').selectOption('rg1')
+  const globalStore = page.getByRole('combobox', { name: '全局门店' })
+  await globalStore.fill('rg1')
+  await expect(page.getByRole('option', { name: /荆州之星店/ })).toBeVisible()
+  await page.getByRole('option', { name: /荆州之星店/ }).click()
   await expect(page).toHaveURL(/storeId=rg1/)
 
   await page.getByRole('button', { name: '打开全局搜索' }).click()

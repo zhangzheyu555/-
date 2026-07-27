@@ -10,6 +10,7 @@ import type {
   WarehouseItemRequisitionScopeMode,
 } from '../../api/warehouse'
 import ActionConfirmDialog from '../ui/ActionConfirmDialog.vue'
+import SearchableMultiSelect from '../common/SearchableMultiSelect.vue'
 import ModalFooter from '../ui/ModalFooter.vue'
 import UiButton from '../ui/UiButton.vue'
 import UnsavedChangesDialog from '../ui/UnsavedChangesDialog.vue'
@@ -74,6 +75,12 @@ const pendingPayload = ref<WarehouseItemPayload | null>(null)
 const categoryOptions = computed(() => flattenCategories(props.categories))
 const dirty = computed(() => Boolean(openingSnapshot.value) && snapshotForm() !== openingSnapshot.value)
 const activeStores = computed(() => props.stores)
+const activeStoreOptions = computed(() => activeStores.value.map((store) => ({
+  value: store.id,
+  label: store.name || store.id,
+  description: store.regionCode ? `${regionLabel(store.regionCode)} · ${store.regionCode}` : '未配置区域',
+  searchText: [store.name, store.id, store.regionCode, store.regionCode ? regionLabel(store.regionCode) : ''].filter(Boolean).join(' '),
+})))
 const regionOptions = computed<RegionOption[]>(() => {
   const options = new Map<string, string>()
   for (const region of props.regions) {
@@ -493,12 +500,15 @@ function confirmAllStores() {
 
               <fieldset class="scope-target-list store-target-list">
                 <legend>指定门店（可多选）</legend>
-                <label v-for="store in activeStores" :key="store.id">
-                  <input v-model="form.requisitionStoreIds" type="checkbox" :value="store.id" />
-                  <span>{{ store.name }}</span>
-                  <small>{{ store.regionCode ? regionLabel(store.regionCode) : '未配置区域' }}</small>
-                </label>
-                <p v-if="!activeStores.length" class="scope-empty">暂无营业中的门店。</p>
+                <SearchableMultiSelect
+                  :model-value="form.requisitionStoreIds"
+                  :options="activeStoreOptions"
+                  selected-noun="家门店"
+                  search-placeholder="搜索门店名称、编号或区域"
+                  aria-label="搜索并选择可叫货门店"
+                  empty-message="暂无营业中的门店"
+                  @update:model-value="form.requisitionStoreIds = $event.map(String)"
+                />
               </fieldset>
             </div>
 
@@ -858,6 +868,11 @@ textarea:focus {
   margin: 0;
   padding: 0;
   border: 0;
+}
+
+.store-target-list :deep(.searchable-multi-select) {
+  border: 0;
+  padding: 0;
 }
 
 .scope-mode-options {

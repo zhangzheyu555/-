@@ -202,10 +202,10 @@ test('全局门店从全部切换至 rg1 后，范围摘要与三项 CSV 请求�
   const toolbar = page.getByLabel('导出筛选')
   await expect(toolbar.getByText('全部门店 · 全部品牌 · 2026-07', { exact: true })).toBeVisible()
 
-  const globalStore = page.getByLabel('全局门店')
-  await globalStore.focus()
-  await expect(globalStore.locator('option')).toHaveCount(3)
-  await globalStore.selectOption('rg1')
+  const globalStore = page.getByRole('combobox', { name: '全局门店' })
+  await globalStore.fill('rg1')
+  await expect(page.getByRole('option', { name: /荆州之星店/ })).toBeVisible()
+  await page.getByRole('option', { name: /荆州之星店/ }).click()
 
   await expect(page).toHaveURL(/\/export\?storeId=rg1/)
   await expect(page.getByText('导出范围已更新：荆州之星店 · 茹菓 · 2026-07', { exact: true })).toBeVisible()
@@ -249,27 +249,69 @@ test('即使误配 finance.export，店长也不能进入或请求数据导出',
   }
 })
 
-test('刷新会重新加载当前导出范围并显示成功提示', async ({ page }) => {
+test('导出范围满 60 秒后在前台自动更新并合并焦点事件', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-07-25T00:00:00Z') })
   const requests = await prepareExportPage(page, bossSession)
 
   await page.goto('/export?storeId=rg1')
   await expect(page.getByLabel('导出筛选')).toContainText('荆州之星店 · 茹菓 · 2026-07')
   const initialRequestCount = requests.dashboardUrls.length
+  await expect(page.getByRole('button', { name: /刷新|重新加载|重新读取/ })).toHaveCount(0)
 
-  const refreshed = page.waitForResponse((candidate) => (
-    new URL(candidate.url()).pathname === '/api/finance/dashboard' && candidate.status() === 200
-  ))
-  await page.getByRole('button', { name: '刷新', exact: true }).click()
-  await refreshed
+  await page.clock.runFor(59_000)
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('focus'))
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  await page.waitForTimeout(100)
+  expect(requests.dashboardUrls).toHaveLength(initialRequestCount)
 
-  await expect(page.getByText('已刷新当前导出范围。', { exact: true })).toBeVisible()
-  expect(requests.dashboardUrls.length).toBeGreaterThan(initialRequestCount)
+  await page.clock.runFor(1_000)
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('focus'))
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  await expect.poll(() => requests.dashboardUrls.length).toBe(initialRequestCount + 1)
   const refreshedDashboard = new URL(requests.dashboardUrls.at(-1) || '')
   expect(refreshedDashboard.searchParams.get('storeId')).toBe('rg1')
   expect(refreshedDashboard.searchParams.get('brandId')).toBeNull()
+  await page.waitForTimeout(100)
+  expect(requests.dashboardUrls).toHaveLength(initialRequestCount + 1)
 })
 
-test('刷新失败时保留当前范围并显示业务化失败提示', async ({ page }) => {
+test('门店目录加载失败不会把导出范围标记为最新，恢复前台时会立即重试', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-07-25T00:00:00Z') })
+  await prepareExportPage(page, bossSession)
+  let failStoreCatalog = true
+  let storeCatalogRequests = 0
+
+  await page.route('**/api/stores', (route) => {
+    storeCatalogRequests += 1
+    if (failStoreCatalog) {
+      return route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: false, message: '受控门店目录读取失败' }),
+      })
+    }
+    return route.fulfill(ok(stores))
+  })
+
+  await page.goto('/export?storeId=rg1')
+  await expect(page.getByRole('alert')).toContainText('门店目录加载失败，请稍后重试。')
+  const requestsAfterFailure = storeCatalogRequests
+  expect(requestsAfterFailure).toBeGreaterThan(0)
+
+  failStoreCatalog = false
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+
+  await expect.poll(() => storeCatalogRequests).toBeGreaterThan(requestsAfterFailure)
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  await expect(page.getByLabel('导出筛选')).toContainText('荆州之星店 · 茹菓 · 2026-07')
+})
+
+test('前台自动更新失败时保留当前范围并显示业务化失败提示', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-07-25T00:00:00Z') })
   await prepareExportPage(page, bossSession)
 
   await page.goto('/export?storeId=rg1')
@@ -281,7 +323,11 @@ test('刷新失败时保留当前范围并显示业务化失败提示', async ({
     contentType: 'application/json',
     body: JSON.stringify({ success: false, message: '系统处理失败' }),
   }))
-  await page.getByRole('button', { name: '刷新', exact: true }).click()
+  await page.clock.runFor(60_000)
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('focus'))
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
 
   await expect(page.getByRole('alert')).toContainText('利润数据加载失败，请稍后重试。')
   await expect(toolbar).toContainText('荆州之星店 · 茹菓 · 2026-07')

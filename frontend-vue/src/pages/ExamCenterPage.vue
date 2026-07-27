@@ -4,13 +4,14 @@ import { useRoute, useRouter } from 'vue-router'
 import PageHeader from '../components/common/PageHeader.vue'
 import SecondaryNavigation from '../components/common/SecondaryNavigation.vue'
 import SearchInput from '../components/common/SearchInput.vue'
+import SearchableMultiSelect from '../components/common/SearchableMultiSelect.vue'
 import ActionConfirmDialog from '../components/ui/ActionConfirmDialog.vue'
 import ModalFooter from '../components/ui/ModalFooter.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import UnsavedChangesDialog from '../components/ui/UnsavedChangesDialog.vue'
 import {
   BookOpen, ChartBarBig, CheckCircle2, ClipboardCheck, Download, FileQuestion, Files, FolderTree,
-  GraduationCap, Library, ListChecks, MonitorPlay, Play, Plus, RefreshCw, Send,
+  GraduationCap, Library, ListChecks, MonitorPlay, Play, Plus, Send,
   Trash2, Upload, UserCheck, X,
 } from 'lucide-vue-next'
 import {
@@ -61,6 +62,7 @@ import {
   type TrainingVideoViewerRow,
 } from '../api/exams'
 import { useAuthStore } from '../stores/auth'
+import { useForegroundReload } from '../composables/useForegroundReload'
 
 type ViewKey = 'mine' | 'courses' | 'videos' | 'materials' | 'questions' | 'categories' | 'papers' | 'campaigns' | 'grading' | 'video-progress' | 'results' | 'wrongs'
 type EditorKey = 'course' | 'material' | 'category' | 'question' | 'paper' | 'publish' | 'video' | null
@@ -168,6 +170,12 @@ const stores = computed(() => {
   for (const candidate of overview.value?.candidates || []) values.set(candidate.storeId, candidate.storeName)
   return Array.from(values.entries()).map(([id, name]) => ({ id, name }))
 })
+const examStoreOptions = computed(() => stores.value.map((store) => ({
+  value: store.id,
+  label: store.name || store.id,
+  description: store.id,
+  searchText: `${store.name || ''} ${store.id}`,
+})))
 const metrics = computed(() => ({
   active: campaigns.value.filter((item) => item.statusLabel === '进行中').length,
   assigned: campaigns.value.reduce((sum, item) => sum + item.assignedCount, 0),
@@ -258,31 +266,60 @@ async function loadAll() {
   loading.value = true
   error.value = ''
   try {
-    overview.value = await getExamCenterOverview()
+    const nextOverview = await getExamCenterOverview()
+    overview.value = nextOverview
     const loaders: Array<Promise<unknown>> = [loadLearning(), loadVideos(), loadResults(), loadWrongQuestions()]
     if (overview.value.canManage || overview.value.accessMode === 'COMPANY') loaders.push(loadQuestionBank(), loadVideoReport())
     if (overview.value.canManage) loaders.push(loadReviews())
-    await Promise.allSettled(loaders)
+    const results = await Promise.allSettled(loaders)
     const requested = String(route.query.view || '') as ViewKey
     if (modules.value.some((item) => item.key === requested)) activeView.value = requested
     if (!modules.value.some((item) => item.key === activeView.value)) activeView.value = 'mine'
+    if (results.some((result) => result.status === 'rejected')) {
+      error.value = '部分培训考试数据获取失败，当前继续显示上次成功获取的内容。'
+      return false
+    }
+    markFresh()
+    return true
   } catch (reason) {
-    overview.value = null
-    error.value = displayError(reason, '培训考试加载失败，请重新加载。')
+    error.value = displayError(reason, '培训考试加载失败，请稍后重试。')
+    return false
   } finally {
     loading.value = false
   }
 }
 
+const { markFresh } = useForegroundReload(async () => {
+  if (!await loadAll()) throw new Error('培训考试数据暂时不可用')
+}, {
+  canReload: () => (
+    !loading.value
+    && !saving.value
+    && !submitting.value
+    && !editor.value
+    && !reviewDetail.value
+    && !activeAssignment.value
+    && !playingVideo.value
+    && !selectedCampaign.value
+    && !pendingDismiss.value
+    && !pendingCategoryDelete.value
+    && !pendingVideoDelete.value
+  ),
+})
+
 async function loadLearning() {
   const settled = await Promise.allSettled([getTrainingCourses(), getTrainingMaterials()])
   if (settled[0].status === 'fulfilled') courses.value = settled[0].value
   if (settled[1].status === 'fulfilled') materials.value = settled[1].value
+  const failed = settled.find((result) => result.status === 'rejected')
+  if (failed?.status === 'rejected') throw failed.reason
 }
 async function loadQuestionBank() {
   const settled = await Promise.allSettled([getExamQuestionCategories(), getExamQuestionBank()])
   if (settled[0].status === 'fulfilled') categories.value = settled[0].value
   if (settled[1].status === 'fulfilled') questions.value = settled[1].value
+  const failed = settled.find((result) => result.status === 'rejected')
+  if (failed?.status === 'rejected') throw failed.reason
 }
 async function loadReviews() { reviews.value = await getExamReviews() }
 async function loadVideos() { videos.value = await getTrainingVideos() }
@@ -726,13 +763,15 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="page-panel exam-shell">
-    <PageHeader title="培训考试">
-      <template #actions>
-        <button class="button" :disabled="loading" @click="loadAll"><RefreshCw :size="16" />重新加载</button>
-      </template>
-    </PageHeader>
+    <PageHeader title="培训考试" />
 
-    <div v-if="error" class="message error">{{ error }}<button @click="error = ''"><X :size="14" /></button></div>
+    <div v-if="error" class="message error">
+      <span>{{ error }}</span>
+      <span class="message-actions">
+        <button type="button" :disabled="loading" @click="loadAll">重试</button>
+        <button type="button" aria-label="关闭错误提示" @click="error = ''"><X :size="14" /></button>
+      </span>
+    </div>
     <div v-if="success" class="message success">{{ success }}<button @click="success = ''"><X :size="14" /></button></div>
 
     <div v-if="loading && !overview" class="loading">正在读取培训考试数据...</div>
@@ -889,7 +928,46 @@ onBeforeUnmount(() => {
 
       <form v-if="editor === 'video'" class="drawer narrow" @submit.prevent="saveCurrentEditor"><header><h3>上传学习视频</h3><UiButton variant="ghost" icon-only aria-label="关闭视频上传" title="关闭" @click="requestCloseEditor"><template #icon><X :size="18" /></template></UiButton></header><div class="form-grid"><label class="wide">视频文件（mp4 / m4v / webm / mov，20MB 以内）<input type="file" accept="video/mp4,video/webm,video/quicktime,.mp4,.m4v,.webm,.mov" required @change="handleVideoFile" /></label><label class="wide">视频标题<input v-model.trim="videoForm.title" placeholder="留空使用文件名" /></label><label>所属课程<select v-model="videoForm.courseId"><option :value="undefined">不关联课程</option><option v-for="item in courses" :key="item.id" :value="item.id">{{ item.title }}</option></select></label><label>分类<input v-model.trim="videoForm.category" placeholder="如：设备维护" /></label><label>排序<input v-model.number="videoForm.sortOrder" type="number" /></label></div><div v-if="saving" class="upload-progress"><div class="progress-track"><div class="progress-fill" :style="{ width: `${uploadPercent}%` }" /></div><em>{{ uploadPercent }}%</em></div><ModalFooter><UiButton variant="secondary" :disabled="saving" @click="requestCloseEditor">取消</UiButton><UiButton variant="primary" type="submit" :loading="saving"><template #icon><Upload :size="15" /></template>上传视频</UiButton></ModalFooter></form>
 
-<form v-else-if="editor === 'publish'" class="drawer" @submit.prevent="publish"><header><h3>发布考试</h3><UiButton variant="ghost" icon-only aria-label="关闭考试发布" title="关闭" @click="requestCloseEditor"><template #icon><X :size="18" /></template></UiButton></header><div class="form-grid"><label class="wide">考试名称<input v-model.trim="publishForm.title" required /></label><label>试卷<select v-model.number="publishForm.paperId"><option v-for="item in papers" :key="item.id" :value="item.id">{{ item.paperName }}</option></select></label><label>分配方式<select v-model="targetMode"><option value="scope">按门店和角色</option><option value="users">指定人员</option></select></label><label>开始时间<input v-model="publishForm.startAt" type="datetime-local" required /></label><label>截止时间<input v-model="publishForm.dueAt" type="datetime-local" required /></label><fieldset v-if="targetMode === 'scope'" class="wide checkbox-field"><legend>应考门店</legend><label v-for="item in stores" :key="item.id"><input v-model="publishForm.storeIds" type="checkbox" :value="item.id" />{{ item.name }}</label></fieldset><fieldset v-if="targetMode === 'scope'" class="wide checkbox-field"><legend>应考角色</legend><label><input v-model="publishForm.targetRoles" type="checkbox" value="EMPLOYEE" />学员</label><label><input v-model="publishForm.targetRoles" type="checkbox" value="STORE_MANAGER" />店长</label><label><input v-model="publishForm.targetRoles" type="checkbox" value="SUPERVISOR" />督导</label></fieldset><fieldset v-else class="wide checkbox-field people"><legend>应考人员</legend><label v-for="item in overview?.candidates || []" :key="item.userId"><input v-model="publishForm.userIds" type="checkbox" :value="item.userId" />{{ item.displayName }} · {{ item.departmentName || item.roleLabel }} · {{ item.storeName }}</label></fieldset></div><ModalFooter><UiButton variant="secondary" @click="requestCloseEditor">取消</UiButton><UiButton variant="primary" type="submit" :loading="saving"><template #icon><Send :size="15" /></template>确认发布</UiButton></ModalFooter></form>
+      <form v-else-if="editor === 'publish'" class="drawer" @submit.prevent="publish">
+        <header>
+          <h3>发布考试</h3>
+          <UiButton variant="ghost" icon-only aria-label="关闭考试发布" title="关闭" @click="requestCloseEditor">
+            <template #icon><X :size="18" /></template>
+          </UiButton>
+        </header>
+        <div class="form-grid">
+          <label class="wide">考试名称<input v-model.trim="publishForm.title" required /></label>
+          <label>试卷<select v-model.number="publishForm.paperId"><option v-for="item in papers" :key="item.id" :value="item.id">{{ item.paperName }}</option></select></label>
+          <label>分配方式<select v-model="targetMode"><option value="scope">按门店和角色</option><option value="users">指定人员</option></select></label>
+          <label>开始时间<input v-model="publishForm.startAt" type="datetime-local" required /></label>
+          <label>截止时间<input v-model="publishForm.dueAt" type="datetime-local" required /></label>
+          <fieldset v-if="targetMode === 'scope'" class="wide checkbox-field exam-store-picker">
+            <legend>应考门店</legend>
+            <SearchableMultiSelect
+              :model-value="publishForm.storeIds"
+              :options="examStoreOptions"
+              selected-noun="家门店"
+              search-placeholder="搜索应考门店名称或编号"
+              aria-label="搜索并选择应考门店"
+              @update:model-value="publishForm.storeIds = $event.map(String)"
+            />
+          </fieldset>
+          <fieldset v-if="targetMode === 'scope'" class="wide checkbox-field">
+            <legend>应考角色</legend>
+            <label><input v-model="publishForm.targetRoles" type="checkbox" value="EMPLOYEE" />学员</label>
+            <label><input v-model="publishForm.targetRoles" type="checkbox" value="STORE_MANAGER" />店长</label>
+            <label><input v-model="publishForm.targetRoles" type="checkbox" value="SUPERVISOR" />督导</label>
+          </fieldset>
+          <fieldset v-else class="wide checkbox-field people">
+            <legend>应考人员</legend>
+            <label v-for="item in overview?.candidates || []" :key="item.userId"><input v-model="publishForm.userIds" type="checkbox" :value="item.userId" />{{ item.displayName }} · {{ item.departmentName || item.roleLabel }} · {{ item.storeName }}</label>
+          </fieldset>
+        </div>
+        <ModalFooter>
+          <UiButton variant="secondary" @click="requestCloseEditor">取消</UiButton>
+          <UiButton variant="primary" type="submit" :loading="saving"><template #icon><Send :size="15" /></template>确认发布</UiButton>
+        </ModalFooter>
+      </form>
     </div>
 
     <div v-if="selectedCampaign" class="overlay" role="dialog" aria-modal="true" aria-label="考试安排详情" @click.self="selectedCampaign = null"><section class="drawer"><header><div><h3>{{ selectedCampaign.campaign.title }}</h3><span>{{ selectedCampaign.campaign.paperName }}</span></div><UiButton variant="ghost" icon-only aria-label="关闭考试安排详情" title="关闭" @click="selectedCampaign = null"><template #icon><X :size="18" /></template></UiButton></header><div class="detail-actions"><button v-if="overview?.canExport" type="button" class="button" @click="exportCampaign"><Download :size="15" />导出成绩</button></div><div class="data-table"><div class="table-head detail-cols"><span>应考人</span><span>门店</span><span>状态</span><span>成绩</span></div><div v-for="item in selectedCampaign.assignments" :key="item.id" class="table-row detail-cols"><b>{{ item.examineeName }}</b><span>{{ item.storeName }}</span><i :class="statusTone(item.status)">{{ item.statusLabel }}</i><span>{{ item.score == null ? '-' : `${item.score} 分` }}</span></div></div></section></div>
@@ -981,6 +1059,25 @@ onBeforeUnmount(() => {
 </style>
 
 <style scoped>
+.exam-store-picker {
+  display: block;
+}
+
+.exam-store-picker :deep(.searchable-multi-select) {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.message-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.message-actions button:first-child {
+  font-weight: 700;
+}
+
 .exam-shell {
   min-width: 0;
   gap: 16px;

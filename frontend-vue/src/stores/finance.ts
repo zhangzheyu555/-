@@ -45,7 +45,6 @@ export const useFinanceStore = defineStore('finance', {
       } catch (error) {
         if (serial !== this.loadSerial) return
         this.error = error instanceof Error ? error.message : '报销数据加载失败'
-        this.expenseReviews = []
       } finally {
         if (serial === this.loadSerial) this.loading = false
       }

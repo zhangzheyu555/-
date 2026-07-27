@@ -1,11 +1,12 @@
 ﻿<script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Download, FileBarChart } from 'lucide-vue-next'
 import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { downloadCsvRows } from '../api/reports'
 import BusinessScopeBar from '../components/common/BusinessScopeBar.vue'
 import PageHeader from '../components/common/PageHeader.vue'
 import { useBusinessScope } from '../composables/useBusinessScope'
+import { useForegroundReload } from '../composables/useForegroundReload'
 import { amount, money, percent, useProfitStore } from '../stores/profit'
 import type { ProfitEntry, ProfitTrendPoint } from '../api/profit'
 import { getBrandTheme, normalizeBrandName, STANDARD_BRANDS } from '../utils/brand'
@@ -15,6 +16,19 @@ const route = useRoute()
 const profit = useProfitStore()
 const scope = useBusinessScope()
 let routeLoadSerial = 0
+const loadedFilterKey = ref('')
+const dashboardMatchesCurrentFilter = computed(() => Boolean(profit.dashboard)
+  && loadedFilterKey.value === currentFilterKey())
+
+const { markFresh } = useForegroundReload(async () => {
+  const filterKey = currentFilterKey()
+  const loaded = await profit.load()
+  if (!loaded || profit.error || currentFilterKey() !== filterKey) return false
+  loadedFilterKey.value = filterKey
+  return true
+}, {
+  canReload: () => !profit.loading,
+})
 
 const standardBrandNames = STANDARD_BRANDS.map((brand) => brand.name)
 
@@ -167,6 +181,18 @@ function queryValue(value: unknown) {
   return Array.isArray(value) ? String(value[0] || '') : String(value || '')
 }
 
+function currentFilterKey() {
+  return [profit.month, profit.brandId, profit.storeId].join('|')
+}
+
+async function retryProfitData() {
+  const filterKey = currentFilterKey()
+  const loaded = await profit.load()
+  if (!loaded || profit.error || currentFilterKey() !== filterKey) return
+  loadedFilterKey.value = filterKey
+  markFresh()
+}
+
 async function applyRouteFilters() {
   const serial = ++routeLoadSerial
   const requestedMonth = queryValue(route.query.month)
@@ -175,16 +201,17 @@ async function applyRouteFilters() {
   const month = /^\d{4}-\d{2}$/.test(requestedMonth) ? requestedMonth : profit.month
   const brandId = scope.scopedBrandId(/^\d+$/.test(requestedBrandId) ? requestedBrandId : '')
   const storeId = scope.scopedStoreId(requestedStoreId)
-  const dashboardChanged = !profit.dashboard
-    || profit.brandId !== brandId
-    || profit.storeId !== storeId
-    || Boolean(month && profit.summary.month !== month)
-
   profit.setFilters({ month, brandId, storeId })
-  if (dashboardChanged) await profit.load()
+  const filterKey = currentFilterKey()
+  const dashboardChanged = !profit.dashboard || loadedFilterKey.value !== filterKey
+  const loaded = dashboardChanged ? await profit.load() : true
   if (serial !== routeLoadSerial) return
+  if (loaded && !profit.error) {
+    loadedFilterKey.value = currentFilterKey()
+    markFresh()
+  }
 
-  if (!scope.isStoreManager.value && !profit.error && profit.storeId && !profit.storeOptions.some((entry) => entry.storeId === profit.storeId)) {
+  if (!scope.isStoreManager.value && loaded && !profit.error && profit.storeId && !profit.storeOptions.some((entry) => entry.storeId === profit.storeId)) {
     profit.setStore('')
   }
 
@@ -244,7 +271,7 @@ function brandPillStyle(name?: string) {
 }
 
 function exportCsv() {
-  if (!profit.entries.length) {
+  if (!dashboardMatchesCurrentFilter.value || !profit.entries.length) {
     window.alert('暂无可导出的数据')
     return
   }
@@ -275,7 +302,7 @@ watch(
           <FileBarChart :size="16" />
           查看利润表
         </button>
-        <button class="ghost-button export-report-button" type="button" title="导出当前筛选结果为 CSV" :disabled="profit.loading" @click="exportCsv">
+        <button class="ghost-button export-report-button" type="button" title="导出当前筛选结果为 CSV" :disabled="profit.loading || !dashboardMatchesCurrentFilter" @click="exportCsv">
           <Download :size="16" />
           导出报表
         </button>
@@ -300,14 +327,16 @@ watch(
       </label>
     </section>
 
-    <div v-if="profit.loading && !profit.dashboard" class="empty-state">正在读取利润概览...</div>
+    <div v-if="profit.loading && !dashboardMatchesCurrentFilter" class="empty-state">正在读取利润概览...</div>
 
     <template v-else>
       <div v-if="profit.error" class="data-region-error" role="alert">
         <span>{{ profit.error }}</span>
-        <button type="button" @click="profit.load()">重新加载</button>
+        <button type="button" :disabled="profit.loading" @click="retryProfitData">重试</button>
       </div>
-      <div v-else-if="scope.isStoreManager.value" class="profit-metric-grid manager-metrics">
+      <div v-if="!dashboardMatchesCurrentFilter" class="empty-state">当前筛选范围暂时无法读取，请稍后重试。</div>
+      <template v-else>
+      <div v-if="scope.isStoreManager.value" class="profit-metric-grid manager-metrics">
         <article class="content-card profit-metric-card revenue"><span>本月营业额</span><b>{{ money(profit.summary.sales) }}</b></article>
         <article class="content-card profit-metric-card"><span>实收收入</span><b>{{ money(profit.summary.income) }}</b></article>
         <article class="content-card profit-metric-card"><span>成本合计</span><b>{{ money(profit.summary.costSum) }}</b></article>
@@ -349,8 +378,7 @@ watch(
 
       <section v-if="!scope.isStoreManager.value" class="profit-brand-section">
         <div class="profit-section-title">品牌卡片</div>
-        <div v-if="profit.error" class="empty-state compact">品牌数据暂时无法读取。</div>
-        <div v-else-if="!brandIncomeCards.length" class="empty-state compact">当前月份暂无品牌收入数据。</div>
+        <div v-if="!brandIncomeCards.length" class="empty-state compact">当前月份暂无品牌收入数据。</div>
         <div v-else class="profit-brand-grid">
           <button
             v-for="brand in brandIncomeCards"
@@ -384,8 +412,7 @@ watch(
           {{ currentBrandName ? `${currentBrandName} 各店排名（${profit.summary.month || profit.month}）` : `各店净利率排名（${profit.summary.month || profit.month}）` }}
           <button v-if="currentBrandName" class="show-all-chip" type="button" @click="clearBrand">显示全部品牌</button>
         </div>
-        <div v-if="profit.error" class="empty-state compact">门店排行暂时无法读取。</div>
-        <div v-else-if="!marginRanking.length" class="empty-state compact">当前筛选条件下暂无门店利润排行。</div>
+        <div v-if="!marginRanking.length" class="empty-state compact">当前筛选条件下暂无门店利润排行。</div>
         <div v-else class="profit-table-wrap">
           <table class="profit-ranking-table">
             <thead>
@@ -451,8 +478,7 @@ watch(
 
       <section v-else class="content-card profit-trend-card">
         <div class="profit-ranking-title">月度净利趋势</div>
-        <div v-if="profit.error" class="empty-state compact">趋势数据暂时无法读取。</div>
-        <div v-else-if="!profit.trend.length" class="empty-state compact">当前暂无月度净利趋势数据。</div>
+        <div v-if="!profit.trend.length" class="empty-state compact">当前暂无月度净利趋势数据。</div>
         <div v-else class="profit-trend-bars">
           <div v-for="point in profit.trend" :key="point.month" class="profit-trend-item">
             <span class="trend-value" :class="{ negative: amount(point.net) < 0 }">{{ compactMoney(point.net) }}</span>
@@ -463,6 +489,7 @@ watch(
           </div>
         </div>
       </section>
+      </template>
     </template>
   </section>
 </template>

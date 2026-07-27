@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AlertTriangle, CheckCircle2, LoaderCircle, RotateCw, Trash2, XCircle } from 'lucide-vue-next'
+import { AlertTriangle, CheckCircle2, LoaderCircle, ScanSearch, Trash2, XCircle } from 'lucide-vue-next'
 import type { InspectionDetectionItem, InspectionDetectionResult } from '../../api/inspection'
 import type { InspectionDraftPhoto } from '../../composables/useInspectionDraft'
 
@@ -44,7 +44,7 @@ const emit = defineEmits<{
       </div>
       <div v-else-if="photo.detectionStatus === 'failed'" class="inspection-detection-failed">
         <XCircle :size="20" /><div><b>识别服务不可用</b><span>{{ photo.detectionError || '本次识别失败，不能按合格处理。' }}</span></div>
-        <button class="secondary-button" type="button" @click="emit('retry', photo)"><RotateCw :size="15" />重新识别</button>
+        <button class="secondary-button" type="button" @click="emit('retry', photo)"><ScanSearch :size="15" />重新识别</button>
       </div>
       <div v-else-if="photo.detection" class="inspection-detection-result">
         <div class="inspection-detection-preview">

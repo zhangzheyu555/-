@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { AlertTriangle, CheckCircle2, KeyRound, Pencil, Plus, RefreshCw, Shield, ShieldCheck, Store, X } from 'lucide-vue-next'
+import { AlertTriangle, CheckCircle2, KeyRound, Pencil, Plus, Shield, ShieldCheck, Store, X } from 'lucide-vue-next'
+import { onBeforeRouteLeave } from 'vue-router'
 import { getStores, type StoreInfo } from '../api/operations'
 import { getWarehouses, type WarehouseInfo } from '../api/warehouse'
 import { ApiError } from '../api/http'
 import PageHeader from '../components/common/PageHeader.vue'
+import SearchableMultiSelect from '../components/common/SearchableMultiSelect.vue'
+import SearchableSingleSelect from '../components/common/SearchableSingleSelect.vue'
 import ModalFooter from '../components/ui/ModalFooter.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import UnsavedChangesDialog from '../components/ui/UnsavedChangesDialog.vue'
@@ -30,6 +33,7 @@ import { useAuthStore } from '../stores/auth'
 import { PERMISSIONS } from '../permissions/permissions'
 import { isBossRole, isGlobalStoreRole, normalizeRoleCode } from '../permissions/roles'
 import { listAvailableWorkspaces } from '../permissions/workspaces'
+import { useForegroundReload } from '../composables/useForegroundReload'
 
 type AccountForm = UserCreatePayload
 type OverrideChoice = PermissionEffect | ''
@@ -136,7 +140,9 @@ const accountFormSnapshot = ref('')
 const discardDialogOpen = ref(false)
 const discardDialogMessage = ref('')
 let authorizationRequestSequence = 0
+let permissionPageRequestSequence = 0
 let pendingDiscardAction: (() => void) | null = null
+let pendingDiscardCancel: (() => void) | null = null
 
 const roles = [
   { value: 'BOSS', label: '老板（系统管理员）' },
@@ -171,6 +177,12 @@ const configuredManagerStoreIds = computed(() => new Set(
   managerAccounts.value.flatMap((user) => [user.storeId, ...(user.storeScope || [])]).filter(Boolean),
 ))
 const pendingManagerStores = computed(() => stores.value.filter((store) => !configuredManagerStoreIds.value.has(store.id)))
+const searchableStoreOptions = computed(() => stores.value.map((store) => ({
+  value: store.id,
+  label: `${store.brandName ? `${store.brandName} · ` : ''}${store.name}`,
+  description: [store.code || store.id, store.area || store.regionCode, store.status].filter(Boolean).join(' · '),
+  searchText: [store.name, store.code, store.area, store.regionCode, store.status, store.brandName].filter(Boolean).join(' '),
+})))
 const roleRows = computed(() => {
   const groups = new Map<string, number>()
   for (const user of users.value) {
@@ -269,21 +281,26 @@ function captureAccountFormSnapshot() {
   accountFormSnapshot.value = accountFormSignature()
 }
 
-function requestDiscardConfirmation(message: string, action: () => void) {
+function requestDiscardConfirmation(message: string, action: () => void, cancel: () => void = () => {}) {
   if (discardDialogOpen.value) return
   discardDialogMessage.value = message
   pendingDiscardAction = action
+  pendingDiscardCancel = cancel
   discardDialogOpen.value = true
 }
 
 function keepEditing() {
+  const cancel = pendingDiscardCancel
   pendingDiscardAction = null
+  pendingDiscardCancel = null
   discardDialogOpen.value = false
+  cancel?.()
 }
 
 function discardChanges() {
   const action = pendingDiscardAction
   pendingDiscardAction = null
+  pendingDiscardCancel = null
   discardDialogOpen.value = false
   action?.()
 }
@@ -565,27 +582,72 @@ function previewAvailableWorkspaces(
   return storeId && storeScope?.mode === 'OWN_STORE' ? available : []
 }
 
-async function refresh() {
+async function loadPermissionPage(options: { reloadAuthorization?: boolean } = {}) {
+  const pageRequestSequence = ++permissionPageRequestSequence
+  const reloadAuthorization = options.reloadAuthorization !== false
   loading.value = true
   error.value = ''
   const selectedUserId = selectedAuthorizationUser.value?.id
+  const authorizationSignatureAtRequest = selectedUserId && reloadAuthorization
+    ? draftAuthorizationSignature()
+    : ''
   try {
-    const [userRows, storeRows, warehouseRows] = await Promise.all([getUsers(), getStores(), getWarehouses()])
+    const [userRows, storeRows, warehouseRows, nextCatalog] = await Promise.all([
+      getUsers(),
+      getStores(),
+      getWarehouses(),
+      canManage.value && reloadAuthorization
+        ? getAuthorizationCatalog()
+        : Promise.resolve(authorizationCatalog.value),
+    ])
+    if (pageRequestSequence !== permissionPageRequestSequence) return false
     users.value = userRows
     stores.value = storeRows
     warehouses.value = warehouseRows
-    if (canManage.value) authorizationCatalog.value = await getAuthorizationCatalog()
-    if (selectedUserId) {
-      const refreshedSelection = userRows.find((user) => user.id === selectedUserId)
-      if (refreshedSelection) await openAuthorization(refreshedSelection, false)
+    if (nextCatalog) authorizationCatalog.value = nextCatalog
+    if (selectedUserId && reloadAuthorization) {
+      if (
+        selectedAuthorizationUser.value?.id !== selectedUserId
+        || draftAuthorizationSignature() !== authorizationSignatureAtRequest
+      ) {
+        return false
+      }
+      const nextSelection = userRows.find((user) => user.id === selectedUserId)
+      if (nextSelection) {
+        const authorizationLoaded = await reloadAuthorizationDetail(nextSelection, authorizationSignatureAtRequest)
+        if (!authorizationLoaded) return false
+      }
       else forceCloseAuthorization()
     }
+    markFresh()
+    return true
   } catch (loadError) {
-    error.value = displayError(loadError, '用户权限加载失败，请刷新后重试。')
+    if (pageRequestSequence === permissionPageRequestSequence) {
+      error.value = displayError(loadError, '用户权限加载失败，请稍后重试。')
+    }
+    return false
   } finally {
-    loading.value = false
+    if (pageRequestSequence === permissionPageRequestSequence) loading.value = false
   }
 }
+
+function canReloadAuthorizationDetail() {
+  return !authorizationDirty.value
+    && !authorizationLoading.value
+    && !authorizationSaving.value
+    && !editorOpen.value
+    && !editingAuthorizationLoading.value
+    && !saving.value
+    && !resetTarget.value
+    && !resetting.value
+    && !discardDialogOpen.value
+}
+
+const { markFresh } = useForegroundReload(() => loadPermissionPage({
+    reloadAuthorization: canReloadAuthorizationDetail(),
+  }), {
+  canReload: () => !loading.value && !saving.value && !resetting.value,
+})
 
 function openCreate() {
   editingUser.value = null
@@ -619,18 +681,6 @@ async function openEdit(user: UserAccount) {
   } finally {
     editingAuthorizationLoading.value = false
   }
-}
-
-function requestRefresh() {
-  if (loading.value) return
-  if (authorizationDirty.value) {
-    requestDiscardConfirmation(
-      '刷新后，当前尚未保存的授权调整将不会保留。',
-      () => { void refresh() },
-    )
-    return
-  }
-  void refresh()
 }
 
 function closeEditor() {
@@ -728,7 +778,7 @@ async function save() {
       successMessage.value = '账号已创建。'
     }
     forceCloseEditor()
-    await refresh()
+    await loadPermissionPage()
   } catch (saveError) {
     error.value = displayError(saveError, '账号保存失败，请稍后重试。')
   } finally {
@@ -819,6 +869,39 @@ async function openAuthorization(user: UserAccount, clearFeedback = true) {
     }
   } finally {
     if (requestSequence === authorizationRequestSequence) authorizationLoading.value = false
+  }
+}
+
+async function reloadAuthorizationDetail(
+  user: UserAccount,
+  expectedDraftSignature = draftAuthorizationSignature(),
+) {
+  const requestSequence = ++authorizationRequestSequence
+  if (
+    selectedAuthorizationUser.value?.id !== user.id
+    || draftAuthorizationSignature() !== expectedDraftSignature
+  ) {
+    return false
+  }
+  authorizationError.value = ''
+  try {
+    const detail = await getUserAuthorization(user.id)
+    if (
+      requestSequence !== authorizationRequestSequence
+      || selectedAuthorizationUser.value?.id !== user.id
+      || draftAuthorizationSignature() !== expectedDraftSignature
+    ) {
+      return false
+    }
+    selectedAuthorizationUser.value = user
+    userAuthorization.value = detail
+    applyAuthorizationDraft(detail)
+    return true
+  } catch (reason) {
+    if (requestSequence === authorizationRequestSequence) {
+      authorizationError.value = displayError(reason, '账号授权加载失败，请稍后重试。')
+    }
+    return false
   }
 }
 
@@ -932,6 +1015,7 @@ async function saveAuthorization() {
     userAuthorization.value = updated.authorization
     applyAuthorizationDraft(updated.authorization)
     authorizationSuccess.value = `权限已更新，该账号需要重新登录。权限版本 v${updated.authorization.permissionVersion}。`
+    markFresh()
   } catch (reason) {
     authorizationError.value = displayError(reason, '账号授权保存失败，请稍后重试。')
   } finally {
@@ -1003,11 +1087,17 @@ function roleTone(role: string) {
 function displayError(reason: unknown, fallback: string) {
   if (reason instanceof ApiError) {
     if (reason.code === 'BACKEND_UNAVAILABLE' || (reason.status != null && reason.status >= 500)) {
-      return '账号权限服务暂时不可用，请确认本机服务已启动后刷新页面。'
+      return '账号权限服务暂时不可用，请确认本机服务已启动后重试。'
     }
   }
   const message = reason instanceof Error ? reason.message : String(reason || '')
   return message || fallback
+}
+
+function retryPermissionPage() {
+  void loadPermissionPage({
+    reloadAuthorization: canReloadAuthorizationDetail(),
+  })
 }
 
 watch(
@@ -1037,11 +1127,23 @@ watch(
 
 onMounted(() => {
   document.addEventListener('keydown', handleDialogEscape)
-  void refresh()
+  void loadPermissionPage()
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleDialogEscape)
+})
+
+onBeforeRouteLeave(() => {
+  if (!accountDirty.value && !authorizationDirty.value && !passwordDirty.value) return true
+  if (discardDialogOpen.value) return false
+  return new Promise<boolean>((resolve) => {
+    requestDiscardConfirmation(
+      '离开账号权限页面后，当前尚未保存的修改将不会保留。',
+      () => resolve(true),
+      () => resolve(false),
+    )
+  })
 })
 </script>
 
@@ -1053,9 +1155,6 @@ onBeforeUnmount(() => {
           <button v-if="canManage" class="primary-button" type="button" @click="openCreate">
             <Plus :size="16" />新增账号
           </button>
-          <button class="ghost-button" type="button" :disabled="loading" @click="requestRefresh">
-            <RefreshCw :size="16" />刷新
-          </button>
         </div>
       </template>
     </PageHeader>
@@ -1065,7 +1164,10 @@ onBeforeUnmount(() => {
       <span>账号、权限和数据范围设置涉及高风险授权，请使用电脑端完成并仔细核对后保存。</span>
     </aside>
 
-    <div v-if="error" class="error-box">{{ error }}</div>
+    <div v-if="error" class="error-box page-load-error">
+      <span>{{ error }}</span>
+      <button class="ghost-button" type="button" :disabled="loading" @click="retryPermissionPage">重试</button>
+    </div>
     <div v-if="successMessage" class="success-box">{{ successMessage }}</div>
     <div v-if="loading && !users.length" class="empty-state">正在读取账号权限...</div>
 
@@ -1200,7 +1302,7 @@ onBeforeUnmount(() => {
         <template v-else>
           <div v-if="authorizationError" class="authorization-message error-box">
             <span>{{ authorizationError }}</span>
-            <button v-if="!userAuthorization" class="ghost-button" type="button" @click="openAuthorization(selectedAuthorizationUser)">重新读取</button>
+            <button v-if="!userAuthorization" class="ghost-button" type="button" @click="openAuthorization(selectedAuthorizationUser)">重试</button>
           </div>
           <div v-if="authorizationSuccess" class="authorization-message success-box">{{ authorizationSuccess }}</div>
 
@@ -1284,13 +1386,16 @@ onBeforeUnmount(() => {
                       </label>
                       <span v-if="!warehouses.length" class="inline-empty">暂无可选仓库。</span>
                     </div>
-                    <div v-else-if="scope.mode === 'STORE_LIST'" class="store-scope-picker">
-                      <label v-for="store in stores" :key="store.id">
-                        <input v-model="scope.storeIds" type="checkbox" :value="store.id" :disabled="authorizationSaving" />
-                        <span>{{ store.brandName }} · {{ store.name }}</span>
-                      </label>
-                      <span v-if="!stores.length" class="inline-empty">暂无可选门店。</span>
-                    </div>
+                    <SearchableMultiSelect
+                      v-else-if="scope.mode === 'STORE_LIST'"
+                      :model-value="scope.storeIds"
+                      :options="searchableStoreOptions"
+                      :disabled="authorizationSaving"
+                      selected-noun="家门店"
+                      search-placeholder="搜索门店名称、编号、区域或状态"
+                      :aria-label="`搜索并选择${domainLabel(scope.domainCode)}门店范围`"
+                      @update:model-value="scope.storeIds = $event.map(String)"
+                    />
                     <span v-else-if="scope.mode === 'OWN_STORE'" class="scope-context">
                       当前绑定：{{ storeName(selectedAuthorizationUser.storeId) }}
                     </span>
@@ -1437,24 +1542,30 @@ onBeforeUnmount(() => {
           <template v-if="storeManagerAccountForm">
             <label>
               绑定门店
-              <select v-model="form.storeId" :disabled="saving">
-                <option value="">请选择一家门店</option>
-                <option v-for="store in stores" :key="store.id" :value="store.id">{{ store.brandName }} · {{ store.name }}</option>
-              </select>
+              <SearchableSingleSelect
+                v-model="form.storeId"
+                :options="searchableStoreOptions"
+                :disabled="saving"
+                placeholder="请选择一家门店"
+                search-placeholder="搜索门店名称、编号、区域或状态"
+                aria-label="搜索并绑定门店"
+              />
             </label>
             <p class="account-role-hint">店长账号必须且只能绑定一家门店；详细业务范围在账号授权中配置。</p>
           </template>
           <template v-else-if="supervisorAccountForm">
             <fieldset class="account-store-scope">
               <legend>知识库管理门店范围</legend>
-              <div class="store-scope-picker" aria-label="知识库管理门店范围">
-                <label v-for="store in stores" :key="store.id">
-                  <input v-model="form.storeScope" type="checkbox" :value="store.id" :disabled="saving" />
-                  <span>{{ store.brandName }} · {{ store.name }} · {{ store.code || store.id }}</span>
-                </label>
-                <span v-if="!stores.length" class="inline-empty">暂无可选门店。</span>
-              </div>
-              <small>已选择 {{ form.storeScope.length }} 家；保存后同步为督导的知识库门店范围。</small>
+              <SearchableMultiSelect
+                :model-value="form.storeScope"
+                :options="searchableStoreOptions"
+                :disabled="saving"
+                selected-noun="家门店"
+                search-placeholder="搜索门店名称、编号、区域或状态"
+                aria-label="搜索并选择知识库管理门店范围"
+                @update:model-value="form.storeScope = $event.map(String)"
+              />
+              <small>保存后同步为督导的知识库门店范围；搜索不会改变已选择的门店。</small>
             </fieldset>
           </template>
           <p v-else-if="globalStoreRoleForm" class="account-role-hint">该角色默认拥有全部门店范围，无需单独配置。</p>
@@ -1543,6 +1654,13 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.page-load-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .users-grid {
@@ -1889,6 +2007,8 @@ tbody tr:hover .sticky-actions-col {
   width: 100%;
 }
 
+.data-scope-row > :deep(.searchable-multi-select) { min-width: 0; }
+
 .store-scope-picker {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
@@ -2114,6 +2234,8 @@ tbody tr:hover .sticky-actions-col {
 .editor-body input[type='text'], .editor-body input[type='password'], .editor-body select {
   width: 100%; box-sizing: border-box; padding: 10px 11px; border: 1px solid var(--line); border-radius: 8px; background: #fff; font: inherit;
 }
+.editor-body :deep(.searchable-single-select),
+.editor-body :deep(.searchable-multi-select) { width: 100%; }
 .editor-body > label.enabled-row { display: flex; align-items: center; gap: 8px; font-weight: 600; }
 .editor-loading-note { margin: 0 18px 14px; color: var(--muted); font-size: 12px; }
 @media (max-width: 768px) {

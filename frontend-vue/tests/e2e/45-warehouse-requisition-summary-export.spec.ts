@@ -253,11 +253,26 @@ async function fillDateRange(page: Page, startDate = '2026-07-01', endDate = '20
   await page.getByLabel('报表结束日期').fill(endDate)
 }
 
+function multiSelect(page: Page, label: string) {
+  return page.locator('.searchable-multi-select').filter({
+    has: page.getByRole('searchbox', { name: label }),
+  })
+}
+
+async function selectMultiOption(page: Page, label: string, query: string, optionName: RegExp) {
+  const selector = multiSelect(page, label)
+  await selector.getByRole('searchbox', { name: label }).fill(query)
+  await selector.getByRole('checkbox', { name: optionName }).check()
+}
+
 test('按门店、物料和月份导出聚合报表，并使用响应文件名', async ({ page }) => {
   const log = await prepare(page)
   await fillDateRange(page)
-  await page.getByLabel('报表门店').selectOption(['rg1', 'rg2'])
-  await page.getByLabel('报表物料').selectOption(['11', '22'])
+  await selectMultiOption(page, '报表门店', 'RG1', /荆州之星店.*RG1/)
+  await selectMultiOption(page, '报表门店', 'RG2', /荆州大学城店.*RG2/)
+  await selectMultiOption(page, '报表物料', 'MILK-11', /鲜牛奶.*MILK-11/)
+  await selectMultiOption(page, '报表物料', 'STRAW-22', /吸管.*STRAW-22/)
+  await expect(multiSelect(page, '报表物料')).toContainText('已选择 2 项物料')
 
   const downloadPromise = page.waitForEvent('download')
   await page.getByRole('button', { name: '导出聚合报表' }).click()
@@ -292,7 +307,7 @@ test('按门店、物料和月份导出聚合报表，并使用响应文件名',
 test('可仅选择门店导出，未选物料表示全部物料', async ({ page }) => {
   const log = await prepare(page)
   await fillDateRange(page)
-  await page.getByLabel('报表门店').selectOption(['rg2'])
+  await selectMultiOption(page, '报表门店', 'RG2', /荆州大学城店.*RG2/)
 
   const downloadPromise = page.waitForEvent('download')
   await page.getByRole('button', { name: '导出聚合报表' }).click()
@@ -308,7 +323,7 @@ test('可仅选择门店导出，未选物料表示全部物料', async ({ page 
 test('可仅选择物料导出，未选门店表示全部门店', async ({ page }) => {
   const log = await prepare(page)
   await fillDateRange(page)
-  await page.getByLabel('报表物料').selectOption(['22'])
+  await selectMultiOption(page, '报表物料', 'STRAW-22', /吸管.*STRAW-22/)
 
   const downloadPromise = page.waitForEvent('download')
   await page.getByRole('button', { name: '导出聚合报表' }).click()
@@ -318,6 +333,33 @@ test('可仅选择物料导出，未选门店表示全部门店', async ({ page 
   expect(log.summaryBodies[0]).toMatchObject({
     storeIds: [],
     productIds: [22],
+  })
+})
+
+test('物料全选仅作用于当前搜索结果，且清空后仍按全部物料导出', async ({ page }) => {
+  const log = await prepare(page)
+  await fillDateRange(page)
+  const selector = multiSelect(page, '报表物料')
+  const search = selector.getByRole('searchbox', { name: '报表物料' })
+
+  await search.fill('MILK-11')
+  await selector.getByRole('button', { name: '全选当前结果' }).click()
+  await expect(selector).toContainText('已选择 1 项物料')
+
+  await search.fill('')
+  await expect(selector.getByRole('checkbox', { name: /鲜牛奶.*MILK-11/ })).toBeChecked()
+  await expect(selector.getByRole('checkbox', { name: /吸管.*STRAW-22/ })).not.toBeChecked()
+
+  await selector.getByRole('button', { name: '清空已选' }).click()
+  await expect(selector).toContainText('已选择 0 项物料')
+
+  const downloadPromise = page.waitForEvent('download')
+  await page.getByRole('button', { name: '导出聚合报表' }).click()
+  await downloadPromise
+
+  await expect.poll(() => log.summaryBodies.length).toBe(1)
+  expect(log.summaryBodies[0]).toMatchObject({
+    productIds: [],
   })
 })
 
@@ -364,15 +406,21 @@ test('日报、周报、月报切换会提交对应周期粒度', async ({ page 
 test('切换仓库会更新导出仓库并清理已不可见物料', async ({ page }) => {
   const log = await prepare(page)
   await fillDateRange(page)
-  await page.getByLabel('报表门店').selectOption(['rg1'])
-  await page.getByLabel('报表物料').selectOption(['11'])
+  await selectMultiOption(page, '报表门店', 'RG1', /荆州之星店.*RG1/)
+  await selectMultiOption(page, '报表物料', 'MILK-11', /鲜牛奶.*MILK-11/)
 
   await page.getByLabel('当前仓库').selectOption('2')
   await expect(page).toHaveURL(/warehouseId=2/)
-  await expect(page.getByLabel('报表门店').locator('option')).toHaveCount(1)
-  await expect(page.getByLabel('报表门店').locator('option')).toHaveText(['山东首店（SD1）'])
-  await expect(page.getByLabel('报表物料').locator('option')).toHaveCount(1)
-  await expect(page.getByLabel('报表物料').locator('option')).toHaveText(['吸管（STRAW-22）'])
+  const storeSelector = multiSelect(page, '报表门店')
+  const productSelector = multiSelect(page, '报表物料')
+  await storeSelector.getByRole('searchbox', { name: '报表门店' }).fill('')
+  await productSelector.getByRole('searchbox', { name: '报表物料' }).fill('')
+  await expect(storeSelector.getByRole('checkbox')).toHaveCount(1)
+  await expect(storeSelector.getByRole('checkbox', { name: /山东首店.*SD1/ })).not.toBeChecked()
+  await expect(productSelector.getByRole('checkbox')).toHaveCount(1)
+  await expect(productSelector.getByRole('checkbox', { name: /吸管.*STRAW-22/ })).not.toBeChecked()
+  await expect(storeSelector).toContainText('已选择 0 家门店')
+  await expect(productSelector).toContainText('已选择 0 项物料')
 
   const downloadPromise = page.waitForEvent('download')
   await page.getByRole('button', { name: '导出聚合报表' }).click()

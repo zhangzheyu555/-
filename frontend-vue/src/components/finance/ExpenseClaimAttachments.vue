@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue'
-import { Download, Image, ImageOff, LoaderCircle, RefreshCw, X } from 'lucide-vue-next'
+import { Download, Image, ImageOff, LoaderCircle, X } from 'lucide-vue-next'
 import {
   deleteExpenseAttachment,
   downloadExpenseAttachment,
@@ -154,7 +154,7 @@ async function remove(attachment: ExpenseAttachment) {
           type="button"
           @click="retry(attachment)"
         >
-          <RefreshCw :size="14" />重试
+          重试
         </button>
         <button class="expense-attachment-action" type="button" :disabled="Boolean(deletingId) || downloadingId === String(attachment.id)" @click="download(attachment)">
           <LoaderCircle v-if="downloadingId === String(attachment.id)" class="spin" :size="14" />

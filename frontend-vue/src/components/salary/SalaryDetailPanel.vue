@@ -21,6 +21,7 @@ const emit = defineEmits<{
   preview: []
   saveAttendance: [record: SalaryRecord, attendanceDays: number, overtimeHours: number, normalHours: number]
   saveDetails: [record: SalaryRecord, attendanceDays: number, overtimeHours: number, normalHours: number, attendanceChanged: boolean, payload: SalaryRecordPayload]
+  dirtyChange: [dirty: boolean]
 }>()
 
 const attendanceInput = ref(0)
@@ -38,6 +39,7 @@ const vacationNoteInput = ref('')
 const legacyCalculationNote = ref('')
 const showHistory = ref(false)
 const dirtyFields = ref(new Set<string>())
+const dirty = computed(() => dirtyFields.value.size > 0)
 
 function truncatedInput(value?: number) {
   const number = Number(value || 0)
@@ -123,6 +125,7 @@ watch(() => props.record, (record) => {
   dirtyFields.value = new Set()
   showHistory.value = false
 }, { immediate: true })
+watch(dirty, (value) => emit('dirtyChange', value), { immediate: true })
 
 const effectivePerformance = computed(() => effectiveInput('performance', performanceInput.value, props.record?.performance))
 const effectiveLateNight = computed(() => effectiveInput('lateNight', lateNightInput.value, props.record?.lateNight))
@@ -264,8 +267,8 @@ function detailPayload(): SalaryRecordPayload {
       <section v-if="!isPendingGeneration" class="editor-section vacation-section">
         <h3>假期</h3>
         <div class="input-grid">
-          <label>假期余额（天）<input v-model.number="vacationLeftInput" :disabled="!canEditRecord" type="number" min="0" max="365" step="0.5" /></label>
-          <label class="wide-field">休息日期备注<textarea v-model="vacationNoteInput" :disabled="!canEditRecord" rows="3" maxlength="255" placeholder="例如：7月5日、12日、19日休息" /></label>
+          <label>假期余额（天）<input v-model.number="vacationLeftInput" :disabled="!canEditRecord" type="number" min="0" max="365" step="0.5" @input="markDirty('vacationLeft')" /></label>
+          <label class="wide-field">休息日期备注<textarea v-model="vacationNoteInput" :disabled="!canEditRecord" rows="3" maxlength="255" placeholder="例如：7月5日、12日、19日休息" @input="markDirty('vacationNote')" /></label>
         </div>
         <div class="vacation-note-meta"><span>记录本月具体休息日期，方便后续核对。</span><span>{{ vacationNoteInput.length }}/255</span></div>
         <small v-if="vacationError" class="attendance-error">{{ vacationError }}</small>

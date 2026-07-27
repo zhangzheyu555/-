@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { AlertTriangle, Bot, ClipboardList, GraduationCap, RefreshCw, Store, UserRound, WalletCards } from 'lucide-vue-next'
+import { AlertTriangle, Bot, ClipboardList, GraduationCap, Store, UserRound, WalletCards } from 'lucide-vue-next'
 import { ApiError } from '../api/http'
 import { getEmployeeWorkbench, type EmployeeWorkbench, type EmployeeWorkbenchItem } from '../api/employeeWorkbench'
+import { useForegroundReload } from '../composables/useForegroundReload'
 
 const router = useRouter()
 const loading = ref(false)
@@ -24,15 +25,25 @@ async function loadWorkbench() {
   loading.value = true
   errorMessage.value = ''
   try {
-    workbench.value = await getEmployeeWorkbench()
+    const nextWorkbench = await getEmployeeWorkbench()
+    workbench.value = nextWorkbench
+    markFresh()
+    return true
   } catch (error) {
     errorMessage.value = error instanceof ApiError
       ? error.message
       : '员工工作台加载失败，请稍后重试'
+    return false
   } finally {
     loading.value = false
   }
 }
+
+const { markFresh } = useForegroundReload(async () => {
+  if (!await loadWorkbench()) throw new Error('员工工作台数据暂时不可用')
+}, {
+  canReload: () => !loading.value,
+})
 
 function itemIcon(item: EmployeeWorkbenchItem) {
   return item.type === 'ASSISTANT' ? Bot : GraduationCap
@@ -56,18 +67,15 @@ onMounted(() => {
         <h1>{{ workbench?.profile.displayName || '当前员工' }}</h1>
         <p class="employee-subtitle">{{ workbench?.store.storeName || '所属门店待加载' }}</p>
       </div>
-      <button class="ghost-button" type="button" :disabled="loading" @click="loadWorkbench">
-        <RefreshCw :size="17" :class="{ spinning: loading }" />
-        刷新
-      </button>
     </div>
 
     <div v-if="errorMessage" class="notice warning">
       <AlertTriangle :size="19" />
       <span>{{ errorMessage }}</span>
+      <button class="ghost-button" type="button" :disabled="loading" @click="loadWorkbench">重试</button>
     </div>
 
-    <div v-else-if="workbench" class="employee-content">
+    <div v-if="workbench" class="employee-content">
       <section class="profile-band">
         <div class="profile-line">
           <span class="profile-icon"><UserRound :size="20" /></span>
@@ -148,7 +156,7 @@ onMounted(() => {
       </section>
     </div>
 
-    <div v-else class="loading-state">正在加载员工工作台...</div>
+    <div v-else-if="loading" class="loading-state">正在加载员工工作台...</div>
   </section>
 </template>
 
@@ -213,17 +221,19 @@ onMounted(() => {
   color: var(--ds-secondary);
 }
 
-.spinning {
-  animation: spin 0.8s linear infinite;
-}
-
 .notice {
+  display: flex;
+  align-items: center;
   gap: 10px;
   padding: 14px 16px;
   border: 1px solid #f2d391;
   border-radius: 7px;
   background: #fff7e8;
   color: #855b10;
+}
+
+.notice span {
+  flex: 1;
 }
 
 .employee-content {
@@ -426,12 +436,6 @@ onMounted(() => {
 .assistant-band.disabled button {
   cursor: not-allowed;
   background: var(--ds-disabled, #cfd8d6);
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 @media (max-width: 768px) {

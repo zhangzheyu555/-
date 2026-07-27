@@ -2,9 +2,11 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ExternalLink, X } from 'lucide-vue-next'
 import PageHeader from '../components/common/PageHeader.vue'
+import SearchableSingleSelect from '../components/common/SearchableSingleSelect.vue'
 import { apiGet, apiPut, http } from '../api/http'
 import { downloadBlob } from '../api/reports'
 import { useAuthStore } from '../stores/auth'
+import { useForegroundReload } from '../composables/useForegroundReload'
 
 interface QmaiConfigView {
   configured: boolean
@@ -64,13 +66,21 @@ const form = reactive({
   consolePassword: '',
   consoleToken: '',
 })
+let qmaiLoadSerial = 0
+let turnoverLoadSerial = 0
 
 async function loadQmai() {
+  const serial = ++qmaiLoadSerial
+  const requestedBrand = brand.value
   try {
     const path = canManage.value ? '/api/qmai/config' : '/api/qmai/status'
-    qmai.value = await apiGet<QmaiConfigView>(`${path}?brand=${brand.value}`)
+    const nextQmai = await apiGet<QmaiConfigView>(`${path}?brand=${requestedBrand}`)
+    if (serial !== qmaiLoadSerial || brand.value !== requestedBrand) return false
+    qmai.value = nextQmai
+    return true
   } catch {
-    qmai.value = null
+    // 同一品牌的后台同步失败时保留上次成功读取的配置状态。
+    return false
   }
 }
 
@@ -79,6 +89,7 @@ function switchBrand(k: BrandKey) {
     return
   }
   brand.value = k
+  clearRecipeUsage()
   qmai.value = null
   turnover.value = null
   turnoverError.value = ''
@@ -86,7 +97,7 @@ function switchBrand(k: BrandKey) {
   incomeError.value = ''
   itemShopFilter.value = ''
   activeTab.value = 'turnover'
-  loadQmai()
+  void loadLocalPlatformState()
 }
 
 function openModal() {
@@ -118,9 +129,10 @@ async function submit() {
   try {
     qmai.value = await apiPut<QmaiConfigView>(`/api/qmai/config?brand=${brand.value}`, { ...form })
     success.value = '企迈凭证已保存。'
+    markFresh()
     setTimeout(() => {
       closeModal()
-      loadTurnover()
+      if (!isConsoleBrand.value) void loadTurnover()
     }, 900)
   } catch (e) {
     error.value = e instanceof Error ? e.message : '保存失败，请稍后重试。'
@@ -308,7 +320,7 @@ function setSort(key: SortKey) {
 const sortArrow = (key: SortKey) =>
   sortKey.value === key ? (sortAsc.value ? ' ▲' : ' ▼') : ''
 
-/* ---------------- 企迈商品销售（同一次刷新的数据，切标签即看） ---------------- */
+/* ---------------- 企迈商品销售（同一次读取的数据，切标签即看） ---------------- */
 const activeTab = ref<'turnover' | 'items' | 'usage'>('turnover')
 const qmaiRecipeEnabled = import.meta.env.VITE_QMAI_RECIPE_ENABLED === 'true'
 
@@ -323,6 +335,12 @@ const itemShopOptions = computed(() => {
   }
   return [...seen.entries()].map(([code, name]) => ({ code, name }))
 })
+const searchableItemShopOptions = computed(() => itemShopOptions.value.map((shop) => ({
+  value: shop.code,
+  label: shop.name,
+  description: shop.code,
+  searchText: `${shop.name} ${shop.code}`,
+})))
 
 // 视图：summary=全门店按商品汇总（默认，直观看每个商品总共卖多少杯）；detail=门店×商品明细
 const itemView = ref<'summary' | 'detail'>('summary')
@@ -462,35 +480,66 @@ interface RecipeUsageSnapshot {
 const recipeUsage = ref<RecipeUsageSnapshot | null>(null)
 const recipeUsageLoading = ref(false)
 const recipeUsageError = ref('')
-const usageResult = computed(() => recipeUsage.value?.calculation ?? {
+const recipeUsageScopeKey = ref('')
+let recipeUsageLoadSerial = 0
+
+function recipeUsageKey(requestedBrand: BrandKey, requestedMonth: string) {
+  return `${requestedBrand}\u0000${requestedMonth}`
+}
+
+const currentRecipeUsageScopeKey = computed(() => recipeUsageKey(brand.value, month.value))
+const scopedRecipeUsage = computed(() =>
+  recipeUsageScopeKey.value === currentRecipeUsageScopeKey.value ? recipeUsage.value : null,
+)
+const usageResult = computed(() => scopedRecipeUsage.value?.calculation ?? {
   totalCups: 0,
   fruits: [] as RecipeUsageFruit[],
 })
 
 async function loadRecipeUsage() {
+  const serial = ++recipeUsageLoadSerial
+  const requestedBrand = brand.value
+  const requestedMonth = month.value
+  const requestedScopeKey = recipeUsageKey(requestedBrand, requestedMonth)
   recipeUsageLoading.value = true
   recipeUsageError.value = ''
   try {
-    recipeUsage.value = await apiGet<RecipeUsageSnapshot>(
-      `/api/qmai/recipe-usage?month=${encodeURIComponent(month.value)}&brand=${encodeURIComponent(brand.value)}`,
+    const nextRecipeUsage = await apiGet<RecipeUsageSnapshot>(
+      `/api/qmai/recipe-usage?month=${encodeURIComponent(requestedMonth)}&brand=${encodeURIComponent(requestedBrand)}`,
     )
+    if (serial !== recipeUsageLoadSerial || currentRecipeUsageScopeKey.value !== requestedScopeKey) {
+      return false
+    }
+    recipeUsage.value = nextRecipeUsage
+    recipeUsageScopeKey.value = requestedScopeKey
+    return true
   } catch (e) {
-    recipeUsage.value = null
-    recipeUsageError.value = e instanceof Error ? e.message : '读取配方用量快照失败。'
+    if (serial === recipeUsageLoadSerial && currentRecipeUsageScopeKey.value === requestedScopeKey) {
+      recipeUsageError.value = e instanceof Error ? e.message : '读取配方用量快照失败。'
+    }
+    return false
   } finally {
-    recipeUsageLoading.value = false
+    if (serial === recipeUsageLoadSerial) {
+      recipeUsageLoading.value = false
+    }
   }
 }
 
 function clearRecipeUsage() {
+  recipeUsageLoadSerial += 1
   recipeUsage.value = null
+  recipeUsageScopeKey.value = ''
+  recipeUsageLoading.value = false
   recipeUsageError.value = ''
 }
 
 function exportUsageExcel() {
-  if (!usageResult.value.fruits.length) return
+  if (recipeUsageScopeKey.value !== currentRecipeUsageScopeKey.value
+    || !scopedRecipeUsage.value?.calculation.fruits.length) return
+  const requestedBrand = brand.value
+  const requestedMonth = month.value
   void downloadServerCsv(
-    `/api/qmai/recipe-usage.csv?month=${encodeURIComponent(month.value)}&brand=${encodeURIComponent(brand.value)}`,
+    `/api/qmai/recipe-usage.csv?month=${encodeURIComponent(requestedMonth)}&brand=${encodeURIComponent(requestedBrand)}`,
     `${brandLabel.value}_物料用量测算_${monthLabel.value}.csv`,
   )
 }
@@ -503,30 +552,35 @@ function shiftMonth(delta: number) {
     return // 不查未来月份
   }
   month.value = next
-  refreshActive()
-}
-
-function refreshActive() {
+  clearRecipeUsage()
   if (isConsoleBrand.value) {
-    loadIncome()
-  } else if (activeTab.value === 'usage') {
-    loadRecipeUsage()
+    income.value = null
+    incomeError.value = ''
   } else {
-    loadTurnover()
+    turnover.value = null
+    void loadTurnover()
   }
 }
 
+function syncConsoleIncome() {
+  return loadIncome()
+}
+
 async function loadTurnover() {
+  const serial = ++turnoverLoadSerial
+  const requestedMonth = month.value
+  const requestedBrand = brand.value
   turnoverLoading.value = true
   turnoverError.value = ''
   try {
-    const query = `month=${encodeURIComponent(month.value)}&brand=${encodeURIComponent(brand.value)}`
+    const query = `month=${encodeURIComponent(requestedMonth)}&brand=${encodeURIComponent(requestedBrand)}`
     const [revenueRows, productRows] = await Promise.all([
       apiGet<QmaiRevenueRow[]>(`/api/qmai/revenue?${query}`),
       apiGet<QmaiProductRow[]>(`/api/qmai/products?${query}`),
     ])
+    if (serial !== turnoverLoadSerial || month.value !== requestedMonth || brand.value !== requestedBrand) return false
     const shops = revenueRows.map((row) => ({
-      shopCode: row.storeId, shopName: row.storeId, bizDate: month.value,
+      shopCode: row.storeId, shopName: row.storeId, bizDate: requestedMonth,
       validOrderCount: row.orderCount, totalAmountSum: row.revenue, incomeSum: row.revenue,
       costSum: row.cost, refundSum: row.refund, profitSum: row.revenue - row.cost - row.refund,
     }))
@@ -545,10 +599,14 @@ async function loadTurnover() {
       profit: shops.reduce((sum, row) => sum + row.profitSum, 0),
       orderCount: shops.reduce((sum, row) => sum + row.validOrderCount, 0), shops, items,
     }
+    return true
   } catch (e) {
-    turnoverError.value = e instanceof Error ? e.message : '拉取营业额失败。'
+    if (serial === turnoverLoadSerial && month.value === requestedMonth && brand.value === requestedBrand) {
+      turnoverError.value = e instanceof Error ? e.message : '读取营业额失败。'
+    }
+    return false
   } finally {
-    turnoverLoading.value = false
+    if (serial === turnoverLoadSerial) turnoverLoading.value = false
   }
 }
 
@@ -599,7 +657,25 @@ function exportActive() {
   }
 }
 
-onMounted(loadQmai)
+async function loadLocalPlatformState() {
+  const qmaiLoaded = await loadQmai()
+  if (isConsoleBrand.value) return qmaiLoaded
+  const turnoverLoaded = await loadTurnover()
+  return qmaiLoaded && turnoverLoaded
+}
+
+const { markFresh } = useForegroundReload(loadLocalPlatformState, {
+  canReload: () => !modalOpen.value
+    && !saving.value
+    && !anyLoading.value
+    && !recipeUsageLoading.value,
+})
+
+onMounted(() => {
+  void loadLocalPlatformState().then((loaded) => {
+    if (loaded) markFresh()
+  })
+})
 </script>
 
 <template>
@@ -666,8 +742,8 @@ onMounted(loadQmai)
           <span class="month-label">{{ monthLabel }}</span>
           <button :disabled="anyLoading || isCurrentMonthOrLater" @click="shiftMonth(1)">下一月 ▶</button>
           <button :disabled="anyLoading || isCurrentMonthOrLater" @click="shiftMonth(12)">下一年 ▶▶</button>
-          <button class="refresh" :disabled="anyLoading" @click="refreshActive">
-            {{ anyLoading ? '加载中…' : '刷新' }}
+          <button v-if="isConsoleBrand" class="sync-action" :disabled="anyLoading" @click="syncConsoleIncome">
+            {{ anyLoading ? '同步中…' : '同步企迈数据' }}
           </button>
           <button
             class="export"
@@ -704,7 +780,7 @@ onMounted(loadQmai)
         </div>
         <p v-if="incomeError" class="msg warn-text">{{ incomeError }}</p>
         <p v-else-if="incomeLoading" class="msg muted">正在从企迈后台拉取 {{ monthLabel }} 营业额…（约 5~15 秒）</p>
-        <p v-else-if="!income" class="msg muted">选择月份后点「刷新」拉取该月营业额（按支付渠道）。</p>
+        <p v-else-if="!income" class="msg muted">选择月份后点击“同步企迈数据”，拉取该月营业额（按支付渠道）。</p>
         <table v-if="income?.channels?.length" class="turnover-table">
           <thead>
             <tr>
@@ -756,10 +832,10 @@ onMounted(loadQmai)
 
       <p v-if="turnoverError" class="msg warn-text">{{ turnoverError }}</p>
       <p v-else-if="turnoverLoading" class="msg muted">
-        正在拉取 {{ monthLabel }} 全部门店营业额与商品销量…（整月门店多，约需 1~3 分钟，请稍候）
+        正在读取 {{ monthLabel }} 全部门店营业额与商品销量…
       </p>
       <p v-else-if="!turnover" class="msg muted">
-        选择月份后点「刷新」查询该月全部门店营业额与商品销量（整月约需 1~3 分钟）。
+        系统会自动读取该月已经导入的企迈营业额与商品销量。
       </p>
 
       <template v-if="activeTab === 'turnover'">
@@ -800,10 +876,15 @@ onMounted(loadQmai)
           </div>
           <label>
             门店：
-            <select v-model="itemShopFilter">
-              <option value="">全部门店</option>
-              <option v-for="s in itemShopOptions" :key="s.code" :value="s.code">{{ s.name }}</option>
-            </select>
+            <SearchableSingleSelect
+              v-model="itemShopFilter"
+              :options="searchableItemShopOptions"
+              empty-option-label="全部门店"
+              empty-value=""
+              placeholder="全部门店"
+              search-placeholder="搜索企迈门店名称或编码"
+              aria-label="企迈商品门店筛选"
+            />
           </label>
           <div class="view-toggle">
             <button :class="{ active: itemScope === 'drink' }" @click="itemScope = 'drink'">饮品</button>
@@ -871,14 +952,14 @@ onMounted(loadQmai)
           </tbody>
         </table>
         <p v-else-if="turnover && !turnoverLoading && !turnoverError" class="msg muted">
-          所选时间范围内暂无商品销售数据（旧数据请点「刷新」重新拉取）。
+          所选时间范围内的本地企迈快照暂无商品销售数据。
         </p>
       </template>
 
       <template v-else-if="activeTab === 'usage'">
         <div class="items-toolbar">
-          <button class="refresh" :disabled="recipeUsageLoading" @click="loadRecipeUsage">
-            {{ recipeUsageLoading ? '生成中…' : `按 ${monthLabel} 销量生成快照` }}
+          <button class="snapshot-action" :disabled="recipeUsageLoading" @click="loadRecipeUsage">
+            {{ recipeUsageLoading ? '生成中…' : '生成月度用量快照' }}
           </button>
           <button @click="clearRecipeUsage">清空</button>
           <span class="msg muted">配方目录、单杯克重和折算系数由服务端按租户与品牌管理；浏览器不可编辑。</span>
@@ -888,7 +969,7 @@ onMounted(loadQmai)
 
         <template v-if="usageResult.fruits.length">
           <h4 class="usage-title">
-            水果采购测算 · {{ recipeUsage?.matchedProductCount || 0 }} 个匹配商品 · {{ qtyFmt(usageResult.totalCups) }} 杯
+            水果采购测算 · {{ scopedRecipeUsage?.matchedProductCount || 0 }} 个匹配商品 · {{ qtyFmt(usageResult.totalCups) }} 杯
           </h4>
           <table class="turnover-table">
             <thead>
@@ -1122,6 +1203,10 @@ onMounted(loadQmai)
   background: #fff;
 }
 
+.items-toolbar :deep(.searchable-single-select) {
+  width: min(220px, 72vw);
+}
+
 .range-tabs {
   display: flex;
   gap: 6px;
@@ -1190,7 +1275,7 @@ onMounted(loadQmai)
   cursor: pointer;
 }
 
-.items-toolbar button.refresh {
+.items-toolbar button.snapshot-action {
   background: #2563eb;
   border-color: #2563eb;
   color: #fff;
@@ -1222,7 +1307,7 @@ td.muted {
   color: #fff;
 }
 
-.range-tabs button.refresh {
+.range-tabs button.sync-action {
   margin-left: 8px;
 }
 

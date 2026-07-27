@@ -1,42 +1,49 @@
 ﻿<script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { RefreshCw } from 'lucide-vue-next'
 import PageHeader from '../components/common/PageHeader.vue'
 import { getAuditLogs, type OperationLog } from '../api/operations'
+import { useForegroundReload } from '../composables/useForegroundReload'
 import { formatAuditAction, formatAuditReason, formatAuditTarget, rawAuditTarget } from '../utils/auditLogDisplay'
 
 const logs = ref<OperationLog[]>([])
 const loading = ref(false)
 const error = ref('')
 
-async function load() {
+const { markFresh } = useForegroundReload(async () => {
+  const loaded = await loadLogs()
+  if (!loaded) throw new Error(error.value || '操作日志加载失败')
+}, {
+  canReload: () => !loading.value,
+})
+
+async function loadLogs() {
   loading.value = true
   error.value = ''
   try {
     logs.value = await getAuditLogs(120)
+    markFresh()
+    return true
   } catch (loadError) {
     error.value = loadError instanceof Error ? loadError.message : '操作日志加载失败'
+    return false
   } finally {
     loading.value = false
   }
 }
 
 onMounted(() => {
-  void load()
+  void loadLogs()
 })
 </script>
 
 <template>
   <section class="page-panel logs-page">
-    <PageHeader>
-      <template #actions>
-        <button class="ghost-button" type="button" :disabled="loading" @click="load">
-          <RefreshCw :size="16" />刷新
-        </button>
-      </template>
-    </PageHeader>
+    <PageHeader />
 
-    <div v-if="error" class="error-box">{{ error }}</div>
+    <div v-if="error" class="error-box logs-error" role="alert">
+      <span>{{ error }}</span>
+      <button type="button" :disabled="loading" @click="loadLogs">重试</button>
+    </div>
     <div v-if="loading && !logs.length" class="empty-state">正在读取操作日志...</div>
 
     <section v-else class="content-card">
@@ -77,6 +84,21 @@ onMounted(() => {
 .logs-page {
   display: grid;
   gap: 18px;
+}
+
+.logs-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.logs-error button {
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: currentColor;
+  font-weight: 700;
 }
 
 </style>

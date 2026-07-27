@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import { Check, ChevronDown, Download, Eye, Filter, UserPlus } from 'lucide-vue-next'
 import {
   approveSalaryRecord, assignSalaryEmployee, getSalaryAssignmentCandidates, getSalaryBusinessMetrics,
@@ -7,9 +8,11 @@ import {
   type SalaryAssignmentCandidate, type SalaryBusinessMetrics, type SalaryRecord, type SalaryRecordPayload,
 } from '../../api/finance'
 import { ApiError } from '../../api/http'
+import { useForegroundReload } from '../../composables/useForegroundReload'
 import { isHourlySalaryRecord, useSalaryPage, money, userError, wholeNumber } from '../../composables/useSalaryPage'
 import { useSalaryWorkflow } from '../../composables/useSalaryWorkflow'
 import SearchInput from '../common/SearchInput.vue'
+import SearchableSingleSelect from '../common/SearchableSingleSelect.vue'
 import SalarySummary from './SalarySummary.vue'
 import SalaryTable from './SalaryTable.vue'
 import SalaryGenerationDialog from './SalaryGenerationDialog.vue'
@@ -22,6 +25,9 @@ const props = withDefaults(defineProps<{
   initialMonth?: string
   embedded?: boolean
 }>(), { initialStoreId: '', initialMonth: '', embedded: false })
+const emit = defineEmits<{
+  dirtyChange: [dirty: boolean]
+}>()
 
 const STATUS_OPTIONS = [
   { value: '', label: '全部状态' }, { value: 'PENDING_GENERATION', label: '待生成' },
@@ -33,6 +39,7 @@ const STATUS_OPTIONS = [
 const page = useSalaryPage()
 const actionError = ref('')
 const businessMetrics = ref<SalaryBusinessMetrics | null>(null)
+const businessMetricsScopeKey = ref('')
 const businessMetricsLoading = ref(false)
 const businessMetricsError = ref('')
 const selectedRowKey = ref('')
@@ -46,6 +53,10 @@ const addEmployeeLoading = ref(false)
 const addEmployeeSaving = ref(false)
 const addEmployeeError = ref('')
 const initialScopeBlocked = ref(false)
+const salaryDetailDirty = ref(false)
+const salaryDiscardOpen = ref(false)
+let pendingSalaryDiscardAction: (() => void) | null = null
+let pendingSalaryDiscardCancel: (() => void) | null = null
 let businessMetricsRequestController: AbortController | null = null
 
 const workflow = useSalaryWorkflow({
@@ -57,7 +68,7 @@ const workflow = useSalaryWorkflow({
   canEdit: page.canEdit,
   pageError: actionError,
   successMessage: page.successMessage,
-  loadPage: () => reloadSalaryData(),
+  loadPage: async () => { await reloadSalaryData() },
   onDeleted: (record) => {
     if (selectedRowKey.value === rowKey(record)) selectedRowKey.value = ''
     const nextCheckedIds = new Set(checkedIds.value)
@@ -66,23 +77,57 @@ const workflow = useSalaryWorkflow({
   },
 })
 
+const { markFresh } = useForegroundReload(async () => {
+  const loaded = await reloadSalaryData(page.page.value, {
+    protectUnsavedDetail: true,
+  })
+  if (!loaded) throw new Error(page.error.value || businessMetricsError.value || '工资数据加载失败')
+}, {
+  canReload: () => !page.initializing.value
+    && !initialScopeBlocked.value
+    && !page.loading.value
+    && !businessMetricsLoading.value
+    && !workflow.actioningId.value
+    && !salaryDetailDirty.value
+    && !workflow.showPreview.value
+    && !workflow.actionConfirmation.value
+    && !batchApprovalOpen.value
+    && !addEmployeeOpen.value,
+})
+
 const title = computed(() => {
   if (page.isStoreManager.value) return `${page.selectedStoreName.value} · 员工工资`
   return page.selectedStoreId.value === 'all'
     ? '员工工资表'
     : `${page.selectedStoreName.value} · 员工工资表`
 })
+const salaryStoreOptions = computed(() => page.filteredAccessibleStores.value.map((store) => ({
+  value: store.id,
+  label: `${store.brandName ? `${store.brandName} · ` : ''}${store.name || store.id}`,
+  description: [store.code, store.area || store.regionCode, store.status].filter(Boolean).join(' · '),
+  searchText: [store.name, store.code, store.area, store.regionCode, store.status, store.brandName].filter(Boolean).join(' '),
+})))
 const selectedRecord = computed(() => page.filteredRows.value.find((row) => rowKey(row) === selectedRowKey.value) || null)
 const grossTotal = computed(() => Number(page.summary.value?.grossTotal || 0))
 const totalHours = computed(() => Number(page.pageData.value?.workHoursTotal || 0))
 const vacationBalance = computed(() => Number(page.pageData.value?.vacationBalanceTotal || 0))
 const employeeCount = computed(() => page.employeeCount.value)
-const revenue = computed(() => metricNumber(businessMetrics.value?.revenue))
-const effectiveHours = computed(() => metricNumber(businessMetrics.value?.effectiveHours))
-const revenuePerHour = computed(() => metricNumber(businessMetrics.value?.hourlyRevenue))
-const perCapitaOutput = computed(() => metricNumber(businessMetrics.value?.perCapitaOutput))
-const commissionTotal = computed(() => metricNumber(businessMetrics.value?.commissionTotal))
-const storeFund = computed(() => metricNumber(businessMetrics.value?.storeFund))
+const currentBusinessMetricsScopeKey = computed(() => JSON.stringify([
+  page.effectiveStoreId.value,
+  page.selectedMonth.value,
+  page.effectiveBrandId.value ?? '',
+]))
+const visibleBusinessMetrics = computed(() => (
+  businessMetricsScopeKey.value === currentBusinessMetricsScopeKey.value
+    ? businessMetrics.value
+    : null
+))
+const revenue = computed(() => metricNumber(visibleBusinessMetrics.value?.revenue))
+const effectiveHours = computed(() => metricNumber(visibleBusinessMetrics.value?.effectiveHours))
+const revenuePerHour = computed(() => metricNumber(visibleBusinessMetrics.value?.hourlyRevenue))
+const perCapitaOutput = computed(() => metricNumber(visibleBusinessMetrics.value?.perCapitaOutput))
+const commissionTotal = computed(() => metricNumber(visibleBusinessMetrics.value?.commissionTotal))
+const storeFund = computed(() => metricNumber(visibleBusinessMetrics.value?.storeFund))
 const efficiencyRatio = computed(() => revenue.value !== null && revenue.value > 0 ? grossTotal.value / revenue.value : null)
 const canAddEmployee = computed(() => page.canEdit.value
   && page.hasValidMonth.value
@@ -90,6 +135,53 @@ const canAddEmployee = computed(() => page.canEdit.value
   && page.effectiveStoreId.value !== 'all'
   && page.isEffectiveStoreActive.value
   && !initialScopeBlocked.value)
+const salaryMonthModel = computed({
+  get: () => page.selectedMonth.value,
+  set: (value: string) => requestSalaryDiscard(() => { page.selectedMonth.value = value }),
+})
+const salaryStoreModel = computed({
+  get: () => page.selectedStoreId.value,
+  set: (value: string) => requestSalaryDiscard(() => { page.selectedStoreId.value = value }),
+})
+const salaryStatusModel = computed({
+  get: () => page.statusFilter.value,
+  set: (value: string) => requestSalaryDiscard(() => { page.statusFilter.value = value }),
+})
+const salaryKeywordModel = computed({
+  get: () => page.keyword.value,
+  set: (value: string) => requestSalaryDiscard(() => { page.keyword.value = value }),
+})
+
+function requestSalaryDiscard(action: () => void, cancel: () => void = () => {}) {
+  if (!salaryDetailDirty.value) {
+    action()
+    return
+  }
+  if (salaryDiscardOpen.value) {
+    cancel()
+    return
+  }
+  pendingSalaryDiscardAction = action
+  pendingSalaryDiscardCancel = cancel
+  salaryDiscardOpen.value = true
+}
+
+function keepSalaryEditing() {
+  const cancel = pendingSalaryDiscardCancel
+  pendingSalaryDiscardAction = null
+  pendingSalaryDiscardCancel = null
+  salaryDiscardOpen.value = false
+  cancel?.()
+}
+
+function discardSalaryChanges() {
+  const action = pendingSalaryDiscardAction
+  pendingSalaryDiscardAction = null
+  pendingSalaryDiscardCancel = null
+  salaryDiscardOpen.value = false
+  selectedRowKey.value = ''
+  action?.()
+}
 
 function metricNumber(value: number | null | undefined) {
   if (value === null || value === undefined) return null
@@ -102,8 +194,9 @@ function revenueMoney(value: number) {
 }
 
 function metricReason(kind: 'revenue' | 'hours' | 'output' | 'fund') {
-  if (businessMetricsLoading.value) return '加载中'
+  if (businessMetricsLoading.value && !visibleBusinessMetrics.value) return '加载中'
   if (businessMetricsError.value) return businessMetricsError.value
+  if (businessMetricsLoading.value) return '正在同步最新数据'
   if (revenue.value === null) return '当前范围缺少营业额'
   if (kind === 'revenue' && revenue.value <= 0) return '当前范围营业额为0'
   if (kind === 'hours' && (effectiveHours.value === null || effectiveHours.value <= 0)) return '当前范围缺少有效工时'
@@ -115,13 +208,15 @@ function metricReason(kind: 'revenue' | 'hours' | 'output' | 'fund') {
 async function loadBusinessMetrics() {
   businessMetricsRequestController?.abort()
   const controller = new AbortController()
+  const requestScopeKey = currentBusinessMetricsScopeKey.value
   businessMetricsRequestController = controller
-  businessMetrics.value = null
   businessMetricsError.value = ''
   if (!page.hasValidMonth.value || !page.isEffectiveStoreActive.value || initialScopeBlocked.value) {
+    businessMetrics.value = null
+    businessMetricsScopeKey.value = ''
     businessMetricsRequestController = null
     businessMetricsLoading.value = false
-    return
+    return false
   }
   businessMetricsLoading.value = true
   try {
@@ -130,11 +225,16 @@ async function loadBusinessMetrics() {
       storeId: page.effectiveStoreId.value === 'all' ? undefined : page.effectiveStoreId.value,
       brandId: page.effectiveBrandId.value,
     }, controller.signal)
-    if (controller.signal.aborted) return
+    if (controller.signal.aborted || requestScopeKey !== currentBusinessMetricsScopeKey.value) return false
     businessMetrics.value = metrics
+    businessMetricsScopeKey.value = requestScopeKey
+    return true
   } catch (error) {
-    if (error instanceof ApiError && error.code === 'REQUEST_CANCELLED') return
-    businessMetricsError.value = '工资经营指标暂时无法获取'
+    if (controller.signal.aborted || (error instanceof ApiError && error.code === 'REQUEST_CANCELLED')) return false
+    if (requestScopeKey === currentBusinessMetricsScopeKey.value) {
+      businessMetricsError.value = '工资经营指标暂时无法获取'
+    }
+    return false
   } finally {
     if (businessMetricsRequestController === controller) {
       businessMetricsRequestController = null
@@ -143,9 +243,35 @@ async function loadBusinessMetrics() {
   }
 }
 
-async function reloadSalaryData(p = page.page.value) {
-  await page.loadPage(p)
-  await loadBusinessMetrics()
+async function reloadSalaryData(
+  p = page.page.value,
+  options: { protectUnsavedDetail?: boolean } = {},
+) {
+  const pageLoaded = await page.loadPage(p, {
+    canApply: options.protectUnsavedDetail
+      ? () => !salaryDetailDirty.value
+      : undefined,
+  })
+  if (!pageLoaded) return false
+  if (options.protectUnsavedDetail && salaryDetailDirty.value) return false
+  const metricsLoaded = await loadBusinessMetrics()
+  if (!metricsLoaded) return false
+  markFresh()
+  return true
+}
+
+async function loadSalaryPage(p: number) {
+  const pageLoaded = await page.loadPage(p)
+  if (!pageLoaded) return
+  markFresh()
+}
+
+function requestSalaryPage(p: number) {
+  requestSalaryDiscard(() => { void loadSalaryPage(p) })
+}
+
+async function retrySalaryData() {
+  await reloadSalaryData()
 }
 
 function applyInitialScope() {
@@ -160,6 +286,7 @@ function applyInitialScope() {
   initialScopeBlocked.value = true
   page.pageData.value = null
   businessMetrics.value = null
+  businessMetricsScopeKey.value = ''
   actionError.value = '该门店已停用或不在当前工资权限范围内，不能继续查看或编辑工资。'
 }
 
@@ -284,7 +411,11 @@ async function confirmBatchApproval() {
 }
 
 function rowKey(record: SalaryRecord) { return record.id || `employee:${record.employeeId || `${record.storeId}:${record.employeeName}`}` }
-function selectRecord(record: SalaryRecord) { selectedRowKey.value = rowKey(record) }
+function selectRecord(record: SalaryRecord) {
+  const nextRowKey = rowKey(record)
+  if (nextRowKey === selectedRowKey.value) return
+  requestSalaryDiscard(() => { selectedRowKey.value = nextRowKey })
+}
 function toggleRow(record: SalaryRecord, checked: boolean) {
   const next = new Set(checkedIds.value)
   if (checked) next.add(record.id); else next.delete(record.id)
@@ -354,6 +485,12 @@ watch([page.effectiveStoreId, page.selectedMonth, page.effectiveBrandId], () => 
   if (page.initializing.value) return
   void loadBusinessMetrics()
 })
+watch([page.loading, businessMetricsLoading], ([pageLoading, metricsLoading]) => {
+  if (!pageLoading && !metricsLoading && page.pageData.value && !page.error.value && !businessMetricsError.value) {
+    markFresh()
+  }
+})
+watch(salaryDetailDirty, (dirty) => emit('dirtyChange', dirty), { immediate: true })
 watch(() => [props.initialStoreId, props.initialMonth], applyInitialScope)
 
 onMounted(async () => {
@@ -362,8 +499,18 @@ onMounted(async () => {
   applyInitialScope()
   page.initializing.value = false
   if (initialScopeBlocked.value) return
-  await page.reloadScopeData(1)
-  await loadBusinessMetrics()
+  await reloadSalaryData(1)
+})
+
+onBeforeRouteLeave(() => {
+  if (!salaryDetailDirty.value) return true
+  if (salaryDiscardOpen.value) return false
+  return new Promise<boolean>((resolve) => {
+    requestSalaryDiscard(
+      () => resolve(true),
+      () => resolve(false),
+    )
+  })
 })
 </script>
 
@@ -372,12 +519,21 @@ onMounted(async () => {
     <header class="salary-page-head">
       <div class="title-block"><h1>{{ title }}</h1><span>{{ page.selectedMonth.value }} · {{ page.total.value }} 名员工</span></div>
       <div class="head-controls">
-        <input v-model="page.selectedMonth.value" type="month" aria-label="月份" />
-          <select v-if="!page.isStoreManager.value" v-model="page.selectedStoreId.value" :disabled="page.storesLoading.value || page.isOwnStoreScope.value" aria-label="门店">
-            <option v-if="!page.isOwnStoreScope.value" value="all">全部授权门店</option>
-          <option v-for="store in page.filteredAccessibleStores.value" :key="store.id" :value="store.id">{{ store.name }}</option>
-        </select>
-        <select v-model="page.statusFilter.value" aria-label="工资状态"><option v-for="option in STATUS_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option></select>
+        <input v-model="salaryMonthModel" type="month" aria-label="月份" />
+        <SearchableSingleSelect
+          v-if="!page.isStoreManager.value"
+          :model-value="salaryStoreModel"
+          :options="salaryStoreOptions"
+          :disabled="page.storesLoading.value || page.isOwnStoreScope.value"
+          :loading="page.storesLoading.value"
+          :empty-option-label="page.isOwnStoreScope.value ? undefined : '全部授权门店'"
+          empty-value="all"
+          placeholder="请选择门店"
+          search-placeholder="搜索门店名称、编号或区域"
+          aria-label="门店"
+          @update:model-value="salaryStoreModel = String($event)"
+        />
+        <select v-model="salaryStatusModel" aria-label="工资状态"><option v-for="option in STATUS_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option></select>
         <button
           v-if="page.canEdit.value"
           class="add-person-button"
@@ -398,7 +554,7 @@ onMounted(async () => {
 
     <div v-if="page.error.value" class="page-error" role="alert">
       <span>{{ page.error.value }}</span>
-      <button type="button" @click="page.loadPage(page.page.value)">重新加载</button>
+      <button type="button" :disabled="page.loading.value" @click="retrySalaryData">重试</button>
     </div>
     <div v-if="actionError" class="inline-error" role="status">{{ actionError }}</div>
     <div v-if="page.storesError.value && !page.isStoreManager.value" class="aux-warning" role="status">
@@ -413,7 +569,7 @@ onMounted(async () => {
     />
 
     <section class="business-metrics">
-      <article><span>当月营业额</span><b>{{ businessMetricsLoading ? '--' : revenue === null ? '--' : revenueMoney(revenue) }}</b><small><span>{{ metricReason('revenue') || '直接去除小数，不四舍五入' }}</span><button v-if="businessMetricsError" type="button" @click="loadBusinessMetrics">重试</button></small></article>
+      <article><span>当月营业额</span><b>{{ revenue === null ? '--' : revenueMoney(revenue) }}</b><small><span>{{ metricReason('revenue') || '直接去除小数，不四舍五入' }}</span><button v-if="businessMetricsError" type="button" @click="loadBusinessMetrics">重试</button></small></article>
       <article><span>人工占比</span><b>{{ efficiencyRatio === null ? '--' : `${(efficiencyRatio * 100).toFixed(1)}%` }}</b><small><span>{{ metricReason('revenue') || `应发 ${money(grossTotal)} ÷ 营业额` }}</span><button v-if="businessMetricsError" type="button" @click="loadBusinessMetrics">重试</button></small></article>
       <article><span>每小时营业额</span><b>{{ revenuePerHour === null ? '--' : money(revenuePerHour) }}</b><small><span>{{ metricReason('hours') || `正常工时＋加班工时，兼职/实习折半${effectiveHours === null ? '' : `（${wholeNumber(effectiveHours)}小时）`}` }}</span><button v-if="businessMetricsError" type="button" @click="loadBusinessMetrics">重试</button></small></article>
       <article><span>人均月产值</span><b>{{ perCapitaOutput === null ? '--' : money(perCapitaOutput) }}</b><small><span>{{ metricReason('output') || '每小时营业额 × 26天 × 8小时' }}</span><button v-if="businessMetricsError" type="button" @click="loadBusinessMetrics">重试</button></small></article>
@@ -430,7 +586,7 @@ onMounted(async () => {
     </details>
 
     <div class="table-tools">
-      <SearchInput v-model="page.keyword.value" class="salary-search" placeholder="搜索姓名、工号或岗位" aria-label="搜索工资记录" />
+      <SearchInput v-model="salaryKeywordModel" class="salary-search" placeholder="搜索姓名、工号或岗位" aria-label="搜索工资记录" />
       <div>
         <button v-if="page.canReview.value" class="batch-button" :disabled="checkedIds.size === 0" @click="batchApprove"><Check :size="16" />批量审核</button>
         <button class="filter-button"><Filter :size="16" />筛选</button>
@@ -443,7 +599,7 @@ onMounted(async () => {
         :total-pages="page.totalPages.value" :loading="page.loading.value"
         :selected-row-key="selectedRowKey" :checked-ids="checkedIds"
         :can-edit="page.canEdit.value" :deleting-id="workflow.deletingId.value"
-        @page-change="page.loadPage($event)" @select="selectRecord" @delete="workflow.doDelete" @toggle-row="toggleRow" @toggle-all="toggleAll"
+        @page-change="requestSalaryPage" @select="selectRecord" @delete="workflow.doDelete" @toggle-row="toggleRow" @toggle-all="toggleAll"
       />
       <SalaryDetailPanel
         :record="selectedRecord" :revenue="revenue ?? 0" :can-edit="page.canEdit.value" :can-review="page.canReview.value" :can-pay="page.canPay.value"
@@ -452,6 +608,7 @@ onMounted(async () => {
         @preview="previewGeneration"
         @save-attendance="saveAttendance"
         @save-details="saveDetails"
+        @dirty-change="salaryDetailDirty = $event"
       />
     </section>
 
@@ -498,6 +655,16 @@ onMounted(async () => {
       @cancel="cancelBatchApproval"
       @confirm="confirmBatchApproval"
     />
+
+    <ActionConfirmDialog
+      :open="salaryDiscardOpen"
+      title="放弃未保存的工资修改？"
+      message="切换筛选、记录或离开页面后，当前尚未保存的工资修改将不会保留。"
+      confirm-label="放弃修改"
+      confirm-variant="danger"
+      @cancel="keepSalaryEditing"
+      @confirm="discardSalaryChanges"
+    />
   </div>
 </template>
 
@@ -507,6 +674,9 @@ onMounted(async () => {
 .title-block h1 { margin: 0; color: #182424; font-size: 23px; line-height: 1.25; }.title-block span { display: block; margin-top: 5px; color: #6f817f; font-size: 13px; }
 .head-controls { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
 .head-controls input,.head-controls select { height: 36px; min-width: 132px; padding: 0 11px; border: 1px solid #d8e4e2; border-radius: 5px; background: #fff; color: #314543; font-size: 14px; }
+.head-controls :deep(.searchable-single-select) { min-width: 210px; }
+.head-controls :deep(.searchable-single-select__control) { min-height: 36px; }
+.head-controls :deep(.searchable-single-select__control input) { height: 34px; min-width: 0; }
 .head-controls button,.table-tools button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 0 15px; border-radius: 5px; font-size: 14px; font-weight: 600; cursor: pointer; }
 .primary-button { width: auto; min-height: 36px; margin: 0; padding: 0 15px; border: 1px solid #276b65; border-radius: 5px; background: #276b65; color: #fff; }.export-button,.batch-button,.add-person-button { border: 1px solid #4f948e; background: #fff; color: #276b65; }.head-controls button:disabled,.table-tools button:disabled { opacity: .5; cursor: default; }
 .business-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { ClipboardCheck, RefreshCw } from 'lucide-vue-next'
+import { ClipboardCheck } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 import { getInspectionRecords, type InspectionRecord } from '../../api/inspection'
 import { inspectionScoreView } from '../../utils/inspectionScore'
@@ -72,7 +72,7 @@ watch(() => props.storeId, () => void loadLatest(), { immediate: true })
     <div class="inspection-heading">
       <div class="inspection-title"><ClipboardCheck :size="19" /><h3>最近督导巡查</h3></div>
       <button v-if="error" class="mini-button" type="button" :disabled="loading" @click="loadLatest">
-        <RefreshCw :size="14" />重试
+        重试
       </button>
     </div>
     <div v-if="loading" class="inspection-empty">正在读取最近巡查...</div>

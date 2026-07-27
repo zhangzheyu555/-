@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { Home, Pencil, Plus, Power, RefreshCw, Search, X } from 'lucide-vue-next'
+import { Home, Pencil, Plus, Power, Search, X } from 'lucide-vue-next'
 import {
   createStore,
   getBrands,
@@ -15,7 +15,9 @@ import {
 } from '../api/operations'
 import BrandBadge from '../components/common/BrandBadge.vue'
 import PageHeader from '../components/common/PageHeader.vue'
+import SearchableSingleSelect from '../components/common/SearchableSingleSelect.vue'
 import ActionConfirmDialog from '../components/ui/ActionConfirmDialog.vue'
+import { useForegroundReload } from '../composables/useForegroundReload'
 import { isBossRole } from '../permissions/roles'
 import { useAuthStore } from '../stores/auth'
 import { normalizeBrandName } from '../utils/brand'
@@ -92,6 +94,33 @@ const filteredStores = computed(() => {
 const costAccountOptions = computed(() => archiveOptions.value.costAccounts.filter(
   (option) => option.storeId !== editingStore.value?.id,
 ))
+const searchableCostAccountOptions = computed(() => {
+  const options = [
+    {
+      value: 'SELF',
+      label: '本门店独立成本账',
+      description: '成本单独核算',
+      searchText: '本门店 独立 成本账',
+    },
+    ...costAccountOptions.value.map((account) => ({
+      value: account.storeId,
+      label: account.storeName,
+      description: [account.storeCode, account.status].filter(Boolean).join(' · '),
+      searchText: [account.storeName, account.storeCode, account.status].filter(Boolean).join(' '),
+    })),
+  ]
+  const current = form.costAccountStoreId
+  if (current && !options.some((option) => option.value === current)) {
+    const store = stores.value.find((candidate) => candidate.id === current)
+    options.push({
+      value: current,
+      label: store?.name || editingStore.value?.costAccountStoreName || current,
+      description: '当前历史成本账归属',
+      searchText: `${store?.name || editingStore.value?.costAccountStoreName || ''} ${current}`,
+    })
+  }
+  return options
+})
 const confirmTitle = computed(() => {
   const store = confirmTarget.value
   if (!store) return ''
@@ -130,7 +159,7 @@ function validContact(value: string) {
     || /^[48]00-?\d{3}-?\d{4}$/.test(normalized)
 }
 
-async function load() {
+async function loadStores() {
   loading.value = true
   error.value = ''
   try {
@@ -142,12 +171,21 @@ async function load() {
     stores.value = storeRows
     brands.value = brandRows
     archiveOptions.value = normalizeArchiveOptions(optionRows)
+    markFresh()
+    return true
   } catch (loadError) {
     error.value = loadError instanceof Error ? loadError.message : '门店管理加载失败'
+    return false
   } finally {
     loading.value = false
   }
 }
+
+const { markFresh } = useForegroundReload(async () => {
+  if (!await loadStores()) throw new Error('门店档案暂时不可用')
+}, {
+  canReload: () => !loading.value && !saving.value && !editorOpen.value && !confirmTarget.value,
+})
 
 function brandName(id: number) {
   return normalizeBrandName(brands.value.find((brand) => brand.id === id)?.name || '-')
@@ -241,7 +279,7 @@ async function saveEditor() {
     editorOpen.value = false
     editingStore.value = null
     Object.assign(form, emptyForm())
-    await load()
+    await loadStores()
   } catch (saveError) {
     error.value = saveError instanceof Error ? saveError.message : '门店档案保存失败'
   } finally {
@@ -267,7 +305,7 @@ async function confirmStoreAction() {
     await updateStoreStatus(store.id, nextStatus, Number(store.version || 0))
     notice.value = `门店“${store.name}”已${active ? '停用' : '启用'}。`
     confirmTarget.value = null
-    await load()
+    await loadStores()
   } catch (actionError) {
     error.value = actionError instanceof Error ? actionError.message : '门店状态变更失败'
   } finally {
@@ -276,7 +314,7 @@ async function confirmStoreAction() {
 }
 
 onMounted(() => {
-  void load()
+  void loadStores()
 })
 </script>
 
@@ -294,14 +332,14 @@ onMounted(() => {
           >
             <Plus :size="16" />新增门店
           </button>
-          <button class="ghost-button" type="button" :disabled="loading" @click="load">
-            <RefreshCw :size="16" />刷新
-          </button>
         </div>
       </template>
     </PageHeader>
 
-    <div v-if="error && !editorOpen" class="error-box">{{ error }}</div>
+    <div v-if="error && !editorOpen" class="error-box page-load-error">
+      <span>{{ error }}</span>
+      <button class="ghost-button" type="button" :disabled="loading" @click="loadStores">重试</button>
+    </div>
     <div v-if="notice" class="success-box">{{ notice }}</div>
 
     <div class="metric-grid">
@@ -490,17 +528,14 @@ onMounted(() => {
               </label>
               <label>
                 成本账归属
-                <select v-model="form.costAccountStoreId" required>
-                  <option value="" disabled>请选择成本账归属</option>
-                  <option value="SELF">本门店独立成本账</option>
-                  <option
-                    v-for="account in costAccountOptions"
-                    :key="account.storeId"
-                    :value="account.storeId"
-                  >
-                    {{ account.storeName }}（{{ account.storeCode }}）
-                  </option>
-                </select>
+                <SearchableSingleSelect
+                  v-model="form.costAccountStoreId"
+                  :options="searchableCostAccountOptions"
+                  :disabled="saving"
+                  placeholder="请选择成本账归属"
+                  search-placeholder="搜索门店名称、编号或状态"
+                  aria-label="成本账归属"
+                />
               </label>
               <label>
                 开业日期
@@ -565,6 +600,13 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.page-load-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .store-filters {
@@ -729,6 +771,14 @@ onMounted(() => {
   color: var(--ink);
   font: inherit;
   font-weight: 700;
+}
+
+.store-form-grid :deep(.searchable-single-select) {
+  width: 100%;
+}
+
+.store-form-grid :deep(.searchable-single-select__control) {
+  min-height: 40px;
 }
 
 .store-form-grid textarea {

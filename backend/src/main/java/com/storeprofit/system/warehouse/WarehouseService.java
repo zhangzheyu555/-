@@ -908,6 +908,166 @@ public class WarehouseService {
     return scopedMovements(user, readScope, 120);
   }
 
+  // ─── Movement Report ────────────────────────────────────────────────────────────
+
+  public WarehouseMovementFilterOptionsResponse movementFilterOptions(AuthUser user, Long warehouseId) {
+    if (topologyService == null) {
+      throw new BusinessException("WAREHOUSE_TOPOLOGY_REQUIRED", "仓库拓扑未启用", HttpStatus.SERVICE_UNAVAILABLE);
+    }
+    FacilityRow facility = topologyService.requireVisibleFacility(user, warehouseId, "查询出入库流水筛选选项");
+    requireNotStoreManager(user, "查询出入库流水");
+    return new WarehouseMovementFilterOptionsResponse(
+        warehouseRepository.movementFilterStores(user.tenantId(), facility.id()),
+        warehouseRepository.movementFilterItems(user.tenantId(), facility.id())
+    );
+  }
+
+  public WarehouseMovementQueryResponse queryMovements(AuthUser user, WarehouseMovementQueryRequest request) {
+    validateMovementScope(user, request.warehouseId(), request.startDate(), request.endDate(),
+        request.storeIds(), request.itemIds());
+    long total = warehouseRepository.movementsFilteredCount(
+        user.tenantId(), request.warehouseId(), request.startDate(), request.endDate(),
+        request.storeIds(), request.itemIds(), request.directions(), request.sourceTypes());
+    List<WarehouseStockMovementResponse> rows = total == 0 ? List.of()
+        : warehouseRepository.movementsFiltered(
+            user.tenantId(), request.warehouseId(), request.startDate(), request.endDate(),
+            request.storeIds(), request.itemIds(), request.directions(), request.sourceTypes(),
+            request.offset(), request.effectivePageSize());
+    WarehouseRepository.MovementSummary summary = total == 0
+        ? new WarehouseRepository.MovementSummary(BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO)
+        : warehouseRepository.movementsFilteredSummary(
+            user.tenantId(), request.warehouseId(), request.startDate(), request.endDate(),
+            request.storeIds(), request.itemIds(), request.directions(), request.sourceTypes());
+    return new WarehouseMovementQueryResponse(
+        rows, total, request.effectivePage(), request.effectivePageSize(),
+        summary.totalIn(), summary.totalOut(), summary.netChange());
+  }
+
+  public WarehouseMovementExport exportMovements(AuthUser user, WarehouseMovementExportRequest request) {
+    validateMovementScope(user, request.warehouseId(), request.startDate(), request.endDate(),
+        request.storeIds(), request.itemIds());
+    long total = warehouseRepository.movementsFilteredCount(
+        user.tenantId(), request.warehouseId(), request.startDate(), request.endDate(),
+        request.storeIds(), request.itemIds(), request.directions(), request.sourceTypes());
+    if (total > 50_000) {
+      throw new BusinessException("MOVEMENT_EXPORT_LIMIT",
+          "导出行数超过 50000 行（当前 " + total + " 行），请缩小日期范围或筛选门店、物料",
+          HttpStatus.BAD_REQUEST);
+    }
+    List<WarehouseStockMovementResponse> rows = total == 0 ? List.of()
+        : warehouseRepository.movementsFiltered(
+            user.tenantId(), request.warehouseId(), request.startDate(), request.endDate(),
+            request.storeIds(), request.itemIds(), request.directions(), request.sourceTypes(),
+            0, 50_000);
+    FacilityRow facility = topologyService.requireVisibleFacility(user, request.warehouseId(), "导出出入库流水");
+    List<String> storeNames = request.storeIds() == null || request.storeIds().isEmpty()
+        ? List.of()
+        : warehouseRepository.movementFilterStores(user.tenantId(), facility.id()).stream()
+            .filter(s -> request.storeIds().contains(s.id()))
+            .map(WarehouseMovementFilterOptionsResponse.StoreOption::name)
+            .toList();
+    List<String> itemNames = request.itemIds() == null || request.itemIds().isEmpty()
+        ? List.of()
+        : warehouseRepository.movementFilterItems(user.tenantId(), facility.id()).stream()
+            .filter(i -> request.itemIds().contains(i.id()))
+            .map(WarehouseMovementFilterOptionsResponse.ItemOption::name)
+            .toList();
+    List<String> directionLabels = request.directions() == null ? List.of()
+        : request.directions().stream().map(d -> switch(d) {
+            case "IN" -> "入库";
+            case "OUT" -> "出库";
+            case "ADJUST" -> "调整";
+            default -> d;
+          }).toList();
+    byte[] content = WarehouseMovementExcelWriter.write(
+        rows, facility.name(), request.startDate(), request.endDate(),
+        storeNames, itemNames, directionLabels);
+    String dateRange = request.startDate().toString().replace("-", "") + "_"
+        + request.endDate().toString().replace("-", "");
+    String fileName = "出入库流水_" + facility.name() + "_" + dateRange + ".xlsx";
+
+    // Write operation log
+    writeMovementExportLog(user, facility, request, (int) total);
+
+    return new WarehouseMovementExport(content, fileName, (int) total);
+  }
+
+  private void validateMovementScope(
+      AuthUser user, Long warehouseId, java.time.LocalDate startDate, java.time.LocalDate endDate,
+      List<String> storeIds, List<Long> itemIds
+  ) {
+    if (topologyService == null) {
+      throw new BusinessException("WAREHOUSE_TOPOLOGY_REQUIRED", "仓库拓扑未启用", HttpStatus.SERVICE_UNAVAILABLE);
+    }
+    topologyService.requireVisibleFacility(user, warehouseId, "查询出入库流水");
+    requireNotStoreManager(user, "查询出入库流水");
+    // Date validation
+    if (startDate == null || endDate == null) {
+      throw new BusinessException("MOVEMENT_DATE_REQUIRED", "请选择查询日期范围", HttpStatus.BAD_REQUEST);
+    }
+    if (startDate.isAfter(endDate)) {
+      throw new BusinessException("MOVEMENT_DATE_INVALID", "开始日期不能晚于结束日期", HttpStatus.BAD_REQUEST);
+    }
+    if (java.time.temporal.ChronoUnit.DAYS.between(startDate, endDate) > 366) {
+      throw new BusinessException("MOVEMENT_DATE_RANGE_EXCEEDED",
+          "查询范围不能超过 366 天，请缩小日期范围", HttpStatus.BAD_REQUEST);
+    }
+    // Validate explicit storeIds
+    if (storeIds != null && !storeIds.isEmpty()) {
+      var allowedStores = warehouseRepository.movementFilterStores(user.tenantId(), warehouseId);
+      var allowedIds = allowedStores.stream()
+          .map(WarehouseMovementFilterOptionsResponse.StoreOption::id)
+          .collect(java.util.stream.Collectors.toSet());
+      for (String storeId : storeIds) {
+        if (!allowedIds.contains(storeId)) {
+          throw new BusinessException("FORBIDDEN",
+              "门店不在当前仓库的供货范围内：" + storeId, HttpStatus.FORBIDDEN);
+        }
+      }
+    }
+    // Validate explicit itemIds
+    if (itemIds != null && !itemIds.isEmpty()) {
+      var allowedItems = warehouseRepository.movementFilterItems(user.tenantId(), warehouseId);
+      var allowedItemIds = allowedItems.stream()
+          .map(WarehouseMovementFilterOptionsResponse.ItemOption::id)
+          .collect(java.util.stream.Collectors.toSet());
+      for (Long itemId : itemIds) {
+        if (!allowedItemIds.contains(itemId)) {
+          throw new BusinessException("FORBIDDEN",
+              "物料不在当前仓库的可见范围内：" + itemId, HttpStatus.FORBIDDEN);
+        }
+      }
+    }
+  }
+
+  private void requireNotStoreManager(AuthUser user, String action) {
+    if (isStoreManager(user)) {
+      throw new BusinessException("FORBIDDEN",
+          "店长不能访问中央库存流水，请使用叫货单查看本店配送记录", HttpStatus.FORBIDDEN);
+    }
+  }
+
+  private void writeMovementExportLog(
+      AuthUser user, FacilityRow facility, WarehouseMovementExportRequest request, int rowCount
+  ) {
+    try {
+      String targetId = request.startDate().toString().replace("-", "") + "_"
+          + request.endDate().toString().replace("-", "");
+      String reason = "仓库：" + facility.name()
+          + "；日期：" + request.startDate() + " 至 " + request.endDate()
+          + "；门店数：" + (request.storeIds() == null ? 0 : request.storeIds().size())
+          + "；物料数：" + (request.itemIds() == null ? 0 : request.itemIds().size())
+          + "；方向：" + (request.directions() == null ? "全部" : String.join(",", request.directions()))
+          + "；结果行数：" + rowCount
+          + "；格式：XLSX";
+      warehouseRepository.logAction(
+          user.tenantId(), user.id(), user.displayName(),
+          "导出出入库流水", targetId, null, reason, null, null);
+    } catch (RuntimeException ignored) {
+      // audit failures must not prevent the export
+    }
+  }
+
   public List<WarehouseReturnResponse> returns(AuthUser user) {
     if (topologyService != null) {
       List<WarehouseFacilityResponse> facilities = topologyService.visibleFacilities(user);

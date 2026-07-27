@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Bell, CalendarDays, ChevronDown, Menu, Search, X } from 'lucide-vue-next'
+import { Bell, CalendarDays, Menu, Search, X } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import { getStores, type StoreInfo } from '../api/operations'
 import SearchInput from '../components/common/SearchInput.vue'
+import SearchableSingleSelect from '../components/common/SearchableSingleSelect.vue'
 import AppSidebar from '../components/sidebar/AppSidebar.vue'
 import { useBusinessScope } from '../composables/useBusinessScope'
 import { PERMISSIONS } from '../permissions/permissions'
@@ -52,6 +53,19 @@ const topbarStores = computed(() => {
   }
   return Array.from(stores.values())
 })
+const topbarStoreOptions = computed(() => topbarStores.value.map((store) => {
+  const source = globalStores.value.find((candidate) => candidate.id === store.id)
+  return {
+    value: store.id,
+    label: store.name,
+    description: source
+      ? [source.code, source.area || source.regionCode, source.status].filter(Boolean).join(' · ')
+      : '当前授权范围',
+    searchText: source
+      ? [source.name, source.code, source.area, source.regionCode, source.status, source.brandName].filter(Boolean).join(' ')
+      : `${store.name} ${store.id}`,
+  }
+}))
 
 async function logout() {
   if (auth.loggingOut) return
@@ -97,8 +111,8 @@ async function ensureStoresLoaded() {
   }
 }
 
-function selectGlobalStore(event: Event) {
-  const storeId = (event.target as HTMLSelectElement).value
+function selectGlobalStore(value: string | number) {
+  const storeId = String(value)
   const query = { ...route.query }
   if (storeId) query.storeId = storeId
   else delete query.storeId
@@ -247,17 +261,19 @@ onMounted(() => {
           <div v-if="route.path !== '/daily-loss'" class="topbar-context">
             <span class="date-display"><CalendarDays :size="16" />{{ updatedAt }}</span>
             <label v-if="!businessScope.isStoreManager.value && !hideTopbarStoreSelector" class="scope-display" :title="auth.scopeText">
-              <select
-                :value="selectedStoreId"
-                aria-label="全局门店"
+              <SearchableSingleSelect
+                :model-value="selectedStoreId"
+                :options="topbarStoreOptions"
+                :loading="storesLoading"
                 :disabled="storesLoading"
-                @focus="ensureStoresLoaded"
-                @change="selectGlobalStore"
-              >
-                <option value="">{{ storesLoading ? '正在加载门店' : '全部门店' }}</option>
-                <option v-for="store in topbarStores" :key="store.id" :value="store.id">{{ store.name }}</option>
-              </select>
-              <ChevronDown :size="15" />
+                empty-option-label="全部门店"
+                empty-value=""
+                placeholder="全部门店"
+                search-placeholder="搜索门店名称、编号或区域"
+                aria-label="全局门店"
+                @open="ensureStoresLoaded"
+                @update:model-value="selectGlobalStore"
+              />
             </label>
             <form
               v-if="canUseAssistant && searchOpen"
@@ -369,30 +385,22 @@ onMounted(() => {
 
 .scope-display {
   position: relative;
-  max-width: 220px;
-  border: 1px solid var(--ds-line);
-  border-radius: 6px;
-  background: #fff;
-}
-
-.scope-display select {
-  width: 100%;
   min-width: 128px;
-  max-width: 200px;
-  height: 32px;
-  padding: 0 30px 0 10px;
-  border: 0;
-  background: transparent;
-  color: var(--ds-secondary);
-  font: inherit;
-  appearance: none;
-  outline: none;
+  max-width: 220px;
 }
 
-.scope-display svg {
-  position: absolute;
-  right: 9px;
-  pointer-events: none;
+.scope-display :deep(.searchable-single-select) {
+  width: 100%;
+  max-width: 200px;
+}
+
+.scope-display :deep(.searchable-single-select__control) {
+  min-height: 34px;
+}
+
+.scope-display :deep(.searchable-single-select__control input) {
+  height: 32px;
+  font-size: 13px;
 }
 
 .notification-button,
@@ -464,7 +472,7 @@ onMounted(() => {
     min-width: 0;
   }
 
-  .scope-display select {
+  .scope-display :deep(.searchable-single-select) {
     min-width: 0;
     max-width: 100%;
   }

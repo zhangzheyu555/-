@@ -1,15 +1,17 @@
 ﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ChevronDown, ChevronLeft, ChevronRight, FileSpreadsheet, History, RefreshCw, Save, X } from 'lucide-vue-next'
+import { ChevronDown, ChevronLeft, ChevronRight, FileSpreadsheet, History, Save, X } from 'lucide-vue-next'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { getProfitEntries, getProfitMonths, saveProfitEntry, type ProfitEntry } from '../api/finance'
 import { getBrands, getStores, type BrandInfo, type StoreInfo } from '../api/operations'
 import BrandSelect from '../components/common/BrandSelect.vue'
 import PageHeader from '../components/common/PageHeader.vue'
+import SearchableSingleSelect from '../components/common/SearchableSingleSelect.vue'
 import ProfitImportDrawer from '../components/finance/ProfitImportDrawer.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import UnsavedChangesDialog from '../components/ui/UnsavedChangesDialog.vue'
 import { useBusinessScope } from '../composables/useBusinessScope'
+import { useForegroundReload } from '../composables/useForegroundReload'
 import { money, percent, useProfitStore } from '../stores/profit'
 import { useAuthStore } from '../stores/auth'
 import { canUseFinanceProfitImport, PERMISSIONS } from '../permissions/permissions'
@@ -107,7 +109,6 @@ const selectedMonth = ref(new Date().toISOString().slice(0, 7))
 const error = ref('')
 const success = ref('')
 const saving = ref(false)
-const refreshing = ref(false)
 const loadingEntry = ref(false)
 const loadingHistory = ref(false)
 const historyRows = ref<ProfitEntry[]>([])
@@ -124,6 +125,11 @@ const fieldErrors = ref<Partial<Record<AmountFieldKey, string>>>({})
 const filterRenderKey = ref(0)
 const unsavedDialogOpen = ref(false)
 const unsavedDialogMessage = ref('')
+const initialized = ref(false)
+let catalogHandledScopeWatchKey = ''
+const catalogsLoaded = ref(false)
+const loadedEntryScopeKey = ref('')
+const loadedHistoryScopeKey = ref('')
 
 let entryRequestId = 0
 let historyRequestId = 0
@@ -142,9 +148,26 @@ const managerStore = computed<StoreInfo | null>(() => scope.isStoreManager.value
 const filteredStores = computed(() => scope.isStoreManager.value
   ? (managerStore.value ? [managerStore.value] : [])
   : filterStoresByBrand(stores.value, selectedBrandId.value))
+const filteredStoreOptions = computed(() => filteredStores.value.map((store) => ({
+  value: store.id,
+  label: `${normalizeBrandName(store.brandName)} · ${store.name}`,
+  description: [store.code, store.area || store.regionCode, store.status].filter(Boolean).join(' · '),
+  searchText: [store.name, store.code, store.area, store.regionCode, store.status, store.brandName].filter(Boolean).join(' '),
+})))
 const selectedStore = computed(() => stores.value.find((store) => store.id === selectedStoreId.value) || managerStore.value)
 const importTargetStoreId = computed(() => scope.scopedStoreId(selectedStoreId.value))
 const canSave = computed(() => auth.hasPermission(PERMISSIONS.FINANCE_PROFIT_WRITE))
+const currentEntryScopeKey = computed(() => dataEntryScopeKey(
+  scope.scopedStoreId(selectedStoreId.value),
+  selectedMonth.value,
+))
+const entryScopeReady = computed(() => Boolean(currentEntryScopeKey.value)
+  && loadedEntryScopeKey.value === currentEntryScopeKey.value)
+const saveButtonTitle = computed(() => {
+  if (!canSave.value) return '当前角色没有保存权限'
+  if (!entryScopeReady.value) return '当前门店和月份的数据尚未成功读取'
+  return '保存当前门店和月份的经营数据'
+})
 const canImportMonthlySummary = computed(() => canUseFinanceProfitImport(auth.role, auth.permissions))
 const pageTitle = '数据录入'
 const historyPreview = computed(() => historyRows.value.slice(0, 5))
@@ -153,9 +176,23 @@ const pagedHistory = computed(() => {
   const start = (historyPage.value - 1) * HISTORY_PAGE_SIZE
   return historyRows.value.slice(start, start + HISTORY_PAGE_SIZE)
 })
-const isDirty = computed(() => !loadingEntry.value && snapshotDraft(draft.value) !== baselineDraft.value)
+const isDirty = computed(() => snapshotDraft(draft.value) !== baselineDraft.value)
 const moreFeesFilledCount = computed(() => MORE_EXPENSE_FIELDS.filter(({ key }) => num(draft.value[key]) !== 0).length)
 const moreFeesHasError = computed(() => MORE_EXPENSE_FIELDS.some(({ key }) => Boolean(fieldErrors.value[key])))
+
+const { markFresh } = useForegroundReload(async () => {
+  const loaded = catalogsLoaded.value
+    ? await loadSelectedScopeData()
+    : await loadPageData()
+  if (!loaded) throw new Error(error.value || '数据录入页面加载失败')
+}, {
+  canReload: () => initialized.value
+    && !isDirty.value
+    && !saving.value
+    && !importDrawerOpen.value
+    && !loadingEntry.value
+    && !loadingHistory.value,
+})
 
 const calcPreview = computed(() => {
   const sales = num(draft.value.sales)
@@ -197,6 +234,10 @@ function createEmptyDraft(): ProfitDraft {
 
 function snapshotDraft(value: ProfitDraft) {
   return JSON.stringify(value)
+}
+
+function dataEntryScopeKey(storeId: string, month: string) {
+  return storeId && month ? `${storeId}\u0000${month}` : ''
 }
 
 function num(value: number | null | undefined) {
@@ -324,19 +365,37 @@ function applyEntry(entry?: ProfitEntry) {
 async function loadCurrentEntry() {
   const requestId = ++entryRequestId
   const storeId = scope.scopedStoreId(selectedStoreId.value)
-  if (!storeId || !selectedMonth.value) {
+  const month = selectedMonth.value
+  const requestScopeKey = dataEntryScopeKey(storeId, month)
+  if (!requestScopeKey) {
     applyEntry()
-    return
+    loadedEntryScopeKey.value = ''
+    return true
   }
+  if (loadedEntryScopeKey.value !== requestScopeKey) {
+    // A filter transition must never leave another store/month's draft editable.
+    applyEntry()
+    loadedEntryScopeKey.value = ''
+  }
+  const draftSnapshotAtRequest = snapshotDraft(draft.value)
   loadingEntry.value = true
   try {
-    const rows = await getProfitEntries({ month: selectedMonth.value, storeId })
-    if (requestId === entryRequestId) applyEntry(rows.find((row) => row.storeId === storeId))
+    const rows = await getProfitEntries({ month, storeId })
+    if (requestId === entryRequestId && currentEntryScopeKey.value === requestScopeKey) {
+      if (snapshotDraft(draft.value) !== draftSnapshotAtRequest) {
+        error.value = '检测到尚未保存的录入内容，本次后台同步已跳过，当前填写保持不变。'
+        return false
+      }
+      applyEntry(rows.find((row) => row.storeId === storeId))
+      loadedEntryScopeKey.value = requestScopeKey
+      return true
+    }
+    return false
   } catch (loadError) {
     if (requestId === entryRequestId) {
-      applyEntry()
-      error.value = displayError(loadError, '当前门店数据读取失败，请刷新后重试。')
+      error.value = displayError(loadError, '当前门店数据读取失败，请稍后重试。')
     }
+    return false
   } finally {
     if (requestId === entryRequestId) loadingEntry.value = false
   }
@@ -347,9 +406,15 @@ async function loadHistory() {
   historyError.value = ''
   historyPage.value = 1
   const storeId = scope.scopedStoreId(selectedStoreId.value)
-  if (!storeId) {
+  const requestScopeKey = dataEntryScopeKey(storeId, selectedMonth.value)
+  if (!requestScopeKey) {
     historyRows.value = []
-    return
+    loadedHistoryScopeKey.value = ''
+    return true
+  }
+  if (loadedHistoryScopeKey.value !== requestScopeKey) {
+    historyRows.value = []
+    loadedHistoryScopeKey.value = ''
   }
   loadingHistory.value = true
   try {
@@ -358,16 +423,18 @@ async function loadHistory() {
       .sort((left, right) => right.localeCompare(left))
       .slice(0, HISTORY_FETCH_LIMIT)
     const rows = await Promise.all(targetMonths.map((month) => getProfitEntries({ month, storeId })))
-    if (requestId !== historyRequestId) return
+    if (requestId !== historyRequestId || currentEntryScopeKey.value !== requestScopeKey) return false
     historyRows.value = rows
       .flat()
       .filter((row) => row.storeId === storeId)
       .sort((left, right) => right.month.localeCompare(left.month))
+    loadedHistoryScopeKey.value = requestScopeKey
+    return true
   } catch {
     if (requestId === historyRequestId) {
-      historyRows.value = []
       historyError.value = '历史记录暂时无法读取。'
     }
+    return false
   } finally {
     if (requestId === historyRequestId) loadingHistory.value = false
   }
@@ -390,7 +457,28 @@ function synchronizeBrandAndStore() {
   }
 }
 
-async function load(showRefreshFeedback = false) {
+async function loadSelectedScopeData() {
+  const requestScopeKey = currentEntryScopeKey.value
+  error.value = ''
+  profit.setFilters({ month: selectedMonth.value, brandId: selectedBrandId.value, storeId: selectedStoreId.value })
+  const [entryLoaded, historyLoaded] = await Promise.all([
+    loadCurrentEntry(),
+    loadHistory(),
+    profit.load(),
+  ])
+  if (profit.error) error.value = profit.error
+  const loaded = entryLoaded
+    && historyLoaded
+    && Boolean(requestScopeKey)
+    && loadedEntryScopeKey.value === requestScopeKey
+    && currentEntryScopeKey.value === requestScopeKey
+    && !profit.error
+  if (loaded) markFresh()
+  return loaded
+}
+
+async function loadPageData() {
+  const scopeKeyBeforeCatalogLoad = currentEntryScopeKey.value
   error.value = ''
   success.value = ''
   try {
@@ -406,12 +494,15 @@ async function load(showRefreshFeedback = false) {
       brands.value = brandRows
       stores.value = storeRows
     }
+    catalogsLoaded.value = true
     synchronizeBrandAndStore()
-    profit.setFilters({ month: selectedMonth.value, brandId: selectedBrandId.value, storeId: selectedStoreId.value })
-    await Promise.all([profit.load(), loadCurrentEntry(), loadHistory()])
-    if (showRefreshFeedback) success.value = '数据已刷新。'
+    if (initialized.value && currentEntryScopeKey.value !== scopeKeyBeforeCatalogLoad) {
+      catalogHandledScopeWatchKey = currentEntryScopeKey.value
+    }
+    return await loadSelectedScopeData()
   } catch (loadError) {
-    error.value = displayError(loadError, '数据录入页面加载失败，请刷新后重试。')
+    error.value = displayError(loadError, '数据录入页面加载失败，请稍后重试。')
+    return false
   }
 }
 
@@ -429,6 +520,10 @@ async function save() {
   }
   if (!selectedMonth.value) {
     error.value = '请选择月份后再保存。'
+    return
+  }
+  if (!entryScopeReady.value) {
+    error.value = '当前门店和月份的数据尚未成功读取，暂不能保存。请稍后重试。'
     return
   }
   const store = stores.value.find((item) => item.id === storeId) || managerStore.value
@@ -466,9 +561,7 @@ async function save() {
       expOther: num(draft.value.expOther),
       note: draft.value.note.trim() || undefined,
     })
-    profit.month = selectedMonth.value
-    await profit.load()
-    await Promise.all([loadCurrentEntry(), loadHistory()])
+    await loadSelectedScopeData()
     success.value = `${selectedStore.value?.name || '当前门店'} ${selectedMonth.value} 数据已保存。`
   } catch (saveError) {
     error.value = displayError(saveError, '保存失败，请稍后重试。')
@@ -539,28 +632,12 @@ function requestMonthChange(event: Event) {
   })
 }
 
-function requestStoreChange(event: Event) {
-  const select = event.target as HTMLSelectElement
-  const value = select.value
-  select.value = selectedStoreId.value
+function requestStoreChange(value: string) {
   if (value === selectedStoreId.value) return
   runAfterDirtyCheck('切换门店将放弃当前尚未保存的录入内容。', () => {
     selectedStoreId.value = value
     const store = stores.value.find((item) => item.id === value)
     if (store) selectedBrandId.value = String(store.brandId)
-  })
-}
-
-function refreshEntry() {
-  runAfterDirtyCheck('刷新将放弃未保存修改，是否继续？', () => {
-    void (async () => {
-      refreshing.value = true
-      try {
-        await load(true)
-      } finally {
-        refreshing.value = false
-      }
-    })()
   })
 }
 
@@ -587,9 +664,8 @@ function goImportStatus() {
 
 async function onImportSaved(saved: number) {
   closeImportDrawer()
-  profit.setFilters({ month: selectedMonth.value, brandId: selectedBrandId.value, storeId: selectedStoreId.value })
-  await Promise.all([profit.load(), loadCurrentEntry(), loadHistory()])
-  success.value = `已导入 ${saved} 条经营数据，当前门店和月份已刷新。`
+  await loadSelectedScopeData()
+  success.value = `已导入 ${saved} 条经营数据，当前门店和月份已更新。`
 }
 
 function goProfitTable() {
@@ -626,7 +702,8 @@ function handleKeydown(event: KeyboardEvent) {
 
 onMounted(async () => {
   document.addEventListener('keydown', handleKeydown)
-  await load()
+  await loadPageData()
+  initialized.value = true
   if (route.query.notice === 'FINANCE_IMPORT_FORBIDDEN') {
     error.value = '经营数据导入仅限财务或老板处理。'
     return
@@ -647,9 +724,14 @@ onBeforeRouteLeave(() => {
 })
 
 watch([selectedStoreId, selectedMonth], () => {
+  if (!initialized.value) return
+  if (catalogHandledScopeWatchKey && catalogHandledScopeWatchKey === currentEntryScopeKey.value) {
+    catalogHandledScopeWatchKey = ''
+    return
+  }
+  catalogHandledScopeWatchKey = ''
   success.value = ''
-  void loadCurrentEntry()
-  void loadHistory()
+  void loadSelectedScopeData()
 })
 
 watch(() => route.query.import, (value) => {
@@ -671,13 +753,10 @@ watch(
       <template #actions>
         <div class="entry-toolbar__actions">
           <span v-if="isDirty" class="entry-dirty" role="status"><i aria-hidden="true" />尚未保存</span>
-          <button class="tool-icon-button" type="button" title="刷新数据" aria-label="刷新数据" :disabled="refreshing || loadingEntry || saving" @click="refreshEntry">
-            <RefreshCw :size="17" :class="{ 'is-spinning': refreshing }" />
-          </button>
           <button v-if="canImportMonthlySummary" class="tool-button" type="button" @click="goImportStatus">
             <FileSpreadsheet :size="16" />导入月度汇总
           </button>
-          <button class="save-button" type="button" :disabled="!canSave || saving" :title="canSave ? '保存当前门店和月份的经营数据' : '当前角色没有保存权限'" @click="save">
+          <button class="save-button" type="button" :disabled="!canSave || saving || loadingEntry || !entryScopeReady" :title="saveButtonTitle" @click="save">
             <Save :size="16" />{{ saving ? '保存中' : '保存' }}
           </button>
         </div>
@@ -711,12 +790,14 @@ watch(
         </label>
         <label v-if="!scope.isStoreManager.value" class="toolbar-field toolbar-field--store">
           <span>门店</span>
-          <select :value="selectedStoreId" aria-label="门店" @change="requestStoreChange">
-            <option value="">请选择门店</option>
-            <option v-for="store in filteredStores" :key="store.id" :value="store.id">
-              {{ normalizeBrandName(store.brandName) }} · {{ store.name }}
-            </option>
-          </select>
+          <SearchableSingleSelect
+            :model-value="selectedStoreId"
+            :options="filteredStoreOptions"
+            placeholder="请选择门店"
+            search-placeholder="搜索门店名称、编号、区域或状态"
+            aria-label="搜索门店"
+            @update:model-value="requestStoreChange(String($event))"
+          />
         </label>
       </div>
     </div>
@@ -1057,6 +1138,10 @@ watch(
   font-variant-numeric: tabular-nums;
 }
 
+.toolbar-field :deep(.searchable-single-select) {
+  width: 100%;
+}
+
 .toolbar-field :deep(.brand-select-wrap) {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1117,7 +1202,6 @@ watch(
   background: #b56713;
 }
 
-.tool-icon-button,
 .tool-button,
 .save-button,
 .text-action {
@@ -1132,21 +1216,6 @@ watch(
   font-weight: 700;
 }
 
-.tool-icon-button {
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  border-radius: var(--entry-radius);
-}
-
-.tool-icon-button .is-spinning {
-  animation: entry-refresh-spin 0.8s linear infinite;
-}
-
-@keyframes entry-refresh-spin {
-  to { transform: rotate(360deg); }
-}
-
 .tool-button,
 .save-button {
   min-height: 40px;
@@ -1154,7 +1223,6 @@ watch(
   border-radius: var(--entry-radius);
 }
 
-.tool-icon-button:hover,
 .tool-button:hover {
   border-color: var(--entry-primary);
   color: var(--entry-primary);
@@ -1843,7 +1911,7 @@ watch(
 
   .entry-toolbar__actions {
     display: grid;
-    grid-template-columns: 40px minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     width: 100%;
   }
 
@@ -1858,6 +1926,10 @@ watch(
 
   .entry-toolbar__actions .save-button {
     width: 100%;
+  }
+
+  .entry-toolbar__actions .save-button:first-of-type {
+    grid-column: 1 / -1;
   }
 
   .more-fees__toggle {

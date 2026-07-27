@@ -29,7 +29,7 @@ const stateCases: Array<{
     enabled: false,
     configured: true,
     title: '服务暂不可用',
-    nextAction: '请稍后点击“检查服务”',
+    nextAction: '系统会在页面重新显示时自动检测',
   },
   {
     state: 'READY',
@@ -43,13 +43,13 @@ const stateCases: Array<{
 test.describe('employee assistant availability', () => {
   for (const scenario of stateCases) {
     test(`shows ${scenario.state} as a distinct business state`, async ({ page }) => {
-      await seedEmployeeAssistantSession(page, scenario.state === 'UNCONFIGURED' ? 'BOSS' : 'SUPERVISOR')
+      await seedEmployeeAssistantSession(page, scenario.state === 'UNCONFIGURED' ? 'BOSS' : 'EMPLOYEE')
       await mockStatus(page, scenario)
 
       await page.goto('/employee-assistant')
       await expect(page.getByTestId('employee-assistant-status')).toContainText(scenario.title)
       await expect(page.getByTestId('employee-assistant-status')).toContainText(scenario.nextAction)
-      await expect(page.getByRole('button', { name: '检查服务' })).toBeVisible()
+      await expect(page.getByRole('button', { name: '检查服务' })).toHaveCount(0)
 
       if (scenario.state === 'UNCONFIGURED') {
         const guide = page.getByTestId('employee-assistant-deployment-guide')
@@ -80,6 +80,54 @@ test.describe('employee assistant availability', () => {
       }
     })
   }
+
+  test('rechecks a stale service once when focus and visibility events arrive together', async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-07-25T00:00:00Z') })
+    await seedEmployeeAssistantSession(page)
+    let statusRequests = 0
+    let serviceReady = false
+    await page.route('**/api/employee-assistant/status', async (route) => {
+      statusRequests += 1
+      const scenario = serviceReady ? stateCases[3] : stateCases[2]
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: {
+            enabled: scenario.enabled,
+            configured: scenario.configured,
+            state: scenario.state,
+            message: messageFor(scenario.state),
+          },
+        }),
+      })
+    })
+
+    await page.goto('/employee-assistant')
+    const serviceStatus = page.getByTestId('employee-assistant-status')
+    await expect(serviceStatus).toContainText('服务暂不可用')
+    await expect.poll(() => statusRequests).toBe(1)
+
+    serviceReady = true
+    await page.clock.runFor(59_000)
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event('focus'))
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    await page.waitForTimeout(50)
+    expect(statusRequests).toBe(1)
+    await expect(serviceStatus).toContainText('服务暂不可用')
+
+    await page.clock.runFor(1_000)
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event('focus'))
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    await expect.poll(() => statusRequests).toBe(2)
+    await expect(serviceStatus).toContainText('服务已就绪')
+    await page.waitForTimeout(50)
+    expect(statusRequests).toBe(2)
+  })
 
   test('sends only the question and current conversation to a ready employee assistant', async ({ page }) => {
     await seedEmployeeAssistantSession(page)
@@ -154,7 +202,7 @@ test.describe('employee assistant availability', () => {
     await page.goto('/employee-assistant')
     const guide = page.getByTestId('employee-assistant-deployment-guide')
     await guide.locator('summary').click()
-    await expect(guide).toContainText('EMPLOYEE_ASSISTANT_MODEL_API_KEY')
+    await expect(guide).toContainText('EMPLOYEE_ASSISTANT_PROVIDER=MODEL')
     await expectNoWholePageOverflow(page, 'employee assistant deployment guide at desktop')
 
     await page.setViewportSize({ width: 390, height: 844 })
@@ -162,7 +210,7 @@ test.describe('employee assistant availability', () => {
   })
 
   test('keeps deployment variables hidden from an ordinary assistant user', async ({ page }) => {
-    await seedEmployeeAssistantSession(page, 'SUPERVISOR')
+    await seedEmployeeAssistantSession(page, 'EMPLOYEE')
     await mockStatus(page, stateCases[0])
 
     await page.goto('/employee-assistant')
@@ -233,24 +281,24 @@ async function mockStatus(page: Page, scenario: (typeof stateCases)[number]) {
   })
 }
 
-async function seedEmployeeAssistantSession(page: Page, role: 'BOSS' | 'SUPERVISOR' = 'SUPERVISOR') {
+async function seedEmployeeAssistantSession(page: Page, role: 'BOSS' | 'EMPLOYEE' = 'EMPLOYEE') {
   const isBoss = role === 'BOSS'
   const user = {
     id: 901,
     tenantId: 1,
     tenantName: 'E2E 租户',
-    displayName: isBoss ? 'E2E 老板' : 'E2E 督导',
+    displayName: isBoss ? 'E2E 老板' : 'E2E 员工',
     role,
-    roleLabel: isBoss ? '老板（系统管理员）' : '运营',
+    roleLabel: isBoss ? '老板（系统管理员）' : '员工',
     storeScope: ['all'],
-    permissions: ['employee_assistant.use'],
+    permissions: isBoss ? ['employee_assistant.use'] : ['exam.learn', 'employee_assistant.use'],
     dataScopes: { STORE: { mode: 'ALL', storeIds: [], warehouseIds: [] } },
     dataScope: { mode: 'ALL', storeIds: [], warehouseIds: [] },
     boundStoreId: null,
     boundStoreName: null,
     brandId: null,
     brandName: null,
-    defaultWorkspace: isBoss ? '/boss' : '/operations',
+    defaultWorkspace: isBoss ? '/boss' : '/employee',
     permissionVersion: 1,
   }
   await page.route('**/api/auth/me', async (route) => {

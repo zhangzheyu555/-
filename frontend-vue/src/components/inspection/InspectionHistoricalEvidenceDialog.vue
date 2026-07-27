@@ -10,6 +10,11 @@ import {
   type InspectionItemResult,
   type InspectionRecord,
 } from '../../api/inspection'
+import SearchableMultiSelect from '../common/SearchableMultiSelect.vue'
+import type {
+  SearchableSelectOption,
+  SearchableSelectValue,
+} from '../common/SearchableSingleSelect.vue'
 
 type EvidenceMode = 'existing' | 'upload'
 
@@ -43,28 +48,53 @@ const errorMessage = ref('')
 const candidateLoadError = ref('')
 
 /**
- * Historical clauses that can be associated.  Uses snapshotId as the stable
- * checkbox key.  Falls back to standardItemId only when the snapshot row still
- * carries a valid standard reference.
+ * Historical clauses that can be associated. Uses a namespaced snapshot/standard
+ * key so the two identifier spaces can never collide in the checkbox list.
+ * Falls back to standardItemId only when no snapshot row id is available.
  */
 const historicalClauses = computed(() => {
-  const seen = new Set<number>()
-  const clauses: Array<InspectionItemResult & { _key: number; _isSnapshotId: boolean }> = []
+  const seen = new Set<string>()
+  const clauses: Array<InspectionItemResult & {
+    _key: string
+    _referenceId: number
+    _isSnapshotId: boolean
+  }> = []
   for (const item of props.items) {
     const snapshotId = isPositiveId(item.snapshotId) ? item.snapshotId as number : 0
     const standardItemId = isPositiveId(item.standardItemId) ? Number(item.standardItemId) : 0
-    // Prefer snapshotId as the unique key
-    if (snapshotId > 0 && !seen.has(snapshotId)) {
-      seen.add(snapshotId)
-      clauses.push({ ...item, _key: snapshotId, _isSnapshotId: true })
-    } else if (standardItemId > 0 && !seen.has(-standardItemId)) {
-      // Use negative standardItemId as fallback key to distinguish from snapshotId
-      seen.add(-standardItemId)
-      clauses.push({ ...item, _key: standardItemId, _isSnapshotId: false })
+    // Snapshot rows and standard items are separate identifier namespaces.  The
+    // composite key also prevents Vue key collisions when both happen to be 41.
+    const snapshotKey = `snapshot:${snapshotId}`
+    const standardKey = `standard:${standardItemId}`
+    if (snapshotId > 0 && !seen.has(snapshotKey)) {
+      seen.add(snapshotKey)
+      clauses.push({ ...item, _key: snapshotKey, _referenceId: snapshotId, _isSnapshotId: true })
+    } else if (standardItemId > 0 && !seen.has(standardKey)) {
+      seen.add(standardKey)
+      clauses.push({ ...item, _key: standardKey, _referenceId: standardItemId, _isSnapshotId: false })
     }
   }
   return clauses
 })
+const historicalClauseOptions = computed<SearchableSelectOption[]>(() => historicalClauses.value.map((item) => ({
+  value: item._key,
+  label: clauseLabel(item),
+  description: `${item.categoryName || item.dimension || '历史条款'} · ${item.deductionReason || '未记录扣分原因'}`,
+  searchText: [
+    item.code,
+    item.title,
+    item.description,
+    item.checkMethod,
+    item.categoryName,
+    item.dimension,
+    item.deductionReason,
+    item.riskLevel,
+  ].filter(Boolean).join(' '),
+})))
+const selectedHistoricalClauseValues = computed<SearchableSelectValue[]>(() => [
+  ...selectedSnapshotIds.value.map((id) => `snapshot:${id}`),
+  ...selectedClauseIds.value.map((id) => `standard:${id}`),
+])
 
 const hasAnyHistoricalClauses = computed(() => historicalClauses.value.length > 0)
 
@@ -170,16 +200,18 @@ function toggleAttachment(attachmentId: number, checked: boolean) {
     : selectedAttachmentIds.value.filter((id) => id !== attachmentId)
 }
 
-function toggleClause(clauseKey: number, isSnapshotId: boolean, checked: boolean) {
-  if (isSnapshotId) {
-    selectedSnapshotIds.value = checked
-      ? Array.from(new Set([...selectedSnapshotIds.value, clauseKey]))
-      : selectedSnapshotIds.value.filter((id) => id !== clauseKey)
-  } else {
-    selectedClauseIds.value = checked
-      ? Array.from(new Set([...selectedClauseIds.value, clauseKey]))
-      : selectedClauseIds.value.filter((id) => id !== clauseKey)
+function updateHistoricalClauseSelection(values: SearchableSelectValue[]) {
+  const clausesByKey = new Map(historicalClauses.value.map((item) => [item._key, item]))
+  const nextSnapshotIds: number[] = []
+  const nextClauseIds: number[] = []
+  for (const value of values) {
+    const item = clausesByKey.get(String(value))
+    if (!item) continue
+    const target = item._isSnapshotId ? nextSnapshotIds : nextClauseIds
+    if (!target.includes(item._referenceId)) target.push(item._referenceId)
   }
+  selectedSnapshotIds.value = nextSnapshotIds
+  selectedClauseIds.value = nextClauseIds
 }
 
 function selectMode(next: EvidenceMode) {
@@ -330,16 +362,19 @@ function clauseLabel(item: InspectionItemResult) {
 
         <section class="evidence-step clause-step" aria-labelledby="historical-clause-title">
           <div class="step-heading"><span>2</span><div><h4 id="historical-clause-title">人工选择历史条款</h4><p>可选择一个或多个条款；系统不会根据文件名、AI 结果或当前标准自动推断。</p></div></div>
-          <div v-if="hasAnyHistoricalClauses" class="historical-clause-list">
-            <label v-for="item in historicalClauses" :key="item._key" class="historical-clause-option">
-              <input
-                type="checkbox"
-                :checked="item._isSnapshotId ? selectedSnapshotIds.includes(item._key) : selectedClauseIds.includes(item._key)"
-                @change="toggleClause(item._key, item._isSnapshotId, ($event.target as HTMLInputElement).checked)"
-              />
-              <span><b>{{ clauseLabel(item) }}</b><small>{{ item.categoryName || item.dimension || '历史条款' }} · {{ item.deductionReason || '未记录扣分原因' }}</small></span>
-            </label>
-          </div>
+          <SearchableMultiSelect
+            v-if="hasAnyHistoricalClauses"
+            :key="String(record.id)"
+            :model-value="selectedHistoricalClauseValues"
+            :options="historicalClauseOptions"
+            search-placeholder="搜索历史条款编号、名称、分类或扣分原因"
+            aria-label="搜索并选择历史条款"
+            selected-noun="条"
+            clear-label="清空已选条款"
+            empty-message="没有匹配的历史条款"
+            :disabled="submitting"
+            @update:model-value="updateHistoricalClauseSelection"
+          />
           <div v-else class="evidence-empty"><b>该巡检缺少历史条款快照，不能安全关联</b><span>{{ props.items.length ? '历史快照行未携带可用的条款编号，请联系管理员修复。' : '该巡检在创建时未保存条款快照，不能将图片关联到当前标准条款。' }}</span></div>
         </section>
       </div>
@@ -383,13 +418,13 @@ function clauseLabel(item: InspectionItemResult) {
 .step-heading > span { display: grid; width: 23px; height: 23px; flex: 0 0 auto; place-items: center; border-radius: 50%; background: var(--primary-soft); color: var(--primary-dark); font-size: 12px; font-weight: 900; }
 .step-heading h4 { color: var(--ink); font-size: 14px; }
 .step-heading p, .evidence-empty span, .selected-original span { margin-top: 3px; color: var(--muted); font-size: 12px; line-height: 1.5; }
-.evidence-candidate-list, .historical-clause-list { display: grid; gap: 7px; max-height: 206px; overflow: auto; padding-right: 2px; }
-.evidence-candidate, .historical-clause-option { display: flex; align-items: flex-start; gap: 9px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--ds-surface-muted); cursor: pointer; }
-.evidence-candidate:has(input:checked), .historical-clause-option:has(input:checked) { border-color: rgba(37, 111, 105, .45); background: var(--primary-soft); }
-.evidence-candidate input, .historical-clause-option input { margin-top: 3px; }
-.evidence-candidate span, .historical-clause-option span, .selected-original { display: grid; min-width: 0; gap: 2px; }
-.evidence-candidate b, .historical-clause-option b, .selected-original b { overflow: hidden; color: var(--ink); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.evidence-candidate small, .historical-clause-option small { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.evidence-candidate-list { display: grid; gap: 7px; max-height: 206px; overflow: auto; padding-right: 2px; }
+.evidence-candidate { display: flex; align-items: flex-start; gap: 9px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--ds-surface-muted); cursor: pointer; }
+.evidence-candidate:has(input:checked) { border-color: rgba(37, 111, 105, .45); background: var(--primary-soft); }
+.evidence-candidate input { margin-top: 3px; }
+.evidence-candidate span, .selected-original { display: grid; min-width: 0; gap: 2px; }
+.evidence-candidate b, .selected-original b { overflow: hidden; color: var(--ink); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.evidence-candidate small { color: var(--muted); font-size: 12px; line-height: 1.45; }
 .evidence-empty { display: grid; gap: 3px; padding: 12px; border-radius: 8px; background: var(--ds-surface-muted); }
 .evidence-empty b { color: var(--ink); font-size: 13px; }
 .missing-original-hint { padding: 9px 10px; border-radius: 7px; background: var(--ds-warning-soft); color: #77440d; font-size: 12px; font-weight: 700; line-height: 1.5; }

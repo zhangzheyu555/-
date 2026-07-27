@@ -8,13 +8,13 @@ import {
   ClipboardList,
   GraduationCap,
   IdCard,
-  RefreshCw,
   Store,
   UserRound,
   WalletCards,
 } from 'lucide-vue-next'
 import { ApiError } from '../api/http'
 import { getEmployeeProfile, type EmployeeProfile, type EmployeeProfileChecklistItem } from '../api/employeeWorkbench'
+import { useForegroundReload } from '../composables/useForegroundReload'
 import { isHourlyEmployee, money, wholeNumber } from '../composables/useSalaryPage'
 
 const router = useRouter()
@@ -36,15 +36,25 @@ async function loadProfile() {
   loading.value = true
   errorMessage.value = ''
   try {
-    profile.value = await getEmployeeProfile()
+    const nextProfile = await getEmployeeProfile()
+    profile.value = nextProfile
+    markFresh()
+    return true
   } catch (error) {
     errorMessage.value = error instanceof ApiError
       ? error.message
       : '我的资料加载失败，请稍后重试。'
+    return false
   } finally {
     loading.value = false
   }
 }
+
+const { markFresh } = useForegroundReload(async () => {
+  if (!await loadProfile()) throw new Error('个人资料暂时不可用')
+}, {
+  canReload: () => !loading.value,
+})
 
 function formatMoney(value?: number | null) {
   if (value === null || value === undefined) return '未生成'
@@ -93,18 +103,15 @@ onMounted(() => {
           {{ profile?.store.storeName || '所属门店加载中' }} · {{ profile?.profile.username || '账号加载中' }}
         </p>
       </div>
-      <button class="ghost-button" type="button" :disabled="loading" @click="loadProfile">
-        <RefreshCw :size="17" :class="{ spinning: loading }" />
-        刷新
-      </button>
     </div>
 
     <div v-if="errorMessage" class="notice warning">
       <AlertTriangle :size="19" />
       <span>{{ errorMessage }}</span>
+      <button class="ghost-button" type="button" :disabled="loading" @click="loadProfile">重试</button>
     </div>
 
-    <div v-else-if="profile" class="profile-grid">
+    <div v-if="profile" class="profile-grid">
       <section class="identity-panel">
         <header>
           <div>
@@ -209,7 +216,7 @@ onMounted(() => {
       </section>
     </div>
 
-    <div v-else class="loading-state">正在加载我的资料...</div>
+    <div v-else-if="loading" class="loading-state">正在加载我的资料...</div>
   </section>
 </template>
 
@@ -270,10 +277,6 @@ onMounted(() => {
   font-weight: 700;
 }
 
-.spinning {
-  animation: spin 0.8s linear infinite;
-}
-
 .notice {
   gap: 10px;
   padding: 14px 16px;
@@ -281,6 +284,10 @@ onMounted(() => {
   border-radius: 7px;
   background: #fff7e8;
   color: #855b10;
+}
+
+.notice span {
+  flex: 1;
 }
 
 .profile-grid {
@@ -580,12 +587,6 @@ onMounted(() => {
 .loading-state {
   padding: 24px;
   color: var(--ds-secondary);
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 @media (max-width: 768px) {

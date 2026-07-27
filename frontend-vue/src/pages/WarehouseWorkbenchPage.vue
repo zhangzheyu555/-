@@ -64,6 +64,7 @@ const requisitionStores = ref<StoreInfo[]>([])
 const requisitionStoresAttempted = ref(false)
 const itemScopeContext = ref<WarehouseItemRequisitionScopeContext | null>(null)
 const itemScopeContextAttempted = ref(false)
+const movementPanelRef = ref<InstanceType<typeof WarehouseMovementPanel> | null>(null)
 
 const overview = computed(() => warehouse.overview)
 const items = computed(() => overview.value?.items || [])
@@ -621,6 +622,7 @@ async function approvePurchaseOrder(purchaseOrderId: string) {
 async function receivePurchaseOrder(purchaseOrderId: string, payload: WarehousePurchaseOrderReceivePayload) {
   try {
     await warehouse.receivePurchaseOrder(purchaseOrderId, payload)
+    movementPanelRef.value?.refresh()
   } catch {
     // store 已保留业务错误提示。
   }
@@ -712,6 +714,7 @@ async function confirmWarehouseAction() {
     confirmationBusy.value = false
     pendingConfirmation.value = null
     confirmationNote.value = ''
+    movementPanelRef.value?.refresh()
   }
 }
 
@@ -916,6 +919,7 @@ watch(
     <WarehouseTransferPanel
       v-else-if="currentTab() === 'transfers'"
       :transfers="warehouse.transfers"
+      :items="items"
       :context="warehouse.transferContext"
       :actioning-id="warehouse.actioningId"
       @create="createTransfer"
@@ -993,7 +997,9 @@ watch(
 
     <section v-else-if="currentTab() === 'movements'" class="section-stack">
       <WarehouseMovementPanel
-        :movements="movements"
+        ref="movementPanelRef"
+        :warehouse-id="selectedWarehouse?.id"
+        :warehouse-name="selectedWarehouse?.name"
         :downloading-id="warehouse.downloadingId"
         @download-movement="downloadMovement"
         @download-delivery="downloadDelivery"

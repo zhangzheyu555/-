@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { AlertTriangle, FileText, Image, Paperclip, RefreshCw, Trash2, X } from 'lucide-vue-next'
+import { AlertTriangle, FileText, Image, Paperclip, Trash2, X } from 'lucide-vue-next'
 import {
   createExpense,
   deleteExpenseAttachment,
@@ -11,6 +11,7 @@ import {
   type ExpenseClaimPayload,
 } from '../../api/finance'
 import type { StoreInfo } from '../../api/operations'
+import SearchableSingleSelect from '../common/SearchableSingleSelect.vue'
 import ModalFooter from '../ui/ModalFooter.vue'
 import UiButton from '../ui/UiButton.vue'
 
@@ -43,6 +44,12 @@ let selectionGeneration = 0
 const title = computed(() => props.claim ? '编辑报销' : '新增报销')
 const submitLabel = computed(() => props.claim?.status === '草稿' ? '提交审核' : '保存并提交')
 const storeOptions = computed(() => props.stores)
+const searchableStoreOptions = computed(() => storeOptions.value.map((store) => ({
+  value: store.id,
+  label: `${store.brandName ? `${store.brandName} · ` : ''}${store.name}`,
+  description: [store.code, store.area || store.regionCode, store.status].filter(Boolean).join(' · '),
+  searchText: [store.name, store.code, store.area, store.regionCode, store.status, store.brandName].filter(Boolean).join(' '),
+})))
 
 const dirty = computed(() => {
   const current = JSON.stringify({ ...form, file: file.value?.name ?? '' })
@@ -284,7 +291,7 @@ async function save(shouldSubmit: boolean) {
     if (file.value) {
       const attachment = await uploadExpenseAttachment(file.value, saved.storeId, saved.id)
       const attachmentUrl = String(attachment.url || attachment.downloadUrl || '').trim()
-      if (!attachmentUrl) throw new Error('报销凭证上传成功但未返回访问地址，请刷新页面后重试。')
+      if (!attachmentUrl) throw new Error('报销凭证上传成功但未返回访问地址，请重新打开报销单后重试。')
       saved = await updateExpense(saved.id, {
         storeId: saved.storeId,
         month: saved.month,
@@ -298,7 +305,7 @@ async function save(shouldSubmit: boolean) {
         try {
           await deleteExpenseAttachment(saved.id, previousPrimaryAttachmentId)
         } catch {
-          throw new Error('新报销凭证已保存，但旧凭证删除失败，请刷新页面后重试。')
+          throw new Error('新报销凭证已保存，但旧凭证删除失败，请重新打开报销单后重试。')
         }
       }
     }
@@ -387,12 +394,14 @@ function isValidDate(value: string) {
         </div>
         <label v-else>
           门店
-          <select v-model="form.storeId" :disabled="Boolean(props.claim) || saving">
-            <option value="">请选择门店</option>
-            <option v-for="store in storeOptions" :key="store.id" :value="store.id">
-              {{ store.brandName ? `${store.brandName} · ` : '' }}{{ store.name }}
-            </option>
-          </select>
+          <SearchableSingleSelect
+            v-model="form.storeId"
+            :options="searchableStoreOptions"
+            :disabled="Boolean(props.claim) || saving"
+            placeholder="请选择门店"
+            search-placeholder="搜索门店名称、编号、区域或状态"
+            aria-label="搜索报销门店"
+          />
         </label>
         <div class="form-grid">
           <label>
@@ -454,10 +463,10 @@ function isValidDate(value: string) {
             </span>
             <span class="attachment-actions">
               <button v-if="previewFailed" type="button" :disabled="saving" @click="retryPreview">
-                <RefreshCw :size="14" />重试预览
+                重试预览
               </button>
               <button type="button" :disabled="saving" @click="chooseFile">
-                <RefreshCw :size="14" />重新选择
+                重新选择
               </button>
               <button type="button" :disabled="saving" @click="removeFile">
                 <Trash2 :size="14" />删除
@@ -593,6 +602,8 @@ function isValidDate(value: string) {
   font: inherit;
   padding: 10px 11px;
 }
+
+.drawer-body :deep(.searchable-single-select) { width: 100%; }
 
 .drawer-body textarea {
   resize: vertical;
