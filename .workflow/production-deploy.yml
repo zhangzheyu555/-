@@ -51,3 +51,46 @@ stages:
         notify: []
         strategy:
           retry: '0'
+  - name: deploy_production
+    displayName: 发布到生产服务器
+    strategy: naturally
+    trigger: auto
+    executor: []
+    steps:
+      - step: deploy@agent
+        name: deploy_agent
+        displayName: 主机部署
+        hostGroupID:
+          ID: store-profit-production
+          hostID:
+            - 8f89dcbb-5d38-493a-b51c-54caddba7985
+        deployArtifact:
+          - source: build
+            name: backend_release
+            target: ~/gitee_go/deploy
+            dependArtifact: BACKEND_ARTIFACT
+          - name: frontend_release
+            target: ~/gitee_go/deploy
+            source: build
+            dependArtifact: FRONTEND_ARTIFACT
+        script:
+          - set -Eeuo pipefail
+          - ''
+          - deploy_dir="/home/deploy/gitee_go/deploy"
+          - release_id="gitee-$(date -u +%Y%m%d%H%M%S)-${RANDOM}${RANDOM}"
+          - release_dir="/home/deploy/releases/$release_id"
+          - ''
+          - test -f "$deploy_dir/backend_release"
+          - test -f "$deploy_dir/frontend_release"
+          - ''
+          - tar -tzf "$deploy_dir/backend_release" >/dev/null
+          - tar -tzf "$deploy_dir/frontend_release" >/dev/null
+          - ''
+          - install -d -m 0700 "$release_dir"
+          - install -m 0600 "$deploy_dir/backend_release" "$release_dir/backend-release.tar.gz"
+          - install -m 0600 "$deploy_dir/frontend_release" "$release_dir/frontend-release.tar.gz"
+          - ''
+          - sudo -n /usr/local/sbin/store-profit-release "$release_id"
+        notify: []
+        strategy:
+          retry: '0'
