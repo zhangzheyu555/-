@@ -81,18 +81,34 @@ stages:
           - deploy_dir="/home/deploy/gitee_go/deploy"
           - backend_source="$deploy_dir/backend_release.tar.gz"
           - frontend_source="$deploy_dir/frontend_release.tar.gz"
+          - artifact_dir="$(mktemp -d /home/deploy/.gitee-artifact.XXXXXX)"
           - release_id="gitee-$(date -u +%Y%m%d%H%M%S)-${RANDOM}${RANDOM}"
           - release_dir="/home/deploy/releases/$release_id"
+          - ''
+          - cleanup() {
+          - '  rm -rf "$artifact_dir"'
+          - '}'
+          - trap cleanup EXIT
           - ''
           - test -f "$backend_source"
           - test -f "$frontend_source"
           - ''
-          - tar -tzf "$backend_source" >/dev/null
-          - tar -tzf "$frontend_source" >/dev/null
+          - mkdir -p "$artifact_dir/backend" "$artifact_dir/frontend"
+          - tar -xzf "$backend_source" -C "$artifact_dir/backend"
+          - tar -xzf "$frontend_source" -C "$artifact_dir/frontend"
+          - ''
+          - backend_archive="$(find "$artifact_dir/backend" -type f -name 'backend-release.tar.gz' -print -quit)"
+          - frontend_archive="$(find "$artifact_dir/frontend" -type f -name 'frontend-release.tar.gz' -print -quit)"
+          - ''
+          - test -n "$backend_archive"
+          - test -n "$frontend_archive"
+          - ''
+          - tar -tzf "$backend_archive" >/dev/null
+          - tar -tzf "$frontend_archive" >/dev/null
           - ''
           - install -d -m 0700 "$release_dir"
-          - install -m 0600 "$backend_source" "$release_dir/backend-release.tar.gz"
-          - install -m 0600 "$frontend_source" "$release_dir/frontend-release.tar.gz"
+          - install -m 0600 "$backend_archive" "$release_dir/backend-release.tar.gz"
+          - install -m 0600 "$frontend_archive" "$release_dir/frontend-release.tar.gz"
           - ''
           - sudo -n /usr/local/sbin/store-profit-release "$release_id"
         notify: []
