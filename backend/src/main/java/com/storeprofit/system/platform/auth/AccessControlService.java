@@ -195,6 +195,66 @@ public class AccessControlService {
         "每日报损 Excel 导出仅限督导或老板");
   }
 
+  /**
+   * Store inventory is a shared read surface for the five formal management roles. The role
+   * boundary remains mandatory even when a stale personal override grants inventory.read to an
+   * employee or another unsupported role.
+   */
+  public void requireInventoryRead(AuthUser user) {
+    requirePermission(user, PermissionCodes.INVENTORY_READ, "查看门店盘存单");
+    String role = user == null ? "" : canonicalRole(user.role());
+    if (Set.of("BOSS", "STORE_MANAGER", "FINANCE", "SUPERVISOR", "WAREHOUSE").contains(role)) {
+      return;
+    }
+    deny(user, "查看门店盘存单", "API", PermissionCodes.INVENTORY_READ, null,
+        "门店盘存查询仅限老板、店长、财务、督导或仓库");
+  }
+
+  /** New inventory entry belongs exclusively to the bound store manager. */
+  public void requireInventoryManage(AuthUser user) {
+    requirePermission(user, PermissionCodes.INVENTORY_MANAGE, "保存门店盘存单");
+    if (user != null && "STORE_MANAGER".equals(canonicalRole(user.role()))) {
+      return;
+    }
+    deny(user, "保存门店盘存单", "API", PermissionCodes.INVENTORY_MANAGE, null,
+        "盘存录入和提交仅限店长");
+  }
+
+  /** Review is shared by the four company-wide accountable roles. */
+  public void requireInventoryReview(AuthUser user) {
+    requirePermission(user, PermissionCodes.INVENTORY_REVIEW, "复核门店盘存单");
+    String role = user == null ? "" : canonicalRole(user.role());
+    if (Set.of("BOSS", "FINANCE", "SUPERVISOR", "WAREHOUSE").contains(role)) {
+      return;
+    }
+    deny(user, "复核门店盘存单", "API", PermissionCodes.INVENTORY_REVIEW, null,
+        "盘存复核仅限老板、财务、督导或仓管");
+  }
+
+  /** Catalog prices affect every store's calculated amount and therefore remain BOSS-only. */
+  public void requireInventoryPriceManage(AuthUser user) {
+    requirePermission(user, PermissionCodes.INVENTORY_MANAGE, "维护盘存物料价格");
+    if (isBoss(user)) {
+      return;
+    }
+    deny(user, "维护盘存物料价格", "API", PermissionCodes.INVENTORY_MANAGE, null,
+        "盘存物料价格维护仅限老板");
+  }
+
+  /**
+   * Inventory Excel is available to the four company-wide management roles. Store managers
+   * remain unable to export even though they can read and maintain their own store's checks.
+   */
+  public void requireInventoryExport(AuthUser user) {
+    requirePermission(user, PermissionCodes.INVENTORY_READ, "导出店铺盘存 Excel");
+    String role = user == null ? "" : canonicalRole(user.role());
+    if (Set.of("BOSS", "FINANCE", "SUPERVISOR", "WAREHOUSE").contains(role)) {
+      return;
+    }
+    deny(user, "导出店铺盘存 Excel", "API", PermissionCodes.INVENTORY_READ, null,
+        "店铺盘存 Excel 导出仅限老板、财务、督导或仓库");
+  }
+
   public void requireExpenseRead(AuthUser user) {
     requireExpenseRead(user, null, null, null);
   }

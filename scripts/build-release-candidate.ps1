@@ -44,7 +44,7 @@ function Invoke-ExternalStep {
 }
 
 function Invoke-ReleaseSourceGate {
-  param([Parameter(Mandatory)][ValidateRange(1, 9999)][int]$ExpectedFlywayLatest)
+  param([Parameter(Mandatory)][ValidatePattern('^[1-9][0-9]*(?:\.[0-9]{17})?$')][string]$ExpectedFlywayLatest)
 
   $gate = Join-Path $projectRoot 'scripts\verify-release-source.ps1'
   if (-not (Test-Path -LiteralPath $gate)) {

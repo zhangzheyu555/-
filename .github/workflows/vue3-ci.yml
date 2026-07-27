@@ -45,6 +45,13 @@ jobs:
       - name: Verify release source completeness and backup exclusions
         run: bash .github/scripts/verify-release-source.sh
 
+      - name: Verify timestamped Flyway migration rule
+        shell: pwsh
+        run: ./scripts/tests/Test-ReleaseFlywayMigrationRules.ps1
+
+      - name: Verify one-command production update ordering
+        run: bash scripts/tests/test-production-update.sh
+
   dependency-review:
     name: Dependency change review
     if: ${{ github.event_name == 'pull_request' }}

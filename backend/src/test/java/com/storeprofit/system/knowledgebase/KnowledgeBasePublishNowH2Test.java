@@ -37,7 +37,11 @@ class KnowledgeBasePublishNowH2Test {
         "门店运营",
         "TENANT",
         List.of(),
-        List.of()
+        List.of(),
+        null,
+        "草稿知识",
+        null,
+        null
     );
 
     assertThat(response.status()).isEqualTo("DRAFT");
@@ -64,6 +68,10 @@ class KnowledgeBasePublishNowH2Test {
         "TENANT",
         List.of(),
         List.of(),
+        null,
+        "开店检查",
+        null,
+        null,
         true
     );
 
@@ -96,6 +104,10 @@ class KnowledgeBasePublishNowH2Test {
         "TENANT",
         List.of(),
         List.of(),
+        null,
+        "回滚知识",
+        null,
+        null,
         true
     )).isInstanceOf(IllegalStateException.class)
         .hasMessage("模拟发布审计失败");
@@ -112,7 +124,7 @@ class KnowledgeBasePublishNowH2Test {
     Flyway.configure()
         .dataSource(dataSource)
         .locations("classpath:db/migration-h2")
-        .target("74")
+        .target("105")
         .load()
         .migrate();
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);

@@ -11,7 +11,10 @@ import {
   getMobileWarehouseOverview,
 } from '@/api/business'
 import { canUseMobileCapability, useContextStore, useMenuStore, useSessionStore } from '@/stores'
+import { normalizeRole } from '@/permissions'
+import { navigateToTodoDetail } from '@/utils/todoRoute'
 import type { ExamOverview, ProfitDashboard, ProfitEntry, RoleTodoItem, WarehouseOverview } from '@/types/business'
+import type { MobileMenuItem } from '@/types/navigation'
 
 const session = useSessionStore()
 const menu = useMenuStore()
@@ -80,7 +83,7 @@ async function loadWorkspace(): Promise<void> {
     const managerEntriesPromise = canUseMobileCapability(session.user, 'business')
       ? getMobileProfitEntries({ storeId })
       : Promise.resolve([])
-    const [todoResult, warehouseResult, financeResult, examResult, entryResult] = await Promise.all([
+    const [todoResult, warehouseResult, financeResult, examResult, entryResult] = await Promise.allSettled([
       todoPromise,
       warehousePromise,
       financePromise,
@@ -88,13 +91,20 @@ async function loadWorkspace(): Promise<void> {
       managerEntriesPromise,
     ])
     if (requestId !== workspaceRequestId) return
-    todos.value = todoResult.items || []
-    warehouse.value = warehouseResult
-    finance.value = financeResult
-    exams.value = examResult
-    managerEntries.value = entryResult
+    const failed: string[] = []
+    if (todoResult.status === 'fulfilled') todos.value = todoResult.value.items || []
+    else failed.push('待办')
+    if (warehouseResult.status === 'fulfilled') warehouse.value = warehouseResult.value
+    else failed.push('库存')
+    if (financeResult.status === 'fulfilled') finance.value = financeResult.value
+    else failed.push('经营数据')
+    if (examResult.status === 'fulfilled') exams.value = examResult.value
+    else failed.push('培训考试')
+    if (entryResult.status === 'fulfilled') managerEntries.value = entryResult.value
+    else failed.push('本店经营')
+    workspaceError.value = failed.length ? `${failed.join('、')}暂时无法加载，下拉可重新获取。` : ''
   } catch {
-    if (requestId === workspaceRequestId) workspaceError.value = '部分工作台数据暂时无法加载，下拉可重新获取。'
+    if (requestId === workspaceRequestId) workspaceError.value = '工作台数据加载异常，下拉可重新获取。'
   } finally {
     if (requestId === workspaceRequestId) workspaceLoading.value = false
   }
@@ -168,9 +178,26 @@ const metrics = computed<WorkspaceMetric[]>(() => {
   ]
 })
 
-function compactMoney(value: number): string {
-  return String(value ?? '')
+const QUICK_ACCESS_BY_ROLE: Record<string, readonly string[]> = {
+  BOSS: ['summary', 'expenses', 'inspection', 'audit'], FINANCE: ['expenses', 'salary', 'summary', 'dailyLoss'],
+  STORE_MANAGER: ['requisition', 'dailyLoss', 'inventory', 'expenses'], WAREHOUSE: ['warehouse'],
+  SUPERVISOR: ['inspection', 'rectification', 'operations'], EMPLOYEE: ['learning', 'exam', 'assistant'],
 }
+const quickActions = computed<MobileMenuItem[]>(() => {
+  const all = menu.groups.flatMap((group) => group.items)
+  const order = QUICK_ACCESS_BY_ROLE[normalizeRole(session.user?.role)] || []
+  return [...all].sort((left, right) => quickRank(order, left.key) - quickRank(order, right.key)).slice(0, 4)
+})
+function quickRank(order: readonly string[], key: string): number { const index = order.indexOf(key); return index === -1 ? Number.MAX_SAFE_INTEGER : index }
+function openQuick(item: MobileMenuItem): void { uni.navigateTo({ url: item.path }) }
+function openApps(): void { uni.switchTab({ url: '/pages/apps/index' }) }
+function compactMoney(value: number | undefined | null): string {
+  if (value === undefined || value === null || !Number.isFinite(Number(value))) return '—'
+  const amount = Number(value); const sign = amount < 0 ? '-' : ''; const abs = Math.abs(amount)
+  if (abs >= 10000) { const wan = Number((abs / 10000).toFixed(1)); return wan < 10000 ? `${sign}¥${wan}万` : `${sign}¥${trimTrailingZero((abs / 100000000).toFixed(2))}亿` }
+  return `${sign}¥${abs.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+function trimTrailingZero(value: string): string { return value.replace(/\.0+$/, '').replace(/(\.\d*[1-9])0+$/, '$1') }
 
 async function chooseStore(event: { detail: { value: string | number } }): Promise<void> {
   const index = Number(event.detail.value)
@@ -192,6 +219,7 @@ function openProfile(): void {
 function openTodos(): void {
   uni.switchTab({ url: '/pages/todo/index' })
 }
+function openTodo(todo: RoleTodoItem): void { navigateToTodoDetail(todo) }
 function openBusiness(): void { uni.navigateTo({ url: '/pkg-store/business/index' }) }
 function money(value: number | undefined): string { return `¥${Number(value || 0).toFixed(2)}` }
 function percent(value: number | undefined): string { return `${Number(value || 0).toFixed(1)}%` }
@@ -242,6 +270,11 @@ function storeStatusLabel(status: string | undefined): string {
       </view>
     </view>
 
+    <view v-if="quickActions.length" class="section-card quick-access">
+      <view class="section-card__head"><view><text class="section-card__eyebrow">常用功能</text><text class="section-card__title">直接进入</text></view><button class="text-button" @click="openApps">全部应用</button></view>
+      <view class="quick-grid" :class="`quick-grid--${quickActions.length}`"><button v-for="item in quickActions" :key="item.key" class="quick-item mobile-feedback" @click="openQuick(item)"><view class="quick-item__icon" :class="`quick-item__icon--${item.tone}`">{{ item.icon }}</view><text class="quick-item__label">{{ item.label }}</text></button></view>
+    </view>
+
     <view v-if="session.user?.role === 'STORE_MANAGER' && currentStoreInfo" class="section-card store-profile-preview">
       <view class="section-card__head"><view><text class="section-card__eyebrow">我的门店</text><text class="section-card__title">门店基础资料</text></view></view>
       <view class="store-profile-preview__grid"><view><text>门店名称</text><b>{{ currentStoreInfo.name }}</b></view><view><text>门店编号</text><b>{{ currentStoreInfo.code || currentStoreInfo.id }}</b></view><view><text>所属品牌</text><b>{{ currentStoreInfo.brandName || '待补充' }}</b></view><view><text>门店状态</text><b>{{ storeStatusLabel(currentStoreInfo.status) }}</b></view><view><text>所在区域</text><b>{{ currentStoreInfo.area || '待补充' }}</b></view><view><text>配送仓库</text><b>{{ currentStoreInfo.supplyWarehouseName || '暂未配置' }}</b></view></view>
@@ -256,7 +289,7 @@ function storeStatusLabel(status: string | undefined): string {
 
     <view v-if="pendingTodos.length" class="section-card todo-preview">
       <view class="section-card__head"><view><text class="section-card__eyebrow">今日优先事项</text><text class="section-card__title">待办处理</text></view><button class="text-button" @click="openTodos">全部待办</button></view>
-      <button v-for="todo in pendingTodos.slice(0, 3)" :key="todo.id" class="todo-row" @click="openTodos"><view><text class="todo-row__title">{{ todo.title }}</text><text class="todo-row__meta">{{ todo.storeName || '权限范围内事项' }}</text></view><text class="todo-row__arrow">›</text></button>
+      <button v-for="todo in pendingTodos.slice(0, 3)" :key="todo.id" class="todo-row" @click="openTodo(todo)"><view><text class="todo-row__title">{{ todo.title }}</text><text class="todo-row__meta">{{ todo.storeName || '权限范围内事项' }}</text></view><text class="todo-row__arrow">›</text></button>
       <button v-if="pendingTodos.length > 3" class="all-todos" @click="openTodos">查看全部 {{ pendingTodos.length }} 项待办</button>
     </view>
 
@@ -330,5 +363,8 @@ function storeStatusLabel(status: string | undefined): string {
 .todo-row__meta { color: #80918e; font-size: 21rpx; }
 .todo-row__arrow { color: #27655f; font-size: 34rpx; }
 .all-todos { min-height: 70rpx; margin: 14rpx 0 0; padding: 0; color: #27655f; background: #e7f4f1; border-radius: 10rpx; font-size: 23rpx; font-weight: 700; line-height: 70rpx; }
-.apps-hint { padding:20rpx 24rpx; color:#718581; background:#f8fbfa; border:1rpx dashed #cadeda; border-radius:14rpx; font-size:23rpx; text-align:center; }
+.quick-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12rpx; margin-top: 14rpx; }
+.quick-grid--1 { grid-template-columns: minmax(0, 1fr); }.quick-grid--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }.quick-grid--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.quick-item { display: flex; min-height: 136rpx; margin: 0; padding: 18rpx 8rpx; flex-direction: column; align-items: center; justify-content: center; gap: 10rpx; background: #f7faf9; border: 1rpx solid #e3ecea; border-radius: 12rpx; }.quick-item::after { border: 0; }.quick-grid--1 .quick-item { min-height: 108rpx; flex-direction: row; gap: 16rpx; }
+.quick-item__icon { display: flex; width: 56rpx; height: 56rpx; align-items: center; justify-content: center; color: #27655f; background: #e4f3f0; border-radius: 14rpx; font-size: 28rpx; font-weight: 800; }.quick-item__icon--orange { color: #96603b; background: #fdf1e4; }.quick-item__icon--blue { color: #35618f; background: #e8f1fa; }.quick-item__icon--slate { color: #59606b; background: #eef0f3; }.quick-item__label { overflow: hidden; max-width: 100%; color: #263633; font-size: 22rpx; font-weight: 700; text-align: center; text-overflow: ellipsis; white-space: nowrap; }.quick-grid--1 .quick-item__label { font-size: 27rpx; }
 </style>

@@ -9,6 +9,7 @@ import com.storeprofit.system.operations.OperationsBusinessModels.ExamQuestionRe
 import com.storeprofit.system.operations.OperationsBusinessModels.InventoryCheckLineRequest;
 import com.storeprofit.system.operations.OperationsBusinessModels.InventoryCheckLineResponse;
 import com.storeprofit.system.operations.OperationsBusinessModels.InventoryCheckResponse;
+import com.storeprofit.system.operations.OperationsBusinessModels.InventoryItemResponse;
 import com.storeprofit.system.operations.OperationsBusinessModels.TrainingLearningRecordResponse;
 import com.storeprofit.system.operations.OperationsBusinessModels.TrainingMaterialResponse;
 import java.math.BigDecimal;
@@ -52,6 +53,98 @@ public class OperationsBusinessRepository {
     }
   }
 
+  /**
+   * Resolves a store only when it belongs to the 茹菓 inventory brand. The aliases match the
+   * established daily-loss brand boundary and intentionally rely on the brand relation rather
+   * than a store-code prefix.
+   */
+  public Optional<String> inventoryStoreName(long tenantId, String storeId) {
+    try {
+      return Optional.ofNullable(jdbcTemplate.queryForObject("""
+          select inventory_store.name
+          from store_branch inventory_store
+          join brand inventory_brand
+            on inventory_brand.tenant_id = inventory_store.tenant_id
+           and inventory_brand.id = inventory_store.brand_id
+          where inventory_store.tenant_id = ?
+            and inventory_store.id = ?
+            and (inventory_brand.name in ('茹菓', '茹果')
+                 or lower(inventory_brand.name) in ('ruguo', 'ru guo', 'rg'))
+          """, String.class, tenantId, storeId));
+    } catch (EmptyResultDataAccessException ex) {
+      return Optional.empty();
+    }
+  }
+
+  public List<InventoryItemResponse> inventoryItems(long tenantId) {
+    return jdbcTemplate.query("""
+        select id, item_code, category, item_name, spec, unit, package_quantity,
+               package_price, unit_price, sort_order, enabled
+        from store_inventory_item
+        where tenant_id = ? and enabled = 1
+        order by sort_order, id
+        """, (rs, rowNum) -> {
+      BigDecimal unitPrice = rs.getBigDecimal("unit_price");
+      return new InventoryItemResponse(
+          rs.getLong("id"),
+          rs.getString("item_code"),
+          rs.getString("category"),
+          rs.getString("item_name"),
+          rs.getString("spec"),
+          rs.getString("unit"),
+          rs.getBigDecimal("package_quantity"),
+          rs.getBigDecimal("package_price"),
+          unitPrice,
+          rs.getInt("sort_order"),
+          rs.getBoolean("enabled"),
+          unitPrice != null
+      );
+    }, tenantId);
+  }
+
+  public Optional<InventoryItemResponse> inventoryItem(long tenantId, String itemCode) {
+    try {
+      return Optional.ofNullable(jdbcTemplate.queryForObject("""
+          select id, item_code, category, item_name, spec, unit, package_quantity,
+                 package_price, unit_price, sort_order, enabled
+          from store_inventory_item
+          where tenant_id = ? and item_code = ?
+          """, (rs, rowNum) -> {
+        BigDecimal unitPrice = rs.getBigDecimal("unit_price");
+        return new InventoryItemResponse(
+            rs.getLong("id"),
+            rs.getString("item_code"),
+            rs.getString("category"),
+            rs.getString("item_name"),
+            rs.getString("spec"),
+            rs.getString("unit"),
+            rs.getBigDecimal("package_quantity"),
+            rs.getBigDecimal("package_price"),
+            unitPrice,
+            rs.getInt("sort_order"),
+            rs.getBoolean("enabled"),
+            unitPrice != null
+        );
+      }, tenantId, itemCode));
+    } catch (EmptyResultDataAccessException ex) {
+      return Optional.empty();
+    }
+  }
+
+  public boolean updateInventoryItemPrice(
+      long tenantId,
+      String itemCode,
+      BigDecimal packageQuantity,
+      BigDecimal packagePrice,
+      BigDecimal unitPrice
+  ) {
+    return jdbcTemplate.update("""
+        update store_inventory_item
+        set package_quantity = ?, package_price = ?, unit_price = ?, updated_at = current_timestamp
+        where tenant_id = ? and item_code = ? and enabled = 1
+        """, packageQuantity, packagePrice, unitPrice, tenantId, itemCode) > 0;
+  }
+
   public List<InventoryCheckResponse> inventoryChecks(long tenantId, String storeId) {
     return inventoryChecks(tenantId, storeId, null);
   }
@@ -63,12 +156,24 @@ public class OperationsBusinessRepository {
   ) {
     StringBuilder sql = new StringBuilder("""
         select id, check_no, store_id, store_name, date_format(check_date, '%Y-%m-%d') as check_date,
-               status, total_amount, submitted_by, reviewed_by,
+               status, total_amount, submitted_by, reviewed_by, reviewed_by_name, reviewed_by_role,
                date_format(reviewed_at, '%Y-%m-%d %H:%i:%s') as reviewed_at,
                note, date_format(created_at, '%Y-%m-%d %H:%i:%s') as created_at,
                date_format(updated_at, '%Y-%m-%d %H:%i:%s') as updated_at
-        from store_inventory_check
+        from store_inventory_check inventory_check
         where tenant_id = ?
+          and status in ('SUBMITTED', 'REVIEWED')
+          and exists (
+            select 1
+            from store_branch inventory_store
+            join brand inventory_brand
+              on inventory_brand.tenant_id = inventory_store.tenant_id
+             and inventory_brand.id = inventory_store.brand_id
+            where inventory_store.tenant_id = inventory_check.tenant_id
+              and inventory_store.id = inventory_check.store_id
+              and (inventory_brand.name in ('茹菓', '茹果')
+                   or lower(inventory_brand.name) in ('ruguo', 'ru guo', 'rg'))
+          )
         """);
     List<Object> args = new ArrayList<>();
     args.add(tenantId);
@@ -90,6 +195,9 @@ public class OperationsBusinessRepository {
         amount(rs.getBigDecimal("total_amount")),
         boxedLong(rs.getLong("submitted_by"), rs.wasNull()),
         boxedLong(rs.getLong("reviewed_by"), rs.wasNull()),
+        rs.getString("reviewed_by_name"),
+        rs.getString("reviewed_by_role"),
+        inventoryReviewerRoleLabel(rs.getString("reviewed_by_role")),
         rs.getString("reviewed_at"),
         rs.getString("note"),
         rs.getString("created_at"),
@@ -102,12 +210,24 @@ public class OperationsBusinessRepository {
     try {
       InventoryCheckResponse header = jdbcTemplate.queryForObject("""
           select id, check_no, store_id, store_name, date_format(check_date, '%Y-%m-%d') as check_date,
-                 status, total_amount, submitted_by, reviewed_by,
+                 status, total_amount, submitted_by, reviewed_by, reviewed_by_name, reviewed_by_role,
                  date_format(reviewed_at, '%Y-%m-%d %H:%i:%s') as reviewed_at,
                  note, date_format(created_at, '%Y-%m-%d %H:%i:%s') as created_at,
                  date_format(updated_at, '%Y-%m-%d %H:%i:%s') as updated_at
-          from store_inventory_check
+          from store_inventory_check inventory_check
           where tenant_id = ? and id = ?
+            and status in ('SUBMITTED', 'REVIEWED')
+            and exists (
+              select 1
+              from store_branch inventory_store
+              join brand inventory_brand
+                on inventory_brand.tenant_id = inventory_store.tenant_id
+               and inventory_brand.id = inventory_store.brand_id
+              where inventory_store.tenant_id = inventory_check.tenant_id
+                and inventory_store.id = inventory_check.store_id
+                and (inventory_brand.name in ('茹菓', '茹果')
+                     or lower(inventory_brand.name) in ('ruguo', 'ru guo', 'rg'))
+            )
           """, (rs, rowNum) -> new InventoryCheckResponse(
           rs.getLong("id"),
           rs.getString("check_no"),
@@ -119,6 +239,9 @@ public class OperationsBusinessRepository {
           amount(rs.getBigDecimal("total_amount")),
           boxedLong(rs.getLong("submitted_by"), rs.wasNull()),
           boxedLong(rs.getLong("reviewed_by"), rs.wasNull()),
+          rs.getString("reviewed_by_name"),
+          rs.getString("reviewed_by_role"),
+          inventoryReviewerRoleLabel(rs.getString("reviewed_by_role")),
           rs.getString("reviewed_at"),
           rs.getString("note"),
           rs.getString("created_at"),
@@ -166,9 +289,11 @@ public class OperationsBusinessRepository {
       long userId,
       List<InventoryCheckLineRequest> lines
   ) {
-    long checkId = id == null
-        ? insertInventoryCheck(tenantId, checkNo, storeId, storeName, checkDate, note, totalAmount, userId)
-        : updateInventoryCheck(tenantId, id, storeId, storeName, checkDate, note, totalAmount);
+    if (id != null) {
+      throw new IllegalArgumentException("Submitted inventory checks cannot be updated");
+    }
+    long checkId = insertInventoryCheck(
+        tenantId, checkNo, storeId, storeName, checkDate, note, totalAmount, userId);
     jdbcTemplate.update("delete from store_inventory_check_line where tenant_id = ? and check_id = ?", tenantId, checkId);
     for (InventoryCheckLineRequest line : lines) {
       insertInventoryCheckLine(tenantId, checkId, line);
@@ -191,9 +316,9 @@ public class OperationsBusinessRepository {
       PreparedStatement ps = connection.prepareStatement("""
           insert into store_inventory_check(
             tenant_id, check_no, store_id, store_name, check_date, status,
-            total_amount, note, created_by, created_at, updated_at
+            total_amount, submitted_by, note, created_by, created_at, updated_at
           )
-          values (?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, current_timestamp, current_timestamp)
+          values (?, ?, ?, ?, ?, 'SUBMITTED', ?, ?, ?, ?, current_timestamp, current_timestamp)
           """, new String[]{"id"}); // 显式只取 id：H2 会把所有 default 列都当 generated key 返回，getKey() 会炸
       ps.setLong(1, tenantId);
       ps.setString(2, checkNo);
@@ -201,30 +326,13 @@ public class OperationsBusinessRepository {
       ps.setString(4, storeName);
       ps.setDate(5, Date.valueOf(checkDate));
       ps.setBigDecimal(6, amount(totalAmount));
-      ps.setString(7, blankToNull(note));
-      ps.setLong(8, userId);
+      ps.setLong(7, userId);
+      ps.setString(8, blankToNull(note));
+      ps.setLong(9, userId);
       return ps;
     }, keyHolder);
     Number key = keyHolder.getKey();
     return key == null ? 0 : key.longValue();
-  }
-
-  private long updateInventoryCheck(
-      long tenantId,
-      long id,
-      String storeId,
-      String storeName,
-      String checkDate,
-      String note,
-      BigDecimal totalAmount
-  ) {
-    jdbcTemplate.update("""
-        update store_inventory_check
-        set store_id = ?, store_name = ?, check_date = ?, total_amount = ?,
-            note = ?, updated_at = current_timestamp
-        where tenant_id = ? and id = ?
-        """, storeId, storeName, Date.valueOf(checkDate), amount(totalAmount), blankToNull(note), tenantId, id);
-    return id;
   }
 
   private void insertInventoryCheckLine(long tenantId, long checkId, InventoryCheckLineRequest line) {
@@ -255,28 +363,24 @@ public class OperationsBusinessRepository {
     );
   }
 
-  public boolean updateInventoryCheckStatus(long tenantId, long id, String expectedStatus, String nextStatus, Long userId) {
-    int affected;
-    if ("SUBMITTED".equals(nextStatus)) {
-      affected = jdbcTemplate.update("""
-          update store_inventory_check
-          set status = ?, submitted_by = ?, updated_at = current_timestamp
-          where tenant_id = ? and id = ? and status = ?
-          """, nextStatus, userId, tenantId, id, expectedStatus);
-    } else if ("REVIEWED".equals(nextStatus)) {
-      affected = jdbcTemplate.update("""
-          update store_inventory_check
-          set status = ?, reviewed_by = ?, reviewed_at = current_timestamp, updated_at = current_timestamp
-          where tenant_id = ? and id = ? and status = ?
-          """, nextStatus, userId, tenantId, id, expectedStatus);
-    } else {
-      affected = jdbcTemplate.update("""
-          update store_inventory_check
-          set status = ?, updated_at = current_timestamp
-          where tenant_id = ? and id = ? and status <> 'REVIEWED'
-          """, nextStatus, tenantId, id);
-    }
-    return affected > 0;
+  public boolean reviewInventoryCheck(
+      long tenantId,
+      long id,
+      long reviewerId,
+      String reviewerName,
+      String reviewerRole
+  ) {
+    return jdbcTemplate.update("""
+        update store_inventory_check
+        set status = 'REVIEWED',
+            reviewed_by = ?,
+            reviewed_by_name = ?,
+            reviewed_by_role = ?,
+            reviewed_at = current_timestamp,
+            updated_at = current_timestamp
+        where tenant_id = ? and id = ? and status = 'SUBMITTED'
+        """, reviewerId, required(reviewerName, "审核人"), required(reviewerRole, "UNKNOWN"),
+        tenantId, id) > 0;
   }
 
   public List<ExamPaperResponse> examPapers(long tenantId) {
@@ -709,11 +813,22 @@ public class OperationsBusinessRepository {
 
   private String statusLabel(String status) {
     return switch (status == null ? "" : status) {
-      case "DRAFT" -> "草稿";
       case "SUBMITTED" -> "已提交";
       case "REVIEWED" -> "已复核";
-      case "CANCELLED" -> "已作废";
       default -> status;
+    };
+  }
+
+  private String inventoryReviewerRoleLabel(String role) {
+    return switch (role == null ? "" : role.trim().toUpperCase()) {
+      case "BOSS", "ADMIN", "OWNER" -> "老板";
+      case "FINANCE" -> "财务";
+      case "SUPERVISOR", "OPERATIONS", "OPS" -> "督导";
+      case "WAREHOUSE" -> "仓管";
+      case "STORE_MANAGER" -> "店长";
+      case "EMPLOYEE" -> "员工";
+      case "", "UNKNOWN" -> null;
+      default -> role;
     };
   }
 

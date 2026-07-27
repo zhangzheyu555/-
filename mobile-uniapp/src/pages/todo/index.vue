@@ -3,13 +3,15 @@ import { computed, ref } from 'vue'
 import { onPullDownRefresh, onShow } from '@dcloudio/uni-app'
 import StatusChip from '@/components/StatusChip.vue'
 import { closeMobileBossTodo, escalateMobileRoleTodo, getMobileBossTodoDashboard, getMobileRequisitions, getMobileRoleTodos, resolveMobileRoleTodo } from '@/api/business'
+import type { MobileTodoAttachment } from '@/api/business'
 import { useSessionStore } from '@/stores'
 import type { RoleTodoItem } from '@/types/business'
 import { canPerformMobileAction } from '@/permissions'
 import { chooseImages } from '@/platform'
 import { createEdgeSwipeToHomeHandlers } from '@/platform/edgeSwipeHome'
 import { todoAttachmentsFromMedia } from '@/utils/todoAttachment'
-import { todoStage, todoStatusLabel, todoStatusTone } from '@/utils/todoStatus'
+import { isWarehouseRequisitionTodo, navigateToTodoDetail } from '@/utils/todoRoute'
+import { todoPriorityLabel, todoPriorityTier, todoStage, todoStatusLabel, todoStatusTone } from '@/utils/todoStatus'
 
 const session = useSessionStore()
 const { onTouchStart, onTouchEnd } = createEdgeSwipeToHomeHandlers()
@@ -34,13 +36,14 @@ const statusTabs = computed(() => isBoss.value
       { value: 'IN_PROGRESS', label: '处理中' },
       { value: 'PENDING_REVIEW', label: '待复核' },
       { value: 'COMPLETED', label: '已完成' },
+      { value: 'REJECTED', label: '已驳回' },
     ])
 const filteredTodos = computed(() => activeStatus.value
   ? todos.value.filter((todo) => todoStage(todo) === activeStatus.value)
   : todos.value)
 const pendingCount = computed(() => todos.value.filter((todo) => !['COMPLETED', 'REJECTED'].includes(todoStage(todo))).length)
 const completedCount = computed(() => todos.value.filter((todo) => todoStage(todo) === 'COMPLETED').length)
-const bossHighPriorityCount = computed(() => todos.value.filter((todo) => Number(todo.priority || 0) >= 3).length)
+const bossHighPriorityCount = computed(() => todos.value.filter((todo) => todoPriorityTier(todo) === 'HIGH').length)
 
 onShow(() => { void refresh() })
 onPullDownRefresh(async () => { await refresh(); uni.stopPullDownRefresh() })
@@ -88,36 +91,36 @@ async function refresh() {
 }
 
 function open(todo: RoleTodoItem) {
-  if (isWarehouseRequisition(todo)) {
-    uni.navigateTo({ url: `/pkg-store/requisition-detail/index?id=${encodeURIComponent(String(todo.sourceRecordId || ''))}` })
-    return
-  }
-  uni.navigateTo({ url: `/pages/todo-detail/index?id=${encodeURIComponent(todo.id)}` })
-}
-
-function isWarehouseRequisition(todo: RoleTodoItem) {
-  const source = String(todo.sourceModule || '')
-  return todo.id.startsWith('warehouse-requisition-') || source.includes('叫货') || source.includes('仓库叫货')
+  navigateToTodoDetail(todo)
 }
 
 async function transition(todo: RoleTodoItem, action: 'resolve' | 'escalate' | 'close') {
   if (action === 'resolve' && !canResolve.value) return
   if (action === 'escalate' && !canEscalate.value) return
   if (action === 'close' && !canClose.value) return
+  let attachments: MobileTodoAttachment[] = []
+  if (action === 'resolve') {
+    const files = await chooseImages({ count: 3, source: 'both' })
+    if (!files.length) { error.value = '「完成并留证」必须上传至少 1 张现场照片，本次未提交。'; return }
+    try { attachments = await todoAttachmentsFromMedia(files) }
+    catch (cause) { error.value = cause instanceof Error ? cause.message : '处理证据读取失败，请重新选择照片。'; return }
+  }
   const note = await askNote(action === 'escalate' ? '填写升级原因' : '填写处理说明')
-  if (!note) return
+  if (!note) { error.value = action === 'escalate' ? '升级原因不能为空，本次未提交。' : '处理说明不能为空，本次未提交。'; return }
   actingId.value = todo.id
+  error.value = ''
   try {
     if (action === 'escalate') await escalateMobileRoleTodo(session.user?.role || '', todo.id, note)
     else if (action === 'close') await closeMobileBossTodo(todo.id, note)
-    else {
-      const files = await chooseImages({ count: 3, source: 'both' })
-      const attachments = files.length ? await todoAttachmentsFromMedia(files) : []
-      await resolveMobileRoleTodo(session.user?.role || '', todo.id, note, attachments)
-    }
+    else await resolveMobileRoleTodo(session.user?.role || '', todo.id, note, attachments)
     await refresh()
   } catch (cause) { error.value = cause instanceof Error ? cause.message : '待办处理失败，请稍后重试。' }
   finally { actingId.value = '' }
+}
+
+function businessTime(todo: RoleTodoItem): string {
+  const value = String(todo.occurredAt || '').trim()
+  return value ? value.replace('T', ' ').slice(0, 16) : ''
 }
 
 function askNote(title: string) {
@@ -143,14 +146,14 @@ function askNote(title: string) {
       <view class="todo-main">
         <view class="todo-top"><text class="todo-title">{{ todo.title }}</text><StatusChip :label="todoStatusLabel(todo)" :tone="todoStatusTone(todo)" /></view>
         <text class="todo-copy">{{ todo.summary || '请进入对应应用处理' }}</text>
-        <view class="todo-foot"><text class="todo-meta">{{ todo.storeName || todo.storeId || '权限范围内事项' }}</text><text v-if="todo.dueAt" class="todo-meta">{{ todo.dueAt }}</text></view>
-        <view v-if="!isWarehouseRequisition(todo) && (canResolve || canEscalate || canClose) && !['COMPLETED','REJECTED'].includes(todoStage(todo))" class="todo-actions" @click.stop>
-          <button v-if="canResolve" :disabled="Boolean(actingId)" @click.stop="transition(todo,'resolve')">完成并留证</button>
-          <button v-if="canEscalate && !todo.escalatedToBoss" :disabled="Boolean(actingId)" @click.stop="transition(todo,'escalate')">升级</button>
-          <button v-if="canClose" :disabled="Boolean(actingId)" @click.stop="transition(todo,'close')">关闭</button>
+        <view class="todo-foot"><text class="todo-meta">{{ todo.sourceModule || '业务事项' }} · {{ todo.storeName || todo.storeId || '权限范围内' }}</text><text v-if="todo.dueAt || businessTime(todo)" class="todo-meta">{{ todo.dueAt || businessTime(todo) }}</text></view>
+        <view v-if="!isWarehouseRequisitionTodo(todo) && (canResolve || canEscalate || canClose) && !['COMPLETED','REJECTED'].includes(todoStage(todo))" class="todo-actions" @click.stop>
+          <button v-if="canResolve" :loading="actingId === todo.id" :disabled="Boolean(actingId)" @click.stop="transition(todo,'resolve')">完成并留证</button>
+          <button v-if="canEscalate && !todo.escalatedToBoss" :loading="actingId === todo.id" :disabled="Boolean(actingId)" @click.stop="transition(todo,'escalate')">升级</button>
+          <button v-if="canClose" :loading="actingId === todo.id" :disabled="Boolean(actingId)" @click.stop="transition(todo,'close')">关闭</button>
         </view>
       </view>
-      <text class="priority">P{{ todo.priority }}</text>
+      <text class="priority" :class="`priority--${todoPriorityTier(todo).toLowerCase()}`">{{ todoPriorityLabel(todo) }}</text>
     </view>
   </view>
 </template>
@@ -188,7 +191,10 @@ function askNote(title: string) {
 .todo-copy { margin-top: 8rpx; color: #6e817d; font-size: 23rpx; line-height: 1.55; }
 .todo-foot { display: flex; margin-top: 12rpx; justify-content: space-between; gap: 12rpx; }
 .todo-meta { color: #849490; font-size: 21rpx; }
-.priority { flex: 0 0 auto; padding: 6rpx 10rpx; color: #27655f; background: #e4f3f0; border-radius: 8rpx; font-size: 21rpx; font-weight: 750; }
+.priority { flex: 0 0 auto; padding: 6rpx 12rpx; color: #27655f; background: #e4f3f0; border-radius: 8rpx; font-size: 21rpx; font-weight: 750; }
+.priority--high { color: #a2412f; background: #fdeae5; }
+.priority--medium { color: #96603b; background: #fdf1e4; }
+.priority--low { color: #6b7d79; background: #eef2f1; }
 .todo-actions { display: flex; gap: 12rpx; margin-top: 16rpx; }
 .todo-actions button { min-height: 64rpx; margin: 0; padding: 0 20rpx; color: #27655f; background: #e4f3f0; border-radius: 10rpx; font-size: 23rpx; font-weight: 700; line-height: 64rpx; }
 </style>

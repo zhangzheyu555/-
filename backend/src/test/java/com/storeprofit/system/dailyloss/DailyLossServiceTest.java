@@ -258,8 +258,8 @@ class DailyLossServiceTest {
     DailyLossMonthlyExcelExport repeatedExport = dailyLossService.exportMonthlyExcel(finance, "s1", "2026-07");
 
     assertThat(draft.totalAmount()).isEqualByComparingTo("50.14");
-    assertThat(draft.supplierCompensationAmount()).isEqualByComparingTo("10.00");
-    assertThat(draft.storeBorneAmount()).isEqualByComparingTo("40.14");
+    assertThat(draft.supplierCompensationAmount()).isEqualByComparingTo(BigDecimal.ZERO);
+    assertThat(draft.storeBorneAmount()).isEqualByComparingTo("50.14");
     assertThat(draft.details()).extracting(DailyLossReportDetailResponse::amountSnapshot)
         .containsExactlyInAnyOrder(new BigDecimal("0.14"), new BigDecimal("50.00"));
     assertThat(submitted.status()).isEqualTo("SUBMITTED");

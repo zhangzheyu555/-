@@ -39,6 +39,15 @@ public class KnowledgeBaseController {
     return ApiResponse.ok(knowledgeBaseService.search(user(authorization), q, limit));
   }
 
+  @GetMapping("/search/summary")
+  public ApiResponse<KnowledgeBaseSearchResponse> searchSummary(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @RequestParam String q,
+      @RequestParam(defaultValue = "5") int limit
+  ) {
+    return ApiResponse.ok(knowledgeBaseService.searchWithSummary(user(authorization), q, limit));
+  }
+
   @GetMapping("/documents")
   public ApiResponse<List<KnowledgeBaseDocumentResponse>> documents(
       @RequestHeader(value = "Authorization", required = false) String authorization
@@ -62,10 +71,15 @@ public class KnowledgeBaseController {
       @RequestParam String visibility,
       @RequestParam(required = false) List<String> roleScopes,
       @RequestParam(required = false) List<String> storeScopes,
+      @RequestParam(required = false) Long topicId,
+      @RequestParam(required = false) String topicName,
+      @RequestParam(required = false) String relationType,
+      @RequestParam(required = false) Long predecessorDocumentId,
       @RequestParam(defaultValue = "false") boolean publishNow
   ) {
     return ApiResponse.ok(knowledgeBaseService.upload(
-        user(authorization), file, title, category, visibility, roleScopes, storeScopes, publishNow));
+        user(authorization), file, title, category, visibility, roleScopes, storeScopes,
+        topicId, topicName, relationType, predecessorDocumentId, publishNow));
   }
 
   @PostMapping("/documents/{id}/publish")

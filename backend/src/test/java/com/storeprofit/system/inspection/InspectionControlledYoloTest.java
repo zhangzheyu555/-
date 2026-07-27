@@ -102,16 +102,17 @@ class InspectionControlledYoloTest {
   }
 
   @Test
-  void detectorTransportUsesFastApiCompatibleHttp11Multipart() throws Exception {
-    AtomicReference<String> upgradeHeader = new AtomicReference<>();
-    AtomicReference<String> contentTypeHeader = new AtomicReference<>();
-    AtomicReference<String> multipartBody = new AtomicReference<>();
+  void detectorRequestUsesHttp11AndAnExplicitMultipartFilePart() throws Exception {
+    AtomicReference<String> protocol = new AtomicReference<>();
+    AtomicReference<String> contentType = new AtomicReference<>();
+    AtomicReference<String> upgrade = new AtomicReference<>();
+    AtomicReference<String> requestBody = new AtomicReference<>();
     HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
     server.createContext("/detect", exchange -> {
-      upgradeHeader.set(exchange.getRequestHeaders().getFirst("Upgrade"));
-      contentTypeHeader.set(exchange.getRequestHeaders().getFirst("Content-Type"));
-      multipartBody.set(new String(
-          exchange.getRequestBody().readAllBytes(), StandardCharsets.ISO_8859_1));
+      protocol.set(exchange.getProtocol());
+      contentType.set(exchange.getRequestHeaders().getFirst("Content-Type"));
+      upgrade.set(exchange.getRequestHeaders().getFirst("Upgrade"));
+      requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.ISO_8859_1));
       byte[] response = "{\"detections\":[]}".getBytes(StandardCharsets.UTF_8);
       exchange.getResponseHeaders().add("Content-Type", "application/json");
       exchange.sendResponseHeaders(200, response.length);
@@ -120,19 +121,21 @@ class InspectionControlledYoloTest {
     });
     server.start();
     try {
-      InspectionService service = service(
-          recordsWithStore(), null, server, Duration.ofMillis(500), null);
+      InspectionService service = service(recordsWithStore(), null, server, Duration.ofMillis(500), null);
 
-      assertThat(service.detect(
-          SUPERVISOR, STORE_ID, imageFile("scene.png", "image/png", png(), png().length)))
-          .containsEntry("detections", List.of());
-      assertThat(upgradeHeader.get()).isNull();
-      assertThat(contentTypeHeader.get())
-          .startsWith("multipart/form-data;")
-          .contains("boundary=");
-      assertThat(multipartBody.get())
+      service.detect(
+          SUPERVISOR,
+          STORE_ID,
+          imageFile("private-name.png", "image/png", png(), png().length));
+
+      assertThat(protocol).hasValue("HTTP/1.1");
+      assertThat(upgrade).hasValue(null);
+      assertThat(contentType.get()).startsWith("multipart/form-data;boundary=");
+      assertThat(requestBody.get())
           .contains("name=\"file\"")
-          .contains("filename=\"inspection.png\"");
+          .contains("filename=\"inspection.png\"")
+          .contains("Content-Type: image/png")
+          .doesNotContain("private-name.png");
     } finally {
       server.stop(0);
     }

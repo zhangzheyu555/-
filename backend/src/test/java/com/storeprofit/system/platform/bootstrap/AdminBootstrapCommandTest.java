@@ -26,18 +26,18 @@ class AdminBootstrapCommandTest {
   @Test
   void bootstrapFlywayCandidateMatchesMigrationResources() throws Exception {
     Path migrationDirectory = Path.of("src", "main", "resources", "db", "migration");
-    List<Integer> versions;
+    List<String> versions;
     try (var files = Files.list(migrationDirectory)) {
       versions = files
           .map(path -> path.getFileName().toString())
-          .filter(name -> name.matches("V[1-9][0-9]*__.+\\.sql"))
-          .map(name -> Integer.parseInt(name.substring(1, name.indexOf("__"))))
+          .filter(name -> name.matches("V[1-9][0-9]*(?:_20[0-9]{15})?__.+\\.sql"))
+          .map(name -> name.substring(1, name.indexOf("__")).replace('_', '.'))
           .sorted()
           .toList();
     }
 
     assertThat(versions)
-        .containsExactlyElementsOf(AdminBootstrapCommand.EXPECTED_FLYWAY_VERSIONS.stream().sorted().toList());
+        .containsExactlyInAnyOrderElementsOf(AdminBootstrapCommand.EXPECTED_FLYWAY_VERSIONS);
   }
 
   @Test

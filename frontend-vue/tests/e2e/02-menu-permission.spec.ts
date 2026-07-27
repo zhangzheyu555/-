@@ -63,6 +63,20 @@ test.describe('page and API permission guardrails', () => {
     })
   }
 
+  for (const role of ['finance', 'supervisor', 'warehouse'] as const) {
+    test(`${role} can open inventory checks with view, export and review access`, async ({ page }) => {
+      await loginAs(page, role)
+      await page.goto('/inventory-checks')
+      await page.waitForLoadState('networkidle')
+      await expect(page.getByText('当前账号没有访问该页面的权限')).toHaveCount(0)
+      await expect(page.getByRole('heading', { name: '店铺盘存' })).toBeVisible()
+      await expect(page.getByText(/当前可查看、导出并复核/)).toBeVisible()
+      await expect(page.getByText(/可导出 Excel，并可复核已提交记录/)).toBeVisible()
+      await expect(page.getByRole('heading', { name: '本店盘存录入' })).toHaveCount(0)
+      await expect(page.getByRole('button', { name: '提交盘存' })).toHaveCount(0)
+    })
+  }
+
   const bossAccessChecks = [
     { path: '/boss', text: '今日待办' },
     { path: '/profit', text: '利润概览' },
@@ -81,6 +95,7 @@ test.describe('page and API permission guardrails', () => {
     { path: '/warehouse/returns', text: '配送退货单' },
     { path: '/warehouse/alerts', text: '库存预警' },
     { path: '/warehouse/receipts', text: '入库记录' },
+    { path: '/inventory-checks', text: '店铺盘存' },
     { path: '/inspection', text: '督导巡店' },
     { path: '/inspection/tasks', text: '发起巡检' },
     { path: '/inspection/records', text: '巡检记录' },

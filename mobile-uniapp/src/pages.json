@@ -65,7 +65,6 @@
       { "pagePath": "pages/home/index", "text": "工作台" },
       { "pagePath": "pages/todo/index", "text": "待办" },
       { "pagePath": "pages/apps/index", "text": "应用" },
-      { "pagePath": "pages/message/index", "text": "消息" },
       { "pagePath": "pages/profile/index", "text": "我的" }
     ]
   },

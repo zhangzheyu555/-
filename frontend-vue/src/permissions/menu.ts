@@ -119,6 +119,14 @@ export const MENU_GROUP_CONFIG: PermissionMenuGroup[] = [
         allowedRoles: ['STORE_MANAGER', 'SUPERVISOR'],
       },
       {
+        key: 'inventory-checks',
+        label: '店铺盘存',
+        to: '/inventory-checks',
+        icon: 'inventory',
+        requiredPermission: PERMISSIONS.INVENTORY_READ,
+        allowedRoles: ['FINANCE', 'SUPERVISOR', 'WAREHOUSE', 'STORE_MANAGER'],
+      },
+      {
         label: '门店详情',
         key: 'store-detail',
         to: '/store-detail',

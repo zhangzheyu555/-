@@ -1,5 +1,12 @@
 import type { RoleTodoItem } from '@/types/business'
 
+const TAB_PAGES = [
+  '/pages/home/index',
+  '/pages/todo/index',
+  '/pages/apps/index',
+  '/pages/profile/index',
+]
+
 const TARGET_ROUTES: Record<string, string> = {
   inspect: '/pkg-inspection/inspection/index',
   inspection: '/pkg-inspection/inspection/index',
@@ -23,10 +30,23 @@ export function routeForTodo(todo: RoleTodoItem, role: string): string {
   return appendParams(base, todo.action?.params)
 }
 
+export function isWarehouseRequisitionTodo(todo: RoleTodoItem): boolean {
+  const source = String(todo.sourceModule || '')
+  return todo.id.startsWith('warehouse-requisition-') || source.includes('叫货')
+}
+
+export function navigateToTodoDetail(todo: RoleTodoItem): void {
+  if (isWarehouseRequisitionTodo(todo)) {
+    uni.navigateTo({ url: `/pkg-store/requisition-detail/index?id=${encodeURIComponent(String(todo.sourceRecordId || ''))}` })
+    return
+  }
+  uni.navigateTo({ url: `/pages/todo-detail/index?id=${encodeURIComponent(todo.id)}` })
+}
+
 export function navigateToTodo(todo: RoleTodoItem, role: string): void {
   const url = routeForTodo(todo, role)
   const path = url.split('?')[0] || url
-  if (['/pages/home/index', '/pages/todo/index', '/pages/apps/index', '/pages/message/index', '/pages/profile/index'].includes(path)) {
+  if (TAB_PAGES.includes(path)) {
     uni.switchTab({ url: path })
     return
   }

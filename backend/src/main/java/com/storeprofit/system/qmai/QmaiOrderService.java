@@ -52,6 +52,8 @@ public class QmaiOrderService {
   private static final String TURNOVER_METHOD = "v3/dataone/item/store/turnover";
   /** 门店列表（分页返回名下所有门店，id 即企迈 shopId）。 */
   private static final String SHOP_LIST_METHOD = "v3/org/shop/getShopList";
+  /** POS 优惠券核销。 */
+  private static final String COUPON_WRITE_OFF_METHOD = "v3/crm/coupon/writeOffCoupon";
 
   private final QmaiConfigService configService;
   private final QmaiOutboundPolicy outboundPolicy;
@@ -106,6 +108,22 @@ public class QmaiOrderService {
       out.put("error", ex.getMessage());
     }
     return out;
+  }
+
+  /** POS 优惠券核销：只允许调用固定路径，避免把通用探测能力暴露给业务页面。 */
+  public Map<String, Object> writeOffCoupon(long tenantId, String brand,
+      Map<String, Object> bizParams) {
+    QmaiConfigService.EffectiveConfig cfg = configService.resolve(tenantId, brand);
+    if (!cfg.isConfigured()) {
+      throw new IllegalStateException("企迈凭证未配置齐全（openId/grantCode/openKey）。");
+    }
+    if (bizParams == null || String.valueOf(bizParams.getOrDefault("bizId", "")).isBlank()) {
+      throw new IllegalArgumentException("bizId 不能为空");
+    }
+    if (String.valueOf(bizParams.getOrDefault("orderNo", "")).isBlank()) {
+      throw new IllegalArgumentException("orderNo 不能为空");
+    }
+    return callOpenApi(cfg, COUPON_WRITE_OFF_METHOD, bizParams, 0);
   }
 
   /** 按自然月聚合。 */

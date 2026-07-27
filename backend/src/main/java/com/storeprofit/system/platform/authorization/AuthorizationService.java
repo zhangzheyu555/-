@@ -19,6 +19,9 @@ public class AuthorizationService {
       // KnowledgeBaseService. It must remain available to ordinary employees, not only managers.
       PermissionCodes.KNOWLEDGE_BASE_SEARCH
   );
+  /** These roles can read/review inventory, but no override may surface entry capability. */
+  private static final Set<String> INVENTORY_REVIEW_ROLES =
+      Set.of("FINANCE", "SUPERVISOR", "WAREHOUSE");
   /** Supervisor takes over operations and may maintain employee profiles, but never payroll. */
   private static final Set<String> SUPERVISOR_PERMISSION_CEILING = Set.of(
       PermissionCodes.SYSTEM_USER_MANAGE,
@@ -80,6 +83,9 @@ public class AuthorizationService {
     if ("SUPERVISOR".equals(canonicalRole)) {
       permissions.removeAll(SUPERVISOR_PERMISSION_CEILING);
     }
+    if (INVENTORY_REVIEW_ROLES.contains(canonicalRole)) {
+      permissions.remove(PermissionCodes.INVENTORY_MANAGE);
+    }
     return Set.copyOf(permissions);
   }
 
@@ -131,6 +137,9 @@ public class AuthorizationService {
     if ("SUPERVISOR".equals(role)) {
       effective.removeAll(SUPERVISOR_PERMISSION_CEILING);
     }
+    if (INVENTORY_REVIEW_ROLES.contains(role)) {
+      effective.remove(PermissionCodes.INVENTORY_MANAGE);
+    }
     // Personal ALLOW overrides are evaluated above, then this hard BOSS-only boundary is
     // applied. DENY still wins for every ordinary permission, and cannot be bypassed here.
     effective.remove(PermissionCodes.STORE_MANAGE);
@@ -175,6 +184,7 @@ public class AuthorizationService {
           PermissionCodes.SALARY_PAY,
           PermissionCodes.WAREHOUSE_READ,
           PermissionCodes.INVENTORY_READ,
+          PermissionCodes.INVENTORY_REVIEW,
           PermissionCodes.ATTACHMENT_READ,
           PermissionCodes.ATTACHMENT_WRITE,
           PermissionCodes.TODO_READ,
@@ -195,6 +205,8 @@ public class AuthorizationService {
           PermissionCodes.WAREHOUSE_CENTRAL_MANAGE,
           PermissionCodes.WAREHOUSE_STORE_READ,
           PermissionCodes.WAREHOUSE_REQUISITION_REVIEW,
+          PermissionCodes.INVENTORY_READ,
+          PermissionCodes.INVENTORY_REVIEW,
           PermissionCodes.DAILY_LOSS_REVIEW,
           PermissionCodes.EXAM_LEARN,
           PermissionCodes.ATTACHMENT_READ,
@@ -236,7 +248,6 @@ public class AuthorizationService {
           PermissionCodes.EMPLOYEE_READ,
           PermissionCodes.EMPLOYEE_MANAGE,
           PermissionCodes.INVENTORY_READ,
-          PermissionCodes.INVENTORY_MANAGE,
           PermissionCodes.INVENTORY_REVIEW,
           PermissionCodes.DAILY_LOSS_READ,
           PermissionCodes.DAILY_LOSS_REVIEW,

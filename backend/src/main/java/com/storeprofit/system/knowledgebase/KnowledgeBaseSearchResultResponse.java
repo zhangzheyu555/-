@@ -3,6 +3,9 @@ package com.storeprofit.system.knowledgebase;
 /** A permitted vector match with a source citation suitable for direct display to a user. */
 public record KnowledgeBaseSearchResultResponse(
     long documentId,
+    long topicId,
+    String topicName,
+    int versionNo,
     String title,
     String category,
     String sourceLocator,

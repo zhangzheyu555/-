@@ -124,14 +124,18 @@ function Get-CandidateMigrationVersion {
   Add-Type -AssemblyName System.IO.Compression.FileSystem
   $archive = [IO.Compression.ZipFile]::OpenRead($JarPath)
   try {
-    $versions = @(
+    $migrations = @(
       $archive.Entries |
-        ForEach-Object { [regex]::Match($_.FullName, 'BOOT-INF/classes/db/migration/V(\d+)__.*\.sql$') } |
+        ForEach-Object { [regex]::Match($_.FullName, 'BOOT-INF/classes/db/migration/V(?<major>\d+)(?:_(?<timestamp>20\d{15}))?__.*\.sql$') } |
         Where-Object { $_.Success } |
-        ForEach-Object { [int]$_.Groups[1].Value }
+        ForEach-Object {
+          $major = [int]$_.Groups['major'].Value
+          $timestamp = $_.Groups['timestamp'].Value
+          [pscustomobject]@{ major = $major; timestamp = $timestamp; version = if ($timestamp) { "$major.$timestamp" } else { [string]$major } }
+        }
     )
-    if ($versions.Count -eq 0) { throw '候选 JAR 未包含可验证的 MySQL Flyway 迁移。' }
-    return ($versions | Measure-Object -Maximum).Maximum
+    if ($migrations.Count -eq 0) { throw '候选 JAR 未包含可验证的 MySQL Flyway 迁移。' }
+    return ($migrations | Sort-Object -Property @{ Expression = 'major'; Descending = $true }, @{ Expression = 'timestamp'; Descending = $true } | Select-Object -First 1).version
   } finally {
     $archive.Dispose()
   }
@@ -182,10 +186,10 @@ try {
 
   [void](Invoke-MySqlCommandSafely -OptionFile $rootOptionFile -Sql 'SELECT 1;' -Action 'MySQL root 连接只读核验')
   $databaseVersion = [string](Invoke-MySqlCommandSafely -OptionFile $rootOptionFile -Sql 'SELECT version FROM `store_profit_mysql8`.`flyway_schema_history` WHERE success = 1 ORDER BY installed_rank DESC LIMIT 1;' -Action 'Flyway 版本只读核验').Trim()
-  if ([int]$databaseVersion -ne $script:ExpectedMigrationVersion) {
+  if ($databaseVersion -cne [string]$script:ExpectedMigrationVersion) {
     throw "当前数据库 Flyway 为 V$databaseVersion，预期为 V$script:ExpectedMigrationVersion；拒绝开始受控替换。"
   }
-  if ([int]$databaseVersion -ne $candidate.MigrationVersion) {
+  if ($databaseVersion -cne [string]$candidate.MigrationVersion) {
     throw "数据库 Flyway 为 V$databaseVersion，候选为 V$($candidate.MigrationVersion)；拒绝让启动器执行迁移。"
   }
   $accountExists = [string](Invoke-MySqlCommandSafely -OptionFile $rootOptionFile -Sql "SELECT COUNT(*) FROM mysql.user WHERE user = '$script:RuntimeUserName' AND host = '127.0.0.1';`n" -Action '受限应用账号存在性核验').Trim()

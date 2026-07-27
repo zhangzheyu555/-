@@ -4,6 +4,20 @@ export type TodoStage = 'PENDING' | 'IN_PROGRESS' | 'PENDING_REVIEW' | 'COMPLETE
 export type TodoDisplayStatus = TodoStage | 'RISK' | 'REMINDER'
 export type TodoStatusTone = 'warning' | 'info' | 'success' | 'danger' | 'neutral'
 
+export type TodoPriorityTier = 'HIGH' | 'MEDIUM' | 'LOW'
+
+export function todoPriorityTier(todo: RoleTodoItem): TodoPriorityTier {
+  const value = Number(todo.priority || 0)
+  if (value >= 90) return 'HIGH'
+  if (value >= 75) return 'MEDIUM'
+  return 'LOW'
+}
+
+export function todoPriorityLabel(todo: RoleTodoItem): string {
+  const labels: Record<TodoPriorityTier, string> = { HIGH: '高', MEDIUM: '中', LOW: '低' }
+  return labels[todoPriorityTier(todo)]
+}
+
 export function todoStage(todo: RoleTodoItem): TodoStage {
   const raw = rawStatus(todo)
   const process = `${todo.processStatus || ''} ${todo.title || ''} ${todo.summary || ''}`

@@ -19,7 +19,7 @@ class DatabaseConfigurationSecurityTest {
           .contains("createDatabaseIfNotExist=false")
           .contains("allowPublicKeyRetrieval=true")
           .contains("connectTimeout=2000")
-          .contains("socketTimeout=2000")
+          .contains("socketTimeout=${MYSQL_SOCKET_TIMEOUT_MS:300000}")
           .contains("username: ${MYSQL_USERNAME}")
           .contains("password: ${MYSQL_PASSWORD}")
           .contains("baseline-on-migrate: false")

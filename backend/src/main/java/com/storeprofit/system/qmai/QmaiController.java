@@ -130,6 +130,23 @@ public class QmaiController {
     return ApiResponse.ok(orderService.probe(user.tenantId(), brand, path, bizParams, signMode));
   }
 
+  /** POS 优惠券核销。该操作会改变企迈数据，仅平台管理员可执行。 */
+  @PostMapping("/pos/write-off-coupon")
+  public ApiResponse<Map<String, Object>> writeOffCoupon(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @RequestParam(name = "brand", required = false) String brand,
+      @RequestBody Map<String, Object> req
+  ) {
+    AuthUser user = accessControl.requireUser(authorization);
+    accessControl.requirePlatformManage(user);
+    Map<String, Object> result = orderService.writeOffCoupon(user.tenantId(), brand, req);
+    auditRepository.writeLog(user, new AuditLogRequest(
+        "企迈POS优惠券核销", "qmai_coupon_write_off", QmaiConfigService.normBrand(brand),
+        null, null, "订单号=" + String.valueOf(req.getOrDefault("orderNo", "")),
+        null, null));
+    return ApiResponse.ok(result);
+  }
+
   /** 诊断：用后台登录令牌探测 console 网关接口，定位营业额报表接口（需平台管理权限）。 */
   @PostMapping("/console-probe")
   public ApiResponse<Map<String, Object>> consoleProbe(

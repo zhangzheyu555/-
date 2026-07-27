@@ -60,6 +60,7 @@ class ApiAuthenticationFilterTest {
 
     for (MockHttpServletRequest request : new MockHttpServletRequest[] {
         request("POST", "/api/auth/login"),
+        request("POST", "/api/auth/wechat/login"),
         request("POST", "/api/auth/initial-password"),
         request("GET", "/api/health"),
         request("POST", "/api/eleme/message"),
@@ -71,6 +72,21 @@ class ApiAuthenticationFilterTest {
       verify(chain).doFilter(request, response);
     }
     verify(authService, never()).requireUser(any());
+  }
+
+  @Test
+  void keepsWeChatBindingEndpointsBehindBearerAuthentication() throws Exception {
+    AuthService authService = mock(AuthService.class);
+    when(authService.requireUser(null)).thenThrow(new BusinessException(
+        "UNAUTHORIZED", "请先登录", HttpStatus.UNAUTHORIZED));
+    ApiAuthenticationFilter filter = new ApiAuthenticationFilter(authService, new ObjectMapper());
+    for (MockHttpServletRequest request : new MockHttpServletRequest[] {
+        request("GET", "/api/auth/wechat/binding"), request("POST", "/api/auth/wechat/bind")
+    }) {
+      MockHttpServletResponse response = new MockHttpServletResponse();
+      filter.doFilter(request, response, mock(FilterChain.class));
+      assertThat(response.getStatus()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
+    }
   }
 
   @Test

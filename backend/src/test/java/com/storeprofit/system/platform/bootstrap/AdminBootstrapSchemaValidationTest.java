@@ -7,8 +7,10 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -16,7 +18,7 @@ class AdminBootstrapSchemaValidationTest {
   @Test
   void acceptsExactlySuccessfulCandidateMigrationsAndRequiredSchema() throws Exception {
     try (Connection connection = schemaConnection(
-        AdminBootstrapCommand.EXPECTED_FLYWAY_VERSION, false, true)) {
+        AdminBootstrapCommand.EXPECTED_FLYWAY_VERSIONS, false, true)) {
       assertThatNoException().isThrownBy(
           () -> AdminBootstrapCommand.validateFlywayHistory(connection));
       assertThatNoException().isThrownBy(
@@ -26,13 +28,15 @@ class AdminBootstrapSchemaValidationTest {
 
   @Test
   void rejectsMissingOrFailedMigrationWithoutRunningFlyway() throws Exception {
+    Set<String> missingLatest = new HashSet<>(AdminBootstrapCommand.EXPECTED_FLYWAY_VERSIONS);
+    missingLatest.remove(AdminBootstrapCommand.EXPECTED_FLYWAY_VERSION);
     try (Connection connection = schemaConnection(
-        AdminBootstrapCommand.EXPECTED_FLYWAY_VERSION - 1, false, true)) {
+        missingLatest, false, true)) {
       assertThatThrownBy(() -> AdminBootstrapCommand.validateFlywayHistory(connection))
           .isInstanceOf(IllegalStateException.class);
     }
     try (Connection connection = schemaConnection(
-        AdminBootstrapCommand.EXPECTED_FLYWAY_VERSION, true, true)) {
+        AdminBootstrapCommand.EXPECTED_FLYWAY_VERSIONS, true, true)) {
       assertThatThrownBy(() -> AdminBootstrapCommand.validateFlywayHistory(connection))
           .isInstanceOf(IllegalStateException.class);
     }
@@ -41,7 +45,7 @@ class AdminBootstrapSchemaValidationTest {
   @Test
   void rejectsMissingRequiredTableOrColumn() throws Exception {
     try (Connection connection = schemaConnection(
-        AdminBootstrapCommand.EXPECTED_FLYWAY_VERSION, false, false)) {
+        AdminBootstrapCommand.EXPECTED_FLYWAY_VERSIONS, false, false)) {
       assertThatThrownBy(() -> AdminBootstrapCommand.validateRequiredSchema(connection))
           .isInstanceOf(SQLException.class);
     }
@@ -76,7 +80,7 @@ class AdminBootstrapSchemaValidationTest {
   }
 
   private Connection schemaConnection(
-      int successfulVersions,
+      Set<String> successfulVersions,
       boolean failLast,
       boolean includeAllRequiredTables
   ) throws SQLException {
@@ -88,19 +92,18 @@ class AdminBootstrapSchemaValidationTest {
             installed_rank int primary key, version varchar(50), success boolean
           )
           """);
-      List<Integer> versions = successfulVersions == AdminBootstrapCommand.EXPECTED_FLYWAY_VERSION
-          ? AdminBootstrapCommand.EXPECTED_FLYWAY_VERSIONS.stream().sorted().toList()
-          : java.util.stream.IntStream.rangeClosed(1, successfulVersions).boxed().toList();
-      int lastVersion = versions.isEmpty() ? 0 : versions.get(versions.size() - 1);
-      for (int version : versions) {
-        boolean success = !(failLast && version == successfulVersions);
-        success = success && !(failLast && version == lastVersion);
+      List<String> versions = successfulVersions.stream().sorted().toList();
+      String lastVersion = versions.isEmpty() ? null : versions.get(versions.size() - 1);
+      int installedRank = 0;
+      for (String version : versions) {
+        installedRank++;
+        boolean success = !(failLast && version.equals(lastVersion));
         statement.execute("insert into flyway_schema_history values ("
-            + version + ", '" + version + "', " + success + ")");
+            + installedRank + ", '" + version + "', " + success + ")");
       }
       if (!failLast) {
         statement.execute("insert into flyway_schema_history values ("
-            + (lastVersion + 1) + ", null, true)");
+            + (installedRank + 1) + ", null, true)");
       }
       statement.execute("create table tenant(id bigint, name varchar(160), status varchar(40))");
       statement.execute("""

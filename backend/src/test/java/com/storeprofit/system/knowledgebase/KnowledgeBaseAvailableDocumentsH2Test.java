@@ -173,7 +173,7 @@ class KnowledgeBaseAvailableDocumentsH2Test {
     Flyway.configure()
         .dataSource(dataSource)
         .locations("classpath:db/migration-h2")
-        .target("74")
+        .target("105")
         .load()
         .migrate();
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);
@@ -219,16 +219,19 @@ class KnowledgeBaseAvailableDocumentsH2Test {
   ) {
     LocalDateTime updatedAt = LocalDateTime.parse(
         publishedAt == null ? "2026-07-24T09:00:00" : publishedAt);
+    long topicId = ensureTopic(jdbc, tenantId, title);
     jdbc.update("""
         insert into knowledge_base_document(
-          id, tenant_id, title, category, original_file_name, content_type, file_size, file_sha256,
+          id, tenant_id, topic_id, version_no, relation_type, title, category,
+          original_file_name, content_type, file_size, file_sha256,
           source_content, visibility, status, parsed_char_count, chunk_count, created_by,
           created_at, updated_at, published_at
-        ) values (?, ?, ?, '门店运营', ?, 'text/plain', 4, ?, ?, ?, ?, 4, 1, 701,
+        ) values (?, ?, ?, 1, 'ORIGINAL', ?, '门店运营', ?, 'text/plain', 4, ?, ?, ?, ?, 4, 1, 701,
           timestamp '2026-07-24 08:00:00', ?, ?)
         """,
         id,
         tenantId,
+        topicId,
         title,
         id + ".txt",
         String.format("%064d", id),
@@ -237,6 +240,22 @@ class KnowledgeBaseAvailableDocumentsH2Test {
         status,
         Timestamp.valueOf(updatedAt),
         publishedAt == null ? null : Timestamp.valueOf(LocalDateTime.parse(publishedAt)));
+  }
+
+  private long ensureTopic(JdbcTemplate jdbc, long tenantId, String title) {
+    Long existing = jdbc.query("""
+        select id from knowledge_base_topic
+        where tenant_id = ? and normalized_name = ?
+        """, (rs) -> rs.next() ? rs.getLong("id") : null, tenantId, title.toLowerCase().trim());
+    if (existing != null) return existing;
+    jdbc.update("""
+        insert into knowledge_base_topic(
+          tenant_id, name, normalized_name, created_by, created_at, updated_at
+        ) values (?, ?, ?, 701, current_timestamp, current_timestamp)
+        """, tenantId, title, title.toLowerCase().trim());
+    return jdbc.queryForObject(
+        "select id from knowledge_base_topic where tenant_id = ? and normalized_name = ?",
+        Long.class, tenantId, title.toLowerCase().trim());
   }
 
   private void insertChunk(JdbcTemplate jdbc, long documentId, String content) {

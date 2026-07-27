@@ -12,6 +12,7 @@ import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -33,6 +34,7 @@ public class KnowledgeBaseService {
   private static final Set<String> VISIBILITIES = Set.of("TENANT", "ROLE", "STORE");
   private static final Set<String> FORMAL_ROLES = Set.of(
       "BOSS", "FINANCE", "SUPERVISOR", "WAREHOUSE", "STORE_MANAGER", "EMPLOYEE");
+  private static final Set<String> RELATION_TYPES = Set.of("ORIGINAL", "REPLACES", "SUPPLEMENTS");
   private static final double MINIMUM_SCORE = 0.10d;
 
   private final KnowledgeBaseRepository repository;
@@ -101,9 +103,14 @@ public class KnowledgeBaseService {
       String category,
       String visibility,
       List<String> roleScopes,
-      List<String> storeScopes
+      List<String> storeScopes,
+      Long topicId,
+      String topicName,
+      String relationType,
+      Long predecessorDocumentId
   ) {
-    return upload(user, file, title, category, visibility, roleScopes, storeScopes, false);
+    return upload(user, file, title, category, visibility, roleScopes, storeScopes,
+        topicId, topicName, relationType, predecessorDocumentId, false);
   }
 
   @Transactional
@@ -115,6 +122,10 @@ public class KnowledgeBaseService {
       String visibility,
       List<String> roleScopes,
       List<String> storeScopes,
+      Long topicId,
+      String topicName,
+      String relationType,
+      Long predecessorDocumentId,
       boolean publishNow
   ) {
     accessControl.requireKnowledgeBaseManage(user);
@@ -122,6 +133,10 @@ public class KnowledgeBaseService {
     Scope normalizedScope = normalizeScope(user, visibility, roleScopes, storeScopes);
     String normalizedTitle = title(title, parsed.fileName());
     String normalizedCategory = required(category, "请选择资料分类", 64).toUpperCase(Locale.ROOT);
+    KnowledgeBaseRepository.TopicRow topic = resolveTopic(user, topicId, topicName, normalizedTitle);
+    repository.lockTopic(user.tenantId(), topic.id());
+    int versionNo = repository.nextVersionNo(user.tenantId(), topic.id());
+    Relation relation = normalizeRelation(user, topic, versionNo, relationType, predecessorDocumentId);
     List<KnowledgeDocumentChunker.ChunkDraft> chunkDrafts = chunker.split(parsed.sections());
     int parsedChars = parsed.sections().stream().mapToInt(section -> section.text().length()).sum();
     ArrayList<KnowledgeBaseRepository.ChunkInsert> chunks = new ArrayList<>();
@@ -133,6 +148,7 @@ public class KnowledgeBaseService {
     long id;
     try {
       id = repository.insertDocument(user.tenantId(), new KnowledgeBaseRepository.DocumentInsert(
+          topic.id(), versionNo, relation.type(), relation.predecessorDocumentId(),
           normalizedTitle, normalizedCategory, parsed.fileName(), parsed.contentType(), sha256(parsed.sourceContent()),
           parsed.sourceContent(), normalizedScope.visibility(), parsedChars, chunks.size(), user.id()));
     } catch (DataIntegrityViolationException ex) {
@@ -141,8 +157,10 @@ public class KnowledgeBaseService {
     repository.insertRoleScopes(id, normalizedScope.roles());
     repository.insertStoreScopes(id, normalizedScope.stores());
     repository.insertChunks(user.tenantId(), id, List.copyOf(chunks));
+    repository.touchTopic(user.tenantId(), topic.id());
     KnowledgeBaseRepository.DocumentRow saved = requiredDocument(user, id);
-    audit(user, "knowledge_base.document_upload", saved, "已上传并完成本地向量索引，共" + chunks.size() + "段");
+    audit(user, "knowledge_base.document_upload", saved,
+          "已归入主题“" + topic.name() + "”第" + versionNo + "版并完成本地向量索引，共" + chunks.size() + "段");
     return publishNow ? publishDraft(user, saved) : response(saved);
   }
 
@@ -165,11 +183,33 @@ public class KnowledgeBaseService {
     if (document.chunkCount() <= 0) {
       throw KnowledgeBaseErrors.badRequest("KNOWLEDGE_BASE_EMPTY_DOCUMENT", "资料没有可检索内容，不能发布");
     }
+    KnowledgeBaseRepository.DocumentRow predecessor = null;
+    if ("REPLACES".equals(document.relationType())) {
+      if (document.predecessorDocumentId() == null) {
+        throw KnowledgeBaseErrors.badRequest("KNOWLEDGE_BASE_PREDECESSOR_REQUIRED", "替代版本必须指定被替代资料");
+      }
+      predecessor = requiredDocument(user, document.predecessorDocumentId());
+      requireManageDocument(user, predecessor, scope(predecessor));
+      if (predecessor.topicId() != document.topicId() || !"PUBLISHED".equals(predecessor.status())) {
+        throw new BusinessException(
+            "KNOWLEDGE_BASE_PREDECESSOR_NOT_PUBLISHED", "被替代资料不是同一主题的已发布版本", HttpStatus.CONFLICT);
+      }
+    }
     if (repository.publish(user.tenantId(), document.id(), user.id()) == 0) {
       throw new BusinessException("KNOWLEDGE_BASE_DOCUMENT_CONFLICT", "资料状态已变化，请刷新后重试", HttpStatus.CONFLICT);
     }
+    if (predecessor != null
+        && repository.archivePublishedPredecessor(user.tenantId(), predecessor.id()) == 0) {
+      throw new BusinessException(
+          "KNOWLEDGE_BASE_PREDECESSOR_CONFLICT", "被替代资料状态已变化，请刷新后重试", HttpStatus.CONFLICT);
+    }
+    repository.touchTopic(user.tenantId(), document.topicId());
     KnowledgeBaseRepository.DocumentRow published = requiredDocument(user, document.id());
-    audit(user, "knowledge_base.document_publish", published, "已发布知识库资料");
+    String reason = predecessor == null
+        ? "已发布知识库资料"
+        : "已发布知识库资料，并自动下架被替代的第" + predecessor.versionNo() + "版（资料编号"
+            + predecessor.id() + "）";
+    audit(user, "knowledge_base.document_publish", published, reason);
     return response(published);
   }
 
@@ -181,6 +221,7 @@ public class KnowledgeBaseService {
     if (repository.archive(user.tenantId(), id) == 0) {
       throw new BusinessException("KNOWLEDGE_BASE_DOCUMENT_CONFLICT", "资料状态已变化，请刷新后重试", HttpStatus.CONFLICT);
     }
+    repository.touchTopic(user.tenantId(), document.topicId());
     KnowledgeBaseRepository.DocumentRow archived = requiredDocument(user, id);
     audit(user, "knowledge_base.document_archive", archived, "已下架知识库资料");
     return response(archived);
@@ -188,6 +229,18 @@ public class KnowledgeBaseService {
 
   @Transactional(readOnly = true)
   public List<KnowledgeBaseSearchResultResponse> search(AuthUser user, String query, int limit) {
+    return searchResults(user, query, limit);
+  }
+
+  @Transactional(readOnly = true)
+  public KnowledgeBaseSearchResponse searchWithSummary(AuthUser user, String query, int limit) {
+    List<KnowledgeBaseSearchResultResponse> results = searchResults(user, query, limit);
+    String normalizedQuery = required(query, "请输入至少两个字符的检索内容", 300);
+    return new KnowledgeBaseSearchResponse(
+        normalizedQuery, summary(normalizedQuery, results), topicGroups(normalizedQuery, results), results);
+  }
+
+  private List<KnowledgeBaseSearchResultResponse> searchResults(AuthUser user, String query, int limit) {
     accessControl.requireKnowledgeBaseSearch(user);
     String normalizedQuery = required(query, "请输入至少两个字符的检索内容", 300);
     if (normalizedQuery.codePointCount(0, normalizedQuery.length()) < 2) {
@@ -195,18 +248,51 @@ public class KnowledgeBaseService {
     }
     int boundedLimit = Math.max(1, Math.min(10, limit));
     byte[] queryEmbedding = embeddingService.embed(normalizedQuery);
+    List<String> tokens = queryTokens(normalizedQuery);
     Map<Long, Scope> scopes = new HashMap<>();
-    DataScope storeScope = accessControl.knowledgeBaseReadStoreScope(user);
-    return repository.publishedChunks(user.tenantId()).stream()
-        .filter(chunk -> visibleTo(user, chunk.documentId(), chunk.visibility(), scopes, storeScope))
-        .map(chunk -> new ScoredChunk(chunk, embeddingService.cosine(queryEmbedding, chunk.embedding())))
+    Map<String, ScoredChunk> integrated = new HashMap<>();
+    repository.publishedChunks(user.tenantId()).stream()
+        .filter(chunk -> visibleTo(user, chunk.documentId(), chunk.visibility(), scopes, accessControl.knowledgeBaseReadStoreScope(user)))
+        .map(chunk -> scoreChunk(chunk, queryEmbedding, tokens, normalizedQuery))
         .filter(item -> item.score() >= MINIMUM_SCORE)
+        .forEach(item -> integrated.merge(
+            item.chunk().topicId() + ":" + item.chunk().contentHash(),
+            item,
+            this::preferredSource));
+    return integrated.values().stream()
         .sorted(Comparator.comparingDouble(ScoredChunk::score).reversed()
+            .thenComparing((ScoredChunk item) -> item.chunk().versionNo(), Comparator.reverseOrder())
             .thenComparing(item -> item.chunk().documentId()))
         .limit(boundedLimit)
         .map(item -> new KnowledgeBaseSearchResultResponse(
-            item.chunk().documentId(), item.chunk().title(), item.chunk().category(), item.chunk().sourceLocator(),
+            item.chunk().documentId(), item.chunk().topicId(), item.chunk().topicName(), item.chunk().versionNo(),
+            item.chunk().title(), item.chunk().category(), item.chunk().sourceLocator(),
             excerpt(item.chunk().content()), rounded(item.score())))
+        .toList();
+  }
+
+  private ScoredChunk preferredSource(ScoredChunk left, ScoredChunk right) {
+    if (left.chunk().versionNo() != right.chunk().versionNo()) {
+      return left.chunk().versionNo() > right.chunk().versionNo() ? left : right;
+    }
+    return left.score() >= right.score() ? left : right;
+  }
+
+  private List<KnowledgeBaseTopicSearchResponse> topicGroups(
+      String query,
+      List<KnowledgeBaseSearchResultResponse> results
+  ) {
+    LinkedHashMap<Long, List<KnowledgeBaseSearchResultResponse>> grouped = new LinkedHashMap<>();
+    for (KnowledgeBaseSearchResultResponse result : results) {
+      grouped.computeIfAbsent(result.topicId(), ignored -> new ArrayList<>()).add(result);
+    }
+    return grouped.entrySet().stream()
+        .map(entry -> {
+          List<KnowledgeBaseSearchResultResponse> sources = List.copyOf(entry.getValue());
+          KnowledgeBaseSearchResultResponse first = sources.getFirst();
+          return new KnowledgeBaseTopicSearchResponse(
+              entry.getKey(), first.topicName(), summary(query, sources), sources);
+        })
         .toList();
   }
 
@@ -258,6 +344,84 @@ public class KnowledgeBaseService {
       accessControl.requireKnowledgeBaseStoreAccess(user, storeId);
     }
     return new Scope(normalizedVisibility, List.of(), stores);
+  }
+
+  private KnowledgeBaseRepository.TopicRow resolveTopic(
+      AuthUser user,
+      Long topicId,
+      String suppliedTopicName,
+      String fallbackTitle
+  ) {
+    if (topicId != null) {
+      if (topicId <= 0) {
+        throw KnowledgeBaseErrors.badRequest("KNOWLEDGE_BASE_TOPIC_ID_INVALID", "知识主题编号不正确");
+      }
+      return repository.findTopic(user.tenantId(), topicId)
+          .orElseThrow(() -> KnowledgeBaseErrors.badRequest(
+              "KNOWLEDGE_BASE_TOPIC_NOT_FOUND", "指定知识主题不存在或不属于当前企业"));
+    }
+    String name = required(
+        suppliedTopicName == null || suppliedTopicName.isBlank() ? fallbackTitle : suppliedTopicName,
+        "请填写知识主题", 200);
+    String normalizedName = normalizedTopicName(name);
+    KnowledgeBaseRepository.TopicRow existing =
+        repository.findTopicByNormalizedName(user.tenantId(), normalizedName).orElse(null);
+    if (existing != null) return existing;
+    try {
+      long id = repository.insertTopic(user.tenantId(), name, normalizedName, user.id());
+      return repository.findTopic(user.tenantId(), id)
+          .orElseThrow(() -> new IllegalStateException("知识主题保存后无法读取"));
+    } catch (DataIntegrityViolationException ex) {
+      return repository.findTopicByNormalizedName(user.tenantId(), normalizedName)
+          .orElseThrow(() -> ex);
+    }
+  }
+
+  private Relation normalizeRelation(
+      AuthUser user,
+      KnowledgeBaseRepository.TopicRow topic,
+      int versionNo,
+      String suppliedType,
+      Long suppliedPredecessorId
+  ) {
+    String type = suppliedType == null || suppliedType.isBlank()
+        ? (versionNo == 1 ? "ORIGINAL" : "SUPPLEMENTS")
+        : suppliedType.trim().toUpperCase(Locale.ROOT);
+    if (!RELATION_TYPES.contains(type)) {
+      throw KnowledgeBaseErrors.badRequest("KNOWLEDGE_BASE_RELATION_INVALID", "资料版本关系不正确");
+    }
+    if (versionNo == 1 && !"ORIGINAL".equals(type)) {
+      throw KnowledgeBaseErrors.badRequest("KNOWLEDGE_BASE_RELATION_INVALID", "主题首版必须是原始版本");
+    }
+    if (versionNo > 1 && "ORIGINAL".equals(type)) {
+      throw KnowledgeBaseErrors.badRequest("KNOWLEDGE_BASE_RELATION_INVALID", "已有主题不能再次创建原始版本");
+    }
+    if ("ORIGINAL".equals(type)) return new Relation(type, null);
+    Long predecessorId = suppliedPredecessorId;
+    if (predecessorId == null) {
+      predecessorId = repository.latestDocument(user.tenantId(), topic.id())
+          .map(KnowledgeBaseRepository.DocumentRow::id)
+          .orElse(null);
+    }
+    if (predecessorId == null || predecessorId <= 0) {
+      throw KnowledgeBaseErrors.badRequest("KNOWLEDGE_BASE_PREDECESSOR_REQUIRED", "请选择关联的上一版本资料");
+    }
+    KnowledgeBaseRepository.DocumentRow predecessor = repository.findDocument(user.tenantId(), predecessorId)
+        .orElseThrow(() -> KnowledgeBaseErrors.badRequest(
+            "KNOWLEDGE_BASE_PREDECESSOR_NOT_FOUND", "关联的上一版本资料不存在"));
+    requireManageDocument(user, predecessor, scope(predecessor));
+    if (predecessor.topicId() != topic.id()) {
+      throw KnowledgeBaseErrors.badRequest(
+          "KNOWLEDGE_BASE_PREDECESSOR_TOPIC_MISMATCH", "只能关联同一知识主题下的资料");
+    }
+    return new Relation(type, predecessorId);
+  }
+
+  private String normalizedTopicName(String value) {
+    return java.text.Normalizer.normalize(value, java.text.Normalizer.Form.NFKC)
+        .toLowerCase(Locale.ROOT)
+        .replaceAll("\\s+", " ")
+        .trim();
   }
 
   private void requireManageDocument(AuthUser user, KnowledgeBaseRepository.DocumentRow document, Scope scope) {
@@ -384,9 +548,109 @@ public class KnowledgeBaseService {
     return Math.round(score * 10_000d) / 10_000d;
   }
 
+  private ScoredChunk scoreChunk(
+      KnowledgeBaseRepository.SearchChunkRow chunk,
+      byte[] queryEmbedding,
+      List<String> tokens,
+      String query
+  ) {
+    double vectorScore = embeddingService.cosine(queryEmbedding, chunk.embedding());
+    double keywordScore = keywordScore(chunk, tokens, query);
+    double score = keywordScore <= 0d ? vectorScore : Math.max(vectorScore, vectorScore * 0.35d + keywordScore * 0.65d);
+    return new ScoredChunk(chunk, Math.min(1d, score));
+  }
+
+  private double keywordScore(KnowledgeBaseRepository.SearchChunkRow chunk, List<String> tokens, String query) {
+    if (tokens.isEmpty()) return 0d;
+    String haystack = normalizedMatchText(chunk.title() + " " + chunk.category() + " "
+        + chunk.sourceLocator() + " " + chunk.content());
+    long matched = tokens.stream().filter(haystack::contains).count();
+    double score = (double) matched / tokens.size() * 0.72d;
+    String compactQuery = compactForMatch(query);
+    if (!compactQuery.isBlank()) {
+      if (compactForMatch(chunk.title()).contains(compactQuery)) score += 0.24d;
+      if (compactForMatch(chunk.content()).contains(compactQuery)) score += 0.18d;
+    }
+    if (normalizedMatchText(chunk.category()).contains(normalizedMatchText(query))) score += 0.12d;
+    return Math.min(1d, score);
+  }
+
+  private List<String> queryTokens(String query) {
+    LinkedHashSet<String> tokens = new LinkedHashSet<>();
+    for (String value : normalizedMatchText(query).split("[^\\p{IsAlphabetic}\\p{IsDigit}]+")) {
+      if (value.length() >= 2) tokens.add(value);
+    }
+    String compact = compactForMatch(query);
+    if (compact.length() >= 2) {
+      tokens.add(compact);
+      int[] codePoints = compact.codePoints().toArray();
+      for (int index = 0; index + 2 <= codePoints.length && tokens.size() < 24; index++) {
+        tokens.add(new String(codePoints, index, 2));
+      }
+      for (int index = 0; index + 3 <= codePoints.length && tokens.size() < 24; index++) {
+        tokens.add(new String(codePoints, index, 3));
+      }
+    }
+    return tokens.stream().limit(24).toList();
+  }
+
+  private String summary(String query, List<KnowledgeBaseSearchResultResponse> results) {
+    if (results.isEmpty()) return "";
+    List<String> tokens = queryTokens(query);
+    LinkedHashSet<String> points = new LinkedHashSet<>();
+    for (KnowledgeBaseSearchResultResponse result : results) {
+      String point = bestSentence(result.excerpt(), tokens);
+      if (!point.isBlank()) points.add(point);
+      if (points.size() >= 3) break;
+    }
+    if (points.isEmpty()) return "";
+    StringBuilder builder = new StringBuilder("根据已发布资料，检索结果可归纳为：");
+    int index = 1;
+    for (String point : points) {
+      builder.append('\n').append(index++).append(". ").append(point);
+    }
+    return builder.toString();
+  }
+
+  private String bestSentence(String text, List<String> tokens) {
+    String normalized = (text == null ? "" : text).replaceAll("\\s+", " ").trim();
+    if (normalized.isBlank()) return "";
+    String[] sentences = normalized.split("(?<=[。！？；;])|\\n+");
+    String best = "";
+    int bestScore = -1;
+    for (String sentence : sentences) {
+      String candidate = sentence.trim();
+      if (candidate.isBlank()) continue;
+      String matchText = normalizedMatchText(candidate);
+      int score = (int) tokens.stream().filter(matchText::contains).count();
+      if (score > bestScore || (score == bestScore && candidate.length() > best.length())) {
+        best = candidate;
+        bestScore = score;
+      }
+    }
+    if (best.isBlank()) best = normalized;
+    return best.length() <= 180 ? best : best.substring(0, 180) + "…";
+  }
+
+  private String normalizedMatchText(String value) {
+    return java.text.Normalizer.normalize(value == null ? "" : value, java.text.Normalizer.Form.NFKC)
+        .toLowerCase(Locale.ROOT)
+        .replaceAll("\\s+", " ")
+        .trim();
+  }
+
+  private String compactForMatch(String value) {
+    StringBuilder result = new StringBuilder();
+    normalizedMatchText(value).codePoints().filter(Character::isLetterOrDigit).limit(1000)
+        .forEach(result::appendCodePoint);
+    return result.toString();
+  }
+
   private KnowledgeBaseDocumentResponse response(KnowledgeBaseRepository.DocumentRow row) {
     Scope scope = scope(row);
-    return new KnowledgeBaseDocumentResponse(row.id(), row.title(), row.category(), row.originalFileName(),
+    return new KnowledgeBaseDocumentResponse(
+        row.id(), row.topicId(), row.topicName(), row.versionNo(), row.relationType(), row.predecessorDocumentId(),
+        row.title(), row.category(), row.originalFileName(),
         row.contentType(), row.fileSize(), row.visibility(), row.status(), scope.roles(), scope.stores(),
         row.parsedCharCount(), row.chunkCount(), row.createdBy(), row.publishedBy(), row.createdAt(), row.updatedAt(),
         row.publishedAt());
@@ -398,6 +662,8 @@ public class KnowledgeBaseService {
   }
 
   private record Scope(String visibility, List<String> roles, List<String> stores) {}
+
+  private record Relation(String type, Long predecessorDocumentId) {}
 
   private record ScoredChunk(KnowledgeBaseRepository.SearchChunkRow chunk, double score) {}
 

@@ -23,10 +23,17 @@ public final class AdminBootstrapCommand {
   public static final String COMMAND_ARGUMENT = "--admin-bootstrap";
   public static final String ENABLED_ENVIRONMENT = "APP_BOOTSTRAP_ADMIN_ENABLED";
   static final String QA_DOCKER_IDENTITY_ENVIRONMENT = "APP_BOOTSTRAP_ADMIN_QA_DOCKER";
-  static final int EXPECTED_FLYWAY_VERSION = 104;
-  static final Set<Integer> EXPECTED_FLYWAY_VERSIONS = java.util.stream.IntStream
-      .rangeClosed(1, EXPECTED_FLYWAY_VERSION)
-      .boxed()
+  static final int LEGACY_FLYWAY_MAXIMUM_MAJOR_VERSION = 105;
+  static final String EXPECTED_FLYWAY_VERSION = "109.20260727120000004";
+  static final Set<String> EXPECTED_FLYWAY_VERSIONS = java.util.stream.Stream.concat(
+      java.util.stream.IntStream
+          .rangeClosed(1, LEGACY_FLYWAY_MAXIMUM_MAJOR_VERSION)
+          .mapToObj(Integer::toString),
+      java.util.stream.Stream.of(
+          "106.20260727120000001",
+          "107.20260727120000002",
+          "108.20260727120000003",
+          EXPECTED_FLYWAY_VERSION))
       .collect(java.util.stream.Collectors.toUnmodifiableSet());
 
   private final PasswordService passwordService;
@@ -306,7 +313,7 @@ public final class AdminBootstrapCommand {
   }
 
   static void validateFlywayHistory(Connection connection) throws SQLException {
-    Set<Integer> versions = new HashSet<>();
+    Set<String> versions = new HashSet<>();
     try (Statement statement = connection.createStatement();
          ResultSet rows = statement.executeQuery("""
              select version, success
@@ -321,16 +328,10 @@ public final class AdminBootstrapCommand {
         if (versionText == null) {
           continue;
         }
-        if (!versionText.matches("[1-9][0-9]*")) {
+        if (!versionText.matches("[1-9][0-9]*(?:\\.20[0-9]{15})?")) {
           throw new IllegalStateException("Flyway history is incomplete");
         }
-        int version;
-        try {
-          version = Integer.parseInt(versionText);
-        } catch (NumberFormatException exception) {
-          throw new IllegalStateException("Flyway history is incomplete", exception);
-        }
-        if (!versions.add(version)) {
+        if (!versions.add(versionText)) {
           throw new IllegalStateException("Flyway history contains a duplicate version");
         }
       }

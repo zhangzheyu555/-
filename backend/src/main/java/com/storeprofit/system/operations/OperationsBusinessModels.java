@@ -57,11 +57,43 @@ public final class OperationsBusinessModels {
       BigDecimal totalAmount,
       Long submittedBy,
       Long reviewedBy,
+      String reviewedByName,
+      String reviewedByRole,
+      String reviewedByRoleLabel,
       String reviewedAt,
       String note,
       String createdAt,
       String updatedAt,
       List<InventoryCheckLineResponse> lines
+  ) {
+  }
+
+  public record InventoryItemResponse(
+      Long id,
+      String itemCode,
+      String category,
+      String itemName,
+      String spec,
+      String unit,
+      BigDecimal packageQuantity,
+      BigDecimal packagePrice,
+      BigDecimal unitPrice,
+      Integer sortOrder,
+      Boolean enabled,
+      Boolean priced
+  ) {
+  }
+
+  public record InventoryItemPriceUpdateRequest(
+      BigDecimal packageQuantity,
+      BigDecimal packagePrice,
+      BigDecimal unitPrice
+  ) {
+  }
+
+  public record InventoryCheckExcelExport(
+      String fileName,
+      byte[] content
   ) {
   }
 
