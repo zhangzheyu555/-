@@ -1,0 +1,53 @@
+version: '1.0'
+name: production-deploy
+displayName: ProductionDeploy
+triggers:
+  trigger: manual
+  push:
+    branches:
+      precise:
+        - main
+stages:
+  - name: build_and_deploy
+    displayName: 构建并发布
+    strategy: naturally
+    trigger: auto
+    executor: []
+    steps:
+      - step: build@maven
+        name: build_backend
+        displayName: 构建后端
+        jdkVersion: '21'
+        mavenVersion: 3.9.11
+        commands:
+          - cd backend
+          - mvn -B -ntp test
+          - mvn -B -ntp -DskipTests package
+        artifacts:
+          - name: BACKEND_ARTIFACT
+            path:
+              - backend/target/store-profit-backend-0.1.0-SNAPSHOT.jar
+        settings: []
+        caches:
+          - ~/.m2
+        notify: []
+        strategy:
+          retry: '0'
+      - step: build@nodejs
+        name: build_frontend
+        displayName: 构建前端
+        nodeVersion: 22.3.0
+        commands:
+          - cd frontend-vue
+          - npm ci
+          - npm run build
+        artifacts:
+          - name: FRONTEND_ARTIFACT
+            path:
+              - frontend-vue/dist
+        caches:
+          - ~/.npm
+          - ~/.yarn
+        notify: []
+        strategy:
+          retry: '0'
