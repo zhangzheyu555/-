@@ -13,6 +13,30 @@ export interface OperationLog {
   createdAt?: string
 }
 
+export type AuditStoreScope = 'ALL' | 'STORE' | 'GLOBAL'
+
+export interface OperationLogQuery {
+  keyword?: string
+  operatorName?: string
+  action?: string
+  storeScope: AuditStoreScope
+  storeId?: string
+  startDate: string
+  endDate: string
+  page: number
+  pageSize: number
+}
+
+export interface OperationLogQueryResponse {
+  rows: OperationLog[]
+  total: number
+  page: number
+  pageSize: number
+  totalPages: number
+  operators: string[]
+  actions: string[]
+}
+
 export interface StoreInfo {
   id: string
   code: string
@@ -87,9 +111,24 @@ export function getAuditLogs(limit = 80) {
   return apiGet<OperationLog[]>(`/api/audit/logs?limit=${limit}`)
 }
 
-export function getStores(options: { knowledgeBaseScope?: boolean } = {}) {
+export function queryAuditLogs(query: OperationLogQuery, signal?: AbortSignal) {
+  const params = new URLSearchParams({
+    keyword: query.keyword?.trim() || '',
+    operatorName: query.operatorName || '',
+    action: query.action || '',
+    storeScope: query.storeScope,
+    storeId: query.storeId || '',
+    startDate: query.startDate,
+    endDate: query.endDate,
+    page: String(query.page),
+    pageSize: String(query.pageSize),
+  })
+  return apiGet<OperationLogQueryResponse>(`/api/audit/logs/search?${params.toString()}`, { signal })
+}
+
+export function getStores(options: { knowledgeBaseScope?: boolean; signal?: AbortSignal } = {}) {
   const query = options.knowledgeBaseScope ? '?knowledgeBaseScope=true' : ''
-  return apiGet<StoreInfo[]>(`/api/stores${query}`)
+  return apiGet<StoreInfo[]>(`/api/stores${query}`, { signal: options.signal })
 }
 
 export function getBrands() {

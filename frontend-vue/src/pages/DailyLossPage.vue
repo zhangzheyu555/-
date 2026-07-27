@@ -83,7 +83,6 @@ const detailReport = ref<DailyLossReport | null>(null)
 const approvalNotes = ref<Record<string, string>>({})
 const approvingId = ref('')
 const lines = ref<LossLineForm[]>([emptyLine()])
-const supplierCompensation = ref('0')
 const formRef = ref<HTMLElement | null>(null)
 const recordsRef = ref<HTMLElement | null>(null)
 const recordFilter = ref<'ALL' | 'NOT_REPORTED' | 'SUBMITTED' | 'REVIEWED'>('ALL')
@@ -100,7 +99,6 @@ const photoControllers = new Map<string, AbortController>()
 
 const hasPendingLossChanges = computed(() => Boolean(
   selectedFiles.value.length
-  || Number(supplierCompensation.value) > 0
   || lines.value.some((line) => line.itemConfigId || line.quantity || line.reason.trim())
   || Object.values(approvalNotes.value).some((note) => String(note || '').trim()),
 ))
@@ -184,15 +182,6 @@ const reportDayGroups = computed(() => {
 })
 const todayReport = computed(() => scopedReports.value.find((report) => report.lossDate === localDate()))
 const itemsById = computed(() => new Map(items.value.map((item) => [Number(item.id), item])))
-const expectedLossAmount = computed(() => lines.value.reduce((total, line) => {
-  const item = selectedItem(line)
-  const quantity = Number(line.quantity)
-  const factor = Number(item?.quantityPerPricingUnit || 1)
-  const price = Number(item?.unitPrice || 0)
-  return total + (Number.isFinite(quantity) && quantity > 0 && factor > 0 ? quantity / factor * price : 0)
-}, 0))
-const expectedSupplierCompensation = computed(() => Math.max(0, Number(supplierCompensation.value) || 0))
-const expectedStoreBorneAmount = computed(() => Math.max(0, expectedLossAmount.value - expectedSupplierCompensation.value))
 const categoryTabs = computed<CategoryTab[]>(() => {
   const grouped = new Map<string, CategoryTab>()
   for (const item of items.value) {
@@ -357,7 +346,6 @@ function discardLossDraftAndChangeStore() {
 
 function resetLossDraft() {
   lines.value = [emptyLine()]
-  supplierCompensation.value = '0'
   selectedFiles.value = []
   releaseSelectedPreviews()
   Object.keys(approvalNotes.value).forEach((key) => delete approvalNotes.value[key])
@@ -524,10 +512,6 @@ async function submitReport() {
     pageError.value = '请至少选择一个报损品类，并填写大于零的数量。'
     return
   }
-  if (expectedSupplierCompensation.value > expectedLossAmount.value + 0.005) {
-    pageError.value = '厂商赔付金额不能超过报损总金额。'
-    return
-  }
   if (!selectedFiles.value.length && !(todayReport.value?.attachments?.length)) {
     pageError.value = '请至少上传一张报损照片。'
     return
@@ -541,7 +525,6 @@ async function submitReport() {
       storeId: effectiveStoreId.value,
       lossDate: localDate(),
       details,
-      supplierCompensationAmount: expectedSupplierCompensation.value,
     })
     if (selectedFiles.value.length && saved.id) {
       await uploadDailyLossReportAttachments(saved.id, selectedFiles.value, (percent) => { uploadProgress.value = percent })
@@ -776,8 +759,6 @@ function currentMonth() {
       </header>
       <div class="archive-amounts">
         <div><span>源表总损耗</span><strong>¥{{ formatMoney(scopedMonthlyArchive.declaredTotalLossAmount) }}</strong></div>
-        <div><span>厂商赔付</span><strong>¥{{ formatMoney(scopedMonthlyArchive.supplierCompensationAmount) }}</strong></div>
-        <div><span>系统计算店铺承担</span><strong>¥{{ formatMoney(scopedMonthlyArchive.calculatedStoreBorneAmount) }}</strong></div>
       </div>
       <p v-if="scopedMonthlyArchive.reconciliationStatus === 'SOURCE_VARIANCE'" class="archive-note">
         原始值已完整保留：{{ scopedMonthlyArchive.sourceNote }}
@@ -789,7 +770,7 @@ function currentMonth() {
         <PackageMinus :size="20" />
         <div>
           <h2>今日报损</h2>
-          <p>按实际单位录入数量，系统自动折算计价，并分别核算厂商赔付与店铺承担。</p>
+          <p>按实际单位录入数量，系统自动折算计价并核算报损金额。</p>
         </div>
       </div>
 
@@ -845,15 +826,6 @@ function currentMonth() {
       </div>
 
       <button class="text-button" type="button" @click="addLine"><Plus :size="15" />增加品类</button>
-
-      <section class="settlement-block" aria-label="报损结算">
-        <label>
-          <span>厂商赔付金额</span>
-          <span class="money-control"><em>¥</em><input v-model="supplierCompensation" type="number" min="0" step="0.01" inputmode="decimal" /></span>
-        </label>
-        <div><span>总计损耗金额</span><strong>¥{{ formatMoney(expectedLossAmount) }}</strong></div>
-        <div><span>店铺承担</span><strong>¥{{ formatMoney(expectedStoreBorneAmount) }}</strong></div>
-      </section>
 
       <section class="photo-upload-block" aria-label="报损照片上传">
         <label class="attachment-field">
@@ -919,7 +891,7 @@ function currentMonth() {
               <span class="status-pill" :class="`status-${statusKey(report).toLowerCase()}`">{{ statusLabel(report) }}</span>
             </div>
             <p v-if="report.reported">
-              {{ report.detailCount || 0 }} 项明细 · 损耗 ¥{{ formatMoney(report.totalAmount) }} · 厂商赔付 ¥{{ formatMoney(report.supplierCompensationAmount) }} · 店铺承担 ¥{{ formatMoney(report.storeBorneAmount) }}
+              {{ report.detailCount || 0 }} 项明细 · 损耗 ¥{{ formatMoney(report.totalAmount) }}
             </p>
             <p v-if="report.reported && ['REVIEWED', 'APPROVED'].includes(statusKey(report))" class="inventory-result">
               {{ report.inventoryStatusLabel || (report.inventoryDeducted ? '库存已准确扣减' : '库存扣减状态异常') }}
@@ -1014,11 +986,6 @@ function currentMonth() {
           该日期尚未提交报损。历史日期不能在此补报，请按现有业务规则处理。
         </div>
         <div v-else class="detail-body">
-          <section class="detail-settlement">
-            <div><span>总计损耗金额</span><strong>¥{{ formatMoney(detailReport.totalAmount) }}</strong></div>
-            <div><span>厂商赔付金额</span><strong>¥{{ formatMoney(detailReport.supplierCompensationAmount) }}</strong></div>
-            <div><span>店铺承担</span><strong>¥{{ formatMoney(detailReport.storeBorneAmount) }}</strong></div>
-          </section>
           <section>
             <h3>报损明细</h3>
             <div class="detail-list detail-list--dialog">
@@ -1145,7 +1112,7 @@ function currentMonth() {
 .archive-summary header p { margin: 4px 0 0; color: var(--ds-muted); font-size: 12px; }
 .archive-summary header > span { padding: 4px 9px; border-radius: 999px; background: var(--ds-success-soft); color: #27724b; font-size: 12px; font-weight: 700; }
 .archive-summary header > span.warning { background: var(--ds-warning-soft); color: #87500f; }
-.archive-amounts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.archive-amounts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .archive-amounts div { display: grid; gap: 4px; padding: 12px; border: 1px solid var(--ds-line); border-radius: 7px; background: #fbfdfc; }
 .archive-amounts span { color: var(--ds-muted); font-size: 12px; }
 .archive-amounts strong { color: var(--ds-ink); font-size: 19px; }
@@ -1163,17 +1130,27 @@ function currentMonth() {
 .records-toolbar {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
   gap: 10px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--ds-line);
 }
 
-.section-heading svg { margin-top: 2px; color: var(--ds-primary-hover); }
+.section-heading { justify-content: flex-start; }
+.records-toolbar { justify-content: space-between; }
+.section-heading > div,
+.records-toolbar > div,
+.archive-summary header > div { min-width: 0; }
+.section-heading svg { flex: 0 0 auto; margin-top: 2px; color: var(--ds-primary-hover); }
 .section-heading h2,
 .records-toolbar h2 { margin: 0; color: var(--ds-ink); font-size: 17px; }
 .section-heading p,
-.records-toolbar p { margin: 3px 0 0; color: var(--ds-muted); font-size: 12px; line-height: 1.5; }
+.records-toolbar p {
+  margin: 3px 0 0;
+  color: var(--ds-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
 
 .empty-config-alert {
   padding: 10px 12px;
@@ -1259,38 +1236,6 @@ function currentMonth() {
 
 .pricing-hint { color: var(--ds-muted); font-size: 11px; font-weight: 600; line-height: 1.35; }
 
-.settlement-block,
-.detail-settlement {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  padding: 14px;
-  border: 1px solid #efddb9;
-  border-radius: 8px;
-  background: var(--ds-warning-soft);
-}
-
-.settlement-block > div,
-.detail-settlement > div { display: grid; gap: 5px; align-content: center; }
-.settlement-block span,
-.detail-settlement span { color: var(--ds-muted); font-size: 12px; font-weight: 700; }
-.settlement-block strong,
-.detail-settlement strong { color: var(--ds-ink); font-size: 19px; }
-
-.money-control {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  min-height: 42px;
-  overflow: hidden;
-  border: 1px solid var(--ds-line-strong);
-  border-radius: 7px;
-  background: #fff;
-}
-
-.money-control em { padding-left: 10px; color: var(--ds-muted); font-style: normal; }
-.money-control input { min-width: 0; min-height: 40px; border: 0; background: transparent; color: var(--ds-ink); font: inherit; }
-
 .reason-field input { padding: 8px 10px; }
 .quick-reasons { display: flex; gap: 6px; flex-wrap: wrap; }
 .quick-reasons button,
@@ -1330,6 +1275,7 @@ function currentMonth() {
   width: fit-content;
   min-height: 36px;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   padding: 0 11px;
   border: 0;
@@ -1365,7 +1311,9 @@ function currentMonth() {
 
 .file-picker-ui {
   display: flex;
+  box-sizing: border-box;
   width: 100%;
+  min-width: 0;
   min-height: 42px;
   align-items: center;
   gap: 10px;
@@ -1376,6 +1324,7 @@ function currentMonth() {
 }
 
 .file-picker-button {
+  flex: 0 0 auto;
   min-height: 30px;
   padding: 6px 11px;
   border-radius: 6px;
@@ -1385,13 +1334,22 @@ function currentMonth() {
 }
 
 .file-picker-ui em {
+  flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
   color: var(--ds-muted);
   font-style: normal;
   font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.attachment-field small { color: var(--ds-muted); font-size: 12px; }
+.attachment-field small {
+  color: var(--ds-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
 
 .selected-preview-grid,
 .photo-grid {
@@ -1485,8 +1443,14 @@ function currentMonth() {
 .record-row.empty { background: #fafbfc; }
 .record-main { min-width: 0; }
 .record-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.record-title strong { color: var(--ds-ink); font-size: 15px; }
-.record-main p { margin: 7px 0 4px; color: var(--ds-secondary); font-size: 13px; line-height: 1.5; }
+.record-title strong { color: var(--ds-ink); font-size: 15px; overflow-wrap: anywhere; }
+.record-main p {
+  margin: 7px 0 4px;
+  color: var(--ds-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
 .status-pill { display: inline-flex; min-height: 23px; align-items: center; padding: 3px 7px; border-radius: 999px; background: #eef4f3; color: #3e5e5b; font-size: 11px; font-weight: 800; }
 .status-not_reported { background: #f1f3f5; color: #5d6670; }
 .status-draft { background: #eaf3ff; color: #245a99; }
@@ -1496,13 +1460,27 @@ function currentMonth() {
 .status-rejected { background: #fff0f1; color: #a53a46; }
 
 .detail-list { display: flex; margin-top: 8px; gap: 6px; flex-wrap: wrap; }
-.detail-list span { padding: 3px 7px; border-radius: 999px; background: var(--ds-surface-muted); color: var(--ds-secondary); font-size: 12px; }
+.detail-list span {
+  max-width: 100%;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--ds-surface-muted);
+  color: var(--ds-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
 .photo-grid { margin-top: 8px; }
 .photo-grid button { display: grid; width: 64px; height: 54px; place-items: center; }
 .photo-grid--large button { width: 112px; height: 92px; }
 .review-action { display: grid; align-content: start; min-width: 190px; gap: 8px; }
 .review-action :deep(.ui-button) { min-width: 126px; height: 38px; padding: 0 12px; font-size: 13px; }
-.approval-note { grid-column: 1 / -1; margin: 0; color: var(--ds-muted); font-size: 12px; }
+.approval-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--ds-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
 .empty-state { padding: 28px 16px; color: var(--ds-muted); text-align: center; font-size: 14px; }
 
 .picker-backdrop,
@@ -1520,7 +1498,9 @@ function currentMonth() {
 .item-picker-dialog,
 .detail-dialog {
   display: grid;
+  box-sizing: border-box;
   width: min(880px, calc(100vw - 48px));
+  min-width: 0;
   max-height: calc(100vh - 48px);
   overflow: hidden;
   gap: 12px;
@@ -1544,6 +1524,13 @@ function currentMonth() {
   gap: 12px;
 }
 
+.item-picker-dialog header > div,
+.detail-dialog header > div { min-width: 0; }
+
+.item-picker-dialog header :deep(.ui-button),
+.detail-dialog header :deep(.ui-button),
+.image-preview-dialog header :deep(.ui-button) { flex: 0 0 auto; }
+
 .item-picker-dialog h2,
 .detail-dialog h2,
 .detail-dialog h3 {
@@ -1553,7 +1540,13 @@ function currentMonth() {
 }
 
 .item-picker-dialog p,
-.detail-dialog p { margin: 3px 0 0; color: var(--ds-muted); font-size: 12px; }
+.detail-dialog p {
+  margin: 3px 0 0;
+  color: var(--ds-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
 
 .category-tabs {
   display: flex;
@@ -1581,7 +1574,7 @@ function currentMonth() {
   box-shadow: none;
 }
 
-.detail-body { display: grid; gap: 16px; overflow: auto; }
+.detail-body { display: grid; min-height: 0; gap: 16px; overflow: auto; }
 .detail-body section { display: grid; gap: 8px; }
 .detail-list--dialog span { border-radius: 6px; }
 
@@ -1610,7 +1603,7 @@ function currentMonth() {
   .daily-loss-page { gap: 12px; }
   .loss-toolbar {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     align-items: end;
     gap: 8px;
     min-height: 0;
@@ -1618,9 +1611,13 @@ function currentMonth() {
   }
   .loss-toolbar :deep(.business-scope-static),
   .loss-toolbar :deep(.business-scope-error) {
-    grid-column: 1 / -1;
+    grid-column: 1;
     width: 100%;
     max-width: none;
+  }
+  .toolbar-export {
+    grid-column: 1;
+    justify-self: stretch;
   }
   .toolbar-field { min-width: 0; }
   .loss-summary { grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -1628,17 +1625,46 @@ function currentMonth() {
   .archive-amounts { grid-template-columns: 1fr; }
   .loss-form,
   .records-card { padding: 14px; }
+  .records-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .records-toolbar :deep(.ui-button) { width: 100%; min-width: 0; }
   .line-row { padding: 10px; gap: 10px; }
+  .text-button { width: 100%; }
   .form-footer { justify-content: stretch; }
   .form-footer :deep(.ui-button),
   .loss-toolbar :deep(.ui-button) { width: 100%; min-width: 0; }
+  .file-picker-ui {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .file-picker-button {
+    display: inline-flex;
+    width: 100%;
+    align-items: center;
+    justify-content: center;
+  }
+  .file-picker-ui em {
+    overflow: visible;
+    text-align: center;
+    text-overflow: clip;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .day-group-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
   .picker-backdrop {
     align-items: end;
     padding: 0;
   }
   .item-picker-dialog {
     width: 100vw;
+    max-width: 100vw;
     max-height: 88vh;
+    padding: 14px 14px calc(14px + env(safe-area-inset-bottom));
     border-radius: 12px 12px 0 0;
   }
   .detail-backdrop,
@@ -1649,10 +1675,21 @@ function currentMonth() {
 }
 
 @media (max-width: 430px) {
-  .loss-toolbar { grid-template-columns: 1fr; }
-  .toolbar-export { grid-column: 1; justify-self: stretch; }
   .loss-summary { grid-template-columns: 1fr; }
-  .archive-summary header { display: grid; }
+  .archive-summary { padding: 14px; }
+  .archive-summary header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .archive-summary header > span { justify-self: start; }
+  .photo-upload-block { padding: 10px; }
   .selected-preview-grid figure { width: 74px; height: 62px; }
+  .day-group-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 3px;
+  }
+  .item-picker-dialog header,
+  .detail-dialog header { align-items: flex-start; }
 }
 </style>

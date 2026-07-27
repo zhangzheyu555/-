@@ -177,6 +177,14 @@ public class InspectionRectificationService {
     }
     InspectionRectificationStatus decision = reviewDecision(request == null ? null : request.decision());
     String note = requireNote(request == null ? null : request.note(), "请填写复核备注");
+    if (decision == InspectionRectificationStatus.APPROVED
+        && rectificationRepository.evidenceAttachmentIds(
+            user.tenantId(), rectification.id(), record.storeId()).isEmpty()) {
+      throw new BusinessException(
+          "RECTIFICATION_EVIDENCE_REQUIRED",
+          "未关联整改现场证据，不能通过复核",
+          HttpStatus.BAD_REQUEST);
+    }
     if (!rectificationRepository.review(
         user.tenantId(), record.id(), decision, note, user.id(), user.displayName())) {
       throw stateConflict("整改状态已变化，请刷新后重试");
@@ -277,7 +285,7 @@ public class InspectionRectificationService {
 
   private void requireEvidenceEditable(InspectionRectificationRecord rectification) {
     if (rectification.status() == InspectionRectificationStatus.PENDING_REVIEW) {
-      throw stateConflict("整改已提交运营复核，暂不能继续修改证据");
+      throw stateConflict("整改已提交督导复核，暂不能继续修改证据");
     }
     if (rectification.status() == InspectionRectificationStatus.APPROVED) {
       throw stateConflict("整改已通过复核，不能再次修改");

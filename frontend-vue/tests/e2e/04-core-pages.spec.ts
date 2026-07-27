@@ -196,20 +196,20 @@ test.describe('core business pages load', () => {
     await expect(body).not.toContainText('待我处理')
     await expect(body).not.toContainText('已处理复盘')
 
-    await page.getByRole('button', { name: '发起巡检' }).click()
+    await page.getByRole('tab', { name: '发起巡检' }).click()
     await expect(page).toHaveURL(/\/operations\/inspection\/tasks$/)
     await expect(body).toContainText('保存巡检')
     await expect(body).toContainText('品牌')
     await expect(body).toContainText('门店')
 
-    await page.getByRole('button', { name: '稽核标准' }).click()
+    await page.getByRole('tab', { name: '稽核标准' }).click()
     await expect(page).toHaveURL(/\/operations\/inspection\/standards$/)
     await expect(body).toContainText('标准版本')
     await expect(body).toContainText('红线项')
     await expect(body).toContainText('完整评分条款')
     await expect(body).toContainText('标准分')
 
-    await page.getByRole('button', { name: '巡检记录' }).click()
+    await page.getByRole('tab', { name: '巡检记录' }).click()
     await expect(page).toHaveURL(/\/operations\/inspection\/records$/)
     await expect(body).toContainText('日期')
     await expect(body).toContainText('得分')

@@ -289,7 +289,7 @@ function detailText(row: WarehouseTransfer) {
       </div>
       <div v-if="draft.lines.length" class="transfer-lines">
         <div v-for="(line, index) in draft.lines" :key="index" class="transfer-line">
-          <label>
+          <label class="transfer-line-field">
             物料
             <div class="material-picker">
               <SearchableSingleSelect
@@ -309,15 +309,18 @@ function detailText(row: WarehouseTransfer) {
             </small>
             <small v-if="shortageFor(line)" class="stock-shortage">{{ shortageFor(line) }}</small>
           </label>
-          <label>
+          <label class="transfer-line-field">
             {{ isProactiveAllocation ? '配货数量' : '申请数量' }}
             <input v-model.number="line.quantity" type="number" min="0.01" step="0.01" required aria-label="调拨数量" />
           </label>
-          <label>
+          <label class="transfer-line-field">
             明细备注
             <input v-model="line.note" placeholder="选填" />
           </label>
-          <button class="icon-button remove-line" type="button" aria-label="删除调拨物料" @click="removeLine(index)"><Trash2 :size="15" /></button>
+          <div class="transfer-line-action">
+            <span class="transfer-line-action-label" aria-hidden="true">操作</span>
+            <button class="icon-button remove-line" type="button" aria-label="删除调拨物料" @click="removeLine(index)"><Trash2 :size="15" /></button>
+          </div>
         </div>
       </div>
       <div v-else class="inline-empty">点击“增加物料”填写当前有效路线的调拨明细。</div>
@@ -466,17 +469,19 @@ function detailText(row: WarehouseTransfer) {
 }
 
 .transfer-line {
+  --transfer-line-control-height: 40px;
   display: grid;
   grid-template-columns: minmax(200px, 1.4fr) minmax(130px, .6fr) minmax(180px, 1fr) auto;
   gap: 10px;
-  align-items: end;
+  align-items: start;
   padding: 10px;
   border: 1px solid var(--ds-line);
   border-radius: 6px;
   background: var(--ds-surface-muted);
 }
 
-.transfer-line label,
+.transfer-line-field,
+.transfer-line-action,
 .transfer-note {
   display: grid;
   min-width: 0;
@@ -484,6 +489,23 @@ function detailText(row: WarehouseTransfer) {
   color: var(--ds-secondary);
   font-size: 13px;
   font-weight: 700;
+}
+
+.transfer-line-action-label {
+  visibility: hidden;
+  line-height: 1.5;
+  user-select: none;
+}
+
+.transfer-line :deep(.searchable-single-select__control),
+.transfer-line input,
+.remove-line {
+  height: var(--transfer-line-control-height);
+  min-height: var(--transfer-line-control-height);
+}
+
+.transfer-line input {
+  width: 100%;
 }
 
 .transfer-line small {
@@ -503,8 +525,9 @@ function detailText(row: WarehouseTransfer) {
 }
 
 .remove-line {
+  width: var(--transfer-line-control-height);
   min-width: 36px;
-  min-height: 36px;
+  padding: 0;
 }
 
 .transfer-submit {
@@ -560,6 +583,10 @@ td .my-todo {
 }
 
 @media (max-width: 820px) {
+  .transfer-line {
+    --transfer-line-control-height: 44px;
+  }
+
   .transfer-line,
   .transfer-detail > div,
   .transfer-route-fields {
@@ -571,6 +598,14 @@ td .my-todo {
   }
 
   .route-arrow {
+    display: none;
+  }
+
+  .transfer-line-action {
+    gap: 0;
+  }
+
+  .transfer-line-action-label {
     display: none;
   }
 

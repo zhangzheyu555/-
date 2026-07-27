@@ -190,6 +190,15 @@ public class WarehouseController {
     return ApiResponse.ok();
   }
 
+  @DeleteMapping("/items/{id}")
+  public ApiResponse<Void> deleteItem(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable long id
+  ) {
+    warehouseService.deleteItem(authService.requireUser(authorization), id);
+    return ApiResponse.ok();
+  }
+
   @GetMapping("/item-categories")
   public ApiResponse<List<WarehouseItemCategoryResponse>> itemCategories(
       @RequestHeader(value = "Authorization", required = false) String authorization

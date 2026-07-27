@@ -62,7 +62,8 @@ function localDate() {
   return `${year}-${month}-${day}`
 }
 
-test('每日报损可按分类和单位搜索品类，提交仍使用数值型 itemConfigId', async ({ page }) => {
+test('每日报损在 390px 下完整展示并可按分类和单位搜索、提交', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
   const saveBodies: Array<Record<string, unknown>> = []
   const today = localDate()
   const existingReport = {
@@ -130,7 +131,39 @@ test('每日报损可按分类和单位搜索品类，提交仍使用数值型 i
 
   await page.goto('/daily-loss')
   await expect(page.getByRole('heading', { name: '今日报损' })).toBeVisible()
+  await expect(page.getByText(/厂商赔付/)).toHaveCount(0)
+  await expect(page.getByText('总计损耗金额', { exact: true })).toHaveCount(0)
+  await expect(page.getByText(/店铺承担/)).toHaveCount(0)
+  await expect(page.getByLabel('报损结算')).toHaveCount(0)
+  await expect(page.getByText('茹菓测试店 · 茹菓', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '增加品类' })).toBeVisible()
+  await expect(page.getByText('选择照片', { exact: true })).toBeVisible()
+  expect(await page.evaluate(() => Math.max(
+    document.documentElement.scrollWidth,
+    document.body.scrollWidth,
+  ) - window.innerWidth)).toBeLessThanOrEqual(1)
+
+  await page.locator('.record-row').first().click()
+  const detailDialog = page.getByRole('dialog', { name: '报损详情' })
+  await expect(detailDialog).toBeVisible()
+  await expect(detailDialog.locator('.detail-settlement')).toHaveCount(0)
+  await expect(detailDialog.getByText('总计损耗金额', { exact: true })).toHaveCount(0)
+  await expect(detailDialog.getByText(/店铺承担/)).toHaveCount(0)
+  await expect(detailDialog.getByText(/厂商赔付/)).toHaveCount(0)
+  await expect(detailDialog.getByRole('button', { name: '关闭报损详情' })).toBeInViewport()
+  const detailBox = await detailDialog.boundingBox()
+  expect(detailBox).not.toBeNull()
+  expect(detailBox!.x).toBeGreaterThanOrEqual(0)
+  expect(detailBox!.x + detailBox!.width).toBeLessThanOrEqual(390)
+  await detailDialog.getByRole('button', { name: '关闭报损详情' }).click()
   await page.locator('.item-picker-trigger').first().click()
+
+  const pickerDialog = page.getByRole('dialog', { name: '选择报损品类' })
+  await expect(pickerDialog.getByRole('button', { name: '关闭品类选择' })).toBeInViewport()
+  const pickerBox = await pickerDialog.boundingBox()
+  expect(pickerBox).not.toBeNull()
+  expect(pickerBox!.x).toBeGreaterThanOrEqual(0)
+  expect(pickerBox!.x + pickerBox!.width).toBeLessThanOrEqual(390)
 
   const material = page.getByRole('combobox', { name: '搜索报损品类', exact: true })
   await material.fill('奶制品 瓶')
@@ -139,8 +172,12 @@ test('每日报损可按分类和单位搜索品类，提交仍使用数值型 i
   await page.getByRole('option', { name: /鲜牛奶.*MILK-202.*奶制品.*瓶/ }).click()
 
   await page.locator('.quantity-control input').first().fill('2')
+  await expect(page.getByLabel('报损结算')).toHaveCount(0)
   await page.getByRole('button', { name: '变质', exact: true }).click()
-  await page.getByRole('button', { name: '提交今日报损', exact: true }).click()
+  const submit = page.getByRole('button', { name: '提交今日报损', exact: true })
+  await submit.scrollIntoViewIfNeeded()
+  await expect(submit).toBeInViewport()
+  await submit.click()
 
   await expect.poll(() => saveBodies.length).toBe(1)
   expect(saveBodies[0]).toMatchObject({
@@ -151,5 +188,11 @@ test('每日报损可按分类和单位搜索品类，提交仍使用数值型 i
       lossReason: '变质',
     }],
   })
+  expect(saveBodies[0]).not.toHaveProperty('supplierCompensationAmount')
+  expect(saveBodies[0]).not.toHaveProperty('storeBorneAmount')
   expect(typeof (saveBodies[0].details as Array<{ itemConfigId: unknown }>)[0].itemConfigId).toBe('number')
+  expect(await page.evaluate(() => Math.max(
+    document.documentElement.scrollWidth,
+    document.body.scrollWidth,
+  ) - window.innerWidth)).toBeLessThanOrEqual(1)
 })

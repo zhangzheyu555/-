@@ -77,8 +77,6 @@ export interface DailyLossReport {
   statusLabel?: string
   reported: boolean
   totalAmount?: number
-  supplierCompensationAmount?: number
-  storeBorneAmount?: number
   detailCount?: number
   attachmentCount?: number
   inventoryDeductedCount?: number
@@ -99,10 +97,6 @@ export interface DailyLossMonthlyArchive {
   sourceTitle: string
   declaredTotalLossAmount: number
   detailTotalLossAmount: number
-  supplierCompensationAmount: number
-  declaredStoreBorneAmount: number
-  calculatedStoreBorneAmount: number
-  declaredBorneDifference: number
   detailLossDifference: number
   storeCount: number
   itemCount: number
@@ -120,7 +114,6 @@ export interface DailyLossReportSaveRequest {
   storeId: string
   lossDate: string
   details: DailyLossReportLinePayload[]
-  supplierCompensationAmount?: number
 }
 
 export interface DailyLossRecordQuery {

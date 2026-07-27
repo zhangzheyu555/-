@@ -619,6 +619,10 @@ export function setWarehouseItemEnabled(itemId: number, enabled: boolean) {
   return apiPost<void, { enabled: boolean }>(`/api/warehouse/items/${itemId}/enabled`, { enabled })
 }
 
+export function deleteWarehouseItem(itemId: number) {
+  return apiDelete<void>(`/api/warehouse/items/${itemId}`)
+}
+
 export function saveWarehouseItemCategory(payload: {
   id?: number
   name: string
@@ -776,12 +780,19 @@ export interface MovementQueryResponse {
   netChange: number
 }
 
-export function getMovementFilterOptions(warehouseId: string | number) {
-  return apiGet<MovementFilterOptions>(`/api/warehouse/movements/filter-options?warehouseId=${encodeURIComponent(warehouseId)}`)
+export function getMovementFilterOptions(warehouseId: string | number, signal?: AbortSignal) {
+  return apiGet<MovementFilterOptions>(
+    `/api/warehouse/movements/filter-options?warehouseId=${encodeURIComponent(warehouseId)}`,
+    { signal },
+  )
 }
 
-export function queryMovements(request: MovementQueryRequest) {
-  return apiPost<MovementQueryResponse, MovementQueryRequest>('/api/warehouse/movements/query', request)
+export function queryMovements(request: MovementQueryRequest, signal?: AbortSignal) {
+  return apiPost<MovementQueryResponse, MovementQueryRequest>(
+    '/api/warehouse/movements/query',
+    request,
+    { signal },
+  )
 }
 
 export async function downloadMovementExport(

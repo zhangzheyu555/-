@@ -72,7 +72,9 @@ const standard = {
 const detectedSuggestion = {
   image_id: 'IMG-FOCUS-1',
   imageId: 'IMG-FOCUS-1',
-  filename: '巡检现场.jpg',
+  // The backend validates and forwards a safe detector filename. Confirmation
+  // must replay this exact value instead of replacing it with the uploaded display name.
+  filename: 'inspection.jpg',
   annotated_image: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL13wAAAABJRU5ErkJggg==',
   passed: false,
   review_status: 'PENDING',
@@ -180,6 +182,7 @@ test('model suggestion shows a returned annotation and only the 200-point deduct
   await expect.poll(() => confirmationBody).toBeTruthy()
 
   expect(Object.keys(confirmationBody || {})).toEqual(['evidence'])
+  expect((confirmationBody?.evidence as Record<string, unknown>)?.filename).toBe('inspection.jpg')
   const forbiddenKeys = new Set([
     'finalDeduction', 'confirmedDeduction', 'standardDeduction', 'suggestedDeduction',
     'clauseDeduction', 'scaleAdjustmentDeduction', 'deductionPolicyVersion',
@@ -207,6 +210,52 @@ test('model suggestion shows a returned annotation and only the 200-point deduct
     path: path.resolve(process.cwd(), '..', 'output', 'playwright', 'inspection-detection-confirm-196-desktop.png'),
     fullPage: true,
   })
+})
+
+test('draft model confirmation errors are shown in an action dialog instead of the page banner', async ({ page }) => {
+  await page.route('**/api/**', async (route) => {
+    const request = route.request()
+    const pathname = new URL(request.url()).pathname
+    if (!pathname.startsWith('/api/')) return route.continue()
+    if (pathname === '/api/auth/me') return json(route, bossUser)
+    if (pathname === '/api/inspection/standards') return json(route, standard)
+    if (pathname === '/api/inspections/service-health') return json(route, { status: 'UP', configured: true, message: '识别服务正常' })
+    if (pathname === '/api/brands') return json(route, [{ id: 1, name: '茹菓' }])
+    if (pathname === '/api/stores') return json(route, [{ id: 'STORE-1', code: 'STORE-1', name: '测试门店', brandId: 1, brandName: '茹菓' }])
+    if (pathname === '/api/inspections' && request.method() === 'GET') return json(route, [])
+    if (pathname === '/api/storage/upload') return json(route, { id: 501, fileName: '巡检现场.jpg', contentType: 'image/jpeg', fileSize: 32, url: '/api/storage/501/content' })
+    if (pathname === '/api/inspections/detect') return json(route, detectedSuggestion)
+    if (pathname === '/api/inspections/detection-suggestions/DET-FOCUS-1/confirm') {
+      return route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: false,
+          code: 'INSPECTION_DETECTION_KEY_MISMATCH',
+          message: '识别证据与确认编号不一致，请重新识别后再确认',
+          data: null,
+        }),
+      })
+    }
+    if (pathname.startsWith('/api/supervisor/todos')) return json(route, { items: [] })
+    return json(route, [])
+  })
+
+  await seedSession(page)
+  await page.goto('/operations/inspection/tasks')
+  await page.locator('.inspection-upload-box input[type="file"]').setInputFiles({
+    name: '巡检现场.jpg',
+    mimeType: 'image/jpeg',
+    buffer: Buffer.from('inspection-confirm-error-image'),
+  })
+  await page.getByRole('button', { name: '确认问题并加入扣分' }).click()
+
+  const dialog = page.getByRole('alertdialog', { name: '无法确认模型问题' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText('识别证据与确认编号不一致，请重新识别后再确认')
+  await expect(page.locator('.error-box').filter({ hasText: '识别证据与确认编号不一致' })).toHaveCount(0)
+  await dialog.getByRole('button', { name: '返回修改' }).click()
+  await expect(page.getByRole('button', { name: '确认问题并加入扣分' })).toBeVisible()
 })
 
 test('record detail keeps effective deductions separate from unmatched AI evidence and loads protected image blobs', async ({ page }) => {

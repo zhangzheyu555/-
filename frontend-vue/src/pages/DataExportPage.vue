@@ -213,11 +213,6 @@ watch(
   <section class="page-panel export-page">
     <PageHeader :title="scope.isStoreManager.value ? '本店数据导出' : undefined" />
 
-    <aside class="desktop-workflow-notice" role="note">
-      <strong>请在电脑端完成</strong>
-      <span>大批量数据导出涉及门店范围核对和敏感经营数据，请使用电脑端完成。</span>
-    </aside>
-
     <p v-if="rangeNotice" class="export-range-notice" role="status" aria-live="polite">{{ rangeNotice }}</p>
     <div v-if="message" class="success-box" role="status" aria-live="polite">{{ message }}</div>
     <div v-if="error" class="error-box" role="alert">{{ error }}</div>
@@ -303,10 +298,6 @@ watch(
 .export-page {
   display: grid;
   gap: var(--space-4);
-}
-
-.desktop-workflow-notice {
-  display: none;
 }
 
 .export-range-notice,
@@ -470,25 +461,6 @@ watch(
 .export-download-button {
   min-width: 132px;
   white-space: nowrap;
-}
-
-@media (max-width: 768px) {
-  .desktop-workflow-notice {
-    display: grid;
-    gap: var(--space-1);
-    padding: var(--space-3);
-    border: 1px solid #efd19f;
-    border-radius: var(--radius-md);
-    background: #fff8ed;
-    color: #73450f;
-    font-size: 13px;
-    line-height: 1.5;
-  }
-
-  .desktop-workflow-notice strong {
-    color: #73450f;
-    font-size: 14px;
-  }
 }
 
 @media (max-width: 820px) {

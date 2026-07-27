@@ -22,6 +22,23 @@ import org.springframework.stereotype.Repository;
 public class WarehouseRepository {
   private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
   private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+  private static final List<String> ITEM_BUSINESS_REFERENCE_TABLES = List.of(
+      "warehouse_stock_batch",
+      "warehouse_stock_movement",
+      "store_requisition_line",
+      "warehouse_purchase_order_line",
+      "warehouse_delivery_order_line",
+      "store_receipt_line",
+      "warehouse_stock_adjustment",
+      "warehouse_alert",
+      "warehouse_return_order_line",
+      "store_inventory",
+      "store_inventory_movement",
+      "warehouse_inventory",
+      "warehouse_transfer_line",
+      "daily_loss_record",
+      "daily_loss_inventory_application"
+  );
   private final JdbcTemplate jdbcTemplate;
   private volatile Boolean requisitionPolicyTablesAvailable;
 
@@ -470,6 +487,53 @@ public class WarehouseRepository {
     jdbcTemplate.update(
         "update warehouse_item set active = ?, updated_at = current_timestamp where tenant_id = ? and id = ?",
         enabled,
+        tenantId,
+        itemId
+    );
+  }
+
+  public boolean itemHasBusinessReferences(long tenantId, long itemId) {
+    for (String tableName : ITEM_BUSINESS_REFERENCE_TABLES) {
+      if (!hasColumn(tableName, "tenant_id") || !hasColumn(tableName, "item_id")) {
+        continue;
+      }
+      Integer count = jdbcTemplate.queryForObject(
+          "select count(*) from " + tableName + " where tenant_id = ? and item_id = ?",
+          Integer.class,
+          tenantId,
+          itemId
+      );
+      if (count != null && count > 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  public int deleteItem(long tenantId, long itemId) {
+    if (hasColumn("warehouse_item_requisition_target", "item_id")) {
+      jdbcTemplate.update(
+          "delete from warehouse_item_requisition_target where tenant_id = ? and item_id = ?",
+          tenantId,
+          itemId
+      );
+    }
+    if (hasColumn("warehouse_item_requisition_policy", "item_id")) {
+      jdbcTemplate.update(
+          "delete from warehouse_item_requisition_policy where tenant_id = ? and item_id = ?",
+          tenantId,
+          itemId
+      );
+    }
+    if (hasColumn("warehouse_item_department", "item_id")) {
+      jdbcTemplate.update(
+          "delete from warehouse_item_department where tenant_id = ? and item_id = ?",
+          tenantId,
+          itemId
+      );
+    }
+    return jdbcTemplate.update(
+        "delete from warehouse_item where tenant_id = ? and id = ?",
         tenantId,
         itemId
     );
@@ -3413,9 +3477,19 @@ public class WarehouseRepository {
       long tenantId, long warehouseId
   ) {
     String sql = """
-        select s.id, s.name, s.code, s.area, s.status
+        select distinct s.id, s.name, s.code, s.area, s.status
         from store_branch s
-        where s.tenant_id = ? and s.supply_warehouse_id = ?
+        where s.tenant_id = ?
+          and (
+            s.supply_warehouse_id = ?
+            or exists (
+              select 1
+              from warehouse_stock_movement movement
+              where movement.tenant_id = s.tenant_id
+                and movement.warehouse_id = ?
+                and movement.store_id = s.id
+            )
+          )
         order by s.name
         """;
     return jdbcTemplate.query(sql, (rs, n) -> new WarehouseMovementFilterOptionsResponse.StoreOption(
@@ -3424,7 +3498,7 @@ public class WarehouseRepository {
         rs.getString("code"),
         rs.getString("area"),
         rs.getString("status")
-    ), tenantId, warehouseId);
+    ), tenantId, warehouseId, warehouseId);
   }
 
   public List<WarehouseMovementFilterOptionsResponse.ItemOption> movementFilterItems(
@@ -3506,6 +3580,7 @@ public class WarehouseRepository {
     }
 
     StringBuilder where = new StringBuilder("where m.tenant_id = ? and m.warehouse_id = ?\n");
+    where.append("  and m.quantity_delta <> 0\n");
     where.append("  and m.created_at >= ? and m.created_at < ?\n");
     java.util.ArrayList<Object> params = new java.util.ArrayList<>();
     params.add(tenantId);
@@ -3522,8 +3597,19 @@ public class WarehouseRepository {
       params.addAll(itemIds);
     }
     if (directions != null && !directions.isEmpty()) {
-      where.append("  and m.movement_type in (").append(placeholders(directions.size())).append(")\n");
-      params.addAll(directions);
+      List<String> directionPredicates = new ArrayList<>();
+      if (directions.contains("IN")) {
+        directionPredicates.add("(m.quantity_delta > 0 and upper(m.movement_type) not like 'ADJUST%')");
+      }
+      if (directions.contains("OUT")) {
+        directionPredicates.add("(m.quantity_delta < 0 and upper(m.movement_type) not like 'ADJUST%')");
+      }
+      if (directions.contains("ADJUST")) {
+        directionPredicates.add("upper(m.movement_type) like 'ADJUST%'");
+      }
+      if (!directionPredicates.isEmpty()) {
+        where.append("  and (").append(String.join(" or ", directionPredicates)).append(")\n");
+      }
     }
     if (sourceTypes != null && !sourceTypes.isEmpty()) {
       where.append("  and m.source_type in (").append(placeholders(sourceTypes.size())).append(")\n");

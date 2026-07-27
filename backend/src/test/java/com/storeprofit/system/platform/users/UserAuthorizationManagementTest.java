@@ -291,19 +291,79 @@ class UserAuthorizationManagementTest {
   }
 
   @Test
-  void supervisorDataScopeSupportsAssignedOperationsDomainsWithoutAll() {
-    AuthUser supervisor = user(10L, "supervisor2", "SUPERVISOR", null, 2L);
+  void supervisorCanReceiveAllStoresWithinOperationsBoundary() {
+    AuthUser supervisor = user(10L, "supervisor-all-stores", "SUPERVISOR", null, 2L);
     stubAuthorizationSnapshot(supervisor);
+    when(authorizationService.incrementPermissionVersionAndDeleteTokens(1L, 10L)).thenReturn(3L);
 
-    assertThatThrownBy(() -> service.updateAuthorization(
+    assertThatCode(() -> service.updateAuthorization(
         boss,
         10L,
         new UserAuthorizationUpdateRequest(
             List.of(),
-            List.of(new UserDataScopeRequest(DataScopeDomains.PLATFORM, DataScopeModes.ALL, List.of())))))
-        .isInstanceOf(BusinessException.class)
-        .satisfies(error -> assertThat(((BusinessException) error).getCode())
-            .isEqualTo("SUPERVISOR_SCOPE_BOUNDARY"));
+            List.of(new UserDataScopeRequest(
+                DataScopeDomains.STORE, DataScopeModes.ALL, List.of())))))
+        .doesNotThrowAnyException();
+
+    verify(authRepository).replaceStoreScope(1L, 10L, List.of());
+    verify(dataScopeService).replaceAssignments(
+        eq(1L),
+        eq(10L),
+        org.mockito.ArgumentMatchers.argThat(scopes -> scopes.stream()
+            .anyMatch(scope -> DataScopeDomains.STORE.equals(scope.domainCode())
+                && DataScopeModes.ALL.equals(scope.mode())
+                && scope.storeIds().isEmpty())),
+        eq(1L));
+  }
+
+  @Test
+  void supervisorAllStoreScopeIsReturnedAsAllInsteadOfUnconfigured() {
+    AuthUser supervisor = user(14L, "supervisor-all-response", "SUPERVISOR", null, 3L);
+    when(authRepository.users(1L)).thenReturn(List.of(supervisor));
+    when(dataScopeService.configuredScope(supervisor, DataScopeDomains.STORE))
+        .thenReturn(DataScope.all());
+
+    List<UserResponse> users = service.users(boss);
+
+    assertThat(users).singleElement()
+        .satisfies(user -> assertThat(user.storeScope()).containsExactly("all"));
+  }
+
+  @Test
+  void unifiedSupervisorAccessProfileAcceptsAllStoreScope() {
+    AuthUser supervisor = user(15L, "supervisor-all-profile", "SUPERVISOR", null, 3L);
+    stubAuthorizationSnapshot(supervisor);
+    when(authorizationService.incrementPermissionVersionAndDeleteTokens(1L, 15L)).thenReturn(4L);
+
+    assertThatCode(() -> service.updateAccessProfile(
+        boss,
+        15L,
+        new UserAccessProfileUpdateRequest(
+            "全门店督导",
+            "SUPERVISOR",
+            null,
+            List.of(),
+            true,
+            List.of(),
+            List.of(new UserDataScopeRequest(
+                DataScopeDomains.STORE, DataScopeModes.ALL, List.of()))
+        )
+    )).doesNotThrowAnyException();
+
+    verify(authRepository).replaceStoreScope(1L, 15L, List.of());
+    verify(dataScopeService).replaceAssignments(
+        eq(1L),
+        eq(15L),
+        org.mockito.ArgumentMatchers.argThat(scopes -> scopes.stream()
+            .anyMatch(scope -> DataScopeDomains.STORE.equals(scope.domainCode())
+                && DataScopeModes.ALL.equals(scope.mode()))),
+        eq(1L));
+  }
+
+  @Test
+  void supervisorCannotReceiveStoreScopeForWarehouseDomain() {
+    AuthUser supervisor = user(10L, "supervisor2", "SUPERVISOR", null, 2L);
+    stubAuthorizationSnapshot(supervisor);
 
     assertThatThrownBy(() -> service.updateAuthorization(
         boss,

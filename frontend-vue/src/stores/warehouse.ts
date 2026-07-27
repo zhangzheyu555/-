@@ -5,6 +5,7 @@ import {
   createWarehousePurchaseOrder,
   createWarehouseTransfer,
   createWarehouseRequisition,
+  deleteWarehouseItem,
   deleteWarehouseItemCategory,
   downloadWarehousePdf,
   getWarehouseReturns,
@@ -390,15 +391,34 @@ export const useWarehouseStore = defineStore('warehouse', {
     },
     async saveItem(payload: WarehouseItemPayload) {
       const actionId = payload.id ? `item:${payload.id}` : `item:new:${payload.code}`
-      await this.runAction(actionId, async () => {
+      this.actioningId = actionId
+      this.error = ''
+      this.actionMessage = ''
+      try {
         await saveWarehouseItem(payload)
         this.actionMessage = payload.id ? '物料档案已更新' : '物料档案已新增'
-      })
+        try {
+          await this.loadAll()
+        } catch {
+          this.error = '物料已保存，但列表刷新失败，请点击刷新。'
+        }
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : '物料保存失败'
+        throw error
+      } finally {
+        this.actioningId = ''
+      }
     },
     async setItemEnabled(itemId: number, enabled: boolean) {
       await this.runAction(`item-enabled:${itemId}`, async () => {
         await setWarehouseItemEnabled(itemId, enabled)
         this.actionMessage = enabled ? '物料已启用' : '物料已停用'
+      })
+    },
+    async deleteItem(itemId: number, itemName: string) {
+      await this.runAction(`item-delete:${itemId}`, async () => {
+        await deleteWarehouseItem(itemId)
+        this.actionMessage = `物料“${itemName}”已删除`
       })
     },
     async saveCategory(payload: { id?: number; name: string; parentId?: number | null; sortOrder?: number; enabled?: boolean }) {

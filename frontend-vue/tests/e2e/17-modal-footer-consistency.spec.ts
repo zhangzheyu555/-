@@ -47,7 +47,7 @@ const expense = {
   amount: 320,
   category: '设备维护',
   reason: '门店设备检修',
-  status: 'PENDING',
+  status: 'REQUEST_INFO',
   supplements: [],
   supplementAttachmentCount: 0,
 }
@@ -144,6 +144,14 @@ async function fulfillReadonlyApi(route: Route, path: string) {
   if (path === '/api/salaries') return route.fulfill(ok([salaryRecord]))
   if (path === '/api/salaries/preview') {
     return route.fulfill(ok({ generated: 1, skipped: 0, errors: 0, skipDetails: [] }))
+  }
+  if (path === '/api/warehouse/items/requisition-scope-context') {
+    return route.fulfill(ok({ mode: 'ALL', stores: [], regions: [] }))
+  }
+  if (path === '/api/warehouse/warehouses') {
+    return route.fulfill(ok([
+      { id: 1, code: 'JZ-CENTRAL', name: '荆州总仓', type: 'CENTRAL', regionCode: 'JINGZHOU', parentWarehouseId: null, parentWarehouseName: null, externalPurchaseAllowed: true, storeSupplyAllowed: true, enabled: true, canRead: true },
+    ]))
   }
   if (path === '/api/warehouse/overview') {
     return route.fulfill(ok({

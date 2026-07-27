@@ -254,7 +254,9 @@ public class InspectionService {
           Map.of()
       );
     }
-    if (!outboundAllowed(healthUrl)) {
+    if (!outboundAllowed(healthUrl)
+        || !outboundAllowed(detectUrl)
+        || (exportUrl != null && !exportUrl.isBlank() && !outboundAllowed(exportUrl))) {
       return new InspectionServiceHealthResponse(
           "OUTBOUND_BLOCKED",
           false,
@@ -2019,10 +2021,28 @@ public class InspectionService {
   }
 
   private boolean outboundAllowed(String target) {
+    if ("INTERNAL".equalsIgnoreCase(outboundMode) && isFixedInspectionSidecarTarget(target)) {
+      return true;
+    }
     if ("QA".equalsIgnoreCase(runtimeEnvironment) && !isLiteralQaLoopback(target)) {
       return false;
     }
     return LocalMockOutboundPolicy.isAllowed(runtimeEnvironment, outboundMode, target);
+  }
+
+  private boolean isFixedInspectionSidecarTarget(String target) {
+    try {
+      URI uri = URI.create(target == null ? "" : target.trim());
+      return "http".equalsIgnoreCase(uri.getScheme())
+          && "inspection-service".equalsIgnoreCase(uri.getHost())
+          && uri.getPort() == 8000
+          && uri.getUserInfo() == null
+          && uri.getRawQuery() == null
+          && uri.getRawFragment() == null
+          && Set.of("/health", "/detect", "/export").contains(uri.getPath());
+    } catch (IllegalArgumentException ex) {
+      return false;
+    }
   }
 
   private boolean isLiteralQaLoopback(String target) {
@@ -2938,6 +2958,7 @@ public class InspectionService {
     HttpClient client = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(5))
         .followRedirects(HttpClient.Redirect.NEVER)
+        .version(HttpClient.Version.HTTP_1_1)
         .build();
     JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(client);
     factory.setReadTimeout(readTimeout == null ? Duration.ofSeconds(60) : readTimeout);

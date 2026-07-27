@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
+import { expectNoWholePageOverflow } from './auth.setup'
 
 const bossSession = {
   id: 1,
@@ -393,9 +394,10 @@ test('实习员工按小时显示整数，仅修改备注不会丢失原工时�
   await expect(page.getByLabel('绩效奖罚')).toHaveValue('18')
   await expect(page.getByLabel('最终提成金额')).toHaveValue('300')
   await expect(page.getByText('出勤天数应在0—31天之间')).toHaveCount(0)
-  await expect(page.getByRole('button', { name: '保存工资与假期' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: '保存工资与假期' })).toBeDisabled()
 
   await page.getByLabel('休息日期备注').fill('7月5日休息')
+  await expect(page.getByRole('button', { name: '保存工资与假期' })).toBeEnabled()
   await page.getByRole('button', { name: '保存工资与假期' }).click()
 
   expect(captured.attendance).toBeUndefined()
@@ -547,4 +549,282 @@ test('未保存工资与假期修改会阻止焦点恢复同步覆盖明细', as
   await page.getByRole('button', { name: '取消', exact: true }).click()
   await expect(vacationNote).toHaveValue('尚未保存的 7 月休息安排')
   await expect(page.getByLabel('月份')).toHaveValue('2026-07')
+})
+
+test('工资筛选、汇总、表格和明细在 390px 下保持可达且不撑宽页面', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  const captured: CapturedRequests = {}
+  await prepare(page, captured)
+  await page.goto('/finance/salary?storeId=xls12&month=2026-07')
+
+  for (const control of [
+    page.getByLabel('月份'),
+    page.getByRole('combobox', { name: '门店', exact: true }),
+    page.getByLabel('工资状态'),
+    page.locator('.salary-search'),
+  ]) {
+    await control.scrollIntoViewIfNeeded()
+    await expect(control).toBeVisible()
+    const box = await control.boundingBox()
+    expect(box?.height, `${await control.getAttribute('aria-label') || '工资筛选控件'} 的点击高度`).toBeGreaterThanOrEqual(44)
+  }
+
+  await expect(page.getByLabel('搜索工资记录')).toBeVisible()
+  await expect(page.locator('.salary-summary-strip')).toBeVisible()
+  await expect(page.locator('.business-metrics')).toBeVisible()
+  await page.getByText('李店员', { exact: true }).first().click()
+  await expect(page.getByLabel('休息日期备注')).toBeVisible()
+  await expectNoWholePageOverflow(page, 'finance salary 390px')
+})
+
+test('工资修改必须先保存再提交，保存失败在当前明细内提示并可直接重试', async ({ page }) => {
+  const captured: CapturedRequests = {}
+  await prepare(page, captured)
+  let saveAttempts = 0
+  await page.route(/\/api\/salaries\/salary-1$/, async (route) => {
+    if (route.request().method() !== 'PUT') return route.fallback()
+    saveAttempts += 1
+    if (saveAttempts === 1) {
+      return route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: false,
+          code: 'VERSION_CONFLICT',
+          message: '工资记录已被其他用户修改，请刷新后重试',
+        }),
+      })
+    }
+    captured.salaryUpdate = route.request().postDataJSON() as Record<string, unknown>
+    return route.fulfill(ok({ ...salaryRecord, ...captured.salaryUpdate }))
+  })
+  await page.goto('/finance/salary?storeId=xls12&month=2026-07')
+
+  const saveButton = page.getByRole('button', { name: '保存工资与假期' })
+  const submitButton = page.getByRole('button', { name: '提交审核' })
+  await expect(saveButton).toBeDisabled()
+  await expect(submitButton).toBeEnabled()
+
+  await page.getByLabel('其他补贴').fill('80')
+  await expect(saveButton).toBeEnabled()
+  await expect(submitButton).toBeDisabled()
+  await expect(page.getByText('工资明细有未保存修改，请先保存后再提交审核。')).toBeVisible()
+
+  await saveButton.click()
+  await expect(page.locator('.salary-detail-panel').getByRole('alert')).toContainText('工资记录已被其他用户修改')
+  await expect(saveButton).toBeEnabled()
+  await expect(submitButton).toBeDisabled()
+
+  await saveButton.click()
+  await expect.poll(() => saveAttempts).toBe(2)
+  await expect(page.getByText(/已保存 李店员 的工资与假期信息/)).toBeVisible()
+  await expect(submitButton).toBeEnabled()
+})
+
+test('状态和关键词筛选可清除，员工总数与当前筛选结果不会混淆', async ({ page }) => {
+  const captured: CapturedRequests = {}
+  await prepare(page, captured)
+  const salaryQueries: URLSearchParams[] = []
+  await page.route(/\/api\/salaries\/employee-page/, async (route) => {
+    const url = new URL(route.request().url())
+    salaryQueries.push(new URLSearchParams(url.search))
+    const filtered = Boolean(url.searchParams.get('status') || url.searchParams.get('keyword'))
+    return route.fulfill(ok({
+      ...salaryPage(filtered ? [] : [salaryRecord]),
+      content: filtered ? [] : [salaryRecord],
+      total: filtered ? 0 : 1,
+      totalElements: filtered ? 0 : 1,
+      statusCounts: { DRAFT: 1 },
+      summary: {
+        ...salaryPage([salaryRecord]).summary,
+        recordCount: 1,
+      },
+    }))
+  })
+  await page.goto('/finance/salary?storeId=xls12&month=2026-07')
+
+  await page.getByLabel('工资状态').selectOption('SUBMITTED')
+  await expect(page.getByText('当前筛选范围暂无员工')).toBeVisible()
+  await expect(page.locator('.title-block')).toContainText('共 1 名员工 · 当前显示 0 名')
+
+  const clearButton = page.getByRole('button', { name: '清除筛选' })
+  await expect(clearButton).toBeEnabled()
+  await clearButton.click()
+  await expect(page.getByLabel('工资状态')).toHaveValue('')
+  await expect(page.getByText('李店员', { exact: true }).first()).toBeVisible()
+  await expect(clearButton).toBeDisabled()
+  await expect.poll(() => salaryQueries.some((query) => query.get('status') === 'SUBMITTED')).toBe(true)
+  await expect.poll(() => salaryQueries.at(-1)?.has('status')).toBe(false)
+})
+
+test('批量审核只允许选择待审核工资，部分失败时保留失败记录供重试', async ({ page }) => {
+  const captured: CapturedRequests = {}
+  const submittedOne = { ...salaryRecord, id: 'salary-submitted-1', employeeName: '待审甲', status: 'SUBMITTED' }
+  const submittedTwo = {
+    ...salaryRecord,
+    id: 'salary-submitted-2',
+    employeeId: 'EMP-002',
+    employeeName: '待审乙',
+    status: 'PENDING_REVIEW',
+  }
+  await prepare(page, captured, salaryRecord, salaryBusinessMetrics, undefined, [submittedOne, submittedTwo])
+  const approvalAttempts: string[] = []
+  await page.route(/\/api\/salaries\/[^/]+\/approve$/, async (route) => {
+    const id = decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-2) || '')
+    approvalAttempts.push(id)
+    if (id === submittedTwo.id) {
+      return route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: false,
+          code: 'VERSION_CONFLICT',
+          message: '工资记录已被其他用户修改，请刷新后重试',
+        }),
+      })
+    }
+    return route.fulfill(ok({ ...submittedOne, status: 'APPROVED' }))
+  })
+  await page.goto('/finance/salary?storeId=xls12&month=2026-07')
+
+  await expect(page.getByLabel('选择李店员')).toBeDisabled()
+  await expect(page.getByLabel('选择待审甲')).toBeEnabled()
+  await expect(page.getByLabel('选择待审乙')).toBeEnabled()
+  await page.getByLabel('选择当前页待审核工资').check()
+  const batchButton = page.getByRole('button', { name: /批量审核\s*（2）/ })
+  await expect(batchButton).toBeEnabled()
+  await batchButton.click()
+  await page.getByRole('alertdialog', { name: '批量审核工资' }).getByRole('button', { name: '确认审核' }).click()
+
+  await expect.poll(() => approvalAttempts).toEqual([submittedOne.id, submittedTwo.id])
+  await expect(page.getByText('已审核 1 条工资记录')).toBeVisible()
+  await expect(page.getByText(/1 条工资审核失败/)).toBeVisible()
+  await expect(page.getByLabel('选择待审甲')).not.toBeChecked()
+  await expect(page.getByLabel('选择待审乙')).toBeChecked()
+})
+
+test('添加人员名单加载失败可在弹窗内重试，成功后恢复选择和提交', async ({ page }) => {
+  const captured: CapturedRequests = {}
+  await prepare(page, captured)
+  let candidateAttempts = 0
+  await page.route(/\/api\/salaries\/assignment-candidates/, async (route) => {
+    candidateAttempts += 1
+    if (candidateAttempts === 1) {
+      return route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: false, code: 'BACKEND_UNAVAILABLE', message: '服务暂时不可用' }),
+      })
+    }
+    return route.fulfill(ok([assignmentCandidate]))
+  })
+  await page.goto('/finance/salary?storeId=xls12&month=2026-07')
+  await page.getByRole('button', { name: '添加人员', exact: true }).click()
+
+  const dialog = page.getByRole('dialog', { name: '添加人员' })
+  await expect(dialog.getByRole('alert')).toBeVisible()
+  await expect(dialog.getByRole('button', { name: '重新加载' })).toBeVisible()
+  await dialog.getByRole('button', { name: '重新加载' }).click()
+  await expect(dialog.getByText('张调店', { exact: true })).toBeVisible()
+  await dialog.getByRole('radio').check()
+  await expect(dialog.getByRole('button', { name: '添加到工资名单' })).toBeEnabled()
+  expect(candidateAttempts).toBe(2)
+})
+
+test('工资生成先展示加载和失败重试，没有可生成员工时禁止确认生成', async ({ page }) => {
+  const captured: CapturedRequests = {}
+  await prepare(page, captured)
+  let previewAttempts = 0
+  await page.route(/\/api\/salaries\/preview/, async (route) => {
+    previewAttempts += 1
+    if (previewAttempts === 1) {
+      return route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: false, code: 'BACKEND_UNAVAILABLE', message: '服务暂时不可用' }),
+      })
+    }
+    return route.fulfill(ok({
+      generated: 0,
+      skipped: 1,
+      errors: 0,
+      skipDetails: [{ employeeId: 'EMP-001', employeeName: '李店员', reason: '缺少已确认考勤' }],
+    }))
+  })
+  await page.goto('/finance/salary?storeId=xls12&month=2026-07')
+  await page.getByRole('button', { name: '生成本月工资' }).click()
+
+  const dialog = page.getByRole('dialog', { name: '工资生成预览' })
+  await expect(dialog.getByRole('alert')).toBeVisible()
+  await dialog.getByRole('button', { name: '重新预览' }).click()
+  await expect(dialog).toContainText('可生成 0 人')
+  await expect(dialog).toContainText('李店员')
+  await expect(dialog).toContainText('缺少已确认考勤')
+  await expect(dialog.getByRole('button', { name: '确认生成本月工资' })).toBeDisabled()
+  expect(previewAttempts).toBe(2)
+})
+
+test('全部门店下从员工明细进入预览会使用员工所属门店', async ({ page }) => {
+  const captured: CapturedRequests = {}
+  const pendingRecord = {
+    ...salaryRecord,
+    id: '',
+    gross: 0,
+    status: 'PENDING_GENERATION' as const,
+  }
+  await prepare(page, captured, pendingRecord)
+  let previewQuery: URLSearchParams | undefined
+  await page.route(/\/api\/salaries\/preview/, async (route) => {
+    previewQuery = new URL(route.request().url()).searchParams
+    return route.fulfill(ok({
+      generated: 1,
+      skipped: 0,
+      errors: 0,
+      skipDetails: [],
+    }))
+  })
+
+  await page.goto('/finance/salary?month=2026-07')
+  await page.getByRole('button', { name: '进入生成预览' }).click()
+
+  const dialog = page.getByRole('dialog', { name: '工资生成预览' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText('荆江之星')
+  await expect(dialog.getByRole('button', { name: '确认生成本月工资' })).toBeEnabled()
+  await expect.poll(() => previewQuery?.get('storeId')).toBe('xls12')
+  await expect(page.getByRole('alert').filter({ hasText: '请先选择具体门店' })).toHaveCount(0)
+})
+
+test('已发放工资可锁定，锁定失败保留确认框和错误以便直接重试', async ({ page }) => {
+  const captured: CapturedRequests = {}
+  const paidRecord = { ...salaryRecord, id: 'salary-paid', employeeName: '已发员工', status: 'PAID' }
+  await prepare(page, captured, paidRecord)
+  let lockAttempts = 0
+  await page.route(/\/api\/salaries\/salary-paid\/lock$/, async (route) => {
+    lockAttempts += 1
+    if (lockAttempts === 1) {
+      return route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: false,
+          code: 'VERSION_CONFLICT',
+          message: '工资记录已被其他用户修改，请刷新后重试',
+        }),
+      })
+    }
+    return route.fulfill(ok({ ...paidRecord, status: 'LOCKED' }))
+  })
+  await page.goto('/finance/salary?storeId=xls12&month=2026-07')
+
+  await page.getByRole('button', { name: '锁定工资记录' }).click()
+  const confirmation = page.getByRole('alertdialog', { name: '锁定工资记录' })
+  await confirmation.getByRole('button', { name: '确认锁定' }).click()
+  await expect(confirmation.getByRole('alert')).toContainText('工资记录已被其他用户修改')
+  await expect(confirmation).toBeVisible()
+
+  await confirmation.getByRole('button', { name: '确认锁定' }).click()
+  await expect.poll(() => lockAttempts).toBe(2)
+  await expect(confirmation).toHaveCount(0)
+  await expect(page.getByText('工资记录已锁定')).toBeVisible()
 })

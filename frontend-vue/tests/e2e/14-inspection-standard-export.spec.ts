@@ -235,10 +235,10 @@ test('latest 200-point standard calculates 180/179 and red-line result while sav
   await page.getByRole('option').filter({ hasText: 'M-01 · M-01 检查条款' }).click()
   await expect(clausePicker).toHaveValue('M-01 · M-01 检查条款')
   await expect(manualDeduct).toHaveValue('37')
-  await manualDeduct.fill('1')
+  await expect(manualDeduct).toHaveAttribute('readonly', '')
   await page.getByLabel('问题描述').fill('物料手工扣分使用稳定条款 ID')
   await page.getByRole('button', { name: '添加', exact: true }).click()
-  await expect(page.locator('.inspection-deduction-card').getByRole('row', { name: /M-01 M-01 检查条款/ })).toContainText('1分')
+  await expect(page.locator('.inspection-deduction-card').getByRole('row', { name: /M-01 M-01 检查条款/ })).toContainText('37分')
 
   await page.getByLabel('督导人').fill('测试督导')
   await page.getByRole('button', { name: '保存巡检' }).first().click()
@@ -247,7 +247,7 @@ test('latest 200-point standard calculates 180/179 and red-line result while sav
   const itemResults = savedPayload?.itemResults as Array<Record<string, unknown>>
   expect(itemResults).toHaveLength(105)
   expect(itemResults.find((item) => item.standardItemId === 1)?.issueFound).toBe(true)
-  expect(itemResults.find((item) => item.standardItemId === 2)?.actualScore).toBe(36)
+  expect(itemResults.find((item) => item.standardItemId === 2)?.actualScore).toBe(0)
   expect(itemResults.find((item) => item.standardItemId === 2)?.deductionReason).toBe('物料手工扣分使用稳定条款 ID')
   expect(itemResults.find((item) => item.standardItemId === 3)?.actualScore).toBe(0)
   expect(itemResults.find((item) => item.standardItemId === 88)?.actualScore).toBe(79)
@@ -264,7 +264,51 @@ test('latest 200-point standard calculates 180/179 and red-line result while sav
   expect(photosJson).toContain('"attachmentId":501')
 })
 
-test('manual review appears before the clause list and clause search filters all supported text fields', async ({ page }) => {
+test('manual red-line selection keeps the prescribed zero score and cannot be edited', async ({ page }) => {
+  await mockInspectionApi(page)
+  await seedSession(page)
+  await page.goto('/operations/inspection/tasks')
+
+  const clausePicker = page.getByRole('combobox', { name: '搜索选择检查条款' })
+  const prescribedScore = page.getByLabel('条款规定扣分')
+
+  await clausePicker.fill('M-RED-01')
+  await page.getByRole('option').filter({ hasText: 'M-RED-01 · M-RED-01 检查条款' }).click()
+
+  await expect(prescribedScore).toHaveValue('0')
+  await expect(prescribedScore).toHaveAttribute('readonly', '')
+  await expect(page.getByText('红线条款：命中即判定不合格，本条款规定扣分为 0 分。')).toBeVisible()
+
+  await page.getByLabel('问题描述').fill('发现红线违规')
+  await page.getByRole('button', { name: '添加', exact: true }).click()
+
+  const redLineRecord = page.locator('.inspection-deduction-card').getByRole('row', { name: /M-RED-01 M-RED-01 检查条款/ })
+  await expect(redLineRecord).toContainText('红线')
+  await expect(redLineRecord).not.toContainText('1分')
+  await expect(page.getByRole('row', { name: /M-RED-01/ }).getByRole('checkbox').first()).toBeChecked()
+})
+
+test('manual deduction validation is shown next to the action in a modal instead of the page banner', async ({ page }) => {
+  await mockInspectionApi(page)
+  await seedSession(page)
+  await page.goto('/operations/inspection/tasks')
+
+  const clausePicker = page.getByRole('combobox', { name: '搜索选择检查条款' })
+  await clausePicker.fill('M-01')
+  await page.getByRole('option').filter({ hasText: 'M-01 · M-01 检查条款' }).click()
+  await page.getByRole('button', { name: '添加', exact: true }).click()
+
+  const dialog = page.getByRole('alertdialog', { name: '无法添加扣分项' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText('请写清楚现场问题，方便门店整改。')
+  await expect(page.locator('.error-box').filter({ hasText: '请写清楚现场问题' })).toHaveCount(0)
+
+  await dialog.getByRole('button', { name: '返回修改' }).click()
+  await expect(dialog).toBeHidden()
+  await expect(page.getByRole('button', { name: '添加', exact: true })).toBeFocused()
+})
+
+test('manual review precedes the clause list, final save follows it, and standards render only on their tab', async ({ page }) => {
   await mockInspectionApi(page)
   await seedSession(page)
   await page.goto('/operations/inspection/tasks')
@@ -278,11 +322,13 @@ test('manual review appears before the clause list and clause search filters all
     const reviewCards = [
       document.querySelector('.inspection-deduction-card'),
       document.querySelector('.inspection-add-card'),
-      document.querySelector('.inspection-note-card'),
     ]
-    return Boolean(clauseSearch) && reviewCards.every((card) => (
-      Boolean(card) && Boolean(card?.compareDocumentPosition(clauseSearch as Node) & Node.DOCUMENT_POSITION_FOLLOWING)
-    ))
+    const noteCard = document.querySelector('.inspection-note-card')
+    return Boolean(clauseSearch)
+      && reviewCards.every((card) => (
+        Boolean(card) && Boolean(card?.compareDocumentPosition(clauseSearch as Node) & Node.DOCUMENT_POSITION_FOLLOWING)
+      ))
+      && Boolean(noteCard?.compareDocumentPosition(clauseSearch as Node) & Node.DOCUMENT_POSITION_PRECEDING)
   })
   expect(manualReviewComesFirst).toBe(true)
 
@@ -313,6 +359,8 @@ test('manual review appears before the clause list and clause search filters all
   await expect(page.locator('[data-category="HYGIENE"] tbody tr')).toHaveCount(47)
   await expect(page.locator('[data-category="SERVICE"] tbody tr')).toHaveCount(18)
 
+  await expect(page.locator('.inspection-standards-view')).toHaveCount(0)
+  await page.goto('/operations/inspection/standards')
   const standardCatalog = page.locator('.inspection-standards-view')
   const standardSearch = standardCatalog.getByRole('searchbox', { name: '搜索标准条款' })
   await expect(standardSearch).toBeVisible()
@@ -326,6 +374,28 @@ test('manual review appears before the clause list and clause search filters all
   await expect(standardCatalog.getByText('当前维度没有包含“S-01”的标准条款。')).toBeVisible()
   await standardCatalog.getByRole('button', { name: '全部维度', exact: true }).click()
   await expect(standardCatalog.locator('.standards-table tbody tr')).toHaveCount(1)
+})
+
+test('dirty inspection drafts require confirmation before being cleared', async ({ page }) => {
+  await mockInspectionApi(page)
+  await seedSession(page)
+  await page.goto('/operations/inspection/tasks')
+
+  await expect(page.locator('.inspection-note-card').getByRole('status')).toContainText('请填写督导人姓名')
+  await page.getByLabel('督导人').fill('测试督导')
+  await page.getByLabel('整改要求 / 备注').fill('闭店前完成复查')
+  await page.getByRole('button', { name: '清空表单' }).click()
+
+  const dialog = page.getByRole('alertdialog', { name: '放弃未保存的巡店草稿？' })
+  await expect(dialog).toBeVisible()
+  await page.getByRole('button', { name: '继续填写' }).click()
+  await expect(page.getByLabel('督导人')).toHaveValue('测试督导')
+  await expect(page.getByLabel('整改要求 / 备注')).toHaveValue('闭店前完成复查')
+
+  await page.getByRole('button', { name: '清空表单' }).click()
+  await page.getByRole('button', { name: '放弃草稿' }).click()
+  await expect(page.getByLabel('督导人')).toHaveValue('')
+  await expect(page.getByLabel('整改要求 / 备注')).toHaveValue('')
 })
 
 test('canonical E2E red-line fixture uses a complete formal standard and downloads xlsx with an authenticated request', async ({ page }) => {
@@ -492,7 +562,7 @@ test('invalid 105-item standard remains visible with category diagnostics and bl
   await expect(page.getByRole('table', { name: '卫生标准条款' }).locator('tbody tr')).toHaveCount(47)
   await expect(page.getByRole('table', { name: '服务标准条款' }).locator('tbody tr')).toHaveCount(15)
 
-  await page.getByRole('button', { name: '发起巡检' }).click()
+  await page.getByRole('tab', { name: '发起巡检' }).click()
   await expect(page.getByText('当前标准未通过校验，只能只读查看，不能保存巡检。')).toBeVisible()
   await expect(page.locator('[data-category="MATERIAL"] tbody tr')).toHaveCount(43)
   await expect(page.locator('[data-category="HYGIENE"] tbody tr')).toHaveCount(47)
@@ -610,7 +680,7 @@ test('read-only store manager is routed to records and cannot see manage tabs', 
   await page.goto('/operations/inspection')
 
   await expect(page).toHaveURL(/\/operations\/inspection\/records$/)
-  await expect(page.getByRole('button', { name: '巡检记录' })).toBeVisible()
-  await expect(page.getByRole('button', { name: '发起巡检' })).toHaveCount(0)
-  await expect(page.getByRole('button', { name: '稽核标准' })).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: '巡检记录' })).toBeVisible()
+  await expect(page.getByRole('tab', { name: '发起巡检' })).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: '稽核标准' })).toHaveCount(0)
 })

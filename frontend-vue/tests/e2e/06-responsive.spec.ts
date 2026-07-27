@@ -3,7 +3,7 @@ import { expectNoWholePageOverflow, loginAs, type RoleKey } from './auth.setup'
 
 const widths = [375, 390, 430, 768]
 
-const pages: Array<{ role: RoleKey | null; path: string; name: string }> = [
+const corePages: Array<{ role: RoleKey | null; path: string; name: string }> = [
   { role: null, path: '/login', name: 'login' },
   { role: 'store', path: '/warehouse', name: 'store-warehouse' },
   { role: 'boss', path: '/boss', name: 'boss' },
@@ -19,9 +19,83 @@ const pages: Array<{ role: RoleKey | null; path: string; name: string }> = [
   { role: 'supervisor', path: '/operations/exams', name: 'supervisor-exam' },
 ]
 
+const mobileRoutesByRole: Record<RoleKey, string[]> = {
+  boss: [
+    '/boss',
+    '/profit',
+    '/profit-table',
+    '/data-entry',
+    '/expenses',
+    '/store-detail',
+    '/stores',
+    '/staff',
+    '/logs',
+    '/users',
+    '/assistant',
+    '/knowledge-base',
+  ],
+  finance: [
+    '/finance',
+    '/profit',
+    '/profit-table',
+    '/data-entry',
+    '/expenses',
+    '/export',
+    '/finance/salary',
+    '/assistant',
+  ],
+  warehouse: [
+    '/warehouse',
+    '/warehouse/central',
+    '/warehouse/shandong',
+    '/warehouse/detail/1',
+    '/warehouse/transfers',
+    '/warehouse/items',
+    '/warehouse/inventory',
+    '/warehouse/requests',
+    '/warehouse/purchase',
+    '/warehouse/movements',
+    '/warehouse/returns',
+    '/warehouse/alerts',
+    '/warehouse/receipts',
+    '/assistant',
+  ],
+  store: [
+    '/store',
+    '/store-detail',
+    '/store/salary',
+    '/store/inventory',
+    '/store/inventory/requisition',
+    '/store/inventory/receipts',
+    '/store/inventory/records',
+    '/daily-loss',
+    '/store/inspection/rectifications',
+    '/store/exams',
+    '/assistant',
+  ],
+  supervisor: [
+    '/operations',
+    '/daily-loss',
+    '/operations/inspection',
+    '/operations/inspection/tasks',
+    '/operations/inspection/records',
+    '/operations/inspection/reviews',
+    '/operations/inspection/standards',
+    '/operations/exams',
+    '/platform-login',
+  ],
+  learner: [
+    '/employee',
+    '/employee/profile',
+    '/employee/exams',
+    '/employee-assistant',
+    '/learn/exams',
+  ],
+}
+
 test.describe('responsive smoke checks', () => {
   for (const width of widths) {
-    for (const item of pages) {
+    for (const item of corePages) {
       test(`${item.name} works at ${width}px`, async ({ page }) => {
         await page.setViewportSize({ width, height: width === 768 ? 1024 : 812 })
         if (item.role) {
@@ -34,6 +108,24 @@ test.describe('responsive smoke checks', () => {
         await expectNoWholePageOverflow(page, `${item.name} ${width}px`)
       })
     }
+  }
+
+  for (const [role, paths] of Object.entries(mobileRoutesByRole) as Array<[RoleKey, string[]]>) {
+    test(`${role} 的全部业务路由在 390px 下不产生整页横向溢出`, async ({ page }) => {
+      await page.setViewportSize({ width: 390, height: 844 })
+      await loginAs(page, role)
+
+      for (const path of paths) {
+        await page.goto(path)
+        await page.waitForLoadState('networkidle')
+        await expect(page.locator('body'), `${path} should render`).not.toBeEmpty()
+        await expect.poll(
+          () => new URL(page.url()).pathname,
+          { message: `${role} should be allowed to stay on ${path}` },
+        ).toBe(path)
+        await expectNoWholePageOverflow(page, `${role} ${path} 390px`)
+      }
+    })
   }
 
   test('mobile menu can open and close', async ({ page }) => {

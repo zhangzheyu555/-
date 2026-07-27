@@ -898,4 +898,56 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
     min-height: 44px;
   }
 }
+
+@media (max-width: 640px) {
+  .store-header-actions,
+  .store-header-actions > *,
+  .manager-month-field,
+  .manager-month-field select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .store-header-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .manager-month-field {
+    display: grid;
+    gap: 6px;
+    white-space: normal;
+  }
+
+  .store-header-actions .ghost-button,
+  .store-header-actions .primary-button {
+    min-height: 44px;
+  }
+
+  .salary-modal-backdrop {
+    align-items: end;
+    padding: 0;
+  }
+
+  .salary-modal {
+    width: 100vw;
+    height: 92dvh;
+    max-width: 100vw;
+    max-height: 92dvh;
+    border-radius: 12px 12px 0 0;
+  }
+
+  .salary-modal > header {
+    align-items: flex-start;
+    padding: 12px 14px;
+  }
+
+  .salary-modal > header > div {
+    min-width: 0;
+  }
+
+  .salary-modal-body {
+    padding: 12px;
+  }
+}
 </style>

@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { AlertTriangle, CheckCircle2, ClipboardList, ImagePlus, XCircle } from 'lucide-vue-next'
-import { useRoute, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import PageHeader from '../components/common/PageHeader.vue'
 import SearchableSingleSelect from '../components/common/SearchableSingleSelect.vue'
+import ActionConfirmDialog from '../components/ui/ActionConfirmDialog.vue'
 import InspectionHistoricalEvidenceDialog from '../components/inspection/InspectionHistoricalEvidenceDialog.vue'
 import InspectionHistoricalEvidencePanel from '../components/inspection/InspectionHistoricalEvidencePanel.vue'
 import InspectionRecordDetailSummary from '../components/inspection/InspectionRecordDetailSummary.vue'
@@ -111,6 +112,7 @@ const loadingStandard = ref(false)
 const detectionService = ref<InspectionServiceHealth | null>(null)
 const errorMessage = ref('')
 const actionMessage = ref('')
+const actionErrorDialog = ref<{ title: string; message: string } | null>(null)
 const selectedRecordId = ref('')
 const detailRecord = ref<InspectionRecord | null>(null)
 const detailLoading = ref(false)
@@ -134,6 +136,18 @@ const historicalEvidenceDialog = ref<{
 const filterBrand = ref('')
 const filterMonth = ref('')
 const inspectionStandard = ref<InspectionStandardSet>(emptyInspectionStandard)
+const draftDiscardDialogOpen = ref(false)
+let pendingDraftDiscardAction: (() => void) | null = null
+let pendingDraftDiscardCancel: (() => void) | null = null
+
+function showActionError(title: string, message: string) {
+  errorMessage.value = ''
+  actionErrorDialog.value = { title, message }
+}
+
+function closeActionError() {
+  actionErrorDialog.value = null
+}
 
 const canManageInspection = computed(() => auth.hasPermission(PERMISSIONS.INSPECTION_MANAGE))
 const canReadDailyLoss = computed(() => auth.hasPermission(PERMISSIONS.DAILY_LOSS_READ))
@@ -221,9 +235,48 @@ function captureDeductionFormBaseline() {
   deductionFormBaselineSignature.value = deductionFormMutationSignature()
 }
 
-function resetInspectionDraft() {
+function forceResetInspectionDraft() {
   resetDraft()
   captureDeductionFormBaseline()
+}
+
+function requestDraftDiscard(action: () => void, cancel: () => void = () => {}) {
+  if (!hasInspectionDraftChanges.value) {
+    action()
+    return
+  }
+  if (draftDiscardDialogOpen.value || saving.value || uploading.value) {
+    cancel()
+    return
+  }
+  pendingDraftDiscardAction = action
+  pendingDraftDiscardCancel = cancel
+  draftDiscardDialogOpen.value = true
+}
+
+function requestResetInspectionDraft() {
+  if (!hasInspectionDraftChanges.value) {
+    forceResetInspectionDraft()
+    return
+  }
+  requestDraftDiscard(() => {})
+}
+
+function keepInspectionDraft() {
+  const cancel = pendingDraftDiscardCancel
+  pendingDraftDiscardAction = null
+  pendingDraftDiscardCancel = null
+  draftDiscardDialogOpen.value = false
+  cancel?.()
+}
+
+function discardInspectionDraft() {
+  const action = pendingDraftDiscardAction
+  pendingDraftDiscardAction = null
+  pendingDraftDiscardCancel = null
+  draftDiscardDialogOpen.value = false
+  forceResetInspectionDraft()
+  action?.()
 }
 
 captureDeductionFormBaseline()
@@ -401,16 +454,20 @@ function applyRouteState() {
 }
 
 function switchTab(tab: InspectionTab) {
-  actionMessage.value = ''
-  errorMessage.value = ''
   const target = tabs.value.find((item) => item.id === tab)
-  if (!target) return
-  const query: Record<string, string> = {}
-  if (tab === 'records') {
-    if (filterBrand.value) query.brand = filterBrand.value
-    if (filterMonth.value) query.month = filterMonth.value
+  if (!target || tab === activeTab.value) return
+  const navigate = () => {
+    actionMessage.value = ''
+    errorMessage.value = ''
+    const query: Record<string, string> = {}
+    if (tab === 'records') {
+      if (filterBrand.value) query.brand = filterBrand.value
+      if (filterMonth.value) query.month = filterMonth.value
+    }
+    void router.push({ path: target.to, query })
   }
-  void router.push({ path: target.to, query })
+  if (activeTab.value === 'create') requestDraftDiscard(navigate)
+  else navigate()
 }
 
 function setBrandFilter(brandName: string) {
@@ -1297,7 +1354,7 @@ async function confirmModelIssue(photo: DraftPhoto) {
   if (!result || detectionCount(result) <= 0 || isDraftReviewBusy(photo)) return
   const key = detectionKey(result)
   if (!key) {
-    errorMessage.value = '识别结果缺少服务端确认编号，请重新识别后再确认。'
+    showActionError('无法确认模型问题', '识别结果缺少服务端确认编号，请重新识别后再确认。')
     return
   }
 
@@ -1330,7 +1387,10 @@ async function confirmModelIssue(photo: DraftPhoto) {
     actionMessage.value = '已通过服务端规则确认；预计扣分已展示，正式保存时服务端会再次按条款重算。'
   } catch (error) {
     photo.reviewStatus = 'pending'
-    errorMessage.value = friendlyError(error, '模型建议确认失败，已保留待确认状态，请重试。')
+    showActionError(
+      '无法确认模型问题',
+      friendlyError(error, '模型建议确认失败，已保留待确认状态，请重试。'),
+    )
   } finally {
     unlockDraftReviewAction(photo)
   }
@@ -1535,60 +1595,68 @@ function releaseDraftPhotos() {
 function addDeduction() {
   errorMessage.value = ''
   actionMessage.value = ''
-  const score = safeNumber(deductionForm.deduct)
   const clause = selectedClause.value
-  const itemTitle = (clause?.item || deductionForm.manualItem).trim()
 
   if (!deductionForm.dimension) {
-    errorMessage.value = '请选择问题维度。'
+    showActionError('无法添加扣分项', '请选择问题维度。')
     return
   }
-  if (!itemTitle) {
-    errorMessage.value = '请填写或选择检查条款。'
-    return
-  }
-  if (!score || score <= 0) {
-    errorMessage.value = '扣分必须大于 0。'
-    return
-  }
-  if (score > safeNumber(draft.fullScore)) {
-    errorMessage.value = '扣分不能超过满分基准。'
+  if (!clause) {
+    showActionError('无法添加扣分项', '请从最新稽核标准中选择具体条款。')
     return
   }
   if (!deductionForm.issue.trim()) {
-    errorMessage.value = '请写清楚现场问题，方便门店整改。'
+    showActionError('无法添加扣分项', '请写清楚现场问题，方便门店整改。')
+    return
+  }
+  const score = Math.max(0, safeNumber(clause.score))
+  const isRedLine = clause.riskLevel === 'RED'
+  deductionForm.deduct = score
+  if (score <= 0 && !isRedLine) {
+    showActionError('无法添加扣分项', '该条款规定扣分为 0 分，不能形成扣分记录。请在完整条款区记录现场情况。')
+    return
+  }
+  if (score > safeNumber(draft.fullScore)) {
+    showActionError('无法添加扣分项', '条款规定扣分超过满分基准，请重新获取稽核标准。')
     return
   }
 
-  if (!clause) {
-    errorMessage.value = '请从最新稽核标准中选择具体条款。'
-    return
-  }
   const target = draft.itemResults.find((item) => item.standardItemId === clause.id)
   if (!target) {
-    errorMessage.value = '请从最新稽核标准中选择具体条款。'
+    showActionError('无法添加扣分项', '当前草稿中找不到该正式条款，请重新获取稽核标准后再试。')
     return
   }
-  const appliedDeduction = Math.min(score, safeNumber(target.actualScore))
-  target.actualScore = roundScore(safeNumber(target.actualScore) - appliedDeduction)
+  const alreadyRecorded = [...draft.deductions, ...draft.redlines]
+    .some((item) => Number(item.standardId) === clause.id)
+  if (alreadyRecorded || target.issueFound || itemDeduction(target) > 0) {
+    showActionError('无法重复添加', '该条款已经记录现场问题，请直接在下方完整条款中修改问题说明。')
+    return
+  }
+
+  const standardScore = Math.max(0, safeNumber(target.standardScore))
+  const appliedDeduction = Math.min(score, standardScore)
+  target.actualScore = roundScore(standardScore - appliedDeduction)
+  target.issueFound = true
   target.deductionReason = [target.deductionReason, deductionForm.issue.trim()].filter(Boolean).join('；')
   normalizeItemScore(target)
 
-  draft.deductions.push({
-    id: `${Date.now()}-${draft.deductions.length}`,
+  const detail: DeductionDetail = {
+    id: `${Date.now()}-${draft.deductions.length + draft.redlines.length}`,
     standardId: String(clause.id),
-    standardTitle: clause?.item || itemTitle,
-    standardDescription: clause?.method,
-    suggestedScore: clause?.score,
+    standardTitle: clause.item,
+    standardDescription: clause.method,
+    suggestedScore: score,
     dim: clause.categoryName,
     categoryCode: clause.categoryCode,
-    code: clause?.code,
-    item: itemTitle,
-    method: clause?.method,
+    code: clause.code,
+    item: clause.item,
+    method: clause.method,
     issue: deductionForm.issue.trim(),
     deduct: appliedDeduction,
-    redline: clause.riskLevel === 'RED',
-  })
+    redline: isRedLine,
+  }
+  if (isRedLine) draft.redlines.push(detail)
+  else draft.deductions.push(detail)
   deductionForm.issue = ''
   deductionForm.manualItem = ''
   fillDeductionFromClause()
@@ -1599,8 +1667,10 @@ function removeDraftRow(kind: 'deduction' | 'redline', index: number) {
   if (kind === 'deduction') {
     const [removed] = draft.deductions.splice(index, 1)
     if (removed) restoreDeduction(removed)
+  } else {
+    const [removed] = draft.redlines.splice(index, 1)
+    if (removed) restoreDeduction(removed)
   }
-  else draft.redlines.splice(index, 1)
 }
 
 function restoreDeduction(detail: DeductionDetail) {
@@ -1609,8 +1679,15 @@ function restoreDeduction(detail: DeductionDetail) {
   const target = draft.itemResults.find((item) => item.standardItemId === standardItemId)
   if (!target) return
   target.actualScore = Math.min(safeNumber(target.standardScore), roundScore(safeNumber(target.actualScore) + safeNumber(detail.deduct)))
-  const remaining = draft.deductions.filter((item) => item !== detail && Number(item.standardId) === standardItemId)
-  target.deductionReason = remaining.map((item) => item.issue).filter(Boolean).join('；')
+  const remaining = [...draft.deductions, ...draft.redlines]
+    .filter((item) => Number(item.standardId) === standardItemId)
+  const reasons = String(target.deductionReason || '').split('；').filter(Boolean)
+  const removedReasonIndex = reasons.indexOf(String(detail.issue || ''))
+  if (removedReasonIndex >= 0) reasons.splice(removedReasonIndex, 1)
+  target.deductionReason = reasons.join('；')
+  if (detail.redline && !remaining.some((item) => item.redline) && !target.deductionReason) {
+    target.issueFound = false
+  }
   normalizeItemScore(target)
 }
 
@@ -1671,7 +1748,7 @@ async function submitRecord() {
 
     const savedRecordId = String(savedRecord.id)
     actionMessage.value = `巡检已在一个事务中保存，图片识别扣分已由服务端按正式条款确认。最终得分 ${recordScore(savedRecord).scoreText}。`
-    resetInspectionDraft()
+    forceResetInspectionDraft()
     const loaded = await loadPageData()
     if (loaded) markFresh()
     await router.push({ path: '/operations/inspection/records', query: { recordId: savedRecordId } })
@@ -1687,7 +1764,7 @@ function toDetectionBindingResult(photo: DraftPhoto): Record<string, unknown> {
   if (!result) throw new Error(`${photo.fileName || '现场照片'} 缺少识别结果，请重新识别。`)
   return {
     image_id: detectionImageId(result),
-    filename: photo.fileName || result.filename,
+    filename: result.filename || photo.fileName,
     attachmentId: photo.attachmentId,
     passed: result.passed,
     detection_count: detectionCount(result),
@@ -1841,6 +1918,17 @@ watch(detailPhotoPreview, (preview) => {
   } else window.removeEventListener('keydown', handleDetailPhotoPreviewKeydown)
 })
 
+onBeforeRouteLeave(() => {
+  if (!hasInspectionDraftChanges.value) return true
+  if (draftDiscardDialogOpen.value || saving.value || uploading.value) return false
+  return new Promise<boolean>((resolve) => {
+    requestDraftDiscard(
+      () => resolve(true),
+      () => resolve(false),
+    )
+  })
+})
+
 onMounted(() => {
   void loadForegroundInspectionData().then((loaded) => {
     if (loaded) markFresh()
@@ -1866,6 +1954,7 @@ onUnmounted(() => {
               :key="tab.id"
               type="button"
               class="inspection-segment-button"
+              role="tab"
               :class="{ on: activeTab === tab.id }"
               :aria-selected="activeTab === tab.id"
               @click="switchTab(tab.id)"
@@ -1878,8 +1967,8 @@ onUnmounted(() => {
       </template>
     </PageHeader>
 
-    <div v-if="errorMessage" class="error-box">{{ errorMessage }}</div>
-    <div v-if="actionMessage" class="success-box">{{ actionMessage }}</div>
+    <div v-if="errorMessage" class="error-box" role="alert">{{ errorMessage }}</div>
+    <div v-if="actionMessage" class="success-box" role="status">{{ actionMessage }}</div>
 
     <div v-if="activeTab === 'records'" class="inspection-records-view">
       <section class="content-card weekly-inspection-target" aria-label="本周巡店目标">
@@ -2133,21 +2222,10 @@ onUnmounted(() => {
         :form="deductionForm"
         :dimensions="draftDimensions"
         :clauses="clausesForDimension"
-        :full-score="draft.fullScore"
         :standard-ready="standardReady"
         @add="addDeduction"
       />
 
-
-      <InspectionDraftActions
-        :note="draft.note"
-        :saving="saving"
-        :uploading="uploading"
-        :save-blocked-reason="saveBlockedReason"
-        @update:note="draft.note = $event"
-        @reset="resetInspectionDraft"
-        @save="submitRecord"
-      />
 
       <InspectionClauseEditor
         :groups="globalStandard.groups"
@@ -2167,9 +2245,20 @@ onUnmounted(() => {
         @toggle-after-photo="toggleAfterPhoto"
       />
 
+      <InspectionDraftActions
+        :note="draft.note"
+        :saving="saving"
+        :uploading="uploading"
+        :save-blocked-reason="saveBlockedReason"
+        @update:note="draft.note = $event"
+        @reset="requestResetInspectionDraft"
+        @save="submitRecord"
+      />
+
     </div>
 
     <InspectionStandardCatalog
+      v-if="activeTab === 'standards'"
       :standard="selectedStandard"
       :stats="selectedStandardStats"
       :has-standard="hasGlobalStandard"
@@ -2178,6 +2267,28 @@ onUnmounted(() => {
       :safe-number="safeNumber"
       :risk-label="riskLabel"
       @retry="retryLoadStandard"
+    />
+
+    <ActionConfirmDialog
+      :open="draftDiscardDialogOpen"
+      title="放弃未保存的巡店草稿？"
+      message="当前填写的巡检信息、评分调整和现场照片将被清空，且无法恢复。"
+      confirm-label="放弃草稿"
+      cancel-label="继续填写"
+      confirm-variant="danger"
+      @cancel="keepInspectionDraft"
+      @confirm="discardInspectionDraft"
+    />
+
+    <ActionConfirmDialog
+      :open="Boolean(actionErrorDialog)"
+      :title="actionErrorDialog?.title || '操作未完成'"
+      :message="actionErrorDialog?.message || ''"
+      confirm-label="返回修改"
+      confirm-variant="danger"
+      acknowledge-only
+      @cancel="closeActionError"
+      @confirm="closeActionError"
     />
 
   </section>

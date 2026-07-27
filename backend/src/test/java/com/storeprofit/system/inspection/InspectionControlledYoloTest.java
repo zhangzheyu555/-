@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.imageio.ImageIO;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -95,6 +96,43 @@ class InspectionControlledYoloTest {
       assertThat(calls).hasValue(1);
       verify(records).storeExists(1L, STORE_ID);
       verifyNoMoreInteractions(records);
+    } finally {
+      server.stop(0);
+    }
+  }
+
+  @Test
+  void detectorTransportUsesFastApiCompatibleHttp11Multipart() throws Exception {
+    AtomicReference<String> upgradeHeader = new AtomicReference<>();
+    AtomicReference<String> contentTypeHeader = new AtomicReference<>();
+    AtomicReference<String> multipartBody = new AtomicReference<>();
+    HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    server.createContext("/detect", exchange -> {
+      upgradeHeader.set(exchange.getRequestHeaders().getFirst("Upgrade"));
+      contentTypeHeader.set(exchange.getRequestHeaders().getFirst("Content-Type"));
+      multipartBody.set(new String(
+          exchange.getRequestBody().readAllBytes(), StandardCharsets.ISO_8859_1));
+      byte[] response = "{\"detections\":[]}".getBytes(StandardCharsets.UTF_8);
+      exchange.getResponseHeaders().add("Content-Type", "application/json");
+      exchange.sendResponseHeaders(200, response.length);
+      exchange.getResponseBody().write(response);
+      exchange.close();
+    });
+    server.start();
+    try {
+      InspectionService service = service(
+          recordsWithStore(), null, server, Duration.ofMillis(500), null);
+
+      assertThat(service.detect(
+          SUPERVISOR, STORE_ID, imageFile("scene.png", "image/png", png(), png().length)))
+          .containsEntry("detections", List.of());
+      assertThat(upgradeHeader.get()).isNull();
+      assertThat(contentTypeHeader.get())
+          .startsWith("multipart/form-data;")
+          .contains("boundary=");
+      assertThat(multipartBody.get())
+          .contains("name=\"file\"")
+          .contains("filename=\"inspection.png\"");
     } finally {
       server.stop(0);
     }

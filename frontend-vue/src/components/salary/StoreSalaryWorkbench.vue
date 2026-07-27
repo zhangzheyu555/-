@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
-import { Check, ChevronDown, Download, Eye, Filter, UserPlus } from 'lucide-vue-next'
+import { Check, ChevronDown, Download, Eye, RotateCcw, UserPlus } from 'lucide-vue-next'
 import {
   approveSalaryRecord, assignSalaryEmployee, getSalaryAssignmentCandidates, getSalaryBusinessMetrics,
-  getSalaryRecords, saveSalaryAttendance, saveSalaryRecord,
+  saveSalaryAttendance, saveSalaryRecord,
   type SalaryAssignmentCandidate, type SalaryBusinessMetrics, type SalaryRecord, type SalaryRecordPayload,
 } from '../../api/finance'
 import { ApiError } from '../../api/http'
@@ -52,12 +52,17 @@ const addEmployeeCandidates = ref<SalaryAssignmentCandidate[]>([])
 const addEmployeeLoading = ref(false)
 const addEmployeeSaving = ref(false)
 const addEmployeeError = ref('')
+const addEmployeeRetryable = ref(false)
 const initialScopeBlocked = ref(false)
 const salaryDetailDirty = ref(false)
+const detailSavingKey = ref('')
+const detailError = ref('')
 const salaryDiscardOpen = ref(false)
+const batchApprovalError = ref('')
 let pendingSalaryDiscardAction: (() => void) | null = null
 let pendingSalaryDiscardCancel: (() => void) | null = null
 let businessMetricsRequestController: AbortController | null = null
+let addEmployeeRequestController: AbortController | null = null
 
 const workflow = useSalaryWorkflow({
   selectedMonth: page.selectedMonth,
@@ -68,12 +73,19 @@ const workflow = useSalaryWorkflow({
   canEdit: page.canEdit,
   pageError: actionError,
   successMessage: page.successMessage,
-  loadPage: async () => { await reloadSalaryData() },
+  isPreviewContextAllowed: (context) => page.canEdit.value
+    && page.hasValidMonth.value
+    && context.month === page.selectedMonth.value
+    && !page.loading.value
+    && !initialScopeBlocked.value
+    && page.accessibleStores.value.some((store) => store.id === context.storeId),
+  loadPage: async () => reloadSalaryData(),
   onDeleted: (record) => {
     if (selectedRowKey.value === rowKey(record)) selectedRowKey.value = ''
     const nextCheckedIds = new Set(checkedIds.value)
     nextCheckedIds.delete(record.id)
     checkedIds.value = nextCheckedIds
+    removeVisibleRecord(record)
   },
 })
 
@@ -134,25 +146,76 @@ const canAddEmployee = computed(() => page.canEdit.value
   && Boolean(page.effectiveStoreId.value)
   && page.effectiveStoreId.value !== 'all'
   && page.isEffectiveStoreActive.value
-  && !initialScopeBlocked.value)
+  && !initialScopeBlocked.value
+  && !page.loading.value)
+const salaryOperationBusy = computed(() => Boolean(
+  detailSavingKey.value
+  || workflow.actioningId.value
+  || workflow.deletingId.value
+  || workflow.previewLoading.value
+  || workflow.generating.value
+  || workflow.exporting.value
+  || workflow.actionConfirmationBusy.value
+  || batchApproving.value
+  || addEmployeeSaving.value,
+))
+const scopeActionGuidance = computed(() => {
+  if (!page.canEdit.value) return ''
+  if (!page.hasValidMonth.value) return '请选择有效月份后再处理工资。'
+  if (!page.effectiveStoreId.value || page.effectiveStoreId.value === 'all') {
+    return '顶部添加人员和批量生成需先选择具体门店；也可在员工明细中按其所属门店进入生成预览。'
+  }
+  if (!page.isEffectiveStoreActive.value) return '当前门店已停用，不能继续添加人员、生成或修改工资。'
+  return ''
+})
+const previewStoreName = computed(() => {
+  const storeId = workflow.previewContext.value?.storeId
+  return storeId ? page.storeMap.value.get(storeId)?.name || storeId : page.selectedStoreName.value
+})
+const selectedDetailSaving = computed(() => Boolean(
+  selectedRecord.value && detailSavingKey.value === rowKey(selectedRecord.value),
+))
 const salaryMonthModel = computed({
   get: () => page.selectedMonth.value,
-  set: (value: string) => requestSalaryDiscard(() => { page.selectedMonth.value = value }),
+  set: (value: string) => requestSalaryDiscard(() => {
+    clearInteractionFeedback()
+    page.selectedMonth.value = value
+  }),
 })
 const salaryStoreModel = computed({
   get: () => page.selectedStoreId.value,
-  set: (value: string) => requestSalaryDiscard(() => { page.selectedStoreId.value = value }),
+  set: (value: string) => requestSalaryDiscard(() => {
+    clearInteractionFeedback()
+    page.selectedStoreId.value = value
+  }),
 })
 const salaryStatusModel = computed({
   get: () => page.statusFilter.value,
-  set: (value: string) => requestSalaryDiscard(() => { page.statusFilter.value = value }),
+  set: (value: string) => requestSalaryDiscard(() => {
+    clearInteractionFeedback()
+    page.statusFilter.value = value
+  }),
 })
 const salaryKeywordModel = computed({
   get: () => page.keyword.value,
-  set: (value: string) => requestSalaryDiscard(() => { page.keyword.value = value }),
+  set: (value: string) => requestSalaryDiscard(() => {
+    clearInteractionFeedback()
+    page.keyword.value = value
+  }),
 })
 
+function clearInteractionFeedback() {
+  actionError.value = ''
+  detailError.value = ''
+  page.successMessage.value = ''
+}
+
 function requestSalaryDiscard(action: () => void, cancel: () => void = () => {}) {
+  if (salaryOperationBusy.value) {
+    actionError.value = '工资操作正在处理中，请完成后再切换范围或记录。'
+    cancel()
+    return
+  }
   if (!salaryDetailDirty.value) {
     action()
     return
@@ -180,7 +243,20 @@ function discardSalaryChanges() {
   pendingSalaryDiscardCancel = null
   salaryDiscardOpen.value = false
   selectedRowKey.value = ''
+  detailError.value = ''
   action?.()
+}
+
+function clearSalaryFilters() {
+  if (!page.hasActiveListFilters.value) return
+  requestSalaryDiscard(() => {
+    clearInteractionFeedback()
+    checkedIds.value = new Set()
+    void (async () => {
+      await page.setListFiltersWithoutReload('', '')
+      await loadSalaryPage(1)
+    })()
+  })
 }
 
 function metricNumber(value: number | null | undefined) {
@@ -254,8 +330,7 @@ async function reloadSalaryData(
   })
   if (!pageLoaded) return false
   if (options.protectUnsavedDetail && salaryDetailDirty.value) return false
-  const metricsLoaded = await loadBusinessMetrics()
-  if (!metricsLoaded) return false
+  await loadBusinessMetrics()
   markFresh()
   return true
 }
@@ -291,6 +366,8 @@ function applyInitialScope() {
 }
 
 async function previewGeneration() {
+  actionError.value = ''
+  detailError.value = ''
   if (!page.effectiveStoreId.value || page.effectiveStoreId.value === 'all') {
     actionError.value = '请先选择具体门店，再生成本月工资。'
     return
@@ -300,6 +377,28 @@ async function previewGeneration() {
     return
   }
   await workflow.doPreview()
+}
+
+async function previewEmployeeGeneration(record: SalaryRecord) {
+  actionError.value = ''
+  detailError.value = ''
+  const storeId = String(record.storeId || '').trim()
+  if (!storeId) {
+    detailError.value = '该员工缺少所属门店，无法生成工资预览。请先完善员工档案。'
+    return
+  }
+  if (record.month !== page.selectedMonth.value) {
+    detailError.value = '当前员工数据所属月份已经变化，请刷新后重试。'
+    return
+  }
+  if (!page.accessibleStores.value.some((store) => store.id === storeId)) {
+    detailError.value = '该员工所属门店已停用或不在当前工资权限范围内，无法生成工资。'
+    return
+  }
+  await workflow.doPreview({
+    storeId,
+    month: page.selectedMonth.value,
+  })
 }
 
 async function confirmGeneration() {
@@ -315,29 +414,55 @@ async function openAddEmployee() {
   }
   addEmployeeCandidates.value = []
   addEmployeeOpen.value = true
+  await loadAddEmployeeCandidates()
+}
+
+async function loadAddEmployeeCandidates() {
+  if (!addEmployeeOpen.value || !canAddEmployee.value) return
+  addEmployeeRequestController?.abort()
+  const controller = new AbortController()
+  const storeId = page.effectiveStoreId.value
+  const month = page.selectedMonth.value
+  addEmployeeRequestController = controller
   addEmployeeLoading.value = true
+  addEmployeeRetryable.value = false
+  addEmployeeError.value = ''
   try {
-    addEmployeeCandidates.value = await getSalaryAssignmentCandidates(
-      page.effectiveStoreId.value,
-      page.selectedMonth.value,
-    )
+    const candidates = await getSalaryAssignmentCandidates(storeId, month, controller.signal)
+    if (
+      controller.signal.aborted
+      || !addEmployeeOpen.value
+      || page.effectiveStoreId.value !== storeId
+      || page.selectedMonth.value !== month
+    ) return
+    addEmployeeCandidates.value = candidates
   } catch (error) {
+    if (controller.signal.aborted || (error instanceof ApiError && error.code === 'REQUEST_CANCELLED')) return
     addEmployeeError.value = userError(error, '可添加人员名单加载失败，请稍后重试。')
+    addEmployeeRetryable.value = true
   } finally {
-    addEmployeeLoading.value = false
+    if (addEmployeeRequestController === controller) {
+      addEmployeeRequestController = null
+      addEmployeeLoading.value = false
+    }
   }
 }
 
 function closeAddEmployee() {
   if (addEmployeeSaving.value) return
+  addEmployeeRequestController?.abort()
+  addEmployeeRequestController = null
+  addEmployeeLoading.value = false
   addEmployeeOpen.value = false
   addEmployeeError.value = ''
+  addEmployeeRetryable.value = false
 }
 
 async function confirmAddEmployee(employeeId: string) {
   if (!canAddEmployee.value || addEmployeeSaving.value) return
   addEmployeeSaving.value = true
   addEmployeeError.value = ''
+  addEmployeeRetryable.value = false
   try {
     const record = await assignSalaryEmployee({
       storeId: page.effectiveStoreId.value,
@@ -345,11 +470,13 @@ async function confirmAddEmployee(employeeId: string) {
       employeeId,
     })
     addEmployeeOpen.value = false
-    page.statusFilter.value = ''
-    page.keyword.value = ''
+    await page.setListFiltersWithoutReload('', '')
     page.successMessage.value = `已将 ${record.employeeName} 添加到当月工资名单，岗位保持为${record.position || '原岗位'}`
-    await reloadSalaryData(1)
+    const loaded = await reloadSalaryData(1)
     selectedRowKey.value = rowKey(record)
+    if (!loaded) {
+      actionError.value = '人员已添加，但最新工资名单刷新失败，请点击重试。'
+    }
   } catch (error) {
     addEmployeeError.value = userError(error, '添加人员失败，请稍后重试。')
   } finally {
@@ -357,38 +484,33 @@ async function confirmAddEmployee(employeeId: string) {
   }
 }
 
-async function recordsInScope() {
-  return getSalaryRecords({
-    month: page.selectedMonth.value,
-    brandId: page.effectiveBrandId.value,
-    storeId: page.effectiveStoreId.value === 'all' ? undefined : page.effectiveStoreId.value,
-  })
+function isReviewableRecord(record: SalaryRecord) {
+  return Boolean(record.id) && ['SUBMITTED', 'PENDING_REVIEW'].includes(record.status || '')
 }
 
 async function batchApprove() {
   actionError.value = ''
+  batchApprovalError.value = ''
   const selected = checkedIds.value
   if (!selected.size) {
     actionError.value = '请先选择需要审核的员工。'
     return
   }
-  try {
-    const records = (await recordsInScope()).filter((row) => selected.has(row.id) && ['SUBMITTED', 'PENDING_REVIEW'].includes(row.status || ''))
-    if (!records.length) {
-      actionError.value = '所选员工中没有待审核工资。'
-      return
-    }
-    batchApprovalRecords.value = records
-    batchApprovalOpen.value = true
-  } catch (error) {
-    actionError.value = userError(error, '批量审核失败。')
+  const records = page.filteredRows.value.filter((row) => selected.has(row.id) && isReviewableRecord(row))
+  if (!records.length) {
+    checkedIds.value = new Set()
+    actionError.value = '所选工资已不处于待审核状态，请刷新后重新选择。'
+    return
   }
+  batchApprovalRecords.value = records
+  batchApprovalOpen.value = true
 }
 
 function cancelBatchApproval() {
   if (batchApproving.value) return
   batchApprovalOpen.value = false
   batchApprovalRecords.value = []
+  batchApprovalError.value = ''
 }
 
 async function confirmBatchApproval() {
@@ -396,17 +518,39 @@ async function confirmBatchApproval() {
   if (!records.length || batchApproving.value) return
   batchApproving.value = true
   actionError.value = ''
-  try {
-    for (const record of records) await approveSalaryRecord(record.id)
-    checkedIds.value = new Set()
-    page.successMessage.value = `已审核 ${records.length} 条工资记录`
-    await reloadSalaryData(1)
-  } catch (error) {
-    actionError.value = userError(error, '批量审核失败。')
-  } finally {
-    batchApproving.value = false
-    batchApprovalOpen.value = false
-    batchApprovalRecords.value = []
+  batchApprovalError.value = ''
+  const approvedIds = new Set<string>()
+  const failures: Array<{ record: SalaryRecord; error: unknown }> = []
+  for (const record of records) {
+    try {
+      await approveSalaryRecord(record.id)
+      approvedIds.add(record.id)
+    } catch (error) {
+      failures.push({ record, error })
+    }
+  }
+  batchApproving.value = false
+
+  if (!approvedIds.size) {
+    batchApprovalError.value = userError(failures[0]?.error, '批量审核失败，请稍后重试。')
+    return
+  }
+
+  const failedIds = new Set(failures.map(({ record }) => record.id))
+  checkedIds.value = failedIds
+  batchApprovalOpen.value = false
+  batchApprovalRecords.value = []
+  batchApprovalError.value = ''
+  page.successMessage.value = `已审核 ${approvedIds.size} 条工资记录`
+  if (failures.length) {
+    actionError.value = `${failures.length} 条工资审核失败，失败记录已保留勾选，可重试。${userError(
+      failures[0].error,
+      '首条失败原因暂时无法获取。',
+    )}`
+  }
+  const loaded = await reloadSalaryData(1)
+  if (!loaded && !actionError.value) {
+    actionError.value = '批量审核已完成，但最新数据刷新失败，请点击重试。'
   }
 }
 
@@ -414,16 +558,22 @@ function rowKey(record: SalaryRecord) { return record.id || `employee:${record.e
 function selectRecord(record: SalaryRecord) {
   const nextRowKey = rowKey(record)
   if (nextRowKey === selectedRowKey.value) return
-  requestSalaryDiscard(() => { selectedRowKey.value = nextRowKey })
+  requestSalaryDiscard(() => {
+    detailError.value = ''
+    selectedRowKey.value = nextRowKey
+  })
 }
 function toggleRow(record: SalaryRecord, checked: boolean) {
+  if (!isReviewableRecord(record) || !page.canReview.value) return
   const next = new Set(checkedIds.value)
   if (checked) next.add(record.id); else next.delete(record.id)
   checkedIds.value = next
 }
 function toggleAll(checked: boolean) {
   const next = new Set(checkedIds.value)
-  for (const row of page.filteredRows.value) checked ? next.add(row.id) : next.delete(row.id)
+  for (const row of page.filteredRows.value.filter(isReviewableRecord)) {
+    checked ? next.add(row.id) : next.delete(row.id)
+  }
   checkedIds.value = next
 }
 
@@ -432,14 +582,23 @@ async function markPaid(record: SalaryRecord) {
   await workflow.doMarkPaid(record)
 }
 
+function lockRecord(record: SalaryRecord) {
+  if (!page.canEdit.value || record.status !== 'PAID') return
+  workflow.doLock(record)
+}
+
 async function saveAttendance(record: SalaryRecord, attendanceDays: number, overtimeHours: number, normalHours: number) {
+  const key = rowKey(record)
+  if (detailSavingKey.value) return
   if (!record.employeeId) {
-    actionError.value = '员工档案编号缺失，无法保存考勤。'
+    detailError.value = '员工档案编号缺失，无法保存考勤。'
     return
   }
+  detailSavingKey.value = key
+  detailError.value = ''
   actionError.value = ''
   try {
-    await saveSalaryAttendance({
+    const attendance = await saveSalaryAttendance({
       storeId: record.storeId,
       employeeId: record.employeeId,
       month: record.month,
@@ -450,40 +609,104 @@ async function saveAttendance(record: SalaryRecord, attendanceDays: number, over
     page.successMessage.value = isHourlySalaryRecord(record)
       ? `已保存 ${record.employeeName} 的计时工时：正常${normalHours}小时，加班${overtimeHours}小时`
       : `已保存 ${record.employeeName} 的考勤：${attendanceDays}天，正常工时${normalHours}小时，加班${overtimeHours}小时`
-    await reloadSalaryData(page.page.value)
+    const loaded = await reloadSalaryData(page.page.value)
+    if (!loaded) {
+      replaceVisibleRecord({
+        ...record,
+        attendance: isHourlySalaryRecord(record) ? `${attendance.normalHours}小时` : `${attendance.attendanceDays}天`,
+        normalHours: attendance.normalHours,
+        otHours: attendance.overtimeHours,
+        workHours: attendance.totalHours,
+      })
+      detailError.value = '工时已保存，但最新工资数据刷新失败，请点击页面重试。'
+    }
   } catch (error) {
-    actionError.value = userError(error, '考勤保存失败。')
+    detailError.value = userError(error, '考勤保存失败，请检查后重试。')
+  } finally {
+    if (detailSavingKey.value === key) detailSavingKey.value = ''
   }
 }
 
 async function saveDetails(record: SalaryRecord, attendanceDays: number, overtimeHours: number, normalHours: number, attendanceChanged: boolean, payload: SalaryRecordPayload) {
+  const key = rowKey(record)
+  if (detailSavingKey.value) return
   if (!record.employeeId) {
-    actionError.value = '员工档案编号缺失，无法保存工资明细。'
+    detailError.value = '员工档案编号缺失，无法保存工资明细。'
     return
   }
+  detailSavingKey.value = key
+  detailError.value = ''
   actionError.value = ''
+  let attendanceSaved = false
   try {
     if (attendanceChanged) {
       await saveSalaryAttendance({ storeId: record.storeId, employeeId: record.employeeId, month: record.month, attendanceDays, overtimeHours, normalHours })
+      attendanceSaved = true
     }
-    await saveSalaryRecord(payload, record.id)
+    const savedRecord = await saveSalaryRecord(payload, record.id)
     page.successMessage.value = attendanceChanged
       ? `已保存 ${record.employeeName} 的考勤、工资与假期信息`
       : `已保存 ${record.employeeName} 的工资与假期信息，原始工时保持不变`
-    await reloadSalaryData(page.page.value)
+    const loaded = await reloadSalaryData(page.page.value)
+    if (!loaded) {
+      replaceVisibleRecord(savedRecord)
+      detailError.value = '工资明细已保存，但最新汇总刷新失败，请点击页面重试。'
+    }
   } catch (error) {
-    actionError.value = userError(error, '工资明细保存失败。')
+    detailError.value = attendanceSaved
+      ? `考勤已保存，但工资明细保存失败：${userError(error, '请稍后重试。')}`
+      : userError(error, '工资明细保存失败，请检查后重试。')
+  } finally {
+    if (detailSavingKey.value === key) detailSavingKey.value = ''
+  }
+}
+
+function replaceVisibleRecord(record: SalaryRecord) {
+  const data = page.pageData.value
+  if (!data) return
+  const key = rowKey(record)
+  const nextRows = page.rows.value.map((row) => rowKey(row) === key ? record : row)
+  page.pageData.value = {
+    ...data,
+    content: nextRows,
+    rows: data.rows ? nextRows : data.rows,
+  }
+}
+
+function removeVisibleRecord(record: SalaryRecord) {
+  const data = page.pageData.value
+  if (!data) return
+  const key = rowKey(record)
+  const nextRows = page.rows.value.filter((row) => rowKey(row) !== key)
+  const nextTotal = Math.max(0, page.total.value - 1)
+  page.pageData.value = {
+    ...data,
+    content: nextRows,
+    rows: data.rows ? nextRows : data.rows,
+    total: nextTotal,
+    totalElements: nextTotal,
   }
 }
 watch(page.filteredRows, (rows) => {
   if (!rows.some((row) => rowKey(row) === selectedRowKey.value)) selectedRowKey.value = rows[0] ? rowKey(rows[0]) : ''
+  const visibleReviewableIds = new Set(rows.filter(isReviewableRecord).map((row) => row.id))
+  const nextCheckedIds = new Set([...checkedIds.value].filter((id) => visibleReviewableIds.has(id)))
+  if (nextCheckedIds.size !== checkedIds.value.size) checkedIds.value = nextCheckedIds
 }, { immediate: true })
 watch([page.effectiveStoreId, page.selectedMonth, page.effectiveBrandId], () => {
   checkedIds.value = new Set()
   actionError.value = ''
-  if (!addEmployeeSaving.value) addEmployeeOpen.value = false
+  detailError.value = ''
+  workflow.closePreview()
+  workflow.cancelActionConfirmation()
+  cancelBatchApproval()
+  if (!addEmployeeSaving.value) closeAddEmployee()
   if (page.initializing.value) return
   void loadBusinessMetrics()
+})
+watch([page.statusFilter, page.keyword, page.page], () => {
+  checkedIds.value = new Set()
+  if (!batchApproving.value) cancelBatchApproval()
 })
 watch([page.loading, businessMetricsLoading], ([pageLoading, metricsLoading]) => {
   if (!pageLoading && !metricsLoading && page.pageData.value && !page.error.value && !businessMetricsError.value) {
@@ -503,6 +726,10 @@ onMounted(async () => {
 })
 
 onBeforeRouteLeave(() => {
+  if (salaryOperationBusy.value) {
+    actionError.value = '工资操作正在处理中，请完成后再离开页面。'
+    return false
+  }
   if (!salaryDetailDirty.value) return true
   if (salaryDiscardOpen.value) return false
   return new Promise<boolean>((resolve) => {
@@ -512,12 +739,25 @@ onBeforeRouteLeave(() => {
     )
   })
 })
+
+onBeforeUnmount(() => {
+  businessMetricsRequestController?.abort()
+  businessMetricsRequestController = null
+  addEmployeeRequestController?.abort()
+  addEmployeeRequestController = null
+})
 </script>
 
 <template>
   <div class="salary-workbench" :class="{ embedded }">
     <header class="salary-page-head">
-      <div class="title-block"><h1>{{ title }}</h1><span>{{ page.selectedMonth.value }} · {{ page.total.value }} 名员工</span></div>
+      <div class="title-block">
+        <h1>{{ title }}</h1>
+        <span>
+          {{ page.selectedMonth.value }} · 共 {{ employeeCount }} 名员工
+          <template v-if="page.hasActiveListFilters.value"> · 当前显示 {{ page.filteredEmployeeCount.value }} 名</template>
+        </span>
+      </div>
       <div class="head-controls">
         <input v-model="salaryMonthModel" type="month" aria-label="月份" />
         <SearchableSingleSelect
@@ -537,31 +777,32 @@ onBeforeRouteLeave(() => {
         <button
           v-if="page.canEdit.value"
           class="add-person-button"
-          :disabled="!canAddEmployee"
+          :disabled="!canAddEmployee || salaryOperationBusy"
           :title="!canAddEmployee ? '请先选择具体门店和月份' : '添加其他门店员工到本月工资名单'"
           @click="openAddEmployee"
         ><UserPlus :size="16" />添加人员</button>
         <button
           v-if="page.canEdit.value"
           class="primary-button"
-          :disabled="workflow.previewLoading.value || !page.canGenerate.value"
+          :disabled="workflow.previewLoading.value || salaryOperationBusy || !page.canGenerate.value"
           :title="!page.effectiveStoreId.value || page.effectiveStoreId.value === 'all' ? '请先选择具体门店' : ''"
           @click="previewGeneration"
-        ><Eye :size="16" />生成本月工资</button>
-        <button v-if="page.canExport.value" class="export-button" :disabled="!page.hasValidMonth.value || page.loading.value" @click="workflow.doExport()"><Download :size="16" />导出工资表</button>
+        ><Eye :size="16" />{{ workflow.previewLoading.value ? '正在准备预览…' : '生成本月工资' }}</button>
+        <button v-if="page.canExport.value" class="export-button" :disabled="!page.hasValidMonth.value || page.loading.value || workflow.exporting.value" @click="workflow.doExport()"><Download :size="16" />{{ workflow.exporting.value ? '正在导出…' : '导出工资表' }}</button>
       </div>
     </header>
+    <div v-if="scopeActionGuidance" class="scope-guidance" role="note">{{ scopeActionGuidance }}</div>
 
     <div v-if="page.error.value" class="page-error" role="alert">
       <span>{{ page.error.value }}</span>
       <button type="button" :disabled="page.loading.value" @click="retrySalaryData">重试</button>
     </div>
-    <div v-if="actionError" class="inline-error" role="status">{{ actionError }}</div>
+    <div v-if="actionError" class="inline-error" role="alert">{{ actionError }}</div>
     <div v-if="page.storesError.value && !page.isStoreManager.value" class="aux-warning" role="status">
       <span>门店列表暂时无法获取</span>
       <button type="button" @click="page.loadStores()">重试</button>
     </div>
-    <div v-if="page.successMessage.value" class="success-box">{{ page.successMessage.value }}</div>
+    <div v-if="page.successMessage.value" class="success-box" role="status">{{ page.successMessage.value }}</div>
 
     <SalarySummary
       :employee-count="employeeCount" :employees-loading="page.employeesLoading.value"
@@ -588,8 +829,8 @@ onBeforeRouteLeave(() => {
     <div class="table-tools">
       <SearchInput v-model="salaryKeywordModel" class="salary-search" placeholder="搜索姓名、工号或岗位" aria-label="搜索工资记录" />
       <div>
-        <button v-if="page.canReview.value" class="batch-button" :disabled="checkedIds.size === 0" @click="batchApprove"><Check :size="16" />批量审核</button>
-        <button class="filter-button"><Filter :size="16" />筛选</button>
+        <button v-if="page.canReview.value" class="batch-button" :disabled="checkedIds.size === 0 || salaryOperationBusy" @click="batchApprove"><Check :size="16" />批量审核<span v-if="checkedIds.size">（{{ checkedIds.size }}）</span></button>
+        <button class="filter-button" :disabled="!page.hasActiveListFilters.value || salaryOperationBusy" title="清除工资状态和搜索关键词" @click="clearSalaryFilters"><RotateCcw :size="16" />清除筛选</button>
       </div>
     </div>
 
@@ -598,14 +839,14 @@ onBeforeRouteLeave(() => {
         :rows="page.filteredRows.value" :total="page.total.value" :page="page.page.value"
         :total-pages="page.totalPages.value" :loading="page.loading.value"
         :selected-row-key="selectedRowKey" :checked-ids="checkedIds"
-        :can-edit="page.canEdit.value" :deleting-id="workflow.deletingId.value"
+        :can-edit="page.canEdit.value" :can-review="page.canReview.value" :deleting-id="workflow.deletingId.value"
         @page-change="requestSalaryPage" @select="selectRecord" @delete="workflow.doDelete" @toggle-row="toggleRow" @toggle-all="toggleAll"
       />
       <SalaryDetailPanel
         :record="selectedRecord" :revenue="revenue ?? 0" :can-edit="page.canEdit.value" :can-review="page.canReview.value" :can-pay="page.canPay.value"
-        :actioning-id="workflow.actioningId.value"
-        @submit="workflow.doSubmit" @approve="workflow.doApprove" @reject="workflow.doReject" @mark-paid="markPaid"
-        @preview="previewGeneration"
+        :actioning-id="workflow.actioningId.value" :saving="selectedDetailSaving" :operation-error="detailError"
+        @submit="workflow.doSubmit" @approve="workflow.doApprove" @reject="workflow.doReject" @mark-paid="markPaid" @lock="lockRecord"
+        @preview="previewEmployeeGeneration"
         @save-attendance="saveAttendance"
         @save-details="saveDetails"
         @dirty-change="salaryDetailDirty = $event"
@@ -614,9 +855,10 @@ onBeforeRouteLeave(() => {
 
     <SalaryGenerationDialog
       :show="workflow.showPreview.value" :preview-data="workflow.previewData.value"
-      :preview-loading="workflow.previewLoading.value" :generating="workflow.generating.value"
-      :can-generate="page.canGenerate.value"
-      @close="workflow.showPreview.value = false" @generate="confirmGeneration"
+      :preview-loading="workflow.previewLoading.value" :preview-error="workflow.previewError.value"
+      :generating="workflow.generating.value" :can-generate="workflow.canConfirmGeneration.value"
+      :store-name="previewStoreName" :month="workflow.previewContext.value?.month || page.selectedMonth.value"
+      @close="workflow.closePreview" @retry="workflow.doPreview" @generate="confirmGeneration"
     />
 
     <SalaryAddEmployeeDialog
@@ -625,9 +867,11 @@ onBeforeRouteLeave(() => {
       :loading="addEmployeeLoading"
       :saving="addEmployeeSaving"
       :error="addEmployeeError"
+      :retryable="addEmployeeRetryable"
       :target-store-name="page.selectedStoreName.value"
       :month="page.selectedMonth.value"
       @close="closeAddEmployee"
+      @retry="loadAddEmployeeCandidates"
       @submit="confirmAddEmployee"
     />
 
@@ -638,9 +882,12 @@ onBeforeRouteLeave(() => {
       :confirm-label="workflow.actionConfirmation.value?.confirmLabel"
       :confirm-variant="workflow.actionConfirmation.value?.confirmVariant"
       :busy="workflow.actionConfirmationBusy.value"
+      :error="workflow.actionConfirmationError.value"
       :model-value="workflow.actionNote.value"
       :note-label="workflow.actionConfirmation.value?.noteLabel"
       :note-placeholder="workflow.actionConfirmation.value?.notePlaceholder"
+      :note-required="workflow.actionConfirmation.value?.kind === 'reject'"
+      :note-max-length="workflow.actionConfirmation.value?.kind === 'reject' ? 255 : 0"
       @update:model-value="workflow.actionNote.value = $event"
       @cancel="workflow.cancelActionConfirmation"
       @confirm="workflow.confirmAction"
@@ -652,6 +899,7 @@ onBeforeRouteLeave(() => {
       :message="`确认审核通过所选 ${batchApprovalRecords.length} 名员工的工资？`"
       confirm-label="确认审核"
       :busy="batchApproving"
+      :error="batchApprovalError"
       @cancel="cancelBatchApproval"
       @confirm="confirmBatchApproval"
     />
@@ -684,6 +932,62 @@ onBeforeRouteLeave(() => {
 .rule-bar { border: 1px solid #d9e7e5; border-radius: 5px; background: #f9fbfb; }.rule-bar summary { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 40px; padding: 0 14px; color: #526765; cursor: pointer; list-style: none; }.rule-bar summary::-webkit-details-marker { display: none; }.rule-bar summary > span { display: inline-flex; align-items: center; gap: 10px; }.rule-bar summary b { color: #276b65; font-size: 14px; }.rule-bar summary span:last-child { color: #27756e; font-size: 13px; }.rule-bar[open] summary svg { transform: rotate(180deg); }.rule-bar > div { padding: 10px 14px; border-top: 1px solid #e2ebe9; color: #526765; font-size: 13px; }
 .table-tools { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 2px; }.table-tools > div { display: flex; gap: 8px; }.table-tools > .salary-search { width: 300px; flex: none; }.filter-button { border: 1px solid #d8e4e2; background: #fff; color: #526765; }
 .salary-workspace { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 18px; align-items: start; min-width: 0; }
+.scope-guidance { padding: 9px 12px; border: 1px solid #d9e7e5; border-radius: 5px; background: #f7fbfa; color: #526765; font-size: 13px; line-height: 1.55; }
 .page-error,.aux-warning { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 12px; border-radius: 4px; font-size: 13px; }.page-error { border: 1px solid #efc9c2; background: #fff5f3; color: #a93f31; }.aux-warning { border: 1px solid #eadfbd; background: #fffaf0; color: #7b6533; }.inline-error,.success-box { padding: 9px 12px; border-radius: 4px; font-size: 13px; }.inline-error { border-left: 3px solid #d8583f; background: #fff2ef; color: #b94736; }.success-box { border-left: 3px solid #276b65; background: #eef7f5; color: #245f59; }
 @media (max-width: 1120px) { .salary-workspace { grid-template-columns: 1fr; }.business-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+
+@media (max-width: 680px) {
+  .salary-page-head,
+  .table-tools,
+  .page-error,
+  .aux-warning {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .head-controls,
+  .table-tools > div {
+    display: grid;
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .head-controls > *,
+  .head-controls input,
+  .head-controls select,
+  .head-controls :deep(.searchable-single-select),
+  .head-controls button,
+  .table-tools > *,
+  .table-tools > .salary-search,
+  .table-tools button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .head-controls input,
+  .head-controls select,
+  .head-controls :deep(.searchable-single-select__control),
+  .head-controls button,
+  .table-tools button {
+    min-height: 44px;
+  }
+
+  .business-metrics {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rule-bar summary {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+    padding-block: 10px;
+  }
+
+  .page-error button,
+  .aux-warning button {
+    width: 100%;
+    min-height: 40px;
+    text-align: left;
+  }
+}
 </style>

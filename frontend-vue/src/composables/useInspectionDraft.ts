@@ -224,6 +224,9 @@ export function useInspectionDraft(options: {
     return 'good'
   })
   const saveBlockedReason = computed(() => {
+    if (!draft.storeId) return '请选择巡检门店'
+    if (!draft.inspectionDate) return '请选择巡检日期'
+    if (!draft.inspector.trim()) return '请填写督导人姓名'
     if (!standardReady.value) return hasGlobalStandard.value
       ? '当前标准未通过校验，请重试获取标准后再保存'
       : '最新巡检标准尚未加载完成'
@@ -256,7 +259,9 @@ export function useInspectionDraft(options: {
   }
 
   function fillDeductionFromClause() {
-    if (selectedClause.value) deductionForm.deduct = selectedClause.value.score || 1
+    deductionForm.deduct = selectedClause.value
+      ? safeInspectionNumber(selectedClause.value.score)
+      : null
   }
 
   function ensureDeductionForm() {

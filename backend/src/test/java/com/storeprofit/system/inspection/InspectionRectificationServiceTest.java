@@ -136,6 +136,34 @@ class InspectionRectificationServiceTest {
     verifyNoInteractions(inspectionRecordRepository, rectificationRepository, storageService);
   }
 
+  @Test
+  void approvalWithoutRectificationEvidenceIsRejectedBeforeTheWorkflowChanges() {
+    AuthUser supervisor = new AuthUser(
+        9L, 1L, "default", "supervisor", "", "Supervisor", "SUPERVISOR", null, true);
+    InspectionRecordResponse record = record("inspection-1", "store-a");
+    InspectionRectificationRecord pendingReview = rectification(
+        "rectification-1", "inspection-1", "store-a", InspectionRectificationStatus.PENDING_REVIEW);
+    when(inspectionRecordRepository.record(1L, "inspection-1")).thenReturn(Optional.of(record));
+    when(rectificationRepository.findForUpdate(1L, "inspection-1")).thenReturn(Optional.of(pendingReview));
+    when(rectificationRepository.evidenceAttachmentIds(1L, "rectification-1", "store-a"))
+        .thenReturn(List.of());
+
+    assertThatThrownBy(() -> service.review(
+        supervisor,
+        "inspection-1",
+        new InspectionRectificationReviewRequest("APPROVED", "证据已核对")))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> {
+          BusinessException businessError = (BusinessException) error;
+          assertThat(businessError.getCode()).isEqualTo("RECTIFICATION_EVIDENCE_REQUIRED");
+          assertThat(businessError.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+        });
+
+    verify(rectificationRepository, never()).review(
+        anyLong(), anyString(), any(), anyString(), any(), anyString());
+    verify(rectificationRepository, never()).saveAction(any());
+  }
+
   private AuthUser manager() {
     return new AuthUser(
         8L, 1L, "default", "manager", "", "Manager", "STORE_MANAGER", "store-a", true);

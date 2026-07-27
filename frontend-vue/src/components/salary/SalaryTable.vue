@@ -12,6 +12,7 @@ const props = defineProps<{
   selectedRowKey: string
   checkedIds: Set<string>
   canEdit: boolean
+  canReview: boolean
   deletingId: string
 }>()
 
@@ -37,7 +38,19 @@ function attendanceDisplay(record: SalaryRecord) {
 }
 
 function allChecked() {
-  return props.rows.length > 0 && props.rows.every((row) => props.checkedIds.has(row.id))
+  const rows = props.rows.filter(isReviewable)
+  return rows.length > 0 && rows.every((row) => props.checkedIds.has(row.id))
+}
+
+function someChecked() {
+  const rows = props.rows.filter(isReviewable)
+  return rows.some((row) => props.checkedIds.has(row.id)) && !allChecked()
+}
+
+function isReviewable(row: SalaryRecord) {
+  return props.canReview
+    && Boolean(row.id)
+    && ['SUBMITTED', 'PENDING_REVIEW'].includes(row.status || '')
 }
 
 function rowKey(row: SalaryRecord) {
@@ -66,12 +79,30 @@ function deleteLabel(row: SalaryRecord) {
     <div v-else class="table-wrap">
       <table>
         <thead><tr>
-          <th class="check"><input type="checkbox" :checked="allChecked()" aria-label="选择当前页" @change="emit('toggle-all', ($event.target as HTMLInputElement).checked)" /></th>
+          <th v-if="canReview" class="check">
+            <input
+              type="checkbox"
+              :checked="allChecked()"
+              :indeterminate="someChecked()"
+              :disabled="!rows.some(isReviewable)"
+              aria-label="选择当前页待审核工资"
+              @change="emit('toggle-all', ($event.target as HTMLInputElement).checked)"
+            />
+          </th>
           <th>姓名</th><th>工号</th><th>岗位</th><th class="num">出勤 / 实际工时</th><th class="num">应发工资</th><th class="num">提成</th><th class="num">总工时</th><th class="num">假期余额</th><th>状态</th><th class="action">操作</th>
         </tr></thead>
         <tbody>
           <tr v-for="row in rows" :key="rowKey(row)" :class="{ selected: rowKey(row) === selectedRowKey }" @click="emit('select', row)">
-            <td class="check" @click.stop><input type="checkbox" :checked="checkedIds.has(row.id)" :aria-label="`选择${row.employeeName}`" @change="emit('toggle-row', row, ($event.target as HTMLInputElement).checked)" /></td>
+            <td v-if="canReview" class="check" @click.stop>
+              <input
+                type="checkbox"
+                :checked="checkedIds.has(row.id)"
+                :disabled="!isReviewable(row)"
+                :title="isReviewable(row) ? '加入批量审核' : '只有待审核工资可以勾选'"
+                :aria-label="`选择${row.employeeName}`"
+                @change="emit('toggle-row', row, ($event.target as HTMLInputElement).checked)"
+              />
+            </td>
             <td><b>{{ row.employeeName }}</b></td>
             <td class="muted">{{ row.employeeId || '--' }}</td>
             <td>{{ row.position || '--' }}</td>
@@ -120,6 +151,7 @@ td b { color: #182424; font-weight: 600; }.muted { color: #6f817f; }.strong { co
 td { overflow: hidden; text-overflow: ellipsis; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }.check { width: 36px; text-align: center; }.action { width: 76px; text-align: center; }
 input[type='checkbox'] { width: 15px; height: 15px; accent-color: #276b65; cursor: pointer; }
+input[type='checkbox']:disabled { cursor: not-allowed; opacity: .42; }
 .action { overflow: visible; white-space: nowrap; }.action button { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; margin: 0 2px; border: 1px solid #d5e2df; border-radius: 4px; background: #fff; color: #526765; cursor: pointer; }.action button:hover { border-color: #6baaa4; color: #276b65; }.action .delete-button { border-color: #efd7d4; color: #b84a3e; }.action .delete-button:hover { border-color: #d98277; background: #fff6f4; color: #a83e33; }.action button:disabled { cursor: wait; opacity: .6; }
 .status-pill { display: inline-flex; padding: 4px 7px; border-radius: 4px; background: #e7f5ef; color: #28795f; font-size: 12px; font-weight: 600; }.status-pill.warn,.status-pill.pending { background: #fff2e2; color: #d46a16; }.status-pill.rejected { background: #fdeceb; color: #c34b40; }.status-pill.muted { background: #edf1f0; color: #637572; }
 .table-footer { display: flex; align-items: center; justify-content: space-between; min-height: 48px; padding: 8px 12px; color: #526765; font-size: 13px; }.pager { display: flex; align-items: center; gap: 8px; }.pager button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: 1px solid #d9e5e3; border-radius: 4px; background: #fff; color: #276b65; cursor: pointer; }.pager button:disabled { color: #aab7b5; cursor: default; }.pager b { min-width: 25px; padding: 5px 8px; border-radius: 4px; background: #276b65; color: #fff; text-align: center; }

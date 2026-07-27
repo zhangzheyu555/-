@@ -11,6 +11,7 @@ const props = defineProps<{
   loading: boolean
   saving: boolean
   error: string
+  retryable: boolean
   targetStoreName: string
   month: string
 }>()
@@ -18,6 +19,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
   submit: [employeeId: string]
+  retry: []
 }>()
 
 const dialogRef = ref<HTMLElement | null>(null)
@@ -158,7 +160,18 @@ function releaseDialogFocus() {
 
         <form class="salary-add-dialog__content" @submit.prevent="submit">
           <div class="salary-add-dialog__body">
-            <div v-if="error" class="salary-add-error" role="alert">{{ error }}</div>
+            <div v-if="error" class="salary-add-error" role="alert">
+              <span>{{ error }}</span>
+              <UiButton
+                v-if="retryable"
+                variant="secondary"
+                type="button"
+                :disabled="loading || saving"
+                @click="emit('retry')"
+              >
+                重新加载
+              </UiButton>
+            </div>
 
             <label class="salary-add-search" :for="searchId">
               <span class="visually-hidden">搜索员工</span>
@@ -304,6 +317,10 @@ function releaseDialogFocus() {
 }
 
 .salary-add-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 14px;
   padding: 10px 12px;
   border: 1px solid var(--ds-danger, #c33f4d);
@@ -312,6 +329,10 @@ function releaseDialogFocus() {
   color: var(--ds-danger, #a52f3b);
   font-size: 13px;
   line-height: 1.55;
+}
+
+.salary-add-error span {
+  min-width: 0;
 }
 
 .salary-add-search {
@@ -502,6 +523,11 @@ function releaseDialogFocus() {
 
   .salary-add-dialog__body {
     padding: 14px 16px 16px;
+  }
+
+  .salary-add-error {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .salary-add-results {
