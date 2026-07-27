@@ -270,6 +270,7 @@ function buildPayload(): WarehouseItemPayload | null {
   if (!canSubmit.value || !form.requisitionScopeMode) return null
   return {
     id: form.id,
+    writeMode: 'FULL',
     code: form.code.trim(),
     name: form.name.trim(),
     categoryId: form.categoryId,

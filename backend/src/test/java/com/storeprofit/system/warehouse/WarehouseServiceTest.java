@@ -234,6 +234,73 @@ class WarehouseServiceTest {
   }
 
   @Test
+  void mobileProfileSavePreservesHiddenCatalogFieldsDepartmentsAndRequisitionScope() {
+    jdbcTemplate.update("""
+        update warehouse_item
+        set cups_per_unit = 12, daily_usage_estimate = 3, min_stock_days = 11,
+            max_stock_days = 42, sort_order = 77
+        where tenant_id = 1 and id = 1
+        """);
+    jdbcTemplate.update("""
+        insert into warehouse_item_department(
+          tenant_id, item_id, department_name, department_code, department_group, purchase_method, supplier_name
+        ) values (1, 1, '采购部', 'CG', '总部', '统采', '供应商A')
+        """);
+    jdbcTemplate.update("""
+        insert into warehouse_item_requisition_policy(
+          tenant_id, item_id, scope_mode, campaign_name, starts_at, ends_at, updated_by
+        ) values (1, 1, 'SELECTED', '限定活动', null, null, 2)
+        """);
+    jdbcTemplate.update("""
+        insert into warehouse_item_requisition_target(tenant_id, item_id, target_type, target_value)
+        values (1, 1, 'STORE', 'rg1')
+        """);
+
+    service.saveItem(warehouseManager(), new WarehouseItemRequest(
+        1L, "MILK", "移动端鲜奶", 1L, null, null, "件", "件", "件", "件", null,
+        "12盒/件", "A-02", new BigDecimal("99"), 20,
+        null, null, null, null, new BigDecimal("25"), null, 5,
+        "移动端更新", null, "冷藏", null, null, null, WarehouseItemWriteMode.MOBILE_PROFILE
+    ));
+
+    assertThat(jdbcTemplate.queryForObject("select name from warehouse_item where id = 1", String.class))
+        .isEqualTo("移动端鲜奶");
+    assertThat(jdbcTemplate.queryForObject("select cups_per_unit from warehouse_item where id = 1", BigDecimal.class))
+        .isEqualByComparingTo("12.00");
+    assertThat(jdbcTemplate.queryForObject("select daily_usage_estimate from warehouse_item where id = 1", BigDecimal.class))
+        .isEqualByComparingTo("3.00");
+    assertThat(jdbcTemplate.queryForObject("select min_stock_days from warehouse_item where id = 1", Integer.class))
+        .isEqualTo(11);
+    assertThat(jdbcTemplate.queryForObject("select max_stock_days from warehouse_item where id = 1", Integer.class))
+        .isEqualTo(42);
+    assertThat(jdbcTemplate.queryForObject("select sort_order from warehouse_item where id = 1", Integer.class))
+        .isEqualTo(77);
+    assertThat(jdbcTemplate.queryForObject("select count(*) from warehouse_item_department where item_id = 1", Integer.class))
+        .isEqualTo(1);
+    assertThat(jdbcTemplate.queryForObject("select scope_mode from warehouse_item_requisition_policy where item_id = 1", String.class))
+        .isEqualTo("SELECTED");
+    assertThat(jdbcTemplate.queryForObject("select count(*) from warehouse_item_requisition_target where item_id = 1", Integer.class))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void mobileProfileSaveRejectsProtectedCatalogAssociations() {
+    WarehouseItemRequest request = new WarehouseItemRequest(
+        1L, "MILK", "鲜奶", 1L, null, null, "件", "件", "件", "件", null,
+        "12盒/件", null, new BigDecimal("88"), 15,
+        null, null, null, null, new BigDecimal("20"), null, 3,
+        null, null, null, true,
+        List.of(new WarehouseItemDepartmentRequest("采购部", null, null, null, null)),
+        allStoresPolicy(), WarehouseItemWriteMode.MOBILE_PROFILE
+    );
+
+    assertThatThrownBy(() -> service.saveItem(warehouseManager(), request))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode())
+            .isEqualTo("MOBILE_PROFILE_PROTECTED_FIELD"));
+  }
+
+  @Test
   void warehouseManagerCanReadScopeConfigurationContextButStoreManagerCannot() {
     WarehouseItemRequisitionScopeContextResponse context =
         service.itemRequisitionScopeContext(warehouseManager());

@@ -438,6 +438,28 @@ public class WarehouseRepository {
         .orElseThrow(() -> new IllegalStateException("warehouse item was not saved"));
   }
 
+  public void updateMobileItemProfile(long tenantId, WarehouseItemRequest request) {
+    String stockUnit = defaultText(request.stockUnit(), defaultText(request.unit(), "件"));
+    String purchaseUnit = defaultText(request.purchaseUnit(), stockUnit);
+    String ingredientUnit = defaultText(request.ingredientUnit(), stockUnit);
+    String categoryName = itemCategoryName(tenantId, request.categoryId()).orElse(null);
+    jdbcTemplate.update("""
+        update warehouse_item
+        set code = ?, name = ?, category_id = ?, category = ?, image_url = ?, unit = ?, purchase_unit = ?,
+            stock_unit = ?, ingredient_unit = ?, unit_conversion_text = ?, spec = ?, warehouse_location = ?,
+            unit_price = ?, shelf_life_days = ?, min_stock_quantity = ?, expiry_alert_days = ?,
+            item_description = ?, item_attributes = ?, updated_at = current_timestamp
+        where tenant_id = ? and id = ?
+        """,
+        request.code().trim(), request.name().trim(), request.categoryId(), categoryName,
+        blankToNull(request.imageUrl()), stockUnit, purchaseUnit, stockUnit, ingredientUnit,
+        blankToNull(request.unitConversionText()), blankToNull(request.spec()), blankToNull(request.warehouseLocation()),
+        amount(request.unitPrice()), request.shelfLifeDays(), amount(request.minStockQuantity()),
+        request.expiryAlertDays(), blankToNull(request.itemDescription()), blankToNull(request.itemAttributes()),
+        tenantId, request.id()
+    );
+  }
+
   public void replaceItemDepartments(long tenantId, long itemId, List<WarehouseItemDepartmentRequest> departments) {
     jdbcTemplate.update("delete from warehouse_item_department where tenant_id = ? and item_id = ?", tenantId, itemId);
     if (departments == null) {

@@ -327,6 +327,10 @@ public class WarehouseService {
   @Transactional
   public void saveItem(AuthUser user, WarehouseItemRequest request) {
     requireWarehouseConfigure(user);
+    if (request.writeMode() == WarehouseItemWriteMode.MOBILE_PROFILE) {
+      saveMobileItemProfile(user, request);
+      return;
+    }
     WarehouseItemRequisitionPolicyRequest policy = normalizeItemRequisitionPolicy(
         user.tenantId(),
         request.requisitionPolicy()
@@ -358,6 +362,36 @@ public class WarehouseService {
         request.name(),
         policyJson(beforePolicy),
         policyJson(afterPolicy)
+    );
+  }
+
+  private void saveMobileItemProfile(AuthUser user, WarehouseItemRequest request) {
+    if (request.id() == null || !warehouseRepository.itemExists(user.tenantId(), request.id())) {
+      throw new BusinessException("ITEM_NOT_FOUND", "商品不存在", HttpStatus.BAD_REQUEST);
+    }
+    if (request.categoryId() == null || !warehouseRepository.itemCategoryEnabled(user.tenantId(), request.categoryId())) {
+      throw new BusinessException("CATEGORY_DISABLED", "商品类别不存在或已停用", HttpStatus.BAD_REQUEST);
+    }
+    if (request.cupsPerUnit() != null
+        || request.dailyUsageEstimate() != null
+        || request.minStockDays() != null
+        || request.maxStockDays() != null
+        || request.sortOrder() != null
+        || request.departments() != null
+        || request.requisitionPolicy() != null
+        || request.alertEnabled() != null
+        || request.active() != null) {
+      throw new BusinessException(
+          "MOBILE_PROFILE_PROTECTED_FIELD",
+          "移动端不能修改物料部门、叫货范围、经营参数、启停和预警开关",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+    validateItemImage(request.imageUrl());
+    warehouseRepository.updateMobileItemProfile(user.tenantId(), request);
+    warehouseRepository.logAction(
+        user.tenantId(), user.id(), user.displayName(), "保存物料基础资料",
+        String.valueOf(request.id()), null, "MOBILE_PROFILE"
     );
   }
 

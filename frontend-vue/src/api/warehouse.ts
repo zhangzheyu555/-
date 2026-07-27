@@ -133,6 +133,7 @@ export interface WarehouseItemDepartment {
 
 export interface WarehouseItemPayload {
   id?: number
+  writeMode?: 'FULL'
   code: string
   name: string
   categoryId?: number | null
