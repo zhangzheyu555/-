@@ -79,18 +79,20 @@ stages:
           - set -Eeuo pipefail
           - ''
           - deploy_dir="/home/deploy/gitee_go/deploy"
+          - backend_source="$deploy_dir/backend_release.tar.gz"
+          - frontend_source="$deploy_dir/frontend_release.tar.gz"
           - release_id="gitee-$(date -u +%Y%m%d%H%M%S)-${RANDOM}${RANDOM}"
           - release_dir="/home/deploy/releases/$release_id"
           - ''
-          - test -f "$deploy_dir/backend_release"
-          - test -f "$deploy_dir/frontend_release"
+          - test -f "$backend_source"
+          - test -f "$frontend_source"
           - ''
-          - tar -tzf "$deploy_dir/backend_release" >/dev/null
-          - tar -tzf "$deploy_dir/frontend_release" >/dev/null
+          - tar -tzf "$backend_source" >/dev/null
+          - tar -tzf "$frontend_source" >/dev/null
           - ''
           - install -d -m 0700 "$release_dir"
-          - install -m 0600 "$deploy_dir/backend_release" "$release_dir/backend-release.tar.gz"
-          - install -m 0600 "$deploy_dir/frontend_release" "$release_dir/frontend-release.tar.gz"
+          - install -m 0600 "$backend_source" "$release_dir/backend-release.tar.gz"
+          - install -m 0600 "$frontend_source" "$release_dir/frontend-release.tar.gz"
           - ''
           - sudo -n /usr/local/sbin/store-profit-release "$release_id"
         notify: []
