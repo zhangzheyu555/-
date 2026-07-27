@@ -1,4 +1,4 @@
--- H2 verification equivalent of MySQL V108.
+-- H2 verification equivalent of MySQL V108.20260727120000003.
 -- Finance, supervisor and warehouse receive inventory.read only.
 delete from role_permission
 where upper(role_code) in ('FINANCE', 'SUPERVISOR', 'WAREHOUSE', 'OPERATIONS', 'OPS')

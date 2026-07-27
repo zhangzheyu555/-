@@ -62,6 +62,7 @@ services:
       SPRING_DATA_REDIS_PASSWORD: ${DEV_REDIS_PASSWORD:-ai_profit_dev_redis}
       INSPECTION_DETECT_URL: http://inspection-service:8000/detect
       INSPECTION_EXPORT_URL: http://inspection-service:8000/export
+      INSPECTION_INTERNAL_SERVICE_ENABLED: "true"
       APP_EXPENSE_SUPPLEMENT_STORAGE_ROOT: /app/expense-supplements
       APP_SEED_DEMO_ENABLED: "false"
       APP_BOOTSTRAP_DEFAULT_USERS_ENABLED: "false"

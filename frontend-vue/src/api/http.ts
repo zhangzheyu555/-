@@ -217,15 +217,15 @@ const technicalMessagePatterns = [
 ]
 
 function normalizeApiMessage(message: string, status?: number, code?: string) {
-  if (code === 'BACKEND_UNAVAILABLE') return '服务暂时不可用，请确认本机服务已启动后刷新页面'
+  if (code === 'BACKEND_UNAVAILABLE') return '服务暂时不可用，请确认本机服务已启动后重试'
   if (status === 401) return '登录已失效，请重新登录'
   if (status === 403) return '当前账号没有访问该数据或执行此操作的权限，如需访问请联系老板调整权限'
   if (status === 404) return '未找到相关数据'
   if (code === 'INSPECTION_SCORE_REPAIR_REQUIRED') return message || '评分数据待修复'
   // 409 also represents repair gates for historical records. Only an explicit
-  // optimistic-lock conflict is safe to turn into a refresh-and-retry message;
+  // optimistic-lock conflict is safe to turn into an actionable reopen-and-retry message;
   // all other business codes must retain the actionable reason returned by API.
-  if (code === 'INSPECTION_RECORD_CONFLICT') return '数据已发生变化，请刷新后重试'
+  if (code === 'INSPECTION_RECORD_CONFLICT') return '数据已被其他人更新，请重新打开当前记录后再提交'
   if (technicalMessagePatterns.some((pattern) => pattern.test(message))) {
     return status && status >= 500 ? '系统处理失败，请稍后重试' : '数据请求失败，请稍后重试'
   }

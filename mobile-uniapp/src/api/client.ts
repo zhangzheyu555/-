@@ -128,12 +128,13 @@ function parsePayload<T>(raw: string): ApiEnvelope<T> {
 }
 
 function normalizeMessage(message: string | undefined, status: number): string {
+  if (status >= 500) return '系统处理失败，请稍后重试'
+  const normalized = String(message || '').trim()
+  if (normalized) return normalized
   if (status === 401) return '登录已失效，请重新登录'
   if (status === 403) return '当前账号没有访问该数据或执行此操作的权限'
   if (status === 404) return '未找到相关数据'
-  if (status >= 500) return '系统处理失败，请稍后重试'
-  const normalized = String(message || '').trim()
-  return normalized || '请求失败，请稍后重试'
+  return '请求失败，请稍后重试'
 }
 
 function appendQuery(path: string, query?: QueryParams): string {

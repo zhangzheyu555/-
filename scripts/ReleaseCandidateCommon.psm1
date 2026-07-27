@@ -1,6 +1,50 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+$script:LegacyFlywayMaximumMajorVersion = 105
+$script:LegacyFlywayMigrationPattern = '^V(?<major>\d+)__(?<description>[A-Za-z0-9][A-Za-z0-9_]*)\.sql$'
+$script:TimestampedFlywayMigrationPattern = '^V(?<major>[1-9]\d*)_(?<timestamp>20\d{15})__(?<description>[A-Za-z0-9][A-Za-z0-9_]*)\.sql$'
+
+function ConvertTo-ReleaseFlywayMigrationInfo {
+  param(
+    [Parameter(Mandatory = $true)][System.IO.FileInfo]$File,
+    [Parameter(Mandatory = $true)][string]$Label
+  )
+
+  $timestamped = [regex]::Match($File.Name, $script:TimestampedFlywayMigrationPattern)
+  if ($timestamped.Success) {
+    $major = [int]$timestamped.Groups['major'].Value
+    if ($major -le $script:LegacyFlywayMaximumMajorVersion) {
+      throw "$Label Flyway migration '$($File.Name)' must use a major version greater than V$script:LegacyFlywayMaximumMajorVersion after the timestamped-version cutover."
+    }
+    $timestamp = $timestamped.Groups['timestamp'].Value
+    return [pscustomobject]@{
+      major = $major
+      timestamp = $timestamp
+      version = "$major.$timestamp"
+      fileName = $File.Name
+      fullPath = $File.FullName
+    }
+  }
+
+  $legacy = [regex]::Match($File.Name, $script:LegacyFlywayMigrationPattern)
+  if ($legacy.Success) {
+    $major = [int]$legacy.Groups['major'].Value
+    if ($major -gt $script:LegacyFlywayMaximumMajorVersion) {
+      throw "$Label Flyway migration '$($File.Name)' must use V<major>_<yyyyMMddHHmmssSSS>__<description>.sql."
+    }
+    return [pscustomobject]@{
+      major = $major
+      timestamp = ''
+      version = [string]$major
+      fileName = $File.Name
+      fullPath = $File.FullName
+    }
+  }
+
+  throw "$Label Flyway migration filename is invalid: '$($File.Name)'. Expected a legacy V<major>__<description>.sql file through V$script:LegacyFlywayMaximumMajorVersion, or V<major>_<yyyyMMddHHmmssSSS>__<description>.sql afterwards."
+}
+
 function Get-ReleaseFlywayMigrationInfo {
   param(
     [Parameter(Mandatory = $true)][string]$MigrationDirectory,
@@ -11,34 +55,35 @@ function Get-ReleaseFlywayMigrationInfo {
     throw "$Label Flyway migration directory is missing: $MigrationDirectory"
   }
 
-  $migrations = @(
-    Get-ChildItem -LiteralPath $MigrationDirectory -File -Filter 'V*__*.sql' |
-      Where-Object { $_.Name -match '^V(\d+)__.+\.sql$' }
-  )
+  $migrationFiles = @(Get-ChildItem -LiteralPath $MigrationDirectory -File -Filter 'V*__*.sql')
+  $migrations = @($migrationFiles | ForEach-Object {
+      ConvertTo-ReleaseFlywayMigrationInfo -File $_ -Label $Label
+    })
   if ($migrations.Count -eq 0) {
     throw "$Label Flyway migration directory has no versioned SQL files: $MigrationDirectory"
   }
 
-  $latestVersion = [int](($migrations | ForEach-Object {
-    [int]([regex]::Match($_.Name, '^V(\d+)__').Groups[1].Value)
-  } | Measure-Object -Maximum).Maximum)
-  $latestMigrations = @($migrations | Where-Object { $_.Name -match ("^V{0}__.+\.sql$" -f $latestVersion) })
-  if ($latestMigrations.Count -ne 1) {
-    throw "$Label Flyway V$latestVersion must have exactly one migration file; found $($latestMigrations.Count)."
+  $duplicateVersions = @($migrations | Group-Object -Property version | Where-Object { $_.Count -gt 1 })
+  if ($duplicateVersions.Count -gt 0) {
+    throw "$Label Flyway version V$($duplicateVersions[0].Name) is duplicated by $($duplicateVersions[0].Group.fileName -join ', ')."
   }
 
+  $latestMigration = $migrations |
+    Sort-Object -Property @{ Expression = 'major'; Descending = $true }, @{ Expression = 'timestamp'; Descending = $true } |
+    Select-Object -First 1
   return [pscustomobject]@{
     label = $Label
-    version = $latestVersion
-    fileName = $latestMigrations[0].Name
-    fullPath = $latestMigrations[0].FullName
+    major = $latestMigration.major
+    version = $latestMigration.version
+    fileName = $latestMigration.fileName
+    fullPath = $latestMigration.fullPath
   }
 }
 
 function Get-ReleaseFlywaySource {
   param(
     [Parameter(Mandatory = $true)][string]$ProjectRoot,
-    [ValidateRange(0, 9999)][int]$ExpectedVersion = 0
+    [string]$ExpectedVersion = ''
   )
 
   $mysql = Get-ReleaseFlywayMigrationInfo -MigrationDirectory (Join-Path $ProjectRoot 'backend\src\main\resources\db\migration') -Label 'MySQL'
@@ -49,7 +94,7 @@ function Get-ReleaseFlywaySource {
   if (-not $mysql.fileName.Equals($h2.fileName, [StringComparison]::Ordinal)) {
     throw "Flyway source trees use different latest migration names: MySQL '$($mysql.fileName)', H2 '$($h2.fileName)'."
   }
-  if ($ExpectedVersion -gt 0 -and $mysql.version -ne $ExpectedVersion) {
+  if (-not [string]::IsNullOrWhiteSpace($ExpectedVersion) -and $mysql.version -ne $ExpectedVersion) {
     throw "Flyway source latest version V$($mysql.version) does not match the expected V$ExpectedVersion."
   }
 

@@ -3,9 +3,15 @@ import { downloadBlob } from './reports'
 
 export type KnowledgeBaseVisibility = 'TENANT' | 'ROLE' | 'STORE'
 export type KnowledgeBaseStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
+export type KnowledgeBaseRelationType = 'ORIGINAL' | 'REPLACES' | 'SUPPLEMENTS'
 
 export interface KnowledgeBaseDocument {
   id: number
+  topicId: number
+  topicName: string
+  versionNo: number
+  relationType: KnowledgeBaseRelationType
+  predecessorDocumentId: number | null
   title: string
   category: string
   originalFileName: string
@@ -26,11 +32,38 @@ export interface KnowledgeBaseDocument {
 
 export interface KnowledgeBaseSearchResult {
   documentId: number
+  topicId: number
+  topicName: string
+  versionNo: number
   title: string
   category: string
   sourceLocator: string
   excerpt: string
   score: number
+}
+
+export interface KnowledgeBaseTopicSearchResult {
+  topicId: number
+  topicName: string
+  summary: string
+  sources: KnowledgeBaseSearchResult[]
+}
+
+export interface KnowledgeBaseSearchResponse {
+  query: string
+  summary: string
+  topics: KnowledgeBaseTopicSearchResult[]
+  results: KnowledgeBaseSearchResult[]
+}
+
+export interface AvailableKnowledgeBaseDocument {
+  id: number
+  title: string
+  category: string
+  originalFileName: string
+  fileSize: number
+  publishedAt: string
+  updatedAt: string
 }
 
 export interface KnowledgeBaseUploadPayload {
@@ -40,6 +73,11 @@ export interface KnowledgeBaseUploadPayload {
   visibility: KnowledgeBaseVisibility
   roleScopes?: string[]
   storeScopes?: string[]
+  topicId?: number
+  topicName?: string
+  relationType?: KnowledgeBaseRelationType
+  predecessorDocumentId?: number
+  publishNow?: boolean
 }
 
 export function searchKnowledgeBase(query: string, limit = 5) {
@@ -48,8 +86,18 @@ export function searchKnowledgeBase(query: string, limit = 5) {
   )
 }
 
+export function searchKnowledgeBaseSummary(query: string, limit = 5) {
+  return apiGet<KnowledgeBaseSearchResponse>(
+    `/api/knowledge-base/search/summary?q=${encodeURIComponent(query)}&limit=${encodeURIComponent(String(limit))}`,
+  )
+}
+
 export function knowledgeBaseDocuments() {
   return apiGet<KnowledgeBaseDocument[]>('/api/knowledge-base/documents')
+}
+
+export function availableKnowledgeBaseDocuments() {
+  return apiGet<AvailableKnowledgeBaseDocument[]>('/api/knowledge-base/documents/available')
 }
 
 export function uploadKnowledgeBaseDocument(payload: KnowledgeBaseUploadPayload) {
@@ -60,6 +108,13 @@ export function uploadKnowledgeBaseDocument(payload: KnowledgeBaseUploadPayload)
   form.append('visibility', payload.visibility)
   payload.roleScopes?.forEach((role) => form.append('roleScopes', role))
   payload.storeScopes?.forEach((storeId) => form.append('storeScopes', storeId))
+  if (payload.topicId) form.append('topicId', String(payload.topicId))
+  if (payload.topicName?.trim()) form.append('topicName', payload.topicName.trim())
+  if (payload.relationType) form.append('relationType', payload.relationType)
+  if (payload.predecessorDocumentId) {
+    form.append('predecessorDocumentId', String(payload.predecessorDocumentId))
+  }
+  form.append('publishNow', String(payload.publishNow ?? false))
   return apiPostForm<KnowledgeBaseDocument>('/api/knowledge-base/documents', form, { timeout: 60_000 })
 }
 

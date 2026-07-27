@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { AlertTriangle, CheckCircle2, KeyRound, Pencil, Plus, RefreshCw, Shield, ShieldCheck, Store, X } from 'lucide-vue-next'
+import { AlertTriangle, CheckCircle2, KeyRound, Pencil, Plus, Shield, ShieldCheck, Store, X } from 'lucide-vue-next'
+import { onBeforeRouteLeave } from 'vue-router'
 import { getStores, type StoreInfo } from '../api/operations'
 import { getWarehouses, type WarehouseInfo } from '../api/warehouse'
 import { ApiError } from '../api/http'
 import PageHeader from '../components/common/PageHeader.vue'
+import SearchableMultiSelect from '../components/common/SearchableMultiSelect.vue'
+import SearchableSingleSelect from '../components/common/SearchableSingleSelect.vue'
 import ModalFooter from '../components/ui/ModalFooter.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import UnsavedChangesDialog from '../components/ui/UnsavedChangesDialog.vue'
@@ -30,6 +33,7 @@ import { useAuthStore } from '../stores/auth'
 import { PERMISSIONS } from '../permissions/permissions'
 import { isBossRole, isGlobalStoreRole, normalizeRoleCode } from '../permissions/roles'
 import { listAvailableWorkspaces } from '../permissions/workspaces'
+import { useForegroundReload } from '../composables/useForegroundReload'
 
 type AccountForm = UserCreatePayload
 type OverrideChoice = PermissionEffect | ''
@@ -40,6 +44,7 @@ interface PermissionGroup {
 }
 
 const DATA_SCOPE_DOMAINS = ['STORE', 'FINANCE', 'SALARY', 'WAREHOUSE', 'INSPECTION', 'EXAM', 'PLATFORM'] as const
+const SUPERVISOR_STORE_SCOPE_DOMAINS = new Set(['STORE', 'INSPECTION', 'EXAM', 'PLATFORM'])
 const DATA_SCOPE_MODE_ORDER: DataScopeMode[] = ['ALL', 'WAREHOUSE_LIST', 'STORE_LIST', 'OWN_STORE', 'CENTRAL_WAREHOUSE', 'SELF', 'NONE']
 const MODULE_LABELS: Record<string, string> = {
   SYSTEM: '系统管理',
@@ -135,7 +140,9 @@ const accountFormSnapshot = ref('')
 const discardDialogOpen = ref(false)
 const discardDialogMessage = ref('')
 let authorizationRequestSequence = 0
+let permissionPageRequestSequence = 0
 let pendingDiscardAction: (() => void) | null = null
+let pendingDiscardCancel: (() => void) | null = null
 
 const roles = [
   { value: 'BOSS', label: '老板（系统管理员）' },
@@ -146,9 +153,14 @@ const roles = [
   { value: 'EMPLOYEE', label: '学员（兼容身份）' },
 ]
 
+function isFixedGlobalStoreRole(role?: string) {
+  return normalizeRoleCode(role) !== 'SUPERVISOR' && isGlobalStoreRole(role)
+}
+
 const canManage = computed(() => isBossRole(auth.role))
 const bossAccountForm = computed(() => isBossRole(form.role))
-const globalStoreRoleForm = computed(() => isGlobalStoreRole(form.role))
+const globalStoreRoleForm = computed(() => isFixedGlobalStoreRole(form.role) && !bossAccountForm.value)
+const supervisorAccountForm = computed(() => normalizeRoleCode(form.role) === 'SUPERVISOR')
 const storeManagerAccountForm = computed(() => normalizeRoleCode(form.role) === 'STORE_MANAGER')
 const activeBossCount = computed(() => users.value.filter((user) => isBossRole(user.role) && user.enabled).length)
 const protectedBoss = computed(() => Boolean(
@@ -165,6 +177,12 @@ const configuredManagerStoreIds = computed(() => new Set(
   managerAccounts.value.flatMap((user) => [user.storeId, ...(user.storeScope || [])]).filter(Boolean),
 ))
 const pendingManagerStores = computed(() => stores.value.filter((store) => !configuredManagerStoreIds.value.has(store.id)))
+const searchableStoreOptions = computed(() => stores.value.map((store) => ({
+  value: store.id,
+  label: `${store.brandName ? `${store.brandName} · ` : ''}${store.name}`,
+  description: [store.code || store.id, store.area || store.regionCode, store.status].filter(Boolean).join(' · '),
+  searchText: [store.name, store.code, store.area, store.regionCode, store.status, store.brandName].filter(Boolean).join(' '),
+})))
 const roleRows = computed(() => {
   const groups = new Map<string, number>()
   for (const user of users.value) {
@@ -174,7 +192,10 @@ const roleRows = computed(() => {
   return Array.from(groups.entries()).map(([label, count]) => ({ label, count }))
 })
 const selectedAuthorizationIsBoss = computed(() => isBossRole(selectedAuthorizationUser.value?.role))
-const selectedAuthorizationIsGlobalStoreRole = computed(() => isGlobalStoreRole(selectedAuthorizationUser.value?.role))
+const selectedAuthorizationIsGlobalStoreRole = computed(() => isFixedGlobalStoreRole(selectedAuthorizationUser.value?.role))
+const selectedAuthorizationIsSupervisor = computed(
+  () => normalizeRoleCode(selectedAuthorizationUser.value?.role) === 'SUPERVISOR',
+)
 const dataScopeRows = computed<UserDataScopeAssignment[]>(() => DATA_SCOPE_DOMAINS
   .map((domainCode) => draftScopes[domainCode])
   .filter((scope): scope is UserDataScopeAssignment => Boolean(scope)))
@@ -260,21 +281,26 @@ function captureAccountFormSnapshot() {
   accountFormSnapshot.value = accountFormSignature()
 }
 
-function requestDiscardConfirmation(message: string, action: () => void) {
+function requestDiscardConfirmation(message: string, action: () => void, cancel: () => void = () => {}) {
   if (discardDialogOpen.value) return
   discardDialogMessage.value = message
   pendingDiscardAction = action
+  pendingDiscardCancel = cancel
   discardDialogOpen.value = true
 }
 
 function keepEditing() {
+  const cancel = pendingDiscardCancel
   pendingDiscardAction = null
+  pendingDiscardCancel = null
   discardDialogOpen.value = false
+  cancel?.()
 }
 
 function discardChanges() {
   const action = pendingDiscardAction
   pendingDiscardAction = null
+  pendingDiscardCancel = null
   discardDialogOpen.value = false
   action?.()
 }
@@ -325,7 +351,9 @@ function highRiskHint(permission: PermissionCatalogEntry) {
 function scopeModeOptions(domainCode: string) {
   const role = normalizeRoleCode(selectedAuthorizationUser.value?.role)
   let modes = DOMAIN_MODES[domainCode] || DATA_SCOPE_MODE_ORDER
-  if (isGlobalStoreRole(role)) modes = ['ALL']
+  if (role === 'SUPERVISOR') {
+    modes = SUPERVISOR_STORE_SCOPE_DOMAINS.has(domainCode) ? ['STORE_LIST', 'NONE'] : ['NONE']
+  } else if (isGlobalStoreRole(role)) modes = ['ALL']
   if (role === 'BOSS') modes = ['ALL']
   if (role === 'STORE_MANAGER') modes = ['OWN_STORE', 'NONE']
   if (role === 'EMPLOYEE') modes = domainCode === 'EXAM' ? ['SELF', 'NONE'] : ['NONE']
@@ -366,6 +394,13 @@ function compatibilityScopeFallback(user: UserAccount) {
     fallback.set(domainCode, { domainCode, mode, storeIds: [...storeIds], warehouseIds: [...warehouseIds] })
   }
   const role = normalizeRoleCode(user.role)
+  if (role === 'SUPERVISOR') {
+    const storeIds = [...new Set((user.storeScope || []).filter((storeId) => storeId && storeId !== 'all'))]
+    for (const domainCode of SUPERVISOR_STORE_SCOPE_DOMAINS) {
+      assign(domainCode, storeIds.length ? 'STORE_LIST' : 'NONE', storeIds)
+    }
+    return fallback
+  }
   if (isGlobalStoreRole(role)) {
     for (const domainCode of DATA_SCOPE_DOMAINS) assign(domainCode, 'ALL')
     return fallback
@@ -405,16 +440,41 @@ function applyAuthorizationDraft(detail: UserAuthorization) {
     : compatibilityScopeFallback(selectedAuthorizationUser.value)
   for (const domainCode of DATA_SCOPE_DOMAINS) {
     const source = scopeByDomain.get(domainCode) || fallbackByDomain.get(domainCode)
+    const supervisorScope = selectedAuthorizationIsSupervisor.value
+      ? supervisorDraftScope(domainCode, source)
+      : null
     draftScopes[domainCode] = {
       domainCode,
-      mode: (selectedAuthorizationIsBoss.value || selectedAuthorizationIsGlobalStoreRole.value) ? 'ALL' : source?.mode || 'NONE',
-      storeIds: [...(source?.storeIds || [])],
-      warehouseIds: [...(source?.warehouseIds || [])],
+      mode: supervisorScope?.mode
+        || ((selectedAuthorizationIsBoss.value || selectedAuthorizationIsGlobalStoreRole.value) ? 'ALL' : source?.mode || 'NONE'),
+      storeIds: [...(supervisorScope?.storeIds || source?.storeIds || [])],
+      warehouseIds: supervisorScope ? [] : [...(source?.warehouseIds || [])],
     }
   }
   for (const permission of catalogPermissions.value) draftOverrides[permission.permissionCode] = ''
   for (const override of detail.overrides) draftOverrides[override.permissionCode] = override.effect
   initialAuthorizationSignature.value = draftAuthorizationSignature()
+}
+
+function supervisorDraftScope(
+  domainCode: string,
+  source?: UserDataScopeAssignment,
+): Pick<UserDataScopeAssignment, 'mode' | 'storeIds'> {
+  if (!SUPERVISOR_STORE_SCOPE_DOMAINS.has(domainCode)) {
+    return { mode: 'NONE', storeIds: [] }
+  }
+  if (source?.mode === 'STORE_LIST' && source.storeIds.length) {
+    return { mode: 'STORE_LIST', storeIds: [...new Set(source.storeIds)] }
+  }
+  if (source?.mode === 'NONE') {
+    return { mode: 'NONE', storeIds: [] }
+  }
+  const accountStores = [...new Set(
+    (selectedAuthorizationUser.value?.storeScope || []).filter((storeId) => storeId && storeId !== 'all'),
+  )]
+  return accountStores.length
+    ? { mode: 'STORE_LIST', storeIds: accountStores }
+    : { mode: 'NONE', storeIds: [] }
 }
 
 function normalizedScopeSignature(scopes: UserDataScopeAssignment[]) {
@@ -450,12 +510,23 @@ function accessProfileScopes(
   detail: UserAuthorization,
   role: string,
   storeId: string | null,
+  storeScope: string[] = [],
 ): UserDataScopeAssignment[] {
   const normalizedRole = normalizeRoleCode(role)
   const roleChanged = normalizeRoleCode(detail.role) !== normalizedRole
   const existing = new Map(detail.dataScopes.map((scope) => [scope.domainCode, scope]))
+  const supervisorStoreIds = [...new Set(storeScope.filter((value) => value && value !== 'all'))]
   return DATA_SCOPE_DOMAINS.map((domainCode) => {
     const current = existing.get(domainCode) || { domainCode, mode: 'NONE' as DataScopeMode, storeIds: [], warehouseIds: [] }
+    if (normalizedRole === 'SUPERVISOR') {
+      const scoped = SUPERVISOR_STORE_SCOPE_DOMAINS.has(domainCode) && supervisorStoreIds.length
+      return {
+        domainCode,
+        mode: scoped ? 'STORE_LIST' : 'NONE',
+        storeIds: scoped ? [...supervisorStoreIds] : [],
+        warehouseIds: [],
+      }
+    }
     if (!roleChanged) return { ...current, storeIds: [...current.storeIds], warehouseIds: [...(current.warehouseIds || [])] }
     if (isGlobalStoreRole(normalizedRole)) return { domainCode, mode: 'ALL', storeIds: [], warehouseIds: [] }
     if (normalizedRole === 'BOSS') return { domainCode, mode: 'ALL', storeIds: [], warehouseIds: [] }
@@ -482,7 +553,7 @@ function accessProfileScopes(
 function accessProfilePayload(
   profile: UserProfilePayload,
   detail: UserAuthorization,
-  scopes = accessProfileScopes(detail, profile.role, profile.storeId || null),
+  scopes = accessProfileScopes(detail, profile.role, profile.storeId || null, profile.storeScope),
   overrides = detail.overrides,
 ): UserAccessProfileUpdate {
   return {
@@ -511,27 +582,72 @@ function previewAvailableWorkspaces(
   return storeId && storeScope?.mode === 'OWN_STORE' ? available : []
 }
 
-async function refresh() {
+async function loadPermissionPage(options: { reloadAuthorization?: boolean } = {}) {
+  const pageRequestSequence = ++permissionPageRequestSequence
+  const reloadAuthorization = options.reloadAuthorization !== false
   loading.value = true
   error.value = ''
   const selectedUserId = selectedAuthorizationUser.value?.id
+  const authorizationSignatureAtRequest = selectedUserId && reloadAuthorization
+    ? draftAuthorizationSignature()
+    : ''
   try {
-    const [userRows, storeRows, warehouseRows] = await Promise.all([getUsers(), getStores(), getWarehouses()])
+    const [userRows, storeRows, warehouseRows, nextCatalog] = await Promise.all([
+      getUsers(),
+      getStores(),
+      getWarehouses(),
+      canManage.value && reloadAuthorization
+        ? getAuthorizationCatalog()
+        : Promise.resolve(authorizationCatalog.value),
+    ])
+    if (pageRequestSequence !== permissionPageRequestSequence) return false
     users.value = userRows
     stores.value = storeRows
     warehouses.value = warehouseRows
-    if (canManage.value) authorizationCatalog.value = await getAuthorizationCatalog()
-    if (selectedUserId) {
-      const refreshedSelection = userRows.find((user) => user.id === selectedUserId)
-      if (refreshedSelection) await openAuthorization(refreshedSelection, false)
+    if (nextCatalog) authorizationCatalog.value = nextCatalog
+    if (selectedUserId && reloadAuthorization) {
+      if (
+        selectedAuthorizationUser.value?.id !== selectedUserId
+        || draftAuthorizationSignature() !== authorizationSignatureAtRequest
+      ) {
+        return false
+      }
+      const nextSelection = userRows.find((user) => user.id === selectedUserId)
+      if (nextSelection) {
+        const authorizationLoaded = await reloadAuthorizationDetail(nextSelection, authorizationSignatureAtRequest)
+        if (!authorizationLoaded) return false
+      }
       else forceCloseAuthorization()
     }
+    markFresh()
+    return true
   } catch (loadError) {
-    error.value = displayError(loadError, '用户权限加载失败，请刷新后重试。')
+    if (pageRequestSequence === permissionPageRequestSequence) {
+      error.value = displayError(loadError, '用户权限加载失败，请稍后重试。')
+    }
+    return false
   } finally {
-    loading.value = false
+    if (pageRequestSequence === permissionPageRequestSequence) loading.value = false
   }
 }
+
+function canReloadAuthorizationDetail() {
+  return !authorizationDirty.value
+    && !authorizationLoading.value
+    && !authorizationSaving.value
+    && !editorOpen.value
+    && !editingAuthorizationLoading.value
+    && !saving.value
+    && !resetTarget.value
+    && !resetting.value
+    && !discardDialogOpen.value
+}
+
+const { markFresh } = useForegroundReload(() => loadPermissionPage({
+    reloadAuthorization: canReloadAuthorizationDetail(),
+  }), {
+  canReload: () => !loading.value && !saving.value && !resetting.value,
+})
 
 function openCreate() {
   editingUser.value = null
@@ -565,18 +681,6 @@ async function openEdit(user: UserAccount) {
   } finally {
     editingAuthorizationLoading.value = false
   }
-}
-
-function requestRefresh() {
-  if (loading.value) return
-  if (authorizationDirty.value) {
-    requestDiscardConfirmation(
-      '刷新后，当前尚未保存的授权调整将不会保留。',
-      () => { void refresh() },
-    )
-    return
-  }
-  void refresh()
 }
 
 function closeEditor() {
@@ -616,7 +720,7 @@ async function save() {
   }
 
   const role = normalizeRoleCode(form.role)
-  const scope = isGlobalStoreRole(role) || isBossRole(role)
+  const scope = isFixedGlobalStoreRole(role) || isBossRole(role)
     ? []
     : storeManagerAccountForm.value
       ? (form.storeId ? [form.storeId] : [])
@@ -624,7 +728,9 @@ async function save() {
   const profile: UserProfilePayload = {
     displayName: form.displayName.trim(),
     role,
-    storeId: (isGlobalStoreRole(role) || isBossRole(role)) ? '' : form.storeId || scope[0] || '',
+    storeId: (isFixedGlobalStoreRole(role) || isBossRole(role) || role === 'SUPERVISOR')
+      ? ''
+      : form.storeId || scope[0] || '',
     storeScope: scope,
     enabled: form.enabled,
   }
@@ -636,7 +742,12 @@ async function save() {
   }
   if (editingUser.value && !editingUser.value.enabled && profile.enabled && editingAuthorization.value) {
     const roleChanged = normalizeRoleCode(editingAuthorization.value.role) !== role
-    const previewScopes = accessProfileScopes(editingAuthorization.value, role, profile.storeId || null)
+    const previewScopes = accessProfileScopes(
+      editingAuthorization.value,
+      role,
+      profile.storeId || null,
+      profile.storeScope,
+    )
     const availableWorkspaces = roleChanged
       ? []
       : previewAvailableWorkspaces(role, editingAuthorization.value.effectivePermissions, previewScopes, profile.storeId)
@@ -667,7 +778,7 @@ async function save() {
       successMessage.value = '账号已创建。'
     }
     forceCloseEditor()
-    await refresh()
+    await loadPermissionPage()
   } catch (saveError) {
     error.value = displayError(saveError, '账号保存失败，请稍后重试。')
   } finally {
@@ -761,6 +872,39 @@ async function openAuthorization(user: UserAccount, clearFeedback = true) {
   }
 }
 
+async function reloadAuthorizationDetail(
+  user: UserAccount,
+  expectedDraftSignature = draftAuthorizationSignature(),
+) {
+  const requestSequence = ++authorizationRequestSequence
+  if (
+    selectedAuthorizationUser.value?.id !== user.id
+    || draftAuthorizationSignature() !== expectedDraftSignature
+  ) {
+    return false
+  }
+  authorizationError.value = ''
+  try {
+    const detail = await getUserAuthorization(user.id)
+    if (
+      requestSequence !== authorizationRequestSequence
+      || selectedAuthorizationUser.value?.id !== user.id
+      || draftAuthorizationSignature() !== expectedDraftSignature
+    ) {
+      return false
+    }
+    selectedAuthorizationUser.value = user
+    userAuthorization.value = detail
+    applyAuthorizationDraft(detail)
+    return true
+  } catch (reason) {
+    if (requestSequence === authorizationRequestSequence) {
+      authorizationError.value = displayError(reason, '账号授权加载失败，请稍后重试。')
+    }
+    return false
+  }
+}
+
 function requestOpenAuthorization(user: UserAccount) {
   if (selectedAuthorizationUser.value?.id === user.id) return
   if (authorizationDirty.value) {
@@ -809,6 +953,13 @@ function learnerAllowDisabled(permissionCode: string) {
   return normalizeRoleCode(selectedAuthorizationUser.value?.role) === 'EMPLOYEE' && permissionCode !== 'exam.learn'
 }
 
+function scopeEditingDisabled(domainCode: string) {
+  return selectedAuthorizationIsBoss.value
+    || selectedAuthorizationIsGlobalStoreRole.value
+    || authorizationSaving.value
+    || (selectedAuthorizationIsSupervisor.value && !SUPERVISOR_STORE_SCOPE_DOMAINS.has(domainCode))
+}
+
 async function saveAuthorization() {
   const target = selectedAuthorizationUser.value
   if (!target || !userAuthorization.value || authorizationSaving.value || selectedAuthorizationIsBoss.value) return
@@ -844,11 +995,14 @@ async function saveAuthorization() {
 
   authorizationSaving.value = true
   try {
+    const supervisorStoreScope = normalizeRoleCode(target.role) === 'SUPERVISOR'
+      ? dataScopes.find((scope) => scope.domainCode === 'STORE')?.storeIds || []
+      : target.storeScope || []
     const profile: UserProfilePayload = {
       displayName: target.displayName,
       role: normalizeRoleCode(target.role),
       storeId: target.storeId || '',
-      storeScope: [...(target.storeScope || [])],
+      storeScope: [...supervisorStoreScope],
       enabled: target.enabled,
     }
     const updated = await updateUserAccessProfile(
@@ -861,6 +1015,7 @@ async function saveAuthorization() {
     userAuthorization.value = updated.authorization
     applyAuthorizationDraft(updated.authorization)
     authorizationSuccess.value = `权限已更新，该账号需要重新登录。权限版本 v${updated.authorization.permissionVersion}。`
+    markFresh()
   } catch (reason) {
     authorizationError.value = displayError(reason, '账号授权保存失败，请稍后重试。')
   } finally {
@@ -874,7 +1029,7 @@ function storeName(storeId?: string) {
 }
 
 function scopeText(user: UserAccount) {
-  if (isGlobalStoreRole(user.role)) return '全部门店'
+  if (isFixedGlobalStoreRole(user.role)) return '全部门店'
   if (!user.storeScope?.length) return '未配置'
   if (user.storeScope.includes('all')) return '全部门店'
   return user.storeScope.map((storeId) => storeName(storeId)).join('、')
@@ -932,36 +1087,63 @@ function roleTone(role: string) {
 function displayError(reason: unknown, fallback: string) {
   if (reason instanceof ApiError) {
     if (reason.code === 'BACKEND_UNAVAILABLE' || (reason.status != null && reason.status >= 500)) {
-      return '账号权限服务暂时不可用，请确认本机服务已启动后刷新页面。'
+      return '账号权限服务暂时不可用，请确认本机服务已启动后重试。'
     }
   }
   const message = reason instanceof Error ? reason.message : String(reason || '')
   return message || fallback
 }
 
+function retryPermissionPage() {
+  void loadPermissionPage({
+    reloadAuthorization: canReloadAuthorizationDetail(),
+  })
+}
+
 watch(
   () => form.role,
   (role) => {
-    if (isGlobalStoreRole(role) || isBossRole(role)) {
+    if (isFixedGlobalStoreRole(role) || isBossRole(role)) {
       form.storeId = ''
       form.storeScope = []
+      return
+    }
+    if (normalizeRoleCode(role) === 'SUPERVISOR') {
+      form.storeId = ''
       return
     }
     if (normalizeRoleCode(role) === 'STORE_MANAGER') {
       const storeId = form.storeId || form.storeScope[0] || ''
       form.storeId = storeId
       form.storeScope = storeId ? [storeId] : []
+      return
+    }
+    if (normalizeRoleCode(role) === 'EMPLOYEE') {
+      form.storeId = ''
+      form.storeScope = []
     }
   },
 )
 
 onMounted(() => {
   document.addEventListener('keydown', handleDialogEscape)
-  void refresh()
+  void loadPermissionPage()
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleDialogEscape)
+})
+
+onBeforeRouteLeave(() => {
+  if (!accountDirty.value && !authorizationDirty.value && !passwordDirty.value) return true
+  if (discardDialogOpen.value) return false
+  return new Promise<boolean>((resolve) => {
+    requestDiscardConfirmation(
+      '离开账号权限页面后，当前尚未保存的修改将不会保留。',
+      () => resolve(true),
+      () => resolve(false),
+    )
+  })
 })
 </script>
 
@@ -973,9 +1155,6 @@ onBeforeUnmount(() => {
           <button v-if="canManage" class="primary-button" type="button" @click="openCreate">
             <Plus :size="16" />新增账号
           </button>
-          <button class="ghost-button" type="button" :disabled="loading" @click="requestRefresh">
-            <RefreshCw :size="16" />刷新
-          </button>
         </div>
       </template>
     </PageHeader>
@@ -985,7 +1164,10 @@ onBeforeUnmount(() => {
       <span>账号、权限和数据范围设置涉及高风险授权，请使用电脑端完成并仔细核对后保存。</span>
     </aside>
 
-    <div v-if="error" class="error-box">{{ error }}</div>
+    <div v-if="error" class="error-box page-load-error">
+      <span>{{ error }}</span>
+      <button class="ghost-button" type="button" :disabled="loading" @click="retryPermissionPage">重试</button>
+    </div>
     <div v-if="successMessage" class="success-box">{{ successMessage }}</div>
     <div v-if="loading && !users.length" class="empty-state">正在读取账号权限...</div>
 
@@ -1070,11 +1252,11 @@ onBeforeUnmount(() => {
           <section class="content-card">
             <div class="panel-title"><Store :size="20" /><h3>门店范围</h3></div>
             <div class="scope-list">
-              <div v-for="user in users.filter((item) => !isGlobalStoreRole(item.role) && !item.storeScope.includes('all'))" :key="user.id">
+              <div v-for="user in users.filter((item) => !isFixedGlobalStoreRole(item.role) && !item.storeScope.includes('all'))" :key="user.id">
                 <b>{{ user.displayName || user.username }}</b>
                 <span>{{ scopeText(user) }}</span>
               </div>
-              <div v-if="!users.some((item) => !isGlobalStoreRole(item.role) && !item.storeScope.includes('all'))" class="empty-state compact">暂无门店范围配置。</div>
+              <div v-if="!users.some((item) => !isFixedGlobalStoreRole(item.role) && !item.storeScope.includes('all'))" class="empty-state compact">暂无门店范围配置。</div>
             </div>
           </section>
         </aside>
@@ -1120,7 +1302,7 @@ onBeforeUnmount(() => {
         <template v-else>
           <div v-if="authorizationError" class="authorization-message error-box">
             <span>{{ authorizationError }}</span>
-            <button v-if="!userAuthorization" class="ghost-button" type="button" @click="openAuthorization(selectedAuthorizationUser)">重新读取</button>
+            <button v-if="!userAuthorization" class="ghost-button" type="button" @click="openAuthorization(selectedAuthorizationUser)">重试</button>
           </div>
           <div v-if="authorizationSuccess" class="authorization-message success-box">{{ authorizationSuccess }}</div>
 
@@ -1132,6 +1314,10 @@ onBeforeUnmount(() => {
             <div v-if="selectedAuthorizationIsGlobalStoreRole && !selectedAuthorizationIsBoss" class="fixed-authorization-note">
               <ShieldCheck :size="18" />
               <div><b>该角色默认拥有全部门店范围</b><span>门店数据范围固定为“全部”，无需单独配置。功能权限仍可在下方调整。</span></div>
+            </div>
+            <div v-if="selectedAuthorizationIsSupervisor" class="fixed-authorization-note">
+              <ShieldCheck :size="18" />
+              <div><b>督导门店范围可配置</b><span>指定门店范围用于知识库资料的发布、列表、搜索和下载；其他督导工作台继续沿用现有角色规则。</span></div>
             </div>
 
             <div
@@ -1183,7 +1369,7 @@ onBeforeUnmount(() => {
                     <select
                       v-model="scope.mode"
                       :aria-label="`${domainLabel(scope.domainCode)}数据范围`"
-                      :disabled="selectedAuthorizationIsBoss || selectedAuthorizationIsGlobalStoreRole || authorizationSaving"
+                      :disabled="scopeEditingDisabled(scope.domainCode)"
                       @change="onScopeModeChanged(scope.domainCode)"
                     >
                       <option
@@ -1200,13 +1386,16 @@ onBeforeUnmount(() => {
                       </label>
                       <span v-if="!warehouses.length" class="inline-empty">暂无可选仓库。</span>
                     </div>
-                    <div v-else-if="scope.mode === 'STORE_LIST'" class="store-scope-picker">
-                      <label v-for="store in stores" :key="store.id">
-                        <input v-model="scope.storeIds" type="checkbox" :value="store.id" :disabled="authorizationSaving" />
-                        <span>{{ store.brandName }} · {{ store.name }}</span>
-                      </label>
-                      <span v-if="!stores.length" class="inline-empty">暂无可选门店。</span>
-                    </div>
+                    <SearchableMultiSelect
+                      v-else-if="scope.mode === 'STORE_LIST'"
+                      :model-value="scope.storeIds"
+                      :options="searchableStoreOptions"
+                      :disabled="authorizationSaving"
+                      selected-noun="家门店"
+                      search-placeholder="搜索门店名称、编号、区域或状态"
+                      :aria-label="`搜索并选择${domainLabel(scope.domainCode)}门店范围`"
+                      @update:model-value="scope.storeIds = $event.map(String)"
+                    />
                     <span v-else-if="scope.mode === 'OWN_STORE'" class="scope-context">
                       当前绑定：{{ storeName(selectedAuthorizationUser.storeId) }}
                     </span>
@@ -1353,12 +1542,31 @@ onBeforeUnmount(() => {
           <template v-if="storeManagerAccountForm">
             <label>
               绑定门店
-              <select v-model="form.storeId" :disabled="saving">
-                <option value="">请选择一家门店</option>
-                <option v-for="store in stores" :key="store.id" :value="store.id">{{ store.brandName }} · {{ store.name }}</option>
-              </select>
+              <SearchableSingleSelect
+                v-model="form.storeId"
+                :options="searchableStoreOptions"
+                :disabled="saving"
+                placeholder="请选择一家门店"
+                search-placeholder="搜索门店名称、编号、区域或状态"
+                aria-label="搜索并绑定门店"
+              />
             </label>
             <p class="account-role-hint">店长账号必须且只能绑定一家门店；详细业务范围在账号授权中配置。</p>
+          </template>
+          <template v-else-if="supervisorAccountForm">
+            <fieldset class="account-store-scope">
+              <legend>知识库管理门店范围</legend>
+              <SearchableMultiSelect
+                :model-value="form.storeScope"
+                :options="searchableStoreOptions"
+                :disabled="saving"
+                selected-noun="家门店"
+                search-placeholder="搜索门店名称、编号、区域或状态"
+                aria-label="搜索并选择知识库管理门店范围"
+                @update:model-value="form.storeScope = $event.map(String)"
+              />
+              <small>保存后同步为督导的知识库门店范围；搜索不会改变已选择的门店。</small>
+            </fieldset>
           </template>
           <p v-else-if="globalStoreRoleForm" class="account-role-hint">该角色默认拥有全部门店范围，无需单独配置。</p>
           <p v-else-if="bossAccountForm" class="account-role-hint">老板固定拥有当前公司全部功能和数据范围，无需单独授权。</p>
@@ -1446,6 +1654,13 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.page-load-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .users-grid {
@@ -1792,6 +2007,8 @@ tbody tr:hover .sticky-actions-col {
   width: 100%;
 }
 
+.data-scope-row > :deep(.searchable-multi-select) { min-width: 0; }
+
 .store-scope-picker {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
@@ -1809,6 +2026,25 @@ tbody tr:hover .sticky-actions-col {
   align-items: center;
   gap: 7px;
   min-height: 28px;
+  font-size: 12px;
+}
+
+.account-store-scope {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.account-store-scope legend {
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.account-store-scope small {
+  color: var(--muted);
   font-size: 12px;
 }
 
@@ -1998,6 +2234,8 @@ tbody tr:hover .sticky-actions-col {
 .editor-body input[type='text'], .editor-body input[type='password'], .editor-body select {
   width: 100%; box-sizing: border-box; padding: 10px 11px; border: 1px solid var(--line); border-radius: 8px; background: #fff; font: inherit;
 }
+.editor-body :deep(.searchable-single-select),
+.editor-body :deep(.searchable-multi-select) { width: 100%; }
 .editor-body > label.enabled-row { display: flex; align-items: center; gap: 8px; font-weight: 600; }
 .editor-loading-note { margin: 0 18px 14px; color: var(--muted); font-size: 12px; }
 @media (max-width: 768px) {

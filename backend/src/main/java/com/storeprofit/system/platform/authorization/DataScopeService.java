@@ -96,6 +96,39 @@ public class DataScopeService {
     return dataScopes(user).getOrDefault(normalizeDomain(domainCode), DataScope.none());
   }
 
+  /**
+   * Returns the persisted scope for a domain without applying role-wide compatibility shortcuts.
+   * Knowledge-base publishing uses this stricter view so a supervisor with an explicit store list
+   * cannot select or manage documents for stores outside that configured list.
+   */
+  public DataScope configuredScope(AuthUser user, String domainCode) {
+    String domain = normalizeDomain(domainCode);
+    if (user == null || !DataScopeDomains.ALL.contains(domain)) {
+      return DataScope.none();
+    }
+    if (AccessControlService.isBoss(user)) {
+      return DataScope.all();
+    }
+    List<DataScopeAssignmentRow> rows = repository.assignmentsForUser(user.tenantId(), user.id());
+    for (DataScopeAssignmentRow row : rows) {
+      if (domain.equals(normalizeDomain(row.domainCode()))) {
+        String mode = normalizeMode(row.scopeType());
+        if ("SUPERVISOR".equals(AccessControlService.canonicalRole(user.role()))
+            && (!SUPERVISOR_SCOPE_DOMAINS.contains(domain)
+            || !Set.of(DataScopeModes.STORE_LIST, DataScopeModes.NONE).contains(mode))) {
+          return DataScope.none();
+        }
+        return materialize(mode, row.scopeValueJson(), user.storeId());
+      }
+    }
+    if (!rows.isEmpty()) {
+      return DataScope.none();
+    }
+    LinkedHashMap<String, DataScope> fallback = emptyScopeMap();
+    applyConservativeCompatibilityFallback(fallback, user);
+    return fallback.getOrDefault(domain, DataScope.none());
+  }
+
   public boolean hasAllDataScope(AuthUser user, String domainCode) {
     return scope(user, domainCode).allowsAllStores();
   }

@@ -187,7 +187,50 @@ test('财务被显式拒绝写入后，即使保留导入权限也不能看到�
   expect(requests.urls.every((url) => !new URL(url).pathname.startsWith('/api/profit-imports'))).toBe(true)
 })
 
-test('数据录入品牌门店保持一致，刷新会重载四类数据并提示结果', async ({ page }) => {
+test('数据录入满 60 秒后只自动更新当前业务数据并合并前台事件', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-07-25T00:00:00Z') })
+  const requests = await prepare(page, financeSession)
+  await page.goto('/data-entry')
+
+  await expect(page.getByRole('heading', { name: '数据录入', level: 1 })).toBeVisible()
+  await expect(page.locator('.summary-loading')).toHaveCount(0)
+  const count = (path: string) => requests.urls.filter((url) => new URL(url).pathname === path).length
+  const before = {
+    brands: count('/api/brands'),
+    stores: count('/api/stores'),
+    dashboard: count('/api/finance/dashboard'),
+    months: count('/api/finance/months'),
+    entries: count('/api/finance/entries'),
+  }
+  await expect(page.getByRole('button', { name: /刷新|重新加载|重新读取/ })).toHaveCount(0)
+
+  await page.clock.runFor(59_000)
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('focus'))
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  await page.waitForTimeout(100)
+  expect(count('/api/finance/dashboard')).toBe(before.dashboard)
+  expect(count('/api/finance/entries')).toBe(before.entries)
+
+  await page.clock.runFor(1_000)
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('focus'))
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  // 当前品牌范围会并行读取“当前品牌”与“不限品牌”两份汇总；
+  // 两个前台事件应合并为这一轮读取，而不是产生四次请求。
+  await expect.poll(() => count('/api/finance/dashboard')).toBe(before.dashboard + 2)
+  await expect.poll(() => count('/api/finance/months')).toBe(before.months + 1)
+  await expect.poll(() => count('/api/finance/entries')).toBe(before.entries + 2)
+  expect(count('/api/brands')).toBe(before.brands)
+  expect(count('/api/stores')).toBe(before.stores)
+  await page.waitForTimeout(100)
+  expect(count('/api/finance/dashboard')).toBe(before.dashboard + 2)
+})
+
+test('数据录入品牌门店保持一致且脏表单不会被前台事件覆盖', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-07-25T00:00:00Z') })
   const requests = await prepare(page, financeSession)
   await page.goto('/data-entry')
 
@@ -200,19 +243,26 @@ test('数据录入品牌门店保持一致，刷新会重载四类数据并提�
   await brand.selectOption('2')
   await expect(store).toHaveValue('bw1')
   await expect(store.locator('option')).toHaveText(['请选择门店', '霸王茶姬 · 霸王中心店'])
+  await expect(page.locator('.summary-loading')).toHaveCount(0)
+  await page.waitForTimeout(100)
 
   const paths = ['/api/brands', '/api/stores', '/api/finance/dashboard', '/api/finance/entries']
   const before = Object.fromEntries(paths.map((path) => [path, requests.urls.filter((url) => new URL(url).pathname === path).length]))
   await page.locator('#profit-sales').fill('999')
-  await page.getByRole('button', { name: '刷新数据' }).click()
-  const confirm = page.getByRole('alertdialog', { name: '当前修改尚未保存' })
-  await expect(confirm).toContainText('刷新将放弃未保存修改，是否继续？')
-  await confirm.getByRole('button', { name: '放弃修改并继续' }).click()
+  await expect(page.getByText('尚未保存', { exact: true })).toBeVisible()
 
-  await expect(page.getByRole('status')).toContainText('数据已刷新')
+  await page.clock.runFor(60_000)
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('focus'))
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  await page.waitForTimeout(150)
+
+  await expect(page.locator('#profit-sales')).toHaveValue('999')
+  await expect(page.getByRole('alertdialog', { name: '当前修改尚未保存' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /刷新|重新加载|重新读取/ })).toHaveCount(0)
   for (const path of paths) {
-    await expect.poll(() => requests.urls.filter((url) => new URL(url).pathname === path).length)
-      .toBeGreaterThan(before[path])
+    expect(requests.urls.filter((url) => new URL(url).pathname === path)).toHaveLength(before[path])
   }
 })
 

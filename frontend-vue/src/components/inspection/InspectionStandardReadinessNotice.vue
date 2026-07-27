@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { RefreshCw } from 'lucide-vue-next'
 import type { InspectionStandardDiagnostic, InspectionStandardSet } from '../../data/inspectionStandards'
 
 interface InspectionStandardStatsView {
@@ -15,10 +14,10 @@ const props = defineProps<{
   ready: boolean
   hasStandard: boolean
   diagnostics: InspectionStandardDiagnostic[]
-  refreshing: boolean
+  loading: boolean
 }>()
 
-const emit = defineEmits<{ refresh: [] }>()
+const emit = defineEmits<{ retry: [] }>()
 </script>
 
 <template>
@@ -28,8 +27,8 @@ const emit = defineEmits<{ refresh: [] }>()
       <span v-else-if="props.standard.validationError" class="danger">当前标准未通过校验，只能只读查看，不能保存巡检。</span>
       <span v-else>暂无稽核标准</span>
     </div>
-    <button class="secondary-button" type="button" :disabled="props.refreshing" @click="emit('refresh')">
-      <RefreshCw :size="15" />{{ props.refreshing ? '刷新中...' : '刷新标准' }}
+    <button v-if="!props.ready" class="secondary-button" type="button" :disabled="props.loading" @click="emit('retry')">
+      {{ props.loading ? '正在获取...' : '重试获取标准' }}
     </button>
   </div>
   <ul v-if="props.hasStandard && !props.ready" class="inspection-standard-diagnostics compact">

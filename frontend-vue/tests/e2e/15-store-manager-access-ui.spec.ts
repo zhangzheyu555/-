@@ -201,3 +201,83 @@ test('authorization save uses the atomic access-profile endpoint', async ({ page
   })
   expect(Array.isArray(requestBody?.dataScopes)).toBe(true)
 })
+
+test('supervisor authorization saves an actual knowledge-base store list instead of ALL', async ({ page }) => {
+  await prepare(page)
+  const supervisor = {
+    id: 12,
+    tenantId: 1,
+    tenantName: '测试租户',
+    username: 'supervisor-stores',
+    displayName: '双店督导',
+    role: 'SUPERVISOR',
+    roleLabel: '督导',
+    enabled: true,
+    storeScope: ['STORE-A'],
+    availableWorkspaces: ['/operations'],
+    defaultWorkspace: '/operations',
+    effectivePermissionStatus: 'READY',
+    effectivePermissionMessage: '权限正常。',
+  }
+  const supervisorAuthorization = {
+    userId: 12,
+    role: 'SUPERVISOR',
+    storeId: null,
+    permissionVersion: 1,
+    roleTemplatePermissions: ['operations.dashboard.read'],
+    dataScopes: [
+      { domainCode: 'STORE', mode: 'ALL', storeIds: [], warehouseIds: [] },
+    ],
+    overrides: [],
+    effectivePermissions: ['operations.dashboard.read'],
+    availableWorkspaces: ['/operations'],
+    defaultWorkspace: '/operations',
+    effectivePermissionStatus: 'READY',
+    effectivePermissionMessage: '权限正常。',
+  }
+  await page.unroute('**/api/users')
+  await page.unroute('**/api/stores')
+  await page.unroute(/\/api\/users\/(\d+)\/authorization$/)
+  await page.route('**/api/users', (route) => route.fulfill(ok([supervisor])))
+  await page.route('**/api/stores', (route) => route.fulfill(ok([
+    { id: 'STORE-A', code: 'A-01', name: '一店', brandName: '茹菓' },
+    { id: 'STORE-B', code: 'B-02', name: '二店', brandName: '茹菓' },
+  ])))
+  await page.route(/\/api\/users\/12\/authorization$/, (route) => route.fulfill(ok(supervisorAuthorization)))
+
+  let requestBody: Record<string, unknown> | null = null
+  await page.route('**/api/users/12/access-profile', async (route) => {
+    requestBody = route.request().postDataJSON()
+    await route.fulfill(ok({
+      user: { ...supervisor, storeScope: requestBody?.storeScope },
+      authorization: {
+        ...supervisorAuthorization,
+        permissionVersion: 2,
+        dataScopes: requestBody?.dataScopes,
+      },
+    }))
+  })
+
+  await page.goto('/users')
+  const supervisorRow = page.getByRole('row').filter({ hasText: 'supervisor-stores' })
+  await supervisorRow.getByTitle('配置角色模板、数据范围和个人权限').click()
+  await expect(page.getByText('督导门店范围可配置')).toBeVisible()
+
+  const storeScopeRow = page.locator('.data-scope-row').filter({ hasText: '门店资料、组织和经营信息' })
+  await expect(storeScopeRow.getByRole('combobox')).toHaveValue('STORE_LIST')
+  await storeScopeRow.getByText('茹菓 · 二店').click()
+  await page.getByRole('button', { name: '保存账号授权' }).click()
+
+  await expect.poll(() => requestBody).not.toBeNull()
+  expect(requestBody).toMatchObject({
+    role: 'SUPERVISOR',
+    storeId: null,
+    storeScope: ['STORE-A', 'STORE-B'],
+  })
+  const scopes = requestBody?.dataScopes as Array<Record<string, unknown>>
+  expect(scopes.find((scope) => scope.domainCode === 'STORE')).toMatchObject({
+    mode: 'STORE_LIST',
+    storeIds: ['STORE-A', 'STORE-B'],
+    warehouseIds: [],
+  })
+})

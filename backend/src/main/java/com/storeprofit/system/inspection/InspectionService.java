@@ -1,6 +1,7 @@
 package com.storeprofit.system.inspection;
 
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.organization.StoreBusinessGuard;
 import com.storeprofit.system.config.LocalMockOutboundPolicy;
 import com.storeprofit.system.audit.AuditLogRequest;
 import com.storeprofit.system.audit.AuditRepository;
@@ -48,10 +49,9 @@ import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.multipart.MultipartFile;
@@ -85,6 +85,8 @@ public class InspectionService {
   private final AuditRepository auditRepository;
   private final String runtimeEnvironment;
   private final String outboundMode;
+  private final boolean internalServiceEnabled;
+  private final StoreBusinessGuard storeBusinessGuard;
 
   @Autowired
   public InspectionService(
@@ -97,7 +99,9 @@ public class InspectionService {
       @Value("${app.inspection.timeout:60s}") Duration timeout,
       @Value("${app.environment:TEST}") String runtimeEnvironment,
       @Value("${app.inspection.outbound-mode:LIVE}") String outboundMode,
-      AuditRepository auditRepository
+      @Value("${app.inspection.internal-service-enabled:false}") boolean internalServiceEnabled,
+      AuditRepository auditRepository,
+      StoreBusinessGuard storeBusinessGuard
   ) {
     this.recordRepository = recordRepository;
     this.standardRepository = standardRepository;
@@ -109,6 +113,8 @@ public class InspectionService {
     this.auditRepository = auditRepository;
     this.runtimeEnvironment = runtimeEnvironment == null ? "" : runtimeEnvironment.trim();
     this.outboundMode = outboundMode == null ? "" : outboundMode.trim();
+    this.internalServiceEnabled = internalServiceEnabled;
+    this.storeBusinessGuard = storeBusinessGuard;
     JdkClientHttpRequestFactory factory = requestFactory(timeout);
     this.detectClient = RestClient.builder()
         .baseUrl(this.detectUrl)
@@ -118,6 +124,61 @@ public class InspectionService {
         .baseUrl(this.exportUrl)
         .requestFactory(factory)
         .build();
+  }
+
+  /** Compatibility constructor retained for callers without the internal service switch. */
+  public InspectionService(
+      InspectionRecordRepository recordRepository,
+      AccessControlService accessControl,
+      InspectionStandardRepository standardRepository,
+      StorageService storageService,
+      String detectUrl,
+      String exportUrl,
+      Duration timeout,
+      String runtimeEnvironment,
+      String outboundMode,
+      AuditRepository auditRepository
+  ) {
+    this(recordRepository, accessControl, standardRepository, storageService,
+        detectUrl, exportUrl, timeout, runtimeEnvironment, outboundMode, false, auditRepository, null);
+  }
+
+  /** Compatibility constructor retained for tests that toggle the internal service switch. */
+  public InspectionService(
+      InspectionRecordRepository recordRepository,
+      AccessControlService accessControl,
+      InspectionStandardRepository standardRepository,
+      StorageService storageService,
+      String detectUrl,
+      String exportUrl,
+      Duration timeout,
+      String runtimeEnvironment,
+      String outboundMode,
+      boolean internalServiceEnabled,
+      AuditRepository auditRepository
+  ) {
+    this(recordRepository, accessControl, standardRepository, storageService,
+        detectUrl, exportUrl, timeout, runtimeEnvironment, outboundMode,
+        internalServiceEnabled, auditRepository, null);
+  }
+
+  /** Compatibility constructor retained for tests that exercise the store business guard. */
+  public InspectionService(
+      InspectionRecordRepository recordRepository,
+      AccessControlService accessControl,
+      InspectionStandardRepository standardRepository,
+      StorageService storageService,
+      String detectUrl,
+      String exportUrl,
+      Duration timeout,
+      String runtimeEnvironment,
+      String outboundMode,
+      AuditRepository auditRepository,
+      StoreBusinessGuard storeBusinessGuard
+  ) {
+    this(recordRepository, accessControl, standardRepository, storageService,
+        detectUrl, exportUrl, timeout, runtimeEnvironment, outboundMode,
+        false, auditRepository, storeBusinessGuard);
   }
 
   /** Compatibility constructor retained for focused loopback-only tests. */
@@ -859,6 +920,13 @@ public class InspectionService {
       requireInspectionStoreAccess(user, record.storeId(), "修改巡检记录");
       requireUnrepairedRecord(user.tenantId(), record.id(), "修改");
     });
+    if (creating
+        && storeBusinessGuard != null
+        && request != null
+        && request.storeId() != null
+        && !request.storeId().isBlank()) {
+      storeBusinessGuard.requireActive(user, request.storeId().trim(), "巡检单");
+    }
     CalculatedInspection calculated = calculateInspection(user, id, request);
     InspectionRecordRequest normalized = calculated.request();
     requireInspectionStoreAccess(user, normalized.storeId(), "保存巡检记录");
@@ -1923,13 +1991,18 @@ public class InspectionService {
       }
     };
 
-    MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
-    body.add("file", resource);
+    MediaType imageMediaType = image.safeFilename().endsWith(".png")
+        ? MediaType.IMAGE_PNG
+        : MediaType.IMAGE_JPEG;
+    MultipartBodyBuilder body = new MultipartBodyBuilder();
+    body.part("file", resource)
+        .filename(image.safeFilename())
+        .contentType(imageMediaType);
 
     try {
       Map<String, Object> result = detectClient.post()
           .contentType(MediaType.MULTIPART_FORM_DATA)
-          .body(body)
+          .body(body.build())
           .retrieve()
           .body(new ParameterizedTypeReference<Map<String, Object>>() {});
       if (result == null) {
@@ -1992,6 +2065,9 @@ public class InspectionService {
   }
 
   private boolean outboundAllowed(String target) {
+    if (InspectionInternalServicePolicy.isAllowed(internalServiceEnabled, target)) {
+      return true;
+    }
     if ("QA".equalsIgnoreCase(runtimeEnvironment) && !isLiteralQaLoopback(target)) {
       return false;
     }
@@ -2909,6 +2985,7 @@ public class InspectionService {
 
   private static JdkClientHttpRequestFactory requestFactory(Duration readTimeout) {
     HttpClient client = HttpClient.newBuilder()
+        .version(HttpClient.Version.HTTP_1_1)
         .connectTimeout(Duration.ofSeconds(5))
         .followRedirects(HttpClient.Redirect.NEVER)
         .build();

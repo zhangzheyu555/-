@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
-import { CheckCircle2, ClipboardCheck, FileImage, LoaderCircle, RefreshCw, RotateCcw, Send, XCircle } from 'lucide-vue-next'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { AlertTriangle, CheckCircle2, ClipboardCheck, FileImage, LoaderCircle, Send, XCircle } from 'lucide-vue-next'
 import PageHeader from '../components/common/PageHeader.vue'
 import UiButton from '../components/ui/UiButton.vue'
+import { useForegroundReload } from '../composables/useForegroundReload'
 import {
   getInspectionRectificationReviewQueue,
   isInspectionRectificationServiceUnavailable,
@@ -16,21 +17,33 @@ const taskErrors = reactive<Record<string, string>>({})
 const loading = ref(false)
 const submittingId = ref('')
 const error = ref('')
+const loadFailed = ref(false)
 const actionMessage = ref('')
+const hasPendingChanges = computed(() => Boolean(
+  submittingId.value
+  || Object.values(reviewNotes).some((note) => String(note || '').trim()),
+))
+const { markFresh } = useForegroundReload(loadQueue, {
+  canReload: () => !hasPendingChanges.value && !loading.value,
+})
 
 onMounted(() => {
   void loadQueue()
 })
 
 async function loadQueue() {
+  if (loading.value) return false
   loading.value = true
+  loadFailed.value = false
   error.value = ''
-  actionMessage.value = ''
   try {
     tasks.value = await getInspectionRectificationReviewQueue()
+    markFresh()
+    return true
   } catch (loadError) {
-    tasks.value = []
-    error.value = unavailableMessage(loadError, '整改复核队列加载失败，请稍后刷新。')
+    loadFailed.value = true
+    error.value = unavailableMessage(loadError, '整改复核队列加载失败，请稍后重试。')
+    return false
   } finally {
     loading.value = false
   }
@@ -52,6 +65,7 @@ async function review(task: InspectionRectificationTask, decision: 'APPROVED' | 
     actionMessage.value = decision === 'APPROVED'
       ? '整改已复核通过，处理记录已写入操作日志。'
       : '整改已驳回，店长将看到驳回原因并可重新提交。'
+    markFresh()
   } catch (reviewError) {
     taskErrors[task.recordId] = unavailableMessage(reviewError, '复核提交失败，请稍后重试。')
   } finally {
@@ -70,7 +84,7 @@ function formatTime(value?: string) {
 
 function unavailableMessage(reason: unknown, fallback: string) {
   if (isInspectionRectificationServiceUnavailable(reason)) {
-    return '整改复核服务暂未部署或当前候选版本不匹配，无法进行复核。请刷新到已部署整改服务的预发布候选后重试。'
+    return '整改复核服务暂未部署或当前候选版本不匹配，无法进行复核。请切换到已部署整改服务的预发布候选后重试。'
   }
   return reason instanceof Error && reason.message ? reason.message : fallback
 }
@@ -78,19 +92,15 @@ function unavailableMessage(reason: unknown, fallback: string) {
 
 <template>
   <section class="page-panel review-page">
-    <PageHeader title="整改复核">
-      <template #actions>
-        <UiButton variant="secondary" :loading="loading" @click="loadQueue">
-          <template #icon><RefreshCw :size="16" /></template>
-          刷新队列
-        </UiButton>
-      </template>
-    </PageHeader>
+    <PageHeader title="整改复核" />
 
-    <div v-if="error" class="error-box" role="alert">{{ error }}</div>
+    <div v-if="error" class="error-box" role="alert">
+      {{ error }}
+      <UiButton v-if="loadFailed && !hasPendingChanges" variant="ghost" size="sm" :loading="loading" @click="loadQueue">重试</UiButton>
+    </div>
     <div v-if="actionMessage" class="success-box" role="status">{{ actionMessage }}</div>
 
-    <div v-if="loading" class="review-loading" aria-live="polite">
+    <div v-if="loading && !tasks.length" class="review-loading" aria-live="polite">
       <LoaderCircle class="spin" :size="22" /> 正在读取待复核整改…
     </div>
     <div v-else-if="!tasks.length && !error" class="empty-state">当前没有待复核的巡检整改。</div>
@@ -131,7 +141,7 @@ function unavailableMessage(reason: unknown, fallback: string) {
             <small>已关联受认证附件</small>
           </li>
         </ul>
-        <div v-else class="evidence-warning"><RotateCcw :size="17" /> 未发现现场证据，不能据此判断整改已完成。</div>
+        <div v-else class="evidence-warning"><AlertTriangle :size="17" /> 未发现现场证据，不能据此判断整改已完成。</div>
 
         <label class="review-note-field" :for="`review-note-${task.recordId}`">
           <span>复核备注</span>

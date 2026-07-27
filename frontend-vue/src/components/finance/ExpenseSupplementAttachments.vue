@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue'
-import { Download, FileText, Image, ImageOff, LoaderCircle, RefreshCw, X } from 'lucide-vue-next'
+import { Download, FileText, Image, ImageOff, LoaderCircle, X } from 'lucide-vue-next'
 import {
   downloadExpenseSupplementAttachment,
   expenseAttachmentDisplayName,
@@ -188,7 +188,7 @@ function fileSize(size: number) {
           type="button"
           @click="retryPreview(attachment)"
         >
-          <RefreshCw :size="14" />重试
+          重试
         </button>
         <button type="button" :disabled="downloadingId === String(attachment.id)" @click="download(attachment)">
           <LoaderCircle v-if="downloadingId === String(attachment.id)" class="spin" :size="14" />

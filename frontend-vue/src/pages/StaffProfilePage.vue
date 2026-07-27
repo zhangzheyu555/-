@@ -10,6 +10,7 @@ import {
   type EmployeeAccountResult, type EmployeeImportReport, type EmployeeRecord, type EmployeeUpsert,
 } from '../api/employees'
 import { getStores, type StoreInfo } from '../api/operations'
+import SearchableSingleSelect from '../components/common/SearchableSingleSelect.vue'
 
 const auth = useAuthStore()
 const canManage = computed(() => auth.hasPermission(PERMISSIONS.EMPLOYEE_MANAGE))
@@ -125,6 +126,19 @@ const storeOptions = computed(() => {
   }
   return [...seen.entries()].map(([id, name]) => ({ id, name }))
 })
+const searchableStoreOptions = computed(() => storeOptions.value.map((option) => {
+  const store = stores.value.find((candidate) => candidate.id === option.id)
+  return {
+    value: option.id,
+    label: option.name,
+    description: store
+      ? [store.code, store.area || store.regionCode, store.status].filter(Boolean).join(' · ')
+      : option.id,
+    searchText: store
+      ? [store.name, store.id, store.code, store.area, store.regionCode, store.status, store.brandName].filter(Boolean).join(' ')
+      : `${option.name} ${option.id}`,
+  }
+}))
 
 async function load() {
   loading.value = true
@@ -180,6 +194,19 @@ function onHourlyModeChange() {
 const dialogOpen = ref(false)
 const editingId = ref('')
 const form = reactive<EmployeeUpsert>(emptyForm())
+const employeeFormStoreOptions = computed(() => {
+  const options = [...searchableStoreOptions.value]
+  if (form.storeId && !options.some((option) => String(option.value) === form.storeId)) {
+    const row = rows.value.find((employee) => employee.id === editingId.value)
+    options.push({
+      value: form.storeId,
+      label: row?.storeName || form.storeId,
+      description: '当前档案门店',
+      searchText: `${row?.storeName || ''} ${form.storeId}`,
+    })
+  }
+  return options
+})
 const saving = ref(false)
 const dialogError = ref('')
 
@@ -378,10 +405,15 @@ function exportCsv() {
     <div class="content-card">
       <div class="staff-toolbar">
         <label>门店：
-          <select v-model="storeFilter">
-            <option value="">全部</option>
-            <option v-for="s in storeOptions" :key="s.id" :value="s.id">{{ s.name }}</option>
-          </select>
+          <SearchableSingleSelect
+            v-model="storeFilter"
+            :options="searchableStoreOptions"
+            empty-option-label="全部门店"
+            empty-value=""
+            placeholder="全部门店"
+            search-placeholder="搜索门店名称、编号或区域"
+            aria-label="员工门店筛选"
+          />
         </label>
         <label>状态：
           <select v-model="statusFilter">
@@ -471,10 +503,14 @@ function exportCsv() {
         </header>
         <div class="staff-drawer-body form-grid">
           <label>门店 *
-            <select v-model="form.storeId" :disabled="!!editingId">
-              <option value="" disabled>请选择门店</option>
-              <option v-for="s in storeOptions" :key="s.id" :value="s.id">{{ s.name }}</option>
-            </select>
+            <SearchableSingleSelect
+              v-model="form.storeId"
+              :options="employeeFormStoreOptions"
+              :disabled="Boolean(editingId)"
+              placeholder="请选择门店"
+              search-placeholder="搜索门店名称、编号或区域"
+              aria-label="员工所属门店"
+            />
           </label>
           <label>姓名 *<input v-model="form.name" type="text" :disabled="!!editingId" /></label>
           <label>职位
@@ -582,6 +618,10 @@ function exportCsv() {
   border-radius: 8px;
   font-size: 13px;
   background: #fff;
+}
+
+.staff-toolbar :deep(.searchable-single-select) {
+  width: 190px;
 }
 
 .staff-toolbar button {
@@ -703,6 +743,10 @@ tr.birthday-soon-row td.birthday-soon {
   border: 1px solid #d1d5db;
   border-radius: 8px;
   font-size: 13px;
+}
+
+.form-grid :deep(.searchable-single-select) {
+  width: 100%;
 }
 
 .form-grid .msg {

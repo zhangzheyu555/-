@@ -36,7 +36,7 @@ class StoreInventoryCatalogMigrationTest {
     Flyway.configure()
         .dataSource(dataSource)
         .locations("classpath:db/migration-h2")
-        .target("106")
+        .target("106.20260727120000001")
         .load()
         .migrate();
 
@@ -87,7 +87,7 @@ class StoreInventoryCatalogMigrationTest {
     Flyway.configure()
         .dataSource(dataSource)
         .locations("classpath:db/migration-h2")
-        .target("107")
+        .target("107.20260727120000002")
         .load()
         .migrate();
 

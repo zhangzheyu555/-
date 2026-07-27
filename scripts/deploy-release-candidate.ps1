@@ -102,17 +102,20 @@ if ([int]$manifest.schemaVersion -ne 2 -or -not $manifest.sourceTreeClean) {
 if ([string]$manifest.gitCommit -notmatch '^[a-f0-9]{40}$') {
   throw 'Release manifest Git commit is invalid.'
 }
-$mysqlFlywayLatest = [int]$manifest.flyway.mysqlLatest
-$h2FlywayLatest = [int]$manifest.flyway.h2Latest
-$manifestFlywayLatest = [int]$manifest.flyway.latest
+$mysqlFlywayLatest = [string]$manifest.flyway.mysqlLatest
+$h2FlywayLatest = [string]$manifest.flyway.h2Latest
+$manifestFlywayLatest = [string]$manifest.flyway.latest
 $mysqlFlywayFile = [string]$manifest.flyway.mysqlLatestFile
 $h2FlywayFile = [string]$manifest.flyway.h2LatestFile
-if ($mysqlFlywayLatest -lt 1 -or $h2FlywayLatest -lt 1 -or $manifestFlywayLatest -lt 1 -or
+if ($mysqlFlywayLatest -notmatch '^[1-9][0-9]*(?:\.[0-9]{17})?$' -or
+    $h2FlywayLatest -notmatch '^[1-9][0-9]*(?:\.[0-9]{17})?$' -or
+    $manifestFlywayLatest -notmatch '^[1-9][0-9]*(?:\.[0-9]{17})?$' -or
     $mysqlFlywayLatest -ne $h2FlywayLatest -or $mysqlFlywayLatest -ne $manifestFlywayLatest) {
   throw 'Release manifest Flyway versions must be positive and synchronized between MySQL, H2, and the recorded latest version.'
 }
-if ($mysqlFlywayFile -notmatch ("^V{0}__.+\.sql$" -f $manifestFlywayLatest) -or
-    $h2FlywayFile -notmatch ("^V{0}__.+\.sql$" -f $manifestFlywayLatest) -or
+$expectedFlywayFilePattern = '^V' + [regex]::Escape($manifestFlywayLatest -replace '\.', '_') + '__[A-Za-z0-9][A-Za-z0-9_]*\.sql$'
+if ($mysqlFlywayFile -notmatch $expectedFlywayFilePattern -or
+    $h2FlywayFile -notmatch $expectedFlywayFilePattern -or
     -not $mysqlFlywayFile.Equals($h2FlywayFile, [StringComparison]::Ordinal)) {
   throw 'Release manifest Flyway latest migration filenames are missing, invalid, or not synchronized between MySQL and H2.'
 }

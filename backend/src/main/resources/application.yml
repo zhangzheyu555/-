@@ -22,7 +22,7 @@ spring:
           no-cache: true
           must-revalidate: true
   datasource:
-    url: jdbc:mysql://${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}?createDatabaseIfNotExist=false&useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&sslMode=${MYSQL_SSL_MODE:DISABLED}&allowPublicKeyRetrieval=true&connectTimeout=2000&socketTimeout=2000
+    url: jdbc:mysql://${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}?createDatabaseIfNotExist=false&useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&sslMode=${MYSQL_SSL_MODE:DISABLED}&allowPublicKeyRetrieval=true&connectTimeout=2000&socketTimeout=${MYSQL_SOCKET_TIMEOUT_MS:300000}
     username: ${MYSQL_USERNAME}
     password: ${MYSQL_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -59,6 +59,7 @@ app:
     detect-url: ${INSPECTION_DETECT_URL:http://127.0.0.1:8000/detect}
     export-url: ${INSPECTION_EXPORT_URL:http://127.0.0.1:8000/export}
     timeout: ${INSPECTION_TIMEOUT:60s}
+    internal-service-enabled: ${INSPECTION_INTERNAL_SERVICE_ENABLED:false}
   eleme:
     app-key: ${ELEME_APP_KEY:}
     app-secret: ${ELEME_APP_SECRET:}
@@ -91,6 +92,10 @@ app:
     shops: ${QMAI_SHOPS:}
   auth:
     token-ttl-hours: 12
+  wechat-mini-program:
+    app-id: ${WECHAT_MINI_APP_ID:}
+    app-secret: ${WECHAT_MINI_APP_SECRET:}
+    base-url: ${WECHAT_MINI_PROGRAM_BASE_URL:https://api.weixin.qq.com}
   training:
     video-playback-ticket-ttl-seconds: ${TRAINING_VIDEO_PLAYBACK_TICKET_TTL_SECONDS:1800}
     # 开发和单实例默认使用本地短期票据。预发布/生产多实例必须显式开启，并且

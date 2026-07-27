@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { RefreshCw } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import PageHeader from '../components/common/PageHeader.vue'
 import SecondaryNavigation from '../components/common/SecondaryNavigation.vue'
@@ -15,6 +14,7 @@ import { useWarehouseStore } from '../stores/warehouse'
 import type { WarehouseItem } from '../api/warehouse'
 import { PERMISSIONS } from '../permissions/permissions'
 import { useBusinessScope } from '../composables/useBusinessScope'
+import { useForegroundReload } from '../composables/useForegroundReload'
 import WarehouseWorkbenchPage from './WarehouseWorkbenchPage.vue'
 
 const auth = useAuthStore()
@@ -124,11 +124,11 @@ function categoryLabel(value: string) {
   return flattenCategories().find((category) => category.id === id)?.name || '全部类别'
 }
 
-async function refresh() {
+async function loadWarehouseData() {
   localError.value = ''
   if (businessScope.configurationError.value) {
     localError.value = businessScope.configurationError.value
-    return
+    return false
   }
   try {
     if (businessScope.isStoreManager.value) {
@@ -139,7 +139,7 @@ async function refresh() {
       const target = warehouseForCurrentRoute()
       if (!target) {
         localError.value = '当前账号暂无可访问的仓库，请联系管理员授权。'
-        return
+        return false
       }
       await Promise.all([
         warehouse.selectWarehouse(target.id),
@@ -153,10 +153,19 @@ async function refresh() {
         })
       }
     }
+    markFresh()
+    return true
   } catch {
     localError.value = warehouse.error || '仓库数据加载失败'
+    return false
   }
 }
+
+const { markFresh } = useForegroundReload(async () => {
+  if (!await loadWarehouseData()) throw new Error('仓库数据暂时不可用')
+}, {
+  canReload: () => !warehouse.loading && !receiptConfirmBusy.value && !pendingReceiptId.value,
+})
 
 async function submitRequisition(payload: {
   lines: Array<{ itemId: number; requestedQuantity: number; note?: string }>
@@ -167,6 +176,7 @@ async function submitRequisition(payload: {
   localError.value = ''
   try {
     await warehouse.submitRequisition(payload.lines, payload.note, payload.clientRequestId)
+    markFresh()
   } catch {
     localError.value = warehouse.error || '叫货提交失败'
   }
@@ -189,6 +199,7 @@ async function confirmReceiveRequisition() {
   receiptConfirmBusy.value = true
   try {
     await warehouse.receiveRequisition(requisitionId, '店长确认收货')
+    markFresh()
   } catch {
     localError.value = warehouse.error || '确认收货失败'
   } finally {
@@ -203,28 +214,25 @@ function addItemToRequisition(item: WarehouseItem) {
 }
 
 onMounted(() => {
-  void refresh()
+  void loadWarehouseData()
 })
 
 watch(
   () => route.name,
   (name, previousName) => {
-    if (name === 'warehouse-overview' && previousName !== 'warehouse-overview') void refresh()
+    if (name === 'warehouse-overview' && previousName !== 'warehouse-overview') void loadWarehouseData()
   },
 )
 </script>
 
 <template>
   <section class="page-panel warehouse-page">
-    <PageHeader title="仓库中心">
-      <template #actions>
-        <button class="ghost-button" type="button" :disabled="warehouse.loading" @click="refresh">
-          <RefreshCw :size="16" />刷新
-        </button>
-      </template>
-    </PageHeader>
+    <PageHeader title="仓库中心" />
 
-    <div v-if="warehouse.error || localError" class="error-box">{{ localError || warehouse.error }}</div>
+    <div v-if="warehouse.error || localError" class="error-box warehouse-load-error">
+      <span>{{ localError || warehouse.error }}</span>
+      <button class="ghost-button" type="button" :disabled="warehouse.loading" @click="loadWarehouseData">重试</button>
+    </div>
     <div v-if="warehouse.actionMessage" class="success-box">{{ warehouse.actionMessage }}</div>
     <div v-if="warehouse.loading && !overview" class="empty-state">正在读取仓库数据...</div>
 
@@ -330,6 +338,13 @@ watch(
 .warehouse-page > .error-box,
 .warehouse-page > .success-box {
   margin: 0;
+}
+
+.warehouse-load-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .store-supply-warehouse {

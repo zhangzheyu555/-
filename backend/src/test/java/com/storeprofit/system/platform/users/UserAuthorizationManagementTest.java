@@ -321,6 +321,34 @@ class UserAuthorizationManagementTest {
   }
 
   @Test
+  void legacySupervisorAuthorizationSynchronizesAccountStoreScope() {
+    AuthUser supervisor = user(13L, "supervisor-sync", "SUPERVISOR", null, 2L);
+    stubAuthorizationSnapshot(supervisor);
+    when(authorizationService.incrementPermissionVersionAndDeleteTokens(1L, 13L)).thenReturn(3L);
+
+    service.updateAuthorization(
+        boss,
+        13L,
+        new UserAuthorizationUpdateRequest(
+            List.of(),
+            List.of(new UserDataScopeRequest(
+                DataScopeDomains.STORE,
+                DataScopeModes.STORE_LIST,
+                List.of("rg1", "rg2"))))
+    );
+
+    verify(authRepository).replaceStoreScope(1L, 13L, List.of("rg1", "rg2"));
+    verify(dataScopeService).replaceAssignments(
+        eq(1L),
+        eq(13L),
+        org.mockito.ArgumentMatchers.argThat(scopes -> scopes.stream()
+            .anyMatch(scope -> DataScopeDomains.STORE.equals(scope.domainCode())
+                && DataScopeModes.STORE_LIST.equals(scope.mode())
+                && scope.storeIds().equals(List.of("rg1", "rg2")))),
+        eq(1L));
+  }
+
+  @Test
   void bossAuthorizationIsFixedAndCannotBeOverridden() {
     when(authRepository.user(1L, 1L)).thenReturn(Optional.of(boss));
 
@@ -453,6 +481,58 @@ class UserAuthorizationManagementTest {
     );
     assertThat(response.role()).isEqualTo("STORE_MANAGER");
     assertThat(response.storeScope()).containsExactly("rg1");
+  }
+
+  @Test
+  void supervisorCreationPersistsConfiguredKnowledgeBaseStoreListAndReturnsActualScope() {
+    when(authRepository.userExists(1L, "supervisor-stores")).thenReturn(false);
+    when(passwordService.hash("secure-password")).thenReturn("password-hash");
+    AuthUser created = user(12L, "supervisor-stores", "SUPERVISOR", null, 1L);
+    when(authRepository.findByUsername(1L, "supervisor-stores")).thenReturn(Optional.of(created));
+    when(authRepository.assignedStoreScope(1L, 12L)).thenReturn(List.of("rg1", "rg2"));
+    when(authRepository.storeScope(1L, 12L, "SUPERVISOR", null)).thenReturn(List.of("all"));
+    when(authorizationService.effectivePermissions(created))
+        .thenReturn(Set.of(PermissionCodes.OPERATIONS_DASHBOARD_READ));
+    when(dataScopeService.dataScopes(created)).thenReturn(Map.of(
+        DataScopeDomains.STORE, DataScope.all()));
+
+    UserResponse response = service.create(
+        boss,
+        new UserCreateRequest(
+            "supervisor-stores",
+            "双店督导",
+            "SUPERVISOR",
+            null,
+            List.of("rg1", "rg2"),
+            "secure-password")
+    );
+
+    verify(authRepository).createUserRequiringPasswordChange(
+        1L, "supervisor-stores", "password-hash", "双店督导", "SUPERVISOR", null);
+    verify(authRepository).replaceStoreScope(1L, 12L, List.of("rg1", "rg2"));
+    verify(dataScopeService).replaceAssignments(
+        eq(1L),
+        eq(12L),
+        org.mockito.ArgumentMatchers.argThat(scopes -> scopes.size() == 7
+            && scopes.stream()
+                .filter(scope -> Set.of(
+                    DataScopeDomains.STORE,
+                    DataScopeDomains.INSPECTION,
+                    DataScopeDomains.EXAM,
+                    DataScopeDomains.PLATFORM).contains(scope.domainCode()))
+                .allMatch(scope -> DataScopeModes.STORE_LIST.equals(scope.mode())
+                    && scope.storeIds().equals(List.of("rg1", "rg2")))
+            && scopes.stream()
+                .filter(scope -> !Set.of(
+                    DataScopeDomains.STORE,
+                    DataScopeDomains.INSPECTION,
+                    DataScopeDomains.EXAM,
+                    DataScopeDomains.PLATFORM).contains(scope.domainCode()))
+                .allMatch(scope -> DataScopeModes.NONE.equals(scope.mode()))),
+        eq(1L)
+    );
+    assertThat(response.storeId()).isNull();
+    assertThat(response.storeScope()).containsExactly("rg1", "rg2");
   }
 
   @Test
@@ -665,6 +745,96 @@ class UserAuthorizationManagementTest {
     verify(authorizationService, times(1)).incrementPermissionVersionAndDeleteTokens(1L, 24L);
     assertThat(response.authorization().permissionVersion()).isEqualTo(7L);
     assertThat(response.authorization().defaultWorkspace()).isEqualTo("/store");
+  }
+
+  @Test
+  void unifiedSupervisorAccessProfilePersistsAndReturnsKnowledgeBaseStoreList() {
+    AuthUser supervisor = user(25L, "supervisor-profile", "SUPERVISOR", null, 6L);
+    when(authRepository.user(1L, 25L)).thenReturn(Optional.of(supervisor));
+    when(authRepository.assignedStoreScope(1L, 25L)).thenReturn(List.of("rg1", "rg2"));
+    when(authRepository.storeScope(1L, 25L, "SUPERVISOR", null)).thenReturn(List.of("all"));
+    when(authorizationService.roleTemplatePermissions(1L, "SUPERVISOR"))
+        .thenReturn(Set.of(PermissionCodes.OPERATIONS_DASHBOARD_READ));
+    when(authorizationService.userOverrides(1L, 25L)).thenReturn(List.of());
+    when(authorizationService.effectivePermissions(supervisor))
+        .thenReturn(Set.of(PermissionCodes.OPERATIONS_DASHBOARD_READ));
+    when(dataScopeService.assignmentsForUser(1L, 25L)).thenReturn(
+        List.of(new DataScopeAssignment(
+            DataScopeDomains.STORE, DataScopeModes.STORE_LIST, List.of("rg1"))),
+        List.of(new DataScopeAssignment(
+            DataScopeDomains.STORE, DataScopeModes.STORE_LIST, List.of("rg1", "rg2"))));
+    when(dataScopeService.dataScopes(supervisor)).thenReturn(Map.of(
+        DataScopeDomains.STORE, DataScope.all()));
+    when(authorizationService.incrementPermissionVersionAndDeleteTokens(1L, 25L)).thenReturn(7L);
+
+    UserAccessProfileResponse response = service.updateAccessProfile(
+        boss,
+        25L,
+        new UserAccessProfileUpdateRequest(
+            "双店督导",
+            "SUPERVISOR",
+            null,
+            List.of("rg1", "rg2"),
+            true,
+            List.of(),
+            List.of(new UserDataScopeRequest(
+                DataScopeDomains.STORE,
+                DataScopeModes.STORE_LIST,
+                List.of("rg1", "rg2")))
+        )
+    );
+
+    verify(authRepository).updateUser(1L, 25L, "双店督导", "SUPERVISOR", null, true);
+    verify(authRepository).replaceStoreScope(1L, 25L, List.of("rg1", "rg2"));
+    verify(dataScopeService).replaceAssignments(
+        eq(1L),
+        eq(25L),
+        org.mockito.ArgumentMatchers.argThat(scopes -> scopes.size() == 7
+            && scopes.stream().anyMatch(scope -> DataScopeDomains.STORE.equals(scope.domainCode())
+                && DataScopeModes.STORE_LIST.equals(scope.mode())
+                && scope.storeIds().equals(List.of("rg1", "rg2")))),
+        eq(1L));
+    assertThat(response.user().storeId()).isNull();
+    assertThat(response.user().storeScope()).containsExactly("rg1", "rg2");
+    assertThat(response.authorization().dataScopes())
+        .anySatisfy(scope -> {
+          assertThat(scope.domainCode()).isEqualTo(DataScopeDomains.STORE);
+          assertThat(scope.mode()).isEqualTo(DataScopeModes.STORE_LIST);
+          assertThat(scope.storeIds()).containsExactly("rg1", "rg2");
+        });
+  }
+
+  @Test
+  void unifiedSupervisorAccessProfileRejectsMismatchedAccountAndDataScopes() {
+    AuthUser supervisor = user(26L, "supervisor-mismatch", "SUPERVISOR", null, 6L);
+    stubAuthorizationSnapshot(supervisor);
+    when(authRepository.assignedStoreScope(1L, 26L)).thenReturn(List.of("rg1"));
+
+    assertThatThrownBy(() -> service.updateAccessProfile(
+        boss,
+        26L,
+        new UserAccessProfileUpdateRequest(
+            "范围冲突督导",
+            "SUPERVISOR",
+            null,
+            List.of("rg1"),
+            true,
+            List.of(),
+            List.of(new UserDataScopeRequest(
+                DataScopeDomains.STORE,
+                DataScopeModes.STORE_LIST,
+                List.of("rg2")))
+        )
+    )).isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode())
+            .isEqualTo("SUPERVISOR_STORE_SCOPE_MISMATCH"));
+
+    verify(authRepository, never()).updateUser(
+        eq(1L), eq(26L), org.mockito.ArgumentMatchers.anyString(),
+        org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any(),
+        org.mockito.ArgumentMatchers.anyBoolean());
+    verify(dataScopeService, never()).replaceAssignments(
+        eq(1L), eq(26L), org.mockito.ArgumentMatchers.anyList(), eq(1L));
   }
 
   @Test

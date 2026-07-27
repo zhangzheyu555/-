@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { AlertTriangle, CheckCircle2, Minus, Plus, Send, Trash2 } from 'lucide-vue-next'
+import SearchableSingleSelect from '../common/SearchableSingleSelect.vue'
 import type { WarehouseItem } from '../../api/warehouse'
 
 const props = defineProps<{
@@ -30,6 +31,28 @@ const wasSubmitting = ref(false)
 const initializedItemId = ref(0)
 
 const selectedItem = computed(() => props.items.find((item) => item.id === selectedItemId.value))
+const itemOptions = computed(() => props.items
+  .filter((item) => item.active !== false)
+  .map((item) => ({
+    value: item.id,
+    label: item.name,
+    description: [
+      item.code,
+      item.categoryName || item.category,
+      item.stockUnit || item.unit,
+      `供货仓可配 ${qty(item.warehouseAvailableQuantity, item.stockUnit || item.unit)}`,
+    ].filter(Boolean).join(' · '),
+    searchText: [
+      item.name,
+      item.code,
+      item.categoryName,
+      item.category,
+      item.stockUnit,
+      item.unit,
+      item.purchaseUnit,
+      item.ingredientUnit,
+    ].filter(Boolean).join(' '),
+  })))
 const shortageCount = computed(() => lines.filter((line) => stockState(line).tone !== 'ok').length)
 
 watch(
@@ -159,12 +182,18 @@ defineExpose({ addItem })
     <div class="requisition-add-row">
       <label>
         物料
-        <select v-model.number="selectedItemId">
-          <option :value="0">请选择物料</option>
-          <option v-for="item in items.filter((row) => row.active !== false)" :key="item.id" :value="item.id">
-            {{ item.name }} · 供货仓可配 {{ qty(item.warehouseAvailableQuantity, item.stockUnit || item.unit) }}
-          </option>
-        </select>
+        <SearchableSingleSelect
+          class="requisition-item-select"
+          :model-value="selectedItemId"
+          :options="itemOptions"
+          :disabled="submitting"
+          :empty-option-label="'请选择物料'"
+          :empty-value="0"
+          placeholder="请选择物料"
+          search-placeholder="搜索物料名称、编码、分类或单位"
+          aria-label="叫货物料"
+          @update:model-value="selectedItemId = Number($event)"
+        />
       </label>
       <label>
         叫货数量
@@ -400,6 +429,14 @@ input {
   .quantity-editor input,
   .line-note-field input {
     min-height: 44px;
+  }
+
+  .requisition-add-row :deep(.requisition-item-select .searchable-single-select__control) {
+    min-height: 44px;
+  }
+
+  .requisition-add-row :deep(.requisition-item-select input) {
+    height: 44px;
   }
 
   .add-line-button,

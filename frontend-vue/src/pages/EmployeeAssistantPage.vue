@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
-import { Clipboard, MessageSquare, RefreshCw, Send, ThumbsDown, ThumbsUp, UserRound } from 'lucide-vue-next'
+import { Clipboard, MessageSquare, Send, ThumbsDown, ThumbsUp, UserRound } from 'lucide-vue-next'
 import UiButton from '../components/ui/UiButton.vue'
 import { ApiError } from '../api/http'
 import { useAuthStore } from '../stores/auth'
@@ -13,6 +13,7 @@ import {
   type EmployeeAssistantServiceState,
   type EmployeeAssistantStatus,
 } from '../api/employeeAssistant'
+import { useForegroundReload } from '../composables/useForegroundReload'
 
 interface ChatTurn {
   id: number
@@ -83,12 +84,18 @@ const serviceState = computed<EmployeeAssistantServiceState>(() => {
   return 'UNAVAILABLE'
 })
 
-const canAsk = computed(() => !loading.value && (status.value?.canAsk ?? serviceState.value === 'READY'))
+const canAsk = computed(() => (
+  (!loading.value || Boolean(status.value))
+  && (status.value?.canAsk ?? serviceState.value === 'READY')
+))
 const canViewDeploymentGuide = computed(() => serviceState.value === 'UNCONFIGURED' && auth.role === 'BOSS')
 const pendingUserTurn = computed(() => [...turns.value].reverse().find((turn) => turn.role === 'user'))
 const isKnowledgeFallback = computed(() => serviceState.value === 'UNCONFIGURED'
   && Boolean(status.value?.knowledgeAvailable)
   && Boolean(status.value?.canAsk))
+const { markFresh } = useForegroundReload(loadStatus, {
+  canReload: () => !loading.value && !sending.value,
+})
 
 const stateBadge = computed(() => {
   if (loading.value && !status.value) return { text: '检查中', cls: 'badge--checking' }
@@ -103,25 +110,38 @@ const stateBadge = computed(() => {
 })
 
 const stateMessage = computed(() => {
-  if (loading.value) return '正在检查服务状态…'
+  if (loading.value && !status.value) return '正在检查服务状态…'
   if (isKnowledgeFallback.value) return '仅发送通用服务问题'
   const map: Record<string, string> = {
     READY: '仅发送通用服务问题',
     UNCONFIGURED: '请联系管理员配置员工助手服务',
     AUTH_FAILED: '请联系管理员检查员工助手服务授权',
-    UNAVAILABLE: '请稍后点击“检查服务”',
+    UNAVAILABLE: '系统会在页面重新显示时自动检测',
   }
   return map[serviceState.value] || ''
 })
 
-onMounted(() => { void loadStatus() })
+onMounted(() => {
+  void loadStatus().then((loaded) => {
+    if (loaded) markFresh()
+  })
+})
 onUnmounted(() => clearWaitingTimer())
 
 async function loadStatus() {
   loading.value = true
   pageError.value = ''
-  try { status.value = await getEmployeeAssistantStatus() }
-  catch (error) { status.value = serviceStatusFromFailure(error) || unavailableStatus(error) }
+  try {
+    status.value = await getEmployeeAssistantStatus()
+    return true
+  } catch (error) {
+    if (status.value) {
+      pageError.value = '员工助手状态核验未完成，系统稍后会自动重试。'
+    } else {
+      status.value = serviceStatusFromFailure(error) || unavailableStatus(error)
+    }
+    return false
+  }
   finally { loading.value = false }
 }
 
@@ -166,6 +186,7 @@ async function send(retryTurn?: ChatTurn) {
       questionId: userTurn.id, handoffState: 'idle', feedbackState: 'idle',
     })
     status.value = { ...(status.value || {}), enabled: true, configured: true, state: 'READY', canAsk: true }
+    markFresh()
     scrollToBottom()
   } catch (error) {
     const failureMessage = error instanceof Error && error.message ? error.message : '员工服务助手暂时无法处理，请稍后再试。'
@@ -262,7 +283,7 @@ function onKeydown(e: KeyboardEvent) {
 function serviceStatusFromFailure(error: unknown): EmployeeAssistantStatus | null {
   const apiError = error instanceof ApiError ? error : null
   const code = apiError?.code
-  const message = apiError?.message || '员工服务助手暂时不可用，请稍后点击"检查服务"。'
+  const message = apiError?.message || '员工服务助手暂时不可用，系统稍后会自动重试。'
   if (code === 'EMPLOYEE_ASSISTANT_NOT_CONFIGURED') return { enabled: false, configured: false, state: 'UNCONFIGURED', message }
   if (code === 'EMPLOYEE_ASSISTANT_AUTH_FAILED' || code === 'EMPLOYEE_ASSISTANT_UPSTREAM_FORBIDDEN') return { enabled: false, configured: true, state: 'AUTH_FAILED', message }
   if (code && /EMPLOYEE_ASSISTANT_(TIMEOUT|UNAVAILABLE|UPSTREAM_UNAVAILABLE|CANCELLED|RESPONSE_INVALID)/.test(code)) return { enabled: false, configured: true, state: 'UNAVAILABLE', message }
@@ -270,7 +291,7 @@ function serviceStatusFromFailure(error: unknown): EmployeeAssistantStatus | nul
 }
 
 function unavailableStatus(error: unknown): EmployeeAssistantStatus {
-  const message = error instanceof Error && error.message ? error.message : '员工服务助手暂时不可用，请稍后点击"检查服务"。'
+  const message = error instanceof Error && error.message ? error.message : '员工服务助手暂时不可用，系统稍后会自动重试。'
   return { enabled: false, configured: true, state: 'UNAVAILABLE', message }
 }
 
@@ -390,7 +411,6 @@ function scrollToBottom() {
             <p>请使用 <code>verify-employee-assistant-config.ps1</code> 完成部署前校验。历史 <code>DEEPSEEK_*</code> 变量不会被本页读取。</p>
           </div>
         </details>
-        <UiButton variant="ghost" size="sm" :loading="loading" @click="loadStatus"><template #icon><RefreshCw :size="15" /></template>检查服务</UiButton>
       </div>
     </header>
 
@@ -438,7 +458,7 @@ function scrollToBottom() {
               <div v-if="turn.role === 'user' && turn.deliveryState === 'failed'" class="ea-msg__recovery" role="status">
                 <span>{{ turn.failureMessage || '本次答复未完成。' }}</span>
                 <div class="ea-msg__acts">
-                  <UiButton variant="ghost" size="sm" @click="retryTurn(turn)"><template #icon><RefreshCw :size="14" /></template>重新发送</UiButton>
+                  <UiButton variant="ghost" size="sm" @click="retryTurn(turn)"><template #icon><Send :size="14" /></template>重新发送</UiButton>
                   <UiButton variant="secondary" size="sm" :loading="turn.handoffState === 'sending'" :disabled="turn.handoffState === 'created'" @click="createHandoff(turn)">{{ turn.handoffState === 'created' ? '已转人工' : '转人工' }}</UiButton>
                 </div>
               </div>
@@ -449,7 +469,7 @@ function scrollToBottom() {
                 </div>
                 <div class="ea-msg__acts">
                   <UiButton variant="ghost" size="sm" @click="copyAnswer(turn)"><template #icon><Clipboard :size="14" /></template>{{ turn.copied ? '已复制' : '复制话术' }}</UiButton>
-                  <UiButton v-if="turn.handoffCategory === 'UPSTREAM_TIMEOUT'" variant="ghost" size="sm" @click="retryAssistantTurn(turn)"><template #icon><RefreshCw :size="14" /></template>重新发送</UiButton>
+                  <UiButton v-if="turn.handoffCategory === 'UPSTREAM_TIMEOUT'" variant="ghost" size="sm" @click="retryAssistantTurn(turn)"><template #icon><Send :size="14" /></template>重新发送</UiButton>
                   <UiButton v-if="turn.needsHuman" variant="secondary" size="sm" :loading="turn.handoffState === 'sending'" :disabled="turn.handoffState === 'created'" @click="createHandoff(turn)">{{ turn.handoffState === 'created' ? '已转人工' : '转人工处理' }}</UiButton>
                   <UiButton variant="ghost" size="sm" icon-only :disabled="turn.feedbackState !== 'idle'" :class="{ 'ea-fb--on': turn.feedbackState === 'helpful' }" aria-label="有帮助" @click="submitFeedback(turn, true)"><template #icon><ThumbsUp :size="14" /></template></UiButton>
                   <UiButton variant="ghost" size="sm" icon-only :disabled="turn.feedbackState !== 'idle'" :class="{ 'ea-fb--on': turn.feedbackState === 'inaccurate' }" aria-label="不准确" @click="submitFeedback(turn, false)"><template #icon><ThumbsDown :size="14" /></template></UiButton>

@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { RefreshCw } from 'lucide-vue-next'
 import type { InspectionRiskLevel } from '../../api/inspection'
 import type {
   InspectionStandardDiagnostic,
   InspectionStandardGroup,
   InspectionStandardSet,
 } from '../../data/inspectionStandards'
+import SearchInput from '../common/SearchInput.vue'
 
 interface CategoryStat {
   categoryCode: string
@@ -31,19 +31,46 @@ const props = defineProps<{
   stats: StandardStats
   hasStandard: boolean
   diagnostics: InspectionStandardDiagnostic[]
-  refreshing: boolean
+  loading: boolean
   safeNumber: (value: unknown) => number
   riskLabel: (value: InspectionRiskLevel) => string
 }>()
 
 const emit = defineEmits<{
-  refresh: []
+  retry: []
 }>()
 
 const dimension = ref('')
-const visibleGroups = computed(() => !dimension.value
-  ? props.standard.groups
-  : props.standard.groups.filter((group) => group.dim === dimension.value))
+const searchText = ref('')
+const searchKeyword = computed(() => searchText.value.trim().toLocaleLowerCase('zh-CN'))
+const visibleGroups = computed(() => props.standard.groups
+  .filter((group) => !dimension.value || group.dim === dimension.value)
+  .map((group) => ({
+    ...group,
+    items: searchKeyword.value
+      ? group.items.filter((clause) => clauseSearchText(clause, group).includes(searchKeyword.value))
+      : group.items,
+  }))
+  .filter((group) => !searchKeyword.value || group.items.length > 0))
+const totalClauseCount = computed(() => props.standard.groups.reduce((sum, group) => sum + group.items.length, 0))
+const visibleClauseCount = computed(() => visibleGroups.value.reduce((sum, group) => sum + group.items.length, 0))
+
+function clauseSearchText(
+  clause: InspectionStandardGroup['items'][number],
+  group: InspectionStandardGroup,
+) {
+  return [
+    clause.code,
+    clause.item,
+    clause.categoryName,
+    group.dim,
+    clause.method,
+    clause.description,
+    clause.riskLevel,
+    props.riskLabel(clause.riskLevel),
+    `标准分 ${clause.score} 分`,
+  ].filter(Boolean).join(' ').toLocaleLowerCase('zh-CN')
+}
 
 function groupScore(group: InspectionStandardGroup) {
   return group.items.reduce((sum, item) => sum + props.safeNumber(item.score), 0)
@@ -80,8 +107,8 @@ function riskClass(level: InspectionRiskLevel) {
           <b>标准校验未通过，以下条款仅供核对</b>
           <span>系统不会隐藏原始条款，也不会允许用错误标准保存新巡检。</span>
         </div>
-        <button class="secondary-button" type="button" :disabled="refreshing" @click="emit('refresh')">
-          <RefreshCw :size="15" />{{ refreshing ? '刷新中...' : '刷新标准' }}
+        <button class="secondary-button" type="button" :disabled="loading" @click="emit('retry')">
+          {{ loading ? '正在获取...' : '重试获取标准' }}
         </button>
       </div>
       <ul class="inspection-standard-diagnostics">
@@ -105,8 +132,8 @@ function riskClass(level: InspectionRiskLevel) {
     <section v-if="!hasStandard" class="content-card">
       <div class="empty-state">
         <b>暂无稽核标准</b>
-        <button class="secondary-button" type="button" :disabled="refreshing" @click="emit('refresh')">
-          <RefreshCw :size="15" />{{ refreshing ? '刷新中...' : '刷新标准' }}
+        <button class="secondary-button" type="button" :disabled="loading" @click="emit('retry')">
+          {{ loading ? '正在获取...' : '重试获取标准' }}
         </button>
       </div>
     </section>
@@ -129,6 +156,15 @@ function riskClass(level: InspectionRiskLevel) {
         >
           {{ group.dim }}
         </button>
+      </div>
+      <div class="standard-catalog-search">
+        <SearchInput
+          v-model="searchText"
+          input-id="inspection-standard-search"
+          placeholder="搜索条款编号、名称、检查方法或评分规则"
+          aria-label="搜索标准条款"
+        />
+        <strong aria-live="polite">显示 {{ visibleClauseCount }} / {{ totalClauseCount }} 条</strong>
       </div>
       <div class="standard-group-stack">
         <div v-for="group in visibleGroups" :key="group.dim" class="standard-group">
@@ -154,6 +190,10 @@ function riskClass(level: InspectionRiskLevel) {
           </div>
         </div>
       </div>
+      <div v-if="!visibleClauseCount" class="empty-state compact" role="status">
+        <template v-if="searchKeyword">当前维度没有包含“{{ searchText.trim() }}”的标准条款。</template>
+        <template v-else>当前维度暂无标准条款。</template>
+      </div>
     </section>
   </div>
 </template>
@@ -178,6 +218,9 @@ function riskClass(level: InspectionRiskLevel) {
 .dimension-filter { display: inline-flex; align-items: center; gap: 4px; padding: 4px; border-radius: 12px; background: #eef1f6; }
 .dimension-filter button { min-height: 34px; padding: 7px 12px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font-size: 13px; font-weight: 900; cursor: pointer; white-space: nowrap; }
 .dimension-filter button.on { background: var(--brand-soft, #fff); color: var(--brand-color, var(--primary-dark)); box-shadow: 0 8px 20px -14px currentColor; }
+.standard-catalog-search { display: flex; align-items: center; gap: 10px; }
+.standard-catalog-search .search-field { flex: 1; }
+.standard-catalog-search > strong { flex: none; color: var(--muted); font-size: 13px; white-space: nowrap; }
 .standard-group { display: grid; gap: 10px; padding-top: 12px; border-top: 1px solid var(--line); }
 .standard-group:first-child { padding-top: 0; border-top: 0; }
 .standard-group-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 0; }
@@ -192,5 +235,7 @@ function riskClass(level: InspectionRiskLevel) {
   .inspection-standard-category-audit { grid-template-columns: 1fr; }
   .inspection-standard-error-head, .standard-group-head { flex-direction: column; }
   .dimension-filter { max-width: 100%; overflow-x: auto; }
+  .standard-catalog-search { align-items: stretch; flex-direction: column; }
+  .standard-catalog-search > strong { white-space: normal; }
 }
 </style>

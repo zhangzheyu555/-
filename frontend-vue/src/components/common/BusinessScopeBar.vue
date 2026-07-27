@@ -2,12 +2,17 @@
 import { computed } from 'vue'
 import { AlertTriangle, MapPin } from 'lucide-vue-next'
 import { useBusinessScope } from '../../composables/useBusinessScope'
+import SearchableSingleSelect from './SearchableSingleSelect.vue'
 
 export interface BusinessScopeOption {
   id: string | number
   name: string
   brandId?: string | number
   brandName?: string
+  code?: string
+  area?: string
+  regionCode?: string
+  status?: string
 }
 
 const props = withDefaults(defineProps<{
@@ -39,6 +44,12 @@ const visibleStores = computed(() => props.stores.filter((store) => {
   return String(store.brandId ?? '') === props.brandId || store.brandName === selectedBrandName.value
 }))
 const selectedBrandName = computed(() => props.brands.find((brand) => String(brand.id) === props.brandId)?.name || '')
+const visibleStoreOptions = computed(() => visibleStores.value.map((store) => ({
+  value: String(store.id),
+  label: `${store.brandName ? `${store.brandName} · ` : ''}${store.name}`,
+  description: [store.code, store.area || store.regionCode, store.status].filter(Boolean).join(' · '),
+  searchText: [store.name, store.code, store.area, store.regionCode, store.status, store.brandName].filter(Boolean).join(' '),
+})))
 
 function updateBrand(event: Event) {
   const value = (event.target as HTMLSelectElement).value
@@ -69,12 +80,17 @@ function updateBrand(event: Event) {
     </label>
     <label>
       <span>门店</span>
-      <select :value="storeId" :disabled="disabled" aria-label="门店" @change="emit('update:storeId', ($event.target as HTMLSelectElement).value)">
-        <option v-if="allowAll" value="">全部门店</option>
-        <option v-for="store in visibleStores" :key="String(store.id)" :value="String(store.id)">
-          {{ store.brandName ? `${store.brandName} · ` : '' }}{{ store.name }}
-        </option>
-      </select>
+      <SearchableSingleSelect
+        :model-value="storeId"
+        :options="visibleStoreOptions"
+        :disabled="disabled"
+        :empty-option-label="allowAll ? '全部门店' : undefined"
+        empty-value=""
+        placeholder="请选择门店"
+        search-placeholder="搜索门店名称、编号、区域或状态"
+        aria-label="搜索门店"
+        @update:model-value="emit('update:storeId', String($event))"
+      />
     </label>
   </div>
 </template>
@@ -102,10 +118,9 @@ function updateBrand(event: Event) {
   font-weight: 700;
 }
 
-.business-scope-controls select {
+.business-scope-controls :deep(.searchable-single-select) {
   width: 100%;
   min-width: 154px;
-  min-height: 38px;
 }
 
 .business-scope-static,

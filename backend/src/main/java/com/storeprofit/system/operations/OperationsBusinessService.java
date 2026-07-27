@@ -1,6 +1,7 @@
 package com.storeprofit.system.operations;
 
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.organization.StoreBusinessGuard;
 import com.storeprofit.system.operations.OperationsBusinessModels.ExamAnswerResponse;
 import com.storeprofit.system.operations.OperationsBusinessModels.ExamAttemptResponse;
 import com.storeprofit.system.operations.OperationsBusinessModels.ExamPaperResponse;
@@ -53,19 +54,29 @@ import org.springframework.transaction.annotation.Transactional;
 public class OperationsBusinessService {
   private final OperationsBusinessRepository repository;
   private final AccessControlService accessControl;
+  private final StoreBusinessGuard storeBusinessGuard;
 
   @Autowired
   public OperationsBusinessService(
       OperationsBusinessRepository repository,
-      AccessControlService accessControl
+      AccessControlService accessControl,
+      StoreBusinessGuard storeBusinessGuard
   ) {
     this.repository = repository;
     this.accessControl = accessControl;
+    this.storeBusinessGuard = storeBusinessGuard;
+  }
+
+  public OperationsBusinessService(
+      OperationsBusinessRepository repository,
+      AccessControlService accessControl
+  ) {
+    this(repository, accessControl, null);
   }
 
   /** Compatibility constructor retained for isolated service tests. */
   public OperationsBusinessService(OperationsBusinessRepository repository) {
-    this(repository, null);
+    this(repository, null, null);
   }
 
   public List<InventoryItemResponse> inventoryItems(AuthUser user) {
@@ -166,6 +177,9 @@ public class OperationsBusinessService {
           "BAD_STATUS", "盘存单保存后即为已提交，不能再次修改，请新建盘存单", HttpStatus.CONFLICT);
     }
     String storeId = normalizeStoreForWrite(user, request.storeId());
+    if (storeBusinessGuard != null) {
+      storeBusinessGuard.requireActive(user, storeId, "盘存单");
+    }
     String storeName = repository.inventoryStoreName(user.tenantId(), storeId)
         .orElseThrow(() -> new BusinessException(
             "INVENTORY_STORE_NOT_ALLOWED",

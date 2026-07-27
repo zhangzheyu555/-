@@ -1,4 +1,4 @@
--- H2 verification equivalent of MySQL V107.
+-- H2 verification equivalent of MySQL V107.20260727120000002.
 -- Historical store_inventory_check_line rows remain untouched.
 delete from store_inventory_item
 where item_code in (

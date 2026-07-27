@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { FileText, Image, Paperclip, RefreshCw, Trash2, Upload, X } from 'lucide-vue-next'
+import { FileText, Image, Paperclip, Trash2, Upload, X } from 'lucide-vue-next'
 import { submitExpenseSupplement, type ExpenseClaim } from '../../api/finance'
 import ModalFooter from '../ui/ModalFooter.vue'
 import UiButton from '../ui/UiButton.vue'
@@ -370,10 +370,10 @@ async function submit() {
               </div>
               <div class="file-actions">
                 <button v-if="item.previewError" type="button" :disabled="uploading" @click="retryPreview(item)">
-                  <RefreshCw :size="14" />重试预览
+                  重试预览
                 </button>
                 <button type="button" :disabled="uploading" @click="replaceFile(index)">
-                  <RefreshCw :size="14" />重新选择
+                  重新选择
                 </button>
                 <button type="button" :disabled="uploading" @click="removeFile(index)">
                   <Trash2 :size="14" />删除

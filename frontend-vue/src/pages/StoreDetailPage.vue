@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ClipboardCheck, Download, Home, ReceiptText, RefreshCw, X } from 'lucide-vue-next'
+import { ClipboardCheck, Download, Home, ReceiptText, X } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import { getStores, type StoreInfo } from '../api/operations'
 import { getProfitDashboard, type ProfitDashboard, type ProfitEntry } from '../api/profit'
@@ -8,10 +8,13 @@ import { downloadCsvRows } from '../api/reports'
 import BrandBadge from '../components/common/BrandBadge.vue'
 import BrandSelect from '../components/common/BrandSelect.vue'
 import PageHeader from '../components/common/PageHeader.vue'
+import SearchableSingleSelect from '../components/common/SearchableSingleSelect.vue'
 import StoreLatestInspection from '../components/inspection/StoreLatestInspection.vue'
 import StoreSalaryWorkbench from '../components/salary/StoreSalaryWorkbench.vue'
+import ActionConfirmDialog from '../components/ui/ActionConfirmDialog.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import { useBusinessScope } from '../composables/useBusinessScope'
+import { useForegroundReload } from '../composables/useForegroundReload'
 import { PERMISSIONS } from '../permissions/permissions'
 import { useAuthStore } from '../stores/auth'
 import { amount, money, percent, riskStatus } from '../stores/profit'
@@ -31,9 +34,34 @@ const selectedMonth = ref('')
 const loading = ref(false)
 const error = ref('')
 const salaryOpen = ref(false)
+const salaryDirty = ref(false)
+const salaryCloseConfirmOpen = ref(false)
+const loadedDashboardScopeKey = ref('')
+let storeDetailRequestId = 0
+
+function dashboardScopeKey(month: string, storeId: string, brandId: number | string | undefined) {
+  return JSON.stringify([month, storeId, brandId === undefined ? '' : String(brandId)])
+}
+
+const currentDashboardScopeKey = computed(() => dashboardScopeKey(
+  selectedMonth.value,
+  businessScope.scopedStoreId(''),
+  businessScope.scopedBrandId(''),
+))
+const dashboardMatchesSelection = computed(() => (
+  Boolean(dashboard.value)
+  && loadedDashboardScopeKey.value === currentDashboardScopeKey.value
+))
+const visibleDashboard = computed(() => dashboardMatchesSelection.value ? dashboard.value : null)
 
 const brandOptions = computed(() => Array.from(new Set(stores.value.map((store) => normalizeBrandName(store.brandName) || '未分品牌'))).map((name) => ({ name })))
 const visibleStores = computed(() => filterStoresByBrand(stores.value, selectedBrandName.value))
+const visibleStoreOptions = computed(() => visibleStores.value.map((store) => ({
+  value: store.id,
+  label: `${normalizeBrandName(store.brandName)} · ${store.name || store.id}`,
+  description: [store.code, store.area || store.regionCode, store.status].filter(Boolean).join(' · '),
+  searchText: [store.name, store.code, store.area, store.regionCode, store.status, store.brandName].filter(Boolean).join(' '),
+})))
 const selectedStore = computed(() => {
   if (businessScope.isStoreManager.value) {
     return stores.value.find((store) => store.id === businessScope.boundStoreId.value) || null
@@ -60,7 +88,7 @@ const detailTitle = computed(() => businessScope.isStoreManager.value
   ? `${businessScope.boundStoreName.value || selectedStore.value?.name || '本店'}详情`
   : '门店详情')
 const monthOptions = computed(() => dashboard.value?.months || [])
-const profitRows = computed(() => dashboard.value?.entries || [])
+const profitRows = computed(() => visibleDashboard.value?.entries || [])
 const storeProfitRows = computed(() => {
   const storeId = selectedStore.value?.id
   if (!storeId) return []
@@ -114,34 +142,50 @@ function applyDefaultStore() {
 }
 
 async function loadStoreDetail() {
+  const requestId = ++storeDetailRequestId
   loading.value = true
   error.value = ''
   if (businessScope.configurationError.value) {
     error.value = businessScope.configurationError.value
     loading.value = false
-    return
+    return false
   }
   try {
     const storeId = businessScope.scopedStoreId('')
     const brandId = businessScope.scopedBrandId('')
+    const requestedMonth = selectedMonth.value
     const [storeRows, profitData] = await Promise.all([
       getStores(),
       getProfitDashboard({
-        month: selectedMonth.value || undefined,
+        month: requestedMonth || undefined,
         storeId: storeId || undefined,
         brandId: brandId || undefined,
       }),
     ])
+    if (requestId !== storeDetailRequestId) return false
+    const resolvedMonth = profitData.summary?.month || requestedMonth || profitData.months?.[0] || ''
     stores.value = storeRows
     dashboard.value = profitData
-    selectedMonth.value = profitData.summary?.month || selectedMonth.value || profitData.months?.[0] || ''
+    selectedMonth.value = resolvedMonth
+    loadedDashboardScopeKey.value = dashboardScopeKey(resolvedMonth, storeId, brandId)
     applyDefaultStore()
+    markFresh()
+    return true
   } catch (loadError) {
-    error.value = loadError instanceof Error ? loadError.message : '门店详情加载失败'
+    if (requestId === storeDetailRequestId) {
+      error.value = loadError instanceof Error ? loadError.message : '门店详情加载失败'
+    }
+    return false
   } finally {
-    loading.value = false
+    if (requestId === storeDetailRequestId) loading.value = false
   }
 }
+
+const { markFresh } = useForegroundReload(async () => {
+  if (!await loadStoreDetail()) throw new Error('门店详情暂时不可用')
+}, {
+  canReload: () => !loading.value && !salaryOpen.value,
+})
 
 function selectMonth(month: string) {
   selectedMonth.value = month
@@ -158,11 +202,36 @@ function goProfit(entry: ProfitEntry | null) {
   void router.push(`/profit-table?${query.toString()}`)
 }
 
-function openSalary() { salaryOpen.value = true }
+function openSalary() {
+  salaryDirty.value = false
+  salaryOpen.value = true
+}
+
+function requestCloseSalary() {
+  if (salaryDirty.value) {
+    salaryCloseConfirmOpen.value = true
+    return
+  }
+  salaryOpen.value = false
+}
+
+function keepSalaryOpen() {
+  salaryCloseConfirmOpen.value = false
+}
+
+function discardSalaryAndClose() {
+  salaryCloseConfirmOpen.value = false
+  salaryDirty.value = false
+  salaryOpen.value = false
+}
 
 function exportStoreCsv() {
   if (!canExportFinance.value) {
     error.value = '当前账号没有导出经营数据的权限。'
+    return
+  }
+  if (!dashboardMatchesSelection.value) {
+    error.value = '当前月份的经营数据尚未成功读取，暂时不能导出。'
     return
   }
   const storeName = selectedStore.value?.name || '门店'
@@ -195,7 +264,7 @@ watch(selectedBrandName, () => {
 })
 
 function handleEscape(event: KeyboardEvent) {
-  if (event.key === 'Escape' && salaryOpen.value) salaryOpen.value = false
+  if (event.key === 'Escape' && salaryOpen.value && !salaryCloseConfirmOpen.value) requestCloseSalary()
 }
 
 onMounted(() => {
@@ -216,9 +285,6 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
               <option v-for="month in monthOptions" :key="month" :value="month">{{ month }}</option>
             </select>
           </label>
-          <button class="ghost-button" type="button" :disabled="loading" @click="loadStoreDetail">
-            <RefreshCw :size="16" />刷新
-          </button>
           <RouterLink v-if="canHandleInspectionRectification" class="ghost-button inspection-rectification-link" to="/store/inspection/rectifications">
             <ClipboardCheck :size="16" />巡检整改
           </RouterLink>
@@ -252,10 +318,15 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
         </label>
         <label v-if="canSwitchStore" class="store-filter-field store-filter-field--store">
           门店
-          <select v-model="selectedStoreId" :disabled="loading" aria-label="门店">
-            <option v-if="!visibleStores.length" value="">该品牌暂无门店数据</option>
-            <option v-for="store in visibleStores" :key="store.id" :value="store.id">{{ normalizeBrandName(store.brandName) }} · {{ store.name }}</option>
-          </select>
+          <SearchableSingleSelect
+            v-model="selectedStoreId"
+            :options="visibleStoreOptions"
+            :disabled="loading || !visibleStoreOptions.length"
+            placeholder="请选择门店"
+            search-placeholder="搜索门店名称、编号或区域"
+            aria-label="门店"
+            empty-message="该品牌暂无门店数据"
+          />
         </label>
         <div v-else class="fixed-store-chip store-filter-field--store">
           <span>当前门店</span>
@@ -263,7 +334,10 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
         </div>
     </div>
 
-    <div v-if="error" class="error-box">{{ error }}</div>
+    <div v-if="error" class="error-box page-load-error">
+      <span>{{ error }}</span>
+      <button class="ghost-button" type="button" :disabled="loading" @click="loadStoreDetail">重试</button>
+    </div>
     <div v-if="loading && !stores.length" class="empty-state">正在读取门店详情...</div>
 
     <template v-else-if="selectedStore">
@@ -276,7 +350,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
         <strong>去提交</strong>
       </RouterLink>
 
-      <div class="store-metric-grid">
+      <div v-if="dashboardMatchesSelection" class="store-metric-grid">
         <article class="store-metric-card revenue">
           <span>累计营收</span>
           <b>{{ money(cumulativeIncome) }}</b>
@@ -321,7 +395,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
 
       <StoreLatestInspection :store-id="selectedStore.id" />
 
-      <section class="content-card monthly-card">
+      <section v-if="dashboardMatchesSelection" class="content-card monthly-card">
         <div class="table-heading">
           <div>
             <h3>逐月经营明细</h3>
@@ -365,13 +439,23 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
     </div>
 
     <Teleport to="body">
-      <div v-if="salaryOpen && canReadSalary && selectedStore" class="salary-modal-backdrop" role="presentation" @click.self="salaryOpen = false">
+      <div v-if="salaryOpen && canReadSalary && selectedStore" class="salary-modal-backdrop" role="presentation" @click.self="requestCloseSalary">
         <section class="salary-modal" role="dialog" aria-modal="true" aria-label="员工工资表">
-          <header><div><h2>{{ selectedStore.name }}员工工资表</h2><span>{{ selectedMonth }}</span></div><UiButton variant="ghost" icon-only title="关闭" aria-label="关闭员工工资表" @click="salaryOpen = false"><template #icon><X :size="20" /></template></UiButton></header>
-          <div class="salary-modal-body"><StoreSalaryWorkbench :key="`${selectedStore.id}-${selectedMonth}`" embedded :initial-store-id="selectedStore.id" :initial-month="selectedMonth" /></div>
+          <header><div><h2>{{ selectedStore.name }}员工工资表</h2><span>{{ selectedMonth }}</span></div><UiButton variant="ghost" icon-only title="关闭" aria-label="关闭员工工资表" @click="requestCloseSalary"><template #icon><X :size="20" /></template></UiButton></header>
+          <div class="salary-modal-body"><StoreSalaryWorkbench :key="`${selectedStore.id}-${selectedMonth}`" embedded :initial-store-id="selectedStore.id" :initial-month="selectedMonth" @dirty-change="salaryDirty = $event" /></div>
         </section>
       </div>
     </Teleport>
+
+    <ActionConfirmDialog
+      :open="salaryCloseConfirmOpen"
+      title="放弃未保存的工资修改？"
+      message="关闭员工工资表后，当前尚未保存的工资修改将不会保留。"
+      confirm-label="放弃修改并关闭"
+      confirm-variant="danger"
+      @cancel="keepSalaryOpen"
+      @confirm="discardSalaryAndClose"
+    />
   </section>
 </template>
 
@@ -390,6 +474,13 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+}
+
+.page-load-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .store-detail-page > * {
@@ -544,6 +635,21 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
   font-size: 13px;
   font-weight: 900;
   text-overflow: ellipsis;
+}
+
+.store-actions :deep(.searchable-single-select) {
+  width: 100%;
+  max-width: 100%;
+}
+
+.store-actions :deep(.searchable-single-select__control) {
+  min-height: 42px;
+}
+
+.store-actions :deep(.searchable-single-select__control input) {
+  height: 40px;
+  font-size: 13px;
+  font-weight: 900;
 }
 
 .store-actions :deep(.brand-select-wrap) {

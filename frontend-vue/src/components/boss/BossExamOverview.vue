@@ -18,10 +18,10 @@ async function load() {
   try {
     summary.value = await getBossExamSummary()
     emit('summary-count', Number(summary.value?.activeExamCount || 0))
+    return true
   } catch (reason) {
-    summary.value = null
-    emit('summary-count', 0)
-    error.value = reason instanceof Error ? reason.message : '考试概览加载失败，请刷新后重试。'
+    error.value = reason instanceof Error ? reason.message : '考试概览加载失败，请稍后重试。'
+    return false
   } finally {
     loading.value = false
   }
@@ -51,8 +51,11 @@ defineExpose({ load })
       </button>
     </div>
 
-    <div v-if="error" class="error-box compact-error">{{ error }}</div>
-    <div v-else-if="loading && !summary" class="exam-empty">正在读取考试概览...</div>
+    <div v-if="error" class="error-box compact-error">
+      {{ error }}
+      <button v-if="!summary" class="mini-button" type="button" :disabled="loading" @click="load">重试</button>
+    </div>
+    <div v-if="loading && !summary" class="exam-empty">正在读取考试概览...</div>
     <div v-else-if="!summary || (!summary.activeExamCount && !summary.assignedCount)" class="exam-empty">
       当前没有进行中的考试。
     </div>

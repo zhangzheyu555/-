@@ -6,17 +6,17 @@ const employeeAssistantUser = {
   tenantId: 1,
   tenantName: '移动端员工助手测试租户',
   displayName: '移动端员工',
-  role: 'SUPERVISOR',
-  roleLabel: '督导',
+  role: 'EMPLOYEE',
+  roleLabel: '员工',
   storeScope: ['all'],
-  permissions: ['employee_assistant.use'],
+  permissions: ['exam.learn', 'employee_assistant.use'],
   dataScopes: { STORE: { mode: 'ALL', storeIds: [], warehouseIds: [] } },
   dataScope: { mode: 'ALL', storeIds: [], warehouseIds: [] },
   boundStoreId: null,
   boundStoreName: null,
   brandId: null,
   brandName: null,
-  defaultWorkspace: '/operations',
+  defaultWorkspace: '/employee',
   permissionVersion: 1,
 }
 
@@ -54,15 +54,14 @@ test.describe('employee assistant mobile safety', () => {
     await expect(page.getByTestId('employee-assistant-status')).toContainText('服务未配置')
     await expect(page.getByTestId('employee-assistant-status')).toContainText('请联系管理员配置员工助手服务')
     await expect(page.getByTestId('employee-assistant-deployment-guide')).toHaveCount(0)
-    await expect(page.getByText('请勿发送客户姓名、电话、订单号、附件、门店财务或任何密钥。')).toBeVisible()
+    await expect(page.getByText('请勿发送任何顾客、订单、支付、附件或身份信息 · Ctrl + Enter 发送')).toBeVisible()
 
     const input = page.getByPlaceholder('例如：顾客说饮品太甜，怎样礼貌处理？')
-    const checkService = page.getByRole('button', { name: '检查服务' })
     const send = page.getByRole('button', { name: '发送问题' })
     await expect(input).toBeDisabled()
     await expect(send).toBeDisabled()
+    await expect(page.getByRole('button', { name: '检查服务' })).toHaveCount(0)
     await expectTouchTarget(input, '员工助手输入框')
-    await expectTouchTarget(checkService, '检查服务按钮')
     await expectTouchTarget(send, '发送问题按钮')
     await expectNoWholePageOverflow(page, 'employee assistant unconfigured mobile state')
   })

@@ -162,6 +162,15 @@ public class WarehouseController {
     return ApiResponse.ok(warehouseService.item(authService.requireUser(authorization), id));
   }
 
+  @GetMapping("/items/requisition-scope-context")
+  public ApiResponse<WarehouseItemRequisitionScopeContextResponse> itemRequisitionScopeContext(
+      @RequestHeader(value = "Authorization", required = false) String authorization
+  ) {
+    return ApiResponse.ok(warehouseService.itemRequisitionScopeContext(
+        authService.requireUser(authorization)
+    ));
+  }
+
   @PostMapping("/items")
   public ApiResponse<Void> saveItem(
       @RequestHeader(value = "Authorization", required = false) String authorization,

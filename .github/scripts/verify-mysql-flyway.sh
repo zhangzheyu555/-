@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 backend_jar="${1:-}"
-readonly expected_flyway_latest=109
+readonly legacy_flyway_maximum_major_version=105
 required_env=(
   APP_ENV SERVER_PORT MYSQL_HOST MYSQL_PORT MYSQL_DATABASE MYSQL_USERNAME
   MYSQL_PASSWORD MYSQL_CONTAINER_ID
@@ -45,6 +45,32 @@ mysql_query() {
       --user="$MYSQL_USERNAME" --database="$MYSQL_DATABASE" \
       --batch --skip-column-names --execute="$1"
 }
+
+expected_flyway_latest="$({
+  latest_key=''
+  latest_version=''
+  while IFS= read -r -d '' migration_path; do
+    file_name="${migration_path##*/}"
+    if [[ "$file_name" =~ ^V([1-9][0-9]*)_((20[0-9]{15}))__([a-zA-Z0-9][a-zA-Z0-9_]*)\.sql$ ]]; then
+      major="${BASH_REMATCH[1]}"
+      timestamp="${BASH_REMATCH[2]}"
+      (( 10#$major > legacy_flyway_maximum_major_version )) || { echo "Timestamped Flyway migration major version must exceed V${legacy_flyway_maximum_major_version}: ${file_name}" >&2; exit 1; }
+      version="${major}.${timestamp}"
+      key="$(printf '%010d.%s' "$((10#$major))" "$timestamp")"
+    elif [[ "$file_name" =~ ^V([0-9]+)__([a-zA-Z0-9][a-zA-Z0-9_]*)\.sql$ ]]; then
+      major="${BASH_REMATCH[1]}"
+      (( 10#$major <= legacy_flyway_maximum_major_version )) || { echo "Timestamped Flyway version is required: ${file_name}" >&2; exit 1; }
+      version="$major"
+      key="$(printf '%010d.%017d' "$((10#$major))" 0)"
+    else
+      echo "Invalid Flyway migration filename: ${file_name}" >&2
+      exit 1
+    fi
+    if [[ -z "$latest_key" || "$key" > "$latest_key" ]]; then latest_key="$key"; latest_version="$version"; fi
+  done < <(find backend/src/main/resources/db/migration -maxdepth 1 -type f -name 'V*__*.sql' -print0)
+  [[ -n "$latest_version" ]] || { echo 'No Flyway migrations found.' >&2; exit 1; }
+  printf '%s' "$latest_version"
+})"
 
 # Historical migrations create temporary tables without an explicit collation.
 # Normalize a controlled empty CI database before Flyway so MySQL 8.0's newer

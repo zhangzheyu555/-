@@ -110,6 +110,7 @@ export function useSalaryPage() {
   const initializing = ref(true)
 
   const pageData = ref<SalaryPageResponse | null>(null)
+  const loadedPageScopeKey = ref('')
 
   /* ---- computed ---- */
   const canEdit = computed(() => auth.hasPermission(PERMISSIONS.SALARY_EDIT))
@@ -196,6 +197,17 @@ export function useSalaryPage() {
 
   /* ---- API calls ---- */
   let pageRequestController: AbortController | null = null
+  function pageScopeKey(targetPage = page.value) {
+    return JSON.stringify([
+      selectedMonth.value,
+      effectiveStoreId.value,
+      effectiveBrandId.value ?? '',
+      statusFilter.value,
+      keyword.value.trim(),
+      targetPage,
+    ])
+  }
+
   async function loadStores() {
     storesLoading.value = true
     storesError.value = ''
@@ -208,24 +220,37 @@ export function useSalaryPage() {
     }
   }
 
-  async function loadPage(p = page.value) {
+  async function loadPage(
+    p = page.value,
+    options: { canApply?: () => boolean } = {},
+  ) {
     if (scopeConfigurationError.value) {
       pageData.value = null
+      loadedPageScopeKey.value = ''
       error.value = scopeConfigurationError.value
-      return
+      return false
     }
     if (!hasValidMonth.value) {
+      pageData.value = null
+      loadedPageScopeKey.value = ''
       error.value = '请选择有效月份。'
-      return
+      return false
     }
     if (!isEffectiveStoreActive.value) {
       pageData.value = null
+      loadedPageScopeKey.value = ''
       error.value = '该门店已停用，不能继续查看、添加人员或生成工资。'
-      return
+      return false
     }
     pageRequestController?.abort()
     const controller = new AbortController()
+    const requestScopeKey = pageScopeKey(p)
+    const preserveExisting = loadedPageScopeKey.value === requestScopeKey
     pageRequestController = controller
+    if (!preserveExisting) {
+      pageData.value = null
+      loadedPageScopeKey.value = ''
+    }
     loading.value = true
     error.value = ''
     try {
@@ -238,13 +263,22 @@ export function useSalaryPage() {
         page: p,
         size: PAGE_SIZE,
       }, controller.signal)
-      if (controller.signal.aborted) return
+      if (
+        controller.signal.aborted
+        || requestScopeKey !== pageScopeKey(p)
+        || options.canApply?.() === false
+      ) {
+        return false
+      }
       pageData.value = resp
       page.value = p
+      loadedPageScopeKey.value = requestScopeKey
+      return true
     } catch (e) {
-      if (e instanceof ApiError && e.code === 'REQUEST_CANCELLED') return
-      pageData.value = null
+      if (e instanceof ApiError && e.code === 'REQUEST_CANCELLED') return false
+      if (!preserveExisting) pageData.value = null
       error.value = userError(e)
+      return false
     } finally {
       if (pageRequestController === controller) {
         pageRequestController = null
@@ -322,7 +356,7 @@ export function useSalaryPage() {
     keywordTimer = setTimeout(() => {
       page.value = 1
       void loadPage(1)
-    }, 250)
+    }, 350)
   })
 
   watch(

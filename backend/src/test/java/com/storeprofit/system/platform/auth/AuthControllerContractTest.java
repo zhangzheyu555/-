@@ -2,6 +2,7 @@ package com.storeprofit.system.platform.auth;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -14,6 +15,30 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class AuthControllerContractTest {
+  @Test
+  void weChatEndpointsKeepLoginAnonymousAndBindingAuthenticated() {
+    AuthService authService = mock(AuthService.class);
+    AuthController controller = new AuthController(authService);
+    AuthUser user = new AuthUser(1L, 1L, "测试租户", "boss", "hash", "老板", "BOSS", null, true);
+    LoginResponse login = LoginResponse.authenticated("token", new SessionUser(
+        1L, 1L, "测试租户", "老板", "BOSS", "老板（系统管理员）", List.of("all"), List.of(),
+        Map.of(), "/boss", 1L, null, null, null, null, DataScope.all()));
+    WeChatBindingStatus binding = new WeChatBindingStatus(true, true);
+    WeChatLoginRequest loginRequest = new WeChatLoginRequest("valid-code", null);
+    WeChatBindRequest bindRequest = new WeChatBindRequest("valid-code");
+    when(authService.weChatLogin("valid-code", null)).thenReturn(login);
+    when(authService.requireUser("Bearer token")).thenReturn(user);
+    when(authService.weChatBindingStatus(user)).thenReturn(binding);
+    when(authService.bindWeChat(user, "valid-code")).thenReturn(binding);
+
+    assertThat(controller.weChatLogin(loginRequest).data()).isSameAs(login);
+    assertThat(controller.weChatBinding("Bearer token").data()).isEqualTo(binding);
+    assertThat(controller.bindWeChat("Bearer token", bindRequest).data()).isEqualTo(binding);
+    verify(authService).weChatLogin("valid-code", null);
+    verify(authService, times(2)).requireUser("Bearer token");
+    verify(authService).bindWeChat(user, "valid-code");
+  }
+
   @Test
   void initialPasswordChangeUsesOnlyTheRestrictedCredentialPayload() {
     AuthService authService = mock(AuthService.class);

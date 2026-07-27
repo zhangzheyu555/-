@@ -120,31 +120,75 @@ test.describe('store assistant status refresh', () => {
     await expect.poll(() => statusRequests).toBe(2)
   })
 
-  test('refreshes after window focus without duplicating rapid focus events', async ({ page }) => {
+  test('rechecks after 60 seconds and deduplicates focus with visibility events', async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-07-14T00:00:00Z') })
     await prepareAssistantPage(page)
-    let deployed = false
+    let state: 'CONFIGURED' | 'READY' = 'CONFIGURED'
     let statusRequests = 0
     await page.route('**/api/assistant/status', async (route) => {
       statusRequests += 1
-      await route.fulfill(ok(assistantStatus(deployed)))
+      await route.fulfill(ok(assistantStatus(true, state)))
     })
 
     await page.goto('/assistant')
     const serviceStatus = page.getByTestId('assistant-service-status')
-    await expect(serviceStatus).toHaveText('AI服务未配置')
+    await expect(serviceStatus).toHaveText('DeepSeek 已配置')
     const requestsBeforeFocus = statusRequests
 
-    deployed = true
+    state = 'READY'
+    await page.clock.runFor(59_000)
     await page.evaluate(() => {
       window.dispatchEvent(new Event('focus'))
-      window.dispatchEvent(new Event('focus'))
-      window.dispatchEvent(new Event('focus'))
+      document.dispatchEvent(new Event('visibilitychange'))
     })
-
+    await page.waitForTimeout(100)
+    expect(statusRequests).toBe(requestsBeforeFocus)
     await expect(serviceStatus).toHaveText('DeepSeek 已配置')
+
+    await page.clock.runFor(1_000)
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event('focus'))
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    await expect(serviceStatus).toHaveText('分析服务正常')
     await expect.poll(() => statusRequests).toBe(requestsBeforeFocus + 1)
     await page.waitForTimeout(100)
     expect(statusRequests).toBe(requestsBeforeFocus + 1)
+  })
+
+  test('keeps the last known status and remains stale when a foreground status request fails', async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-07-14T00:00:00Z') })
+    await prepareAssistantPage(page)
+    let statusRequests = 0
+    await page.route('**/api/assistant/status', async (route) => {
+      statusRequests += 1
+      if (statusRequests === 2) {
+        return route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: false, message: '受控状态读取失败' }),
+        })
+      }
+      return route.fulfill(ok(assistantStatus(true, statusRequests === 1 ? 'READY' : 'CONFIGURED')))
+    })
+
+    await page.goto('/assistant')
+    const serviceStatus = page.getByTestId('assistant-service-status')
+    await expect(serviceStatus).toHaveText('分析服务正常')
+
+    await page.clock.runFor(60_000)
+    const failedResponse = page.waitForResponse((response) => (
+      new URL(response.url()).pathname === '/api/assistant/status' && response.status() === 500
+    ))
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await failedResponse
+    await expect.poll(() => statusRequests).toBe(2)
+    await expect(serviceStatus).toHaveText('分析服务正常')
+
+    await page.clock.runFor(1)
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await expect.poll(() => statusRequests).toBe(3)
+    await expect(serviceStatus).toHaveText('DeepSeek 已配置')
   })
 
   test('cancels the pending unconfigured retry after leaving the assistant page', async ({ page }) => {

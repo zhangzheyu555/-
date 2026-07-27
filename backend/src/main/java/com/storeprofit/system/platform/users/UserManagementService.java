@@ -204,7 +204,9 @@ public class UserManagementService {
     authRepository.updateUser(currentUser.tenantId(), target.id(), profile.displayName(), profile.role(), profile.storeId(), profile.enabled());
     authRepository.replaceStoreScope(currentUser.tenantId(), target.id(), profile.storeScope());
     boolean roleChanged = !AccessControlService.canonicalRole(target.role()).equals(profile.role());
-    if (roleChanged && dataScopeService != null) {
+    boolean supervisorStoreScopeChanged = "SUPERVISOR".equals(profile.role())
+        && !previousStoreScope.equals(normalizedStoreIds(profile.storeScope()));
+    if ((roleChanged || supervisorStoreScopeChanged) && dataScopeService != null) {
       List<DataScopeAssignment> restrictedScopes = restrictedRoleTransitionScopes(profile.role(), profile.storeScope());
       if (!restrictedScopes.isEmpty()) {
         dataScopeService.replaceAssignments(
@@ -258,6 +260,10 @@ public class UserManagementService {
     List<DataScopeAssignment> dataScopes = normalizeDataScopes(
         target, request == null ? null : request.dataScopes());
 
+    if ("SUPERVISOR".equals(AccessControlService.canonicalRole(target.role()))) {
+      authRepository.replaceStoreScope(
+          currentUser.tenantId(), target.id(), supervisorStoreScope(dataScopes));
+    }
     authorizationService.replaceUserOverrides(
         currentUser.tenantId(), target.id(), overrides, currentUser.id());
     dataScopeService.replaceAssignments(
@@ -319,6 +325,7 @@ public class UserManagementService {
       overrides = normalizeOverrides(proposed, request == null ? null : request.overrides());
       dataScopes = normalizeDataScopes(proposed, request == null ? null : request.dataScopes());
     }
+    requireSupervisorStoreScopeConsistency(proposed, profile.storeScope(), dataScopes);
 
     authRepository.updateUser(
         currentUser.tenantId(), target.id(), profile.displayName(), profile.role(), profile.storeId(), profile.enabled());
@@ -646,6 +653,36 @@ public class UserManagementService {
     return restrictedRoleTransitionScopes(role, List.of());
   }
 
+  private void requireSupervisorStoreScopeConsistency(
+      AuthUser user,
+      List<String> accountStoreScope,
+      List<DataScopeAssignment> dataScopes
+  ) {
+    if (!"SUPERVISOR".equals(AccessControlService.canonicalRole(user.role()))) {
+      return;
+    }
+    if (normalizedStoreIds(accountStoreScope).equals(supervisorStoreScope(dataScopes))) {
+      return;
+    }
+    throw new BusinessException(
+        "SUPERVISOR_STORE_SCOPE_MISMATCH",
+        "督导账号门店范围必须与门店数据范围一致",
+        HttpStatus.BAD_REQUEST
+    );
+  }
+
+  private List<String> supervisorStoreScope(List<DataScopeAssignment> dataScopes) {
+    if (dataScopes == null) {
+      return List.of();
+    }
+    return dataScopes.stream()
+        .filter(scope -> DataScopeDomains.STORE.equals(scope.domainCode()))
+        .filter(scope -> DataScopeModes.STORE_LIST.equals(scope.mode()))
+        .findFirst()
+        .map(scope -> normalizedStoreIds(scope.storeIds()))
+        .orElseGet(List::of);
+  }
+
   private List<DataScopeAssignment> restrictedRoleTransitionScopes(String role, List<String> storeScope) {
     if ("STORE_MANAGER".equals(role)) {
       return List.of(
@@ -663,7 +700,9 @@ public class UserManagementService {
       List<String> storeIds = normalizedStoreIds(storeScope);
       return DataScopeDomains.ALL.stream()
           .map(domain -> SUPERVISOR_SCOPE_DOMAINS.contains(domain)
-              ? new DataScopeAssignment(domain, DataScopeModes.ALL, List.of())
+              ? storeIds.isEmpty()
+                  ? new DataScopeAssignment(domain, DataScopeModes.NONE, List.of())
+                  : new DataScopeAssignment(domain, DataScopeModes.STORE_LIST, storeIds)
               : new DataScopeAssignment(domain, DataScopeModes.NONE, List.of()))
           .toList();
     }
@@ -805,12 +844,19 @@ public class UserManagementService {
         roleLabel(user.role()),
         user.storeId(),
         user.enabled(),
-        authRepository.storeScope(user.tenantId(), user.id(), user.role(), user.storeId()),
+        accountStoreScope(user),
         workspaceAccess.availableWorkspaces(),
         workspaceAccess.defaultWorkspace(),
         workspaceAccess.status(),
         workspaceAccess.message()
     );
+  }
+
+  private List<String> accountStoreScope(AuthUser user) {
+    if ("SUPERVISOR".equals(AccessControlService.canonicalRole(user.role()))) {
+      return authRepository.assignedStoreScope(user.tenantId(), user.id());
+    }
+    return authRepository.storeScope(user.tenantId(), user.id(), user.role(), user.storeId());
   }
 
   private AuthUser target(AuthUser currentUser, long userId) {
@@ -844,7 +890,7 @@ public class UserManagementService {
     if (directStoreId != null) {
       scope.add(directStoreId);
     }
-    if (AccessControlService.hasAllStoreScope(role)) {
+    if (AccessControlService.hasAllStoreScope(role) && !"SUPERVISOR".equals(role)) {
       return new UserProfile(name, role, null, List.of(), enabled);
     }
     if ("STORE_MANAGER".equals(role) && scope.size() != 1) {
@@ -862,6 +908,9 @@ public class UserManagementService {
         .collect(java.util.stream.Collectors.toSet());
     if (!validStoreIds.containsAll(scope)) {
       throw new BusinessException("STORE_SCOPE_INVALID", "门店范围中包含不存在的门店", HttpStatus.BAD_REQUEST);
+    }
+    if ("SUPERVISOR".equals(role)) {
+      return new UserProfile(name, role, null, List.copyOf(scope), enabled);
     }
     String storeId = directStoreId == null ? scope.getFirst() : directStoreId;
     if ("STORE_MANAGER".equals(role) && !scope.contains(storeId)) {

@@ -1,6 +1,7 @@
 package com.storeprofit.system.expense;
 
 import com.storeprofit.system.common.BusinessException;
+import com.storeprofit.system.organization.StoreBusinessGuard;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
 import com.storeprofit.system.platform.authorization.DataScope;
@@ -42,6 +43,7 @@ public class ExpenseService {
   private final BusinessTodoService businessTodoService;
   private final DataScopeService dataScopeService;
   private final BusinessScopeResolver businessScopeResolver;
+  private final StoreBusinessGuard storeBusinessGuard;
 
   @Autowired
   public ExpenseService(
@@ -50,7 +52,8 @@ public class ExpenseService {
       AccessControlService accessControl,
       BusinessTodoService businessTodoService,
       DataScopeService dataScopeService,
-      BusinessScopeResolver businessScopeResolver
+      BusinessScopeResolver businessScopeResolver,
+      StoreBusinessGuard storeBusinessGuard
   ) {
     this.expenseRepository = expenseRepository;
     this.supplementRepository = supplementRepository;
@@ -58,6 +61,19 @@ public class ExpenseService {
     this.businessTodoService = businessTodoService;
     this.dataScopeService = dataScopeService;
     this.businessScopeResolver = businessScopeResolver;
+    this.storeBusinessGuard = storeBusinessGuard;
+  }
+
+  public ExpenseService(
+      ExpenseRepository expenseRepository,
+      ExpenseSupplementRepository supplementRepository,
+      AccessControlService accessControl,
+      BusinessTodoService businessTodoService,
+      DataScopeService dataScopeService,
+      BusinessScopeResolver businessScopeResolver
+  ) {
+    this(expenseRepository, supplementRepository, accessControl, businessTodoService,
+        dataScopeService, businessScopeResolver, null);
   }
 
   public ExpenseService(
@@ -67,7 +83,8 @@ public class ExpenseService {
       BusinessTodoService businessTodoService,
       DataScopeService dataScopeService
   ) {
-    this(expenseRepository, supplementRepository, accessControl, businessTodoService, dataScopeService, null);
+    this(expenseRepository, supplementRepository, accessControl, businessTodoService,
+        dataScopeService, null, null);
   }
 
   public ExpenseService(
@@ -76,11 +93,11 @@ public class ExpenseService {
       AccessControlService accessControl,
       BusinessTodoService businessTodoService
   ) {
-    this(expenseRepository, supplementRepository, accessControl, businessTodoService, null, null);
+    this(expenseRepository, supplementRepository, accessControl, businessTodoService, null, null, null);
   }
 
   public ExpenseService(ExpenseRepository expenseRepository) {
-    this(expenseRepository, null, null, null, null, null);
+    this(expenseRepository, null, null, null, null, null, null);
   }
 
   public List<ExpenseClaimResponse> claims(AuthUser user, String month, Long brandId, String storeId, String status) {
@@ -148,10 +165,13 @@ public class ExpenseService {
         request == null ? null : blankToNull(request.month()));
     ExpenseClaimRequest normalized = normalizeRequest(request, businessScope.storeId());
     requireStoreScope(user, normalized.storeId(), targetId, normalized.month());
+    ExpenseRepository.ClaimScope existingScope = expenseRepository.claimScope(user.tenantId(), targetId).orElse(null);
+    if (existingScope == null && storeBusinessGuard != null) {
+      storeBusinessGuard.requireActive(user, normalized.storeId(), "费用单");
+    }
     if (!expenseRepository.storeExists(user.tenantId(), normalized.storeId())) {
       throw new BusinessException("STORE_NOT_FOUND", "门店不存在或不属于当前企业", HttpStatus.BAD_REQUEST);
     }
-    ExpenseRepository.ClaimScope existingScope = expenseRepository.claimScope(user.tenantId(), targetId).orElse(null);
     if (existingScope != null) {
       requireStoreScope(user, existingScope.storeId(), existingScope.id(), existingScope.month());
       if (idempotentCreate) {

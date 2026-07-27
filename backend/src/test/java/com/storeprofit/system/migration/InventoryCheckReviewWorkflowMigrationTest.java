@@ -22,7 +22,7 @@ class InventoryCheckReviewWorkflowMigrationTest {
         """).formatted(UUID.randomUUID()).replaceAll("\\s+", ""));
     dataSource.setUser("sa");
     dataSource.setPassword("");
-    migrate(dataSource, "108");
+    migrate(dataSource, "108.20260727120000003");
 
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);
     jdbc.update("""
@@ -58,7 +58,7 @@ class InventoryCheckReviewWorkflowMigrationTest {
             current_timestamp, current_timestamp)
         """);
 
-    migrate(dataSource, "109");
+    migrate(dataSource, "109.20260727120000004");
 
     assertThat(jdbc.queryForMap("""
         select status, submitted_by

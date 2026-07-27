@@ -1,7 +1,6 @@
 [CmdletBinding()]
 param(
-  [ValidateRange(0, 9999)]
-  [int]$ExpectedFlywayLatest = 0
+  [string]$ExpectedFlywayLatest = ''
 )
 
 Set-StrictMode -Version Latest
@@ -91,37 +90,22 @@ function Test-FlywayLatestVersion {
     [Parameter(Mandatory)][string]$Label
   )
 
-  if ($ExpectedFlywayLatest -lt 1) {
+  if ([string]::IsNullOrWhiteSpace($ExpectedFlywayLatest)) {
     Add-Failure "Cannot validate $Label Flyway latest version because no synchronized source version was resolved."
     return $null
   }
 
-  $directory = Get-RepositoryPath -Path $RelativeDirectory
-  $migrations = @(
-    Get-ChildItem -LiteralPath $directory -File -Filter 'V*__*.sql' |
-      Where-Object { $_.Name -match '^V(\d+)__.+\.sql$' }
-  )
-  if ($migrations.Count -eq 0) {
-    Add-Failure "$Label Flyway migrations are missing: $RelativeDirectory"
+  try {
+    $migration = Get-ReleaseFlywayMigrationInfo -MigrationDirectory (Get-RepositoryPath -Path $RelativeDirectory) -Label $Label
+    if ($migration.version -ne $ExpectedFlywayLatest) {
+      Add-Failure "$Label Flyway latest source version must be V$ExpectedFlywayLatest, found V$($migration.version)."
+    }
+    Test-TrackedFile -Path ("$RelativeDirectory/" + $migration.fileName) | Out-Null
+    return $migration
+  }
+  catch {
+    Add-Failure $_.Exception.Message
     return $null
-  }
-
-  $latest = [int](($migrations | ForEach-Object {
-    [int]([regex]::Match($_.Name, '^V(\d+)__').Groups[1].Value)
-  } | Measure-Object -Maximum).Maximum)
-  if ($latest -ne $ExpectedFlywayLatest) {
-    Add-Failure "$Label Flyway latest source version must be V$ExpectedFlywayLatest, found V$latest."
-  }
-
-  $expected = @($migrations | Where-Object { $_.Name -match "^V$ExpectedFlywayLatest`__.+\.sql$" })
-  if ($expected.Count -ne 1) {
-    Add-Failure "Expected exactly one $Label V$ExpectedFlywayLatest Flyway migration, found $($expected.Count)."
-    return $null
-  }
-  Test-TrackedFile -Path ("$RelativeDirectory/" + $expected[0].Name) | Out-Null
-  return [pscustomobject]@{
-    version = $latest
-    fileName = $expected[0].Name
   }
 }
 
@@ -219,7 +203,7 @@ Test-TrackedFile -Path 'scripts/ReleaseCandidateCommon.psm1' | Out-Null
 $synchronizedFlyway = $null
 try {
   $synchronizedFlyway = Get-ReleaseFlywaySource -ProjectRoot $projectRoot
-  if ($ExpectedFlywayLatest -gt 0 -and $ExpectedFlywayLatest -ne $synchronizedFlyway.version) {
+  if (-not [string]::IsNullOrWhiteSpace($ExpectedFlywayLatest) -and $ExpectedFlywayLatest -ne $synchronizedFlyway.version) {
     Add-Failure "Requested Flyway V$ExpectedFlywayLatest does not match the synchronized source latest V$($synchronizedFlyway.version)."
   }
   $ExpectedFlywayLatest = $synchronizedFlyway.version

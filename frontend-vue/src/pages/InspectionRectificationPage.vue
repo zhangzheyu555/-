@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Camera, CheckCircle2, CircleAlert, FileImage, LoaderCircle, RefreshCw, Send, Trash2 } from 'lucide-vue-next'
+import { onBeforeRouteLeave } from 'vue-router'
+import { Camera, CheckCircle2, CircleAlert, FileImage, LoaderCircle, Send, Trash2 } from 'lucide-vue-next'
 import PageHeader from '../components/common/PageHeader.vue'
+import ActionConfirmDialog from '../components/ui/ActionConfirmDialog.vue'
 import UiButton from '../components/ui/UiButton.vue'
+import { useForegroundReload } from '../composables/useForegroundReload'
 import {
   getMyInspectionRectifications,
   isInspectionRectificationServiceUnavailable,
@@ -22,30 +25,60 @@ const loading = ref(false)
 const uploading = ref(false)
 const submitting = ref(false)
 const error = ref('')
+const loadFailed = ref(false)
 const actionMessage = ref('')
+const discardDialogOpen = ref(false)
+let pendingDiscardAction: (() => void) | null = null
+let pendingDiscardCancel: (() => void) | null = null
 
 const selectedTask = computed(() => tasks.value.find((item) => item.recordId === selectedRecordId.value) || null)
 const pendingTasks = computed(() => tasks.value.filter((item) => isActionableStatus(item.status)))
+const hasPendingChanges = computed(() => Boolean(
+  note.value.trim()
+  || files.value.length
+  || uploadedEvidence.value.length
+  || uploading.value
+  || submitting.value,
+))
+const { markFresh } = useForegroundReload(loadTasks, {
+  canReload: () => !hasPendingChanges.value && !loading.value,
+})
 
 onMounted(() => {
   void loadTasks()
 })
 
 async function loadTasks() {
+  if (loading.value) return false
+  const draftSignatureAtRequest = rectificationDraftSignature()
   loading.value = true
+  loadFailed.value = false
   error.value = ''
-  actionMessage.value = ''
   try {
-    tasks.value = await getMyInspectionRectifications()
+    const nextTasks = await getMyInspectionRectifications()
+    if (rectificationDraftSignature() !== draftSignatureAtRequest) return false
+    tasks.value = nextTasks
     if (!selectedRecordId.value || !tasks.value.some((item) => item.recordId === selectedRecordId.value)) {
       selectTask(pendingTasks.value[0] || tasks.value[0] || null)
     }
+    markFresh()
+    return true
   } catch (loadError) {
-    tasks.value = []
-    error.value = unavailableMessage(loadError, '整改待办加载失败，请稍后刷新。')
+    loadFailed.value = true
+    error.value = unavailableMessage(loadError, '整改待办加载失败，请稍后重试。')
+    return false
   } finally {
     loading.value = false
   }
+}
+
+function rectificationDraftSignature() {
+  return JSON.stringify({
+    selectedRecordId: selectedRecordId.value,
+    note: note.value,
+    files: files.value.map((file) => [file.name, file.size, file.lastModified]),
+    uploadedEvidence: uploadedEvidence.value.map((item) => item.attachmentId),
+  })
 }
 
 function selectTask(task: InspectionRectificationTask | null) {
@@ -53,9 +86,56 @@ function selectTask(task: InspectionRectificationTask | null) {
   note.value = ''
   files.value = []
   uploadedEvidence.value = []
+  loadFailed.value = false
   error.value = ''
   actionMessage.value = ''
 }
+
+function requestDiscardConfirmation(action: () => void, cancel: () => void = () => {}) {
+  if (!hasPendingChanges.value) {
+    action()
+    return
+  }
+  if (discardDialogOpen.value || uploading.value || submitting.value) {
+    cancel()
+    return
+  }
+  pendingDiscardAction = action
+  pendingDiscardCancel = cancel
+  discardDialogOpen.value = true
+}
+
+function requestSelectTask(task: InspectionRectificationTask) {
+  if (task.recordId === selectedRecordId.value) return
+  requestDiscardConfirmation(() => selectTask(task))
+}
+
+function keepEditing() {
+  const cancel = pendingDiscardCancel
+  pendingDiscardAction = null
+  pendingDiscardCancel = null
+  discardDialogOpen.value = false
+  cancel?.()
+}
+
+function discardChanges() {
+  const action = pendingDiscardAction
+  pendingDiscardAction = null
+  pendingDiscardCancel = null
+  discardDialogOpen.value = false
+  action?.()
+}
+
+onBeforeRouteLeave(() => {
+  if (!hasPendingChanges.value) return true
+  if (discardDialogOpen.value || uploading.value || submitting.value) return false
+  return new Promise<boolean>((resolve) => {
+    requestDiscardConfirmation(
+      () => resolve(true),
+      () => resolve(false),
+    )
+  })
+})
 
 function chooseFiles() {
   if (submitting.value || uploading.value) return
@@ -68,7 +148,7 @@ function handleFiles(event: Event) {
   input.value = ''
   if (!selected.length) return
   if (uploadedEvidence.value.length) {
-    error.value = '已有已上传但未提交的现场证据，请先提交整改或刷新后重新办理。'
+    error.value = '已有已上传但未提交的现场证据，请先提交整改或保留当前页面后重新办理。'
     return
   }
   const invalid = selected.find((file) => !isAllowedEvidence(file))
@@ -126,6 +206,7 @@ async function submit() {
     files.value = []
     uploadedEvidence.value = []
     actionMessage.value = '整改已提交，等待运营复核。'
+    markFresh()
   } catch (submitError) {
     const uploadedHint = uploadedEvidence.value.length
       ? '现场证据已上传，但整改尚未提交；请保留当前页面后重新提交。'
@@ -203,7 +284,7 @@ function formatSize(bytes: number) {
 
 function unavailableMessage(reason: unknown, fallback: string) {
   if (isInspectionRectificationServiceUnavailable(reason)) {
-    return '整改服务暂未部署或当前候选版本不匹配，无法办理整改。请刷新到已部署整改服务的预发布候选后重试。'
+    return '整改服务暂未部署或当前候选版本不匹配，无法办理整改。请切换到已部署整改服务的预发布候选后重试。'
   }
   return reason instanceof Error && reason.message ? reason.message : fallback
 }
@@ -211,19 +292,15 @@ function unavailableMessage(reason: unknown, fallback: string) {
 
 <template>
   <section class="page-panel rectification-page">
-    <PageHeader title="巡检整改">
-      <template #actions>
-        <UiButton variant="secondary" :loading="loading" @click="loadTasks">
-          <template #icon><RefreshCw :size="16" /></template>
-          刷新待办
-        </UiButton>
-      </template>
-    </PageHeader>
+    <PageHeader title="巡检整改" />
 
-    <div v-if="error" class="error-box" role="alert">{{ error }}</div>
+    <div v-if="error" class="error-box" role="alert">
+      {{ error }}
+      <UiButton v-if="loadFailed && !hasPendingChanges" variant="ghost" size="sm" :loading="loading" @click="loadTasks">重试</UiButton>
+    </div>
     <div v-if="actionMessage" class="success-box" role="status">{{ actionMessage }}</div>
 
-    <div v-if="loading" class="rectification-loading" aria-live="polite">
+    <div v-if="loading && !tasks.length" class="rectification-loading" aria-live="polite">
       <LoaderCircle class="spin" :size="22" /> 正在读取本店整改待办…
     </div>
 
@@ -244,7 +321,8 @@ function unavailableMessage(reason: unknown, fallback: string) {
             class="rectification-task"
             :class="{ active: selectedRecordId === task.recordId }"
             type="button"
-            @click="selectTask(task)"
+            :disabled="uploading || submitting"
+            @click="requestSelectTask(task)"
           >
             <span class="status-chip" :class="statusTone(task.status)">{{ taskStatusLabel(task) }}</span>
             <b>{{ task.storeName || task.storeId }}</b>
@@ -345,6 +423,16 @@ function unavailableMessage(reason: unknown, fallback: string) {
         </section>
       </div>
     </template>
+
+    <ActionConfirmDialog
+      :open="discardDialogOpen"
+      title="放弃未保存的整改内容？"
+      message="切换整改事项或离开页面后，当前尚未提交的说明和证据将不会保留。"
+      confirm-label="放弃修改"
+      confirm-variant="danger"
+      @cancel="keepEditing"
+      @confirm="discardChanges"
+    />
   </section>
 </template>
 

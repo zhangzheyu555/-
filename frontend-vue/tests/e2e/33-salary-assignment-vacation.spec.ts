@@ -516,3 +516,35 @@ test('待生成合成行和已提交工资不显示删除入口', async ({ page 
   await expect(page.getByText('已提交员工', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: /移出本月工资表|删除.*本月工资记录/ })).toHaveCount(0)
 })
+
+test('未保存工资与假期修改会阻止焦点恢复同步覆盖明细', async ({ page }) => {
+  const captured: CapturedRequests = {}
+  await prepare(page, captured)
+  await page.goto('/finance/salary?storeId=xls12&month=2026-07')
+
+  const vacationNote = page.getByLabel('休息日期备注')
+  await expect(vacationNote).toHaveValue('7月1日休息')
+  await expect.poll(() => captured.employeePageRequests || 0).toBeGreaterThan(0)
+  await expect.poll(() => captured.businessMetricsRequests || 0).toBeGreaterThan(0)
+
+  await vacationNote.fill('尚未保存的 7 月休息安排')
+  const requestsBeforeForegroundEvents = captured.employeePageRequests || 0
+
+  await page.evaluate(() => {
+    const staleNow = Date.now() + 61_000
+    Date.now = () => staleNow
+    window.dispatchEvent(new Event('focus'))
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+
+  await page.waitForTimeout(100)
+  expect(captured.employeePageRequests || 0).toBe(requestsBeforeForegroundEvents)
+  await expect(vacationNote).toHaveValue('尚未保存的 7 月休息安排')
+
+  await page.getByLabel('月份').fill('2026-08')
+  await expect(page.getByRole('heading', { name: '放弃未保存的工资修改？' })).toBeVisible()
+  await expect(page.getByLabel('月份')).toHaveValue('2026-07')
+  await page.getByRole('button', { name: '取消', exact: true }).click()
+  await expect(vacationNote).toHaveValue('尚未保存的 7 月休息安排')
+  await expect(page.getByLabel('月份')).toHaveValue('2026-07')
+})
