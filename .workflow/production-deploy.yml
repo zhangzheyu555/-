@@ -23,10 +23,11 @@ stages:
           - cd backend
           - mvn -B -ntp test
           - mvn -B -ntp -DskipTests package
+          - tar -czf ../backend-release.tar.gz -C target store-profit-backend-0.1.0-SNAPSHOT.jar
         artifacts:
           - name: BACKEND_ARTIFACT
             path:
-              - backend/target/store-profit-backend-0.1.0-SNAPSHOT.jar
+              - backend-release.tar.gz
         settings: []
         caches:
           - ~/.m2
