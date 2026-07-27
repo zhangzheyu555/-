@@ -4,8 +4,7 @@ set -Eeuo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
-readonly expected_mysql_flyway_latest=74
-readonly expected_h2_flyway_latest=73
+readonly legacy_flyway_maximum_major_version=105
 
 required_exam_and_training_files=(
   backend/src/main/resources/db/migration/V28__exam_training_seed_data.sql
@@ -56,34 +55,52 @@ block_release_source() {
 verify_latest_flyway() {
   local migration_dir="$1"
   local label="$2"
-  local expected_flyway_latest="$3"
-  local migration_path file_name version latest=0
-  local -a expected_migrations=()
+  local migration_path file_name major timestamp version key
+  local latest_key='' latest_version='' latest_file=''
+  local seen_versions='|'
 
   while IFS= read -r -d '' migration_path; do
     file_name="${migration_path##*/}"
-    if [[ "$file_name" =~ ^V([0-9]+)__.*\.sql$ ]]; then
-      version=$((10#${BASH_REMATCH[1]}))
-      if (( version > latest )); then
-        latest="$version"
+    if [[ "$file_name" =~ ^V([1-9][0-9]*)_((20[0-9]{15}))__([a-zA-Z0-9][a-zA-Z0-9_]*)\.sql$ ]]; then
+      major="${BASH_REMATCH[1]}"
+      timestamp="${BASH_REMATCH[2]}"
+      if (( 10#$major <= legacy_flyway_maximum_major_version )); then
+        echo "${label} timestamped Flyway migration must use a major version greater than V${legacy_flyway_maximum_major_version}: ${file_name}" >&2
+        return 1
       fi
+      version="${major}.${timestamp}"
+      key="$(printf '%010d.%s' "$((10#$major))" "$timestamp")"
+    elif [[ "$file_name" =~ ^V([0-9]+)__([a-zA-Z0-9][a-zA-Z0-9_]*)\.sql$ ]]; then
+      major="${BASH_REMATCH[1]}"
+      if (( 10#$major > legacy_flyway_maximum_major_version )); then
+        echo "${label} Flyway migration must use V<major>_<yyyyMMddHHmmssSSS>__<description>.sql: ${file_name}" >&2
+        return 1
+      fi
+      version="$major"
+      key="$(printf '%010d.%017d' "$((10#$major))" 0)"
+    else
+      echo "${label} Flyway migration filename is invalid: ${file_name}" >&2
+      return 1
+    fi
+
+    if [[ "$seen_versions" == *"|${version}|"* ]]; then
+      echo "${label} Flyway version V${version} is duplicated: ${file_name}." >&2
+      return 1
+    fi
+    seen_versions+="${version}|"
+    if [[ -z "$latest_key" || "$key" > "$latest_key" ]]; then
+      latest_key="$key"
+      latest_version="$version"
+      latest_file="$file_name"
     fi
   done < <(find "$migration_dir" -maxdepth 1 -type f -name 'V*__*.sql' -print0)
 
-  if (( latest != expected_flyway_latest )); then
-    echo "${label} Flyway latest source version must be V${expected_flyway_latest}, found V${latest}." >&2
-    failures=1
+  if [[ -z "$latest_version" ]]; then
+    echo "${label} Flyway migrations are missing: ${migration_dir}" >&2
+    return 1
   fi
-
-  mapfile -d '' -t expected_migrations < <(
-    find "$migration_dir" -maxdepth 1 -type f -name "V${expected_flyway_latest}__*.sql" -print0 | sort -z
-  )
-  if [[ "${#expected_migrations[@]}" -ne 1 ]]; then
-    echo "Expected exactly one ${label} V${expected_flyway_latest} Flyway migration, found ${#expected_migrations[@]}." >&2
-    failures=1
-    return
-  fi
-  require_tracked_file "${expected_migrations[0]}"
+  require_tracked_file "$migration_dir/$latest_file"
+  printf '%s|%s\n' "$latest_version" "$latest_file"
 }
 
 is_flyway_migration_path() {
@@ -258,8 +275,14 @@ else
   done
 fi
 
-verify_latest_flyway backend/src/main/resources/db/migration MySQL "$expected_mysql_flyway_latest"
-verify_latest_flyway backend/src/main/resources/db/migration-h2 H2 "$expected_h2_flyway_latest"
+mysql_flyway_info="$(verify_latest_flyway backend/src/main/resources/db/migration MySQL)"
+h2_flyway_info="$(verify_latest_flyway backend/src/main/resources/db/migration-h2 H2)"
+IFS='|' read -r mysql_flyway_version mysql_flyway_file <<<"$mysql_flyway_info"
+IFS='|' read -r h2_flyway_version h2_flyway_file <<<"$h2_flyway_info"
+if [[ "$mysql_flyway_version" != "$h2_flyway_version" || "$mysql_flyway_file" != "$h2_flyway_file" ]]; then
+  echo "MySQL and H2 Flyway latest migrations are not synchronized: ${mysql_flyway_file} vs ${h2_flyway_file}." >&2
+  failures=1
+fi
 
 while IFS= read -r -d '' tracked_path; do
   lower_path="${tracked_path,,}"
@@ -310,4 +333,4 @@ if [[ "$failures" -ne 0 ]]; then
   exit 1
 fi
 
-echo "Release source check passed: MySQL Flyway latest V${expected_mysql_flyway_latest}, H2 Flyway latest V${expected_h2_flyway_latest}, exam/training sources, and tracked source data/key exclusions are complete."
+echo "Release source check passed: MySQL and H2 Flyway latest V${mysql_flyway_version}, exam/training sources, and tracked source data/key exclusions are complete."

@@ -51,6 +51,8 @@ public class AuthService {
   private final DataScopeService dataScopeService;
   private final WorkspaceAccessResolver workspaceAccessResolver;
   private final BusinessScopeResolver businessScopeResolver;
+  private final WeChatMiniProgramService weChatMiniProgramService;
+  private final WeChatMiniProgramRepository weChatMiniProgramRepository;
   private final long tokenTtlHours;
   private final long passwordChangeGrantTtlMillis;
   private final SecureRandom secureRandom = new SecureRandom();
@@ -67,7 +69,9 @@ public class AuthService {
       WorkspaceAccessResolver workspaceAccessResolver,
       BusinessScopeResolver businessScopeResolver,
       @Value("${app.auth.token-ttl-hours:12}") long tokenTtlHours,
-      @Value("${app.auth.password-change-grant-ttl-minutes:10}") long passwordChangeGrantTtlMinutes
+      @Value("${app.auth.password-change-grant-ttl-minutes:10}") long passwordChangeGrantTtlMinutes,
+      WeChatMiniProgramService weChatMiniProgramService,
+      WeChatMiniProgramRepository weChatMiniProgramRepository
   ) {
     this.authRepository = authRepository;
     this.passwordService = passwordService;
@@ -76,6 +80,8 @@ public class AuthService {
     this.dataScopeService = dataScopeService;
     this.workspaceAccessResolver = workspaceAccessResolver;
     this.businessScopeResolver = businessScopeResolver;
+    this.weChatMiniProgramService = weChatMiniProgramService;
+    this.weChatMiniProgramRepository = weChatMiniProgramRepository;
     this.tokenTtlHours = tokenTtlHours;
     this.passwordChangeGrantTtlMillis = Math.max(0, passwordChangeGrantTtlMinutes) * 60 * 1000L;
   }
@@ -98,7 +104,9 @@ public class AuthService {
         new WorkspaceAccessResolver(),
         null,
         tokenTtlHours,
-        10
+        10,
+        null,
+        null
     );
   }
 
@@ -122,7 +130,9 @@ public class AuthService {
         workspaceAccessResolver,
         businessScopeResolver,
         tokenTtlHours,
-        10
+        10,
+        null,
+        null
     );
   }
 
@@ -159,7 +169,9 @@ public class AuthService {
         new WorkspaceAccessResolver(),
         null,
         tokenTtlHours,
-        passwordChangeGrantTtlMinutes
+        passwordChangeGrantTtlMinutes,
+        null,
+        null
     );
   }
 
@@ -191,19 +203,72 @@ public class AuthService {
       authRepository.deleteTokensForUser(user.tenantId(), user.id());
       return LoginResponse.passwordChangeRequired(issuePasswordChangeGrant(user));
     }
-    // Resolve permissions and the effective single-store context before issuing a token. A store
-    // manager with an invalid binding must not receive a usable session token.
+    return issueSession(user);
+  }
+
+  @Transactional
+  public LoginResponse weChatLogin(String code, Long tenantId) {
+    requireWeChatSupport();
+    // 当前为单租户部署；未传租户时保持与账号密码登录相同的默认租户规则。
+    long effectiveTenantId = tenantId == null ? TenantDefaults.DEFAULT_TENANT_ID : tenantId;
+    WeChatMiniProgramService.Identity identity = weChatMiniProgramService.exchangeCode(code);
+    long userId = weChatMiniProgramRepository.boundUserId(
+        effectiveTenantId, weChatMiniProgramService.appId(), identity.openid()
+    ).orElseThrow(() -> new BusinessException(
+        "WECHAT_NOT_BOUND", "该微信尚未绑定账号，请先用账号密码登录后在“我的”中绑定", HttpStatus.UNAUTHORIZED));
+    AuthUser user = authRepository.user(effectiveTenantId, userId)
+        .filter(AuthUser::enabled)
+        .orElseThrow(() -> new BusinessException("LOGIN_FAILED", "账号不可用，请联系管理员", HttpStatus.UNAUTHORIZED));
+    return issueSession(user);
+  }
+
+  public WeChatBindingStatus weChatBindingStatus(AuthUser user) {
+    requireWeChatSupport();
+    boolean configured = weChatMiniProgramService.configured();
+    boolean bound = configured && weChatMiniProgramRepository.isBound(
+        user.tenantId(), user.id(), weChatMiniProgramService.appId());
+    return new WeChatBindingStatus(configured, bound);
+  }
+
+  @Transactional
+  public WeChatBindingStatus bindWeChat(AuthUser user, String code) {
+    requireWeChatSupport();
+    WeChatMiniProgramService.Identity identity = weChatMiniProgramService.exchangeCode(code);
+    String appId = weChatMiniProgramService.appId();
+    var boundUserId = weChatMiniProgramRepository.boundUserId(user.tenantId(), appId, identity.openid());
+    if (boundUserId.isPresent()) {
+      if (boundUserId.get() == user.id()) return new WeChatBindingStatus(true, true);
+      throw new BusinessException("WECHAT_ALREADY_BOUND", "该微信已绑定其他账号，请先在原账号解绑", HttpStatus.CONFLICT);
+    }
+    try {
+      weChatMiniProgramRepository.bind(user.tenantId(), user.id(), appId, identity.openid(), identity.unionid());
+    } catch (org.springframework.dao.DuplicateKeyException ex) {
+      throw new BusinessException("WECHAT_ALREADY_BOUND", "该微信已绑定其他账号，请先在原账号解绑", HttpStatus.CONFLICT);
+    }
+    auditRepository.writeLog(user, new AuditLogRequest(
+        "绑定微信一键登录", "wechat_mini_program_binding", String.valueOf(user.id()), user.storeId(), null,
+        "已绑定微信小程序 appId=" + appId + "，openid=" + maskOpenId(identity.openid()), null, null));
+    return new WeChatBindingStatus(true, true);
+  }
+
+  private LoginResponse issueSession(AuthUser user) {
     SessionUser sessionUser = toSessionUser(user);
     String token = newToken();
     authRepository.deleteTokensForUser(user.tenantId(), user.id());
-    authRepository.createToken(
-        token,
-        user.tenantId(),
-        user.id(),
-        user.permissionVersion(),
-        OffsetDateTime.now().plusHours(tokenTtlHours)
-    );
+    authRepository.createToken(token, user.tenantId(), user.id(), user.permissionVersion(),
+        OffsetDateTime.now().plusHours(tokenTtlHours));
     return LoginResponse.authenticated(token, sessionUser);
+  }
+
+  private void requireWeChatSupport() {
+    if (weChatMiniProgramService == null || weChatMiniProgramRepository == null) {
+      throw new IllegalStateException("WeChat mini program authentication is not configured");
+    }
+  }
+
+  private String maskOpenId(String openId) {
+    if (openId == null || openId.length() <= 6) return "***";
+    return openId.substring(0, 3) + "***" + openId.substring(openId.length() - 3);
   }
 
   @Transactional

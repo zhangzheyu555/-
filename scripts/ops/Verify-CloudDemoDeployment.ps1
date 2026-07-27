@@ -120,12 +120,9 @@ function Assert-True {
 
 function Get-LatestLocalFlywayVersion {
   $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-  $files = Get-ChildItem -LiteralPath (Join-Path $repoRoot 'backend\src\main\resources\db\migration') -Filter 'V*__*.sql'
-  $versions = foreach ($file in $files) {
-    if ($file.Name -match '^V(\d+)__') { [int]$Matches[1] }
-  }
-  if (-not $versions) { throw 'No local Flyway migration files found.' }
-  ($versions | Measure-Object -Maximum).Maximum
+  $modulePath = Join-Path $repoRoot 'scripts\ReleaseCandidateCommon.psm1'
+  Import-Module -Name $modulePath -Force -ErrorAction Stop
+  (Get-ReleaseFlywayMigrationInfo -MigrationDirectory (Join-Path $repoRoot 'backend\src\main\resources\db\migration') -Label 'MySQL').version
 }
 
 $ApiBaseUrl = (Require-Text $ApiBaseUrl 'API_BASE_URL').TrimEnd('/')
@@ -145,8 +142,8 @@ $liveness = Invoke-Api -Method GET -Path '/api/health' -Token '' -ExpectedStatus
 Assert-True ($liveness.Body.success -eq $true -and $liveness.Body.data.status -eq 'UP') '/api/health status is UP'
 $diagnostics = Invoke-Api -Method GET -Path '/api/health/diagnostics' -ExpectedStatus @(200)
 $localLatest = Get-LatestLocalFlywayVersion
-$remoteVersion = [int]$diagnostics.Body.data.databaseMigrationVersion
-Assert-True ($remoteVersion -eq $localLatest) "Flyway version matches local latest V$localLatest"
+$remoteVersion = [string]$diagnostics.Body.data.databaseMigrationVersion
+Assert-True ($remoteVersion -ceq $localLatest) "Flyway version matches local latest V$localLatest"
 
 $users = (Invoke-Api -Method GET -Path '/api/users').Body.data
 $userMap = @{}

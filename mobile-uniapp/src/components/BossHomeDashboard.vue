@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import {
   getMobileBossExamSummary,
   getMobileBossTodoDashboard,
@@ -43,17 +43,9 @@ const needsAction = computed(() => dashboard.value?.needsBossAction || [])
 const riskGroups = computed(() => dashboard.value?.highRiskReminders || [])
 const roleProgress = computed(() => dashboard.value?.roleProgress || [])
 const doneReview = computed(() => dashboard.value?.doneReview || [])
-const riskStoreCount = computed(() => Math.max(
-  Number(finance.value?.summary.riskStoreCount || 0),
-  Number(dashboard.value?.todayFocus.highRiskGroupCount || riskGroups.value.length),
-))
 const sectionTabs = computed(() => [
   { key: 'action' as const, label: '需要我处理', count: needsAction.value.length },
-  { key: 'review' as const, label: '待复核', count: pendingReviewTodos.value.length },
-  { key: 'exam' as const, label: '培训考试', count: Number(exams.value?.activeExamCount || 0) },
-  { key: 'risk' as const, label: '风险门店', count: riskGroups.value.length },
   { key: 'progress' as const, label: '岗位进度', count: roleProgress.value.length },
-  { key: 'done' as const, label: '已完成', count: doneReview.value.length },
 ])
 const latestTrend = computed(() => (finance.value?.trend || []).slice(-7))
 
@@ -156,12 +148,6 @@ function selectSection(section: DetailSection): void {
   activeSection.value = section
 }
 
-async function jumpToSection(section: DetailSection): Promise<void> {
-  activeSection.value = section
-  await nextTick()
-  uni.pageScrollTo({ selector: '#boss-detail', duration: 240 })
-}
-
 function includes(source: string, keywords: string[]): boolean {
   return keywords.some((keyword) => source.includes(keyword.toLowerCase()))
 }
@@ -246,16 +232,6 @@ defineExpose({ refresh })
         <text class="kpi-card__label">净利润</text>
         <text class="kpi-card__value" :class="{ negative: Number(finance?.summary.net || 0) < 0 }">{{ money(finance?.summary.net) }}</text>
         <text class="kpi-card__hint">净利率 {{ percent(finance?.summary.margin) }}</text>
-      </button>
-      <button class="kpi-card" @click="jumpToSection('review')">
-        <text class="kpi-card__label">待复核</text>
-        <text class="kpi-card__value">{{ pendingReviewTodos.length }}<text>项</text></text>
-        <text class="kpi-card__hint">等待老板确认</text>
-      </button>
-      <button class="kpi-card kpi-card--risk" @click="jumpToSection('risk')">
-        <text class="kpi-card__label">风险门店</text>
-        <text class="kpi-card__value">{{ riskStoreCount }}<text>家</text></text>
-        <text class="kpi-card__hint">{{ riskStoreCount ? '需要持续关注' : '经营状态正常' }}</text>
       </button>
     </view>
 

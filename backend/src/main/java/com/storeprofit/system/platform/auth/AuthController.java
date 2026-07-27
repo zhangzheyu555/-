@@ -28,6 +28,26 @@ public class AuthController {
     return ApiResponse.ok(authService.login(request, servletRequest.getRemoteAddr()));
   }
 
+  @PostMapping("/wechat/login")
+  public ApiResponse<LoginResponse> weChatLogin(@Valid @RequestBody WeChatLoginRequest request) {
+    return ApiResponse.ok(authService.weChatLogin(request.code(), request.tenantId()));
+  }
+
+  @GetMapping("/wechat/binding")
+  public ApiResponse<WeChatBindingStatus> weChatBinding(
+      @RequestHeader(value = "Authorization", required = false) String authorization
+  ) {
+    return ApiResponse.ok(authService.weChatBindingStatus(authService.requireUser(authorization)));
+  }
+
+  @PostMapping("/wechat/bind")
+  public ApiResponse<WeChatBindingStatus> bindWeChat(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @Valid @RequestBody WeChatBindRequest request
+  ) {
+    return ApiResponse.ok(authService.bindWeChat(authService.requireUser(authorization), request.code()));
+  }
+
   @PostMapping("/logout")
   public ApiResponse<Void> logout(@RequestHeader(value = "Authorization", required = false) String authorization) {
     authService.logout(authorization);

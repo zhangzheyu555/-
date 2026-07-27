@@ -21,7 +21,6 @@ import {
   type InspectionItemResult,
   type InspectionRecord,
   type InspectionStandard,
-  type InspectionStandardItem,
   type RoleTodoItem,
   type StorageAttachment,
   type StoreInfo,
