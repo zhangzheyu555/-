@@ -265,7 +265,7 @@ test('thirty-eight ranking rows expand the main scroll without an inner vertical
   await expect(page.locator('.profit-trend-card')).toBeVisible()
 })
 
-test('primary metric card is opaque and compact topbar search keeps assistant handoff', async ({ page }) => {
+test('primary metric card is opaque and the compact topbar has no redundant controls', async ({ page }) => {
   const consoleErrors: string[] = []
   page.on('console', (message) => {
     if (message.type() === 'error') consoleErrors.push(message.text())
@@ -316,29 +316,11 @@ test('primary metric card is opaque and compact topbar search keeps assistant ha
   expect(colors.opacity).toBe('1')
 
   await expect(page.locator('.topbar-tool-row')).toHaveCount(0)
-  await expect(page.getByRole('button', { name: '打开全局搜索' })).toBeVisible()
+  await expect(page.getByLabel('全局门店')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '打开全局搜索' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '消息提醒' })).toHaveCount(0)
   await expect(page.getByRole('search')).toHaveCount(0)
-
-  const globalStore = page.getByRole('combobox', { name: '全局门店' })
-  await globalStore.fill('rg1')
-  await expect(page.getByRole('option', { name: /荆州之星店/ })).toBeVisible()
-  await page.getByRole('option', { name: /荆州之星店/ }).click()
-  await expect(page).toHaveURL(/storeId=rg1/)
-
-  await page.getByRole('button', { name: '打开全局搜索' }).click()
-  const search = page.getByRole('search')
-  await expect(search).toBeVisible()
-  const searchBox = await search.boundingBox()
-  expect(searchBox?.width || 0).toBeLessThanOrEqual(360)
-  await page.getByLabel('搜索经营数据').press('Escape')
-  await expect(search).toHaveCount(0)
-
-  const question = '荆州之星店本月利润'
-  await page.getByRole('button', { name: '打开全局搜索' }).click()
-  await page.getByLabel('搜索经营数据').fill(question)
-  await page.getByLabel('搜索经营数据').press('Enter')
-  await expect(page).toHaveURL(/\/assistant\?q=/)
-  expect(new URL(page.url()).searchParams.get('q')).toBe(question)
+  await expect(page.locator('.date-display')).toBeVisible()
   expect(consoleErrors).toEqual([])
 })
 

@@ -1843,31 +1843,6 @@ watch(
 }
 
 @media (max-width: 520px) {
-  :global(.app-main:has(.data-entry-page) .topbar-primary-row) {
-    justify-content: flex-start;
-    gap: 8px;
-  }
-
-  :global(.app-main:has(.data-entry-page) .topbar-context) {
-    flex: 1;
-    min-width: 0;
-    gap: 8px;
-  }
-
-  :global(.app-main:has(.data-entry-page) .date-display) {
-    display: none;
-  }
-
-  :global(.app-main:has(.data-entry-page) .scope-display) {
-    flex: 1;
-    min-width: 0;
-  }
-
-  :global(.app-main:has(.data-entry-page) .scope-display select) {
-    width: 100%;
-    min-width: 0;
-  }
-
   .data-entry-page :deep(.business-page-header) {
     align-items: stretch;
     flex-direction: column;

@@ -105,7 +105,7 @@ const selectableStores = computed(() => {
     ? draft.storeValue
     : ''
   if (selectedId && !rows.some((store) => store.id === selectedId)) {
-    rows.unshift({ id: selectedId, label: `门店 ${selectedId}`, description: '当前全局门店' })
+    rows.unshift({ id: selectedId, label: `门店 ${selectedId}`, description: '当前链接门店' })
   }
   return rows
 })

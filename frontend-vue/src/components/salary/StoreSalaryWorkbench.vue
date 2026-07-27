@@ -7,10 +7,13 @@ import {
   saveSalaryAttendance, saveSalaryRecord,
   type SalaryAssignmentCandidate, type SalaryBusinessMetrics, type SalaryRecord, type SalaryRecordPayload,
 } from '../../api/finance'
+import { createEmployee, type EmployeeUpsert } from '../../api/employees'
 import { ApiError } from '../../api/http'
 import { useForegroundReload } from '../../composables/useForegroundReload'
 import { isHourlySalaryRecord, useSalaryPage, money, userError, wholeNumber } from '../../composables/useSalaryPage'
 import { useSalaryWorkflow } from '../../composables/useSalaryWorkflow'
+import { PERMISSIONS } from '../../permissions/permissions'
+import { useAuthStore } from '../../stores/auth'
 import SearchInput from '../common/SearchInput.vue'
 import SearchableSingleSelect from '../common/SearchableSingleSelect.vue'
 import SalarySummary from './SalarySummary.vue'
@@ -29,6 +32,7 @@ const emit = defineEmits<{
   dirtyChange: [dirty: boolean]
 }>()
 
+const auth = useAuthStore()
 const STATUS_OPTIONS = [
   { value: '', label: '全部状态' }, { value: 'PENDING_GENERATION', label: '待生成' },
   { value: 'DRAFT', label: '草稿' }, { value: 'SUBMITTED', label: '待审核' },
@@ -148,6 +152,7 @@ const canAddEmployee = computed(() => page.canEdit.value
   && page.isEffectiveStoreActive.value
   && !initialScopeBlocked.value
   && !page.loading.value)
+const canCreateEmployee = computed(() => auth.hasPermission(PERMISSIONS.EMPLOYEE_MANAGE))
 const salaryOperationBusy = computed(() => Boolean(
   detailSavingKey.value
   || workflow.actioningId.value
@@ -484,6 +489,47 @@ async function confirmAddEmployee(employeeId: string) {
   }
 }
 
+async function confirmCreateEmployee(payload: EmployeeUpsert) {
+  if (!canAddEmployee.value || !canCreateEmployee.value || addEmployeeSaving.value) return
+  const storeId = page.effectiveStoreId.value
+  const month = page.selectedMonth.value
+  if (!storeId || storeId === 'all' || payload.storeId !== storeId) {
+    addEmployeeError.value = '当前门店已经变化，请关闭窗口后重新添加人员。'
+    return
+  }
+
+  addEmployeeSaving.value = true
+  addEmployeeError.value = ''
+  addEmployeeRetryable.value = false
+  try {
+    const created = await createEmployee({
+      ...payload,
+      storeId,
+      status: '在职',
+    })
+    addEmployeeRequestController?.abort()
+    addEmployeeRequestController = null
+    addEmployeeLoading.value = false
+    addEmployeeOpen.value = false
+    await page.setListFiltersWithoutReload('', '')
+    selectedRowKey.value = `employee:${created.id}`
+    page.successMessage.value = `已新建 ${created.name} 的员工档案，并加入 ${month} 工资名单`
+    const loaded = await reloadSalaryData(1)
+    if (!loaded) {
+      actionError.value = '人员档案已创建，但工资名单刷新失败，请点击重试。'
+    }
+  } catch (error) {
+    addEmployeeError.value = userError(error, '新建人员失败，请检查填写内容后重试。')
+  } finally {
+    addEmployeeSaving.value = false
+  }
+}
+
+function clearAddEmployeeSubmissionError() {
+  if (addEmployeeRetryable.value) return
+  addEmployeeError.value = ''
+}
+
 function isReviewableRecord(record: SalaryRecord) {
   return Boolean(record.id) && ['SUBMITTED', 'PENDING_REVIEW'].includes(record.status || '')
 }
@@ -778,7 +824,7 @@ onBeforeUnmount(() => {
           v-if="page.canEdit.value"
           class="add-person-button"
           :disabled="!canAddEmployee || salaryOperationBusy"
-          :title="!canAddEmployee ? '请先选择具体门店和月份' : '添加其他门店员工到本月工资名单'"
+          :title="!canAddEmployee ? '请先选择具体门店和月份' : '新建人员或选择已有员工加入本月工资名单'"
           @click="openAddEmployee"
         ><UserPlus :size="16" />添加人员</button>
         <button
@@ -868,11 +914,15 @@ onBeforeUnmount(() => {
       :saving="addEmployeeSaving"
       :error="addEmployeeError"
       :retryable="addEmployeeRetryable"
+      :can-create-employee="canCreateEmployee"
+      :target-store-id="page.effectiveStoreId.value"
       :target-store-name="page.selectedStoreName.value"
       :month="page.selectedMonth.value"
       @close="closeAddEmployee"
       @retry="loadAddEmployeeCandidates"
       @submit="confirmAddEmployee"
+      @create="confirmCreateEmployee"
+      @clear-error="clearAddEmployeeSubmissionError"
     />
 
     <ActionConfirmDialog

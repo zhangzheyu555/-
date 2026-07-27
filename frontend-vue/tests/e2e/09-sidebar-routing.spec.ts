@@ -125,21 +125,30 @@ test('each business route exposes exactly one current sidebar menu item', async 
   }
 })
 
-test('store manager default workspace shares the single store detail navigation entry', async ({ page }) => {
+test('retired store detail routes fall back to profit without leaving a navigation entry', async ({ page }) => {
   await seedSession(page, 'STORE_MANAGER')
   await page.goto('/store')
 
-  const sidebar = page.locator('.app-sidebar--desktop')
-  await expect(sidebar.getByRole('link', { name: '门店工作台', exact: true })).toHaveCount(0)
-  await expect(sidebar.getByRole('link', { name: '门店详情', exact: true })).toHaveCount(1)
-  await expect(sidebar.getByRole('link', { name: '门店详情', exact: true })).toHaveAttribute('aria-current', 'page')
-  await expect(page).toHaveURL(/\/store$/)
-  await expect(page.locator('.store-detail-page')).toBeVisible()
+  const managerSidebar = page.locator('.app-sidebar--desktop')
+  await expect(page).toHaveURL(/\/profit$/)
+  await expect(page.getByRole('heading', { name: '本店经营概览', exact: true })).toBeVisible()
+  await expect(managerSidebar.getByRole('link', { name: '利润概览', exact: true })).toHaveAttribute('aria-current', 'page')
+  await expect(managerSidebar.getByRole('link', { name: '门店详情', exact: true })).toHaveCount(0)
+  await expect(page.locator('.store-detail-page')).toHaveCount(0)
+
+  await seedSession(page, 'BOSS')
+  await page.goto('/store-detail')
+
+  const bossSidebar = page.locator('.app-sidebar--desktop')
+  await expect(page).toHaveURL(/\/profit$/)
+  await expect(page.getByRole('heading', { name: '利润概览', exact: true })).toBeVisible()
+  await expect(bossSidebar.getByRole('link', { name: '门店详情', exact: true })).toHaveCount(0)
+  await expect(page.locator('.store-detail-page')).toHaveCount(0)
 })
 
 test('store manager workbench exposes daily loss while keeping own-store scope', async ({ page }) => {
   await seedSession(page, 'STORE_MANAGER')
-  await page.goto('/store')
+  await page.goto('/profit')
 
   const dailyLossEntry = page.locator('.app-sidebar--desktop').getByRole('link', { name: '每日报损', exact: true })
   await expect(dailyLossEntry).toBeVisible()
@@ -149,7 +158,7 @@ test('store manager workbench exposes daily loss while keeping own-store scope',
   await expect(page.locator('.business-page-heading p')).toHaveCount(0)
 })
 
-test('supervisor owns daily loss but cannot enter store detail warehouse profiles or assistants', async ({ page }) => {
+test('supervisor owns daily loss but cannot enter retired store routes warehouse profiles or assistants', async ({ page }) => {
   // 即使浏览器仍保留迁移前的权限快照，固定的角色入口也不能被隐藏。
   await seedSession(
     page,

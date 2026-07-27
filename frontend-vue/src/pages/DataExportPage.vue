@@ -41,7 +41,7 @@ function queryValue(value: unknown) {
   return Array.isArray(value) ? String(value[0] || '') : String(value || '')
 }
 
-// The route is the single source of truth for a non-manager's selected store.
+// A routed store is the single source of truth for a non-manager's selected store.
 // scopedStoreId deliberately replaces any URL value for a store manager.
 const selectedStoreId = computed(() => scope.scopedStoreId(queryValue(route.query.storeId)))
 const selectedStore = computed(() => {
@@ -202,7 +202,7 @@ watch(
   () => queryValue(route.query.storeId),
   () => {
     if (!initialized.value) return
-    // Switching the global store must not leave either another store's or another page's brand behind.
+    // A routed store change must not leave another store's or another page's brand behind.
     selectedBrandId.value = scope.isStoreManager.value ? scope.scopedBrandId() : ''
     void reloadExportScope({ announce: true })
   },

@@ -8,7 +8,7 @@ import PageHeader from '../components/common/PageHeader.vue'
 import { useBusinessScope } from '../composables/useBusinessScope'
 import { useForegroundReload } from '../composables/useForegroundReload'
 import { amount, money, percent, useProfitStore } from '../stores/profit'
-import type { ProfitEntry, ProfitTrendPoint } from '../api/profit'
+import type { ProfitTrendPoint } from '../api/profit'
 import { getBrandTheme, normalizeBrandName, STANDARD_BRANDS } from '../utils/brand'
 
 const router = useRouter()
@@ -87,6 +87,9 @@ const scopeStoreOptions = computed(() => profit.storeOptions.map((entry) => ({
   brandName: normalizeBrandName(entry.brandName || ''),
 })))
 const managerEntry = computed(() => profit.entries.find((entry) => entry.storeId === scope.boundStoreId.value) || profit.entries[0] || null)
+const storeManagementAccessDenied = computed(() => (
+  scope.isStoreManager.value && route.query.notice === 'STORE_MANAGEMENT_FORBIDDEN'
+))
 const managerCostExpenseMissing = computed(() => !managerEntry.value
   || (amount(managerEntry.value.costSum) === 0 && amount(managerEntry.value.expenseSum) === 0))
 const managerCompleteness = computed(() => {
@@ -122,14 +125,6 @@ const trendMax = computed(() => {
   const values = profit.trend.map((point) => Math.abs(amount(point.net)))
   return Math.max(...values, 1)
 })
-
-function openStoreDetail(entry?: ProfitEntry) {
-  if (entry) {
-    void router.push({ path: '/store-detail', query: { storeId: entry.storeId } })
-    return
-  }
-  void router.push('/store-detail')
-}
 
 function selectBrandCard(brandName: string) {
   const brand = profit.brands.find((item) => normalizeBrandName(item.name) === brandName)
@@ -309,6 +304,10 @@ watch(
       </template>
     </PageHeader>
 
+    <div v-if="storeManagementAccessDenied" class="store-management-notice" role="alert">
+      当前账号无权进入门店管理，已返回本店经营概览。
+    </div>
+
     <section class="profit-filter-bar" aria-label="利润筛选条件">
       <BusinessScopeBar
         :brands="profit.brands"
@@ -334,7 +333,14 @@ watch(
         <span>{{ profit.error }}</span>
         <button type="button" :disabled="profit.loading" @click="retryProfitData">重试</button>
       </div>
-      <div v-if="!dashboardMatchesCurrentFilter" class="empty-state">当前筛选范围暂时无法读取，请稍后重试。</div>
+      <div v-if="!dashboardMatchesCurrentFilter" class="empty-state">
+        <template v-if="profit.error">
+          <span>品牌数据暂时无法读取。</span>
+          <span>门店排行暂时无法读取。</span>
+          <span>趋势数据暂时无法读取。</span>
+        </template>
+        <span v-else>当前筛选范围暂时无法读取，请稍后重试。</span>
+      </div>
       <template v-else>
       <div v-if="scope.isStoreManager.value" class="profit-metric-grid manager-metrics">
         <article class="content-card profit-metric-card revenue"><span>本月营业额</span><b>{{ money(profit.summary.sales) }}</b></article>
@@ -423,11 +429,10 @@ watch(
                 <th class="r">营收</th>
                 <th class="r">净利</th>
                 <th class="r">净利率</th>
-                <th class="r"></th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="(entry, index) in marginRanking" :key="`${entry.storeId}-${entry.month}`" @click="openStoreDetail(entry)">
+              <tr v-for="(entry, index) in marginRanking" :key="`${entry.storeId}-${entry.month}`">
                 <td class="rank-no">{{ index + 1 }}</td>
                 <td class="store-name">{{ entry.storeName || entry.storeId }}</td>
                 <td>
@@ -439,7 +444,6 @@ watch(
                 <td class="r">{{ money(entry.income ?? entry.sales) }}</td>
                 <td class="r" :class="{ negative: amount(entry.net) < 0 }">{{ money(entry.net) }}</td>
                 <td class="r margin-cell" :class="marginClass(entry.margin)">{{ percent(entry.margin) }}</td>
-                <td class="r chev">›</td>
               </tr>
             </tbody>
           </table>
@@ -993,14 +997,6 @@ watch(
   font-weight: 900;
 }
 
-.profit-ranking-table tbody tr {
-  cursor: pointer;
-}
-
-.profit-ranking-table tbody tr:hover {
-  background: #fff8f2;
-}
-
 .profit-ranking-table .r {
   text-align: right;
 }
@@ -1187,6 +1183,16 @@ watch(
   align-items: center;
 }
 
+.store-management-notice {
+  padding: 12px 14px;
+  border: 1px solid rgba(181, 103, 19, 0.3);
+  border-radius: 8px;
+  color: #77440d;
+  background: var(--ds-warning-soft);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .profit-overview-page :deep(.business-page-actions label) {
   display: grid;
   gap: 5px;
@@ -1235,21 +1241,6 @@ watch(
   height: 7px;
   border-radius: 50%;
   background: var(--pill-color);
-}
-
-.chev {
-  display: inline-block;
-  width: 18px;
-  color: var(--muted);
-  font-size: 18px;
-  font-weight: 900;
-  opacity: 0;
-  transition: opacity 0.12s ease, color 0.12s ease;
-}
-
-.profit-ranking-table tbody tr:hover .chev {
-  color: var(--primary);
-  opacity: 1;
 }
 
 .profit-trend-card {

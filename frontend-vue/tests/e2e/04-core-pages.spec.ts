@@ -5,7 +5,6 @@ const pages: Array<{ role: RoleKey; path: string; text: string }> = [
   { role: 'boss', path: '/boss', text: '今日待办' },
   { role: 'boss', path: '/profit', text: '利润概览' },
   { role: 'boss', path: '/profit-table', text: '利润表' },
-  { role: 'boss', path: '/store-detail', text: '门店详情' },
   { role: 'boss', path: '/assistant', text: '门店经营助手' },
   { role: 'boss', path: '/data-entry', text: '数据录入' },
   { role: 'boss', path: '/expenses', text: '报销栏' },
@@ -93,7 +92,6 @@ test.describe('core business pages load', () => {
       { path: '/boss', texts: ['老板，你好', '今日待办', '需要我处理', '已处理复盘'] },
       { path: '/profit', texts: ['老板，你好', '合并营业收入', '合并净利润', '茹菓', '霸王茶姬', '瑞幸咖啡', '各店净利率排名'] },
       { path: '/profit-table', texts: ['单店利润表', '全部门店汇总', '收入', '成本', '费用', '净利润'] },
-      { path: '/store-detail', texts: ['累计营收', '累计净利', '平均净利率', '门店基础资料', '逐月经营明细'] },
       { path: '/data-entry', texts: ['Excel 表格', '收入（元）', '成本（元）', '费用（元）', '实时利润核算'] },
     ]
     for (const check of checks) {
@@ -154,25 +152,6 @@ test.describe('core business pages load', () => {
     expect(url.searchParams.get('storeId')).toBeNull()
   })
 
-  test('store detail brand selector limits store dropdown to the selected brand', async ({ page }) => {
-    await loginAs(page, 'boss')
-    await page.goto('/store-detail')
-    await page.waitForLoadState('networkidle')
-
-    const brandSelect = page.getByLabel('品牌')
-    const storeSelect = page.getByLabel('门店')
-    await expect(brandSelect).toBeVisible()
-    await expect(storeSelect).toBeVisible()
-
-    await brandSelect.selectOption({ label: '茹菓' })
-    await expect.poll(async () => {
-      return storeSelect.locator('option').evaluateAll((options) => options.map((option) => option.textContent?.trim() || ''))
-    }).not.toContainEqual(expect.stringContaining('霸王茶姬'))
-    const ruguoStoreOptions = await storeSelect.locator('option').evaluateAll((options) => options.map((option) => option.textContent?.trim() || ''))
-    expect(ruguoStoreOptions.join('\n')).not.toContain('瑞幸咖啡')
-    expect(ruguoStoreOptions.join('\n')).toContain('茹菓')
-  })
-
   test('inspection page follows legacy three-tab layout instead of workbench cards', async ({ page }) => {
     await loginAs(page, 'boss')
     await page.goto('/inspection')
@@ -215,23 +194,6 @@ test.describe('core business pages load', () => {
     await expect(body).toContainText('得分')
   })
 
-  test('store detail stays focused on store operation data instead of workbench modules', async ({ page }) => {
-    await loginAs(page, 'boss')
-    await page.goto('/store-detail')
-    await page.waitForLoadState('networkidle')
-
-    const body = await page.locator('body').innerText()
-    expect(body).toContain('门店基础资料')
-    expect(body).toContain('逐月经营明细')
-    expect(body).not.toContain('查看仓库记录')
-    expect(body).not.toContain('查看巡检记录')
-    expect(body).not.toContain('查看报销记录')
-    expect(body).not.toContain('仓库叫货摘要')
-    expect(body).not.toContain('巡检问题摘要')
-    expect(body).not.toContain('叫货单')
-    expect(body).not.toContain('最近评分')
-  })
-
   test('data entry brand selector limits store dropdown to the selected brand', async ({ page }) => {
     await loginAs(page, 'boss')
     await page.goto('/data-entry')
@@ -272,7 +234,6 @@ test.describe('core business pages load', () => {
     const checks = [
       { path: '/profit', text: '合并营业收入' },
       { path: '/profit-table', text: '利润表' },
-      { path: '/store-detail', text: '累计营收' },
       { path: '/assistant', text: '门店经营助手' },
       { path: '/data-entry', text: '实时利润核算' },
       { path: '/expenses', text: '新增报销' },

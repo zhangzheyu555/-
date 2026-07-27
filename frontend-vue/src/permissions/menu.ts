@@ -126,15 +126,6 @@ export const MENU_GROUP_CONFIG: PermissionMenuGroup[] = [
         requiredPermission: PERMISSIONS.INVENTORY_READ,
         allowedRoles: ['FINANCE', 'SUPERVISOR', 'WAREHOUSE', 'STORE_MANAGER'],
       },
-      {
-        label: '门店详情',
-        key: 'store-detail',
-        to: '/store-detail',
-        icon: 'store',
-        requiredPermission: PERMISSIONS.STORE_READ,
-        hiddenRoles: ['SUPERVISOR'],
-        requiredDataScope: { domain: 'STORE', modes: ['ALL', 'STORE_LIST', 'OWN_STORE'] },
-      },
     ],
   },
   {

@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { Download } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import type { ProfitEntry } from '../api/profit'
+import { getStores, type StoreInfo } from '../api/operations'
 import { downloadCsvRows } from '../api/reports'
 import BrandBadge from '../components/common/BrandBadge.vue'
 import BrandSelect from '../components/common/BrandSelect.vue'
@@ -16,7 +17,15 @@ import { getBrandIdLike, normalizeBrandName, STANDARD_BRANDS } from '../utils/br
 
 type ReportMode = 'single' | 'summary'
 type BrandOption = { value: string; name: string; sortOrder: number }
-type StoreOption = ProfitEntry & { brandKey: string; normalizedBrandName: string }
+type StoreOption = Pick<
+  ProfitEntry,
+  'storeId' | 'storeCode' | 'storeName' | 'brandId' | 'brandName' | 'area'
+> & {
+  status?: string
+  regionCode?: string
+  brandKey: string
+  normalizedBrandName: string
+}
 
 const canonicalBrandNames = STANDARD_BRANDS.map((brand) => brand.name)
 
@@ -29,6 +38,10 @@ const summaryPage = ref(Math.max(1, Number(route.query.page || 1) || 1))
 const SUMMARY_PAGE_SIZE = 20
 const initialized = ref(false)
 const loadedDataScopeKey = ref<string | null>(null)
+const storeCatalog = ref<StoreInfo[]>([])
+const storeCatalogLoaded = ref(false)
+const storeCatalogLoading = ref(false)
+const storeCatalogError = ref('')
 let loadSerial = 0
 
 const dataEntryNotice = computed(() => {
@@ -41,18 +54,41 @@ const dataEntryNotice = computed(() => {
 const selectedMonth = computed(() => String(route.query.month || profit.month || profit.summary.month || ''))
 const monthOptions = computed(() => profit.months.length ? profit.months : Array.from(new Set(profit.allEntries.map((entry) => entry.month).filter(Boolean))))
 const allStoreOptions = computed<StoreOption[]>(() => {
-  const seen = new Set<string>()
-  return profit.allEntries
-    .filter((entry) => {
-      if (!entry.storeId || seen.has(entry.storeId)) return false
-      seen.add(entry.storeId)
-      return true
+  const byId = new Map<string, StoreOption>()
+
+  for (const store of storeCatalog.value) {
+    if (!store.id || byId.has(store.id)) continue
+    byId.set(store.id, {
+      storeId: store.id,
+      storeCode: store.code,
+      storeName: store.name,
+      brandId: store.brandId,
+      brandName: store.brandName,
+      area: store.area,
+      status: store.status,
+      regionCode: store.regionCode,
+      brandKey: entryBrandKey(store),
+      normalizedBrandName: normalizeBrandName(store.brandName),
     })
-    .map((entry) => ({
-      ...entry,
+  }
+
+  // Keep current dashboard entries as a compatibility fallback. The canonical
+  // store catalog remains the source of selector options across month changes.
+  for (const entry of profit.allEntries) {
+    if (!entry.storeId || byId.has(entry.storeId)) continue
+    byId.set(entry.storeId, {
+      storeId: entry.storeId,
+      storeCode: entry.storeCode,
+      storeName: entry.storeName,
+      brandId: entry.brandId,
+      brandName: entry.brandName,
+      area: entry.area,
       brandKey: entryBrandKey(entry),
       normalizedBrandName: normalizeBrandName(entry.brandName || ''),
-    }))
+    })
+  }
+
+  return Array.from(byId.values())
 })
 const brandOptions = computed<BrandOption[]>(() => {
   const byName = new Map<string, BrandOption>()
@@ -93,8 +129,20 @@ const storeOptions = computed(() => storesForBrand(selectedBrandId.value))
 const searchableStoreOptions = computed(() => storeOptions.value.map((store) => ({
   value: store.storeId,
   label: `${store.normalizedBrandName} · ${store.storeName || store.storeCode || store.storeId}`,
-  description: store.storeCode && store.storeCode !== store.storeId ? store.storeCode : '',
-  searchText: [store.storeName, store.storeCode, store.storeId, store.brandName].filter(Boolean).join(' '),
+  description: [
+    store.storeCode && store.storeCode !== store.storeId ? store.storeCode : '',
+    store.area || store.regionCode,
+    store.status,
+  ].filter(Boolean).join(' · '),
+  searchText: [
+    store.storeName,
+    store.storeCode,
+    store.storeId,
+    store.brandName,
+    store.area,
+    store.regionCode,
+    store.status,
+  ].filter(Boolean).join(' '),
 })))
 const selectedStoreId = computed(() => {
   if (scope.isStoreManager.value) return scope.boundStoreId.value
@@ -110,7 +158,6 @@ const selectedStore = computed(() => storeOptions.value.find((store) => store.st
     brandName: scope.brandName.value,
     brandKey: scope.scopedBrandId(),
     normalizedBrandName: scope.brandName.value,
-    month: selectedMonth.value,
   } as StoreOption : storeOptions.value[0]))
 const dataMatchesCurrentScope = computed(() => (
   initialized.value
@@ -165,6 +212,23 @@ async function loadProfitTableData() {
   loadedDataScopeKey.value = currentDataScopeKey()
   markFresh()
   return true
+}
+
+async function loadStoreCatalog(options: { force?: boolean } = {}) {
+  if (scope.isStoreManager.value || (storeCatalogLoaded.value && !options.force)) return true
+
+  storeCatalogLoading.value = true
+  storeCatalogError.value = ''
+  try {
+    storeCatalog.value = await getStores()
+    storeCatalogLoaded.value = true
+    return true
+  } catch {
+    storeCatalogError.value = '门店目录加载失败，当前只能显示已有利润数据的门店。'
+    return false
+  } finally {
+    storeCatalogLoading.value = false
+  }
 }
 
 function currentDataScopeKey() {
@@ -304,7 +368,7 @@ function brandNameByValue(value: string) {
   return brandOptions.value.find((brand) => brand.value === value)?.name || (value.startsWith('name:') ? value.slice(5) : '')
 }
 
-function matchesBrand(entry: ProfitEntry, brandId: string) {
+function matchesBrand(entry: Pick<ProfitEntry, 'brandId' | 'brandName'>, brandId: string) {
   if (!brandId) return true
   if (String(entry.brandId || '') === brandId) return true
   const brandName = brandNameByValue(brandId)
@@ -353,7 +417,10 @@ onMounted(async () => {
   if (scope.isStoreManager.value && (route.query.brandId || route.query.storeId || route.query.mode !== 'single')) {
     await router.replace({ path: '/profit-table', query: { month: selectedMonth.value || undefined, mode: 'single' } })
   }
-  await loadProfitTableData()
+  await Promise.all([
+    loadProfitTableData(),
+    loadStoreCatalog(),
+  ])
   initialized.value = true
 })
 
@@ -385,6 +452,10 @@ watch(
       {{ profit.error }}
       <button class="ghost-button" type="button" :disabled="profit.loading" @click="loadProfitTableData">重试</button>
     </div>
+    <div v-if="storeCatalogError" class="error-box">
+      {{ storeCatalogError }}
+      <button class="ghost-button" type="button" :disabled="storeCatalogLoading" @click="loadStoreCatalog({ force: true })">重试</button>
+    </div>
     <div v-if="dataEntryNotice" class="notice-box">{{ dataEntryNotice }}</div>
 
     <section class="report-filter-card">
@@ -395,7 +466,8 @@ watch(
           v-if="!scope.isStoreManager.value && reportMode === 'single'"
           :model-value="selectedStoreId"
           :options="searchableStoreOptions"
-          :disabled="!searchableStoreOptions.length"
+          :disabled="!storeCatalogLoading && !searchableStoreOptions.length"
+          :loading="storeCatalogLoading"
           placeholder="请选择门店"
           search-placeholder="搜索门店名称或编号"
           aria-label="门店"

@@ -170,7 +170,7 @@ test('分页只复用已应用条件，失败时保留上一批结果并提供�
   expect(requests[2]!.searchParams.get('keyword')).toBe('')
 })
 
-test('顶部全局门店会进入首次查询，重置时仍保留该门店范围', async ({ page }) => {
+test('带门店参数进入日志页时，首次查询和重置都保留该范围', async ({ page }) => {
   const requests = await prepare(page, { url: '/logs?storeId=rg1' })
 
   expect(requests[0]!.searchParams.get('storeScope')).toBe('STORE')

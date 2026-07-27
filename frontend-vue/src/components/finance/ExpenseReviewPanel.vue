@@ -4,6 +4,14 @@ import StatusBadge from '../common/StatusBadge.vue'
 import ExpenseClaimAttachments from './ExpenseClaimAttachments.vue'
 import ExpenseSupplementAttachments from './ExpenseSupplementAttachments.vue'
 import type { ExpenseAttachment, ExpenseClaim, ExpenseSupplementAttachment } from '../../api/finance'
+import {
+  expenseStatusLabel,
+  expenseStatusTone,
+  isExpenseEditable,
+  isExpenseReviewable,
+  isExpenseSupplementable,
+  normalizeExpenseStatus,
+} from '../../utils/expenseStatus'
 
 const props = withDefaults(defineProps<{
   expenses: ExpenseClaim[]
@@ -27,36 +35,6 @@ defineEmits<{
 
 function money(value?: number) {
   return `¥${Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-}
-
-function tone(status: string) {
-  if (status === '已通过' || status === '已完成' || status === 'APPROVED') return 'ok'
-  if (status === '已驳回' || status === 'REJECTED') return 'bad'
-  if (status === '草稿') return 'info'
-  return 'warn'
-}
-
-function statusLabel(status: string) {
-  const map: Record<string, string> = {
-    PENDING: '待财务审核',
-    APPROVED: '已通过',
-    REJECTED: '已驳回',
-    REQUEST_INFO: '待补资料',
-    '待补资料': '待补资料',
-  }
-  return map[status] || status || '待财务审核'
-}
-
-function canReview(status: string) {
-  return ['待审核', 'PENDING'].includes(status)
-}
-
-function canEdit(status: string) {
-  return ['草稿', '已驳回', 'REJECTED', '待补资料', 'REQUEST_INFO'].includes(status)
-}
-
-function canSupplement(status: string) {
-  return ['待补资料', 'REQUEST_INFO'].includes(status)
 }
 
 function supplementAttachments(expense: ExpenseClaim): ExpenseSupplementAttachment[] {
@@ -85,15 +63,8 @@ function reviewNote(expense: ExpenseClaim) {
 }
 
 function shouldShowReviewNote(expense: ExpenseClaim) {
-  return Boolean(reviewNote(expense)) && [
-    '待补资料',
-    'REQUEST_INFO',
-    '已驳回',
-    'REJECTED',
-    '已完成',
-    '已通过',
-    'APPROVED',
-  ].includes(expense.status)
+  return Boolean(reviewNote(expense))
+    && ['待补资料', '已驳回', '已完成'].includes(normalizeExpenseStatus(expense.status))
 }
 </script>
 
@@ -134,7 +105,7 @@ function shouldShowReviewNote(expense: ExpenseClaim) {
             <ExpenseClaimAttachments
               :attachments="claimAttachments(expense)"
               :expense-id="expense.id"
-              :removable="props.editable && canEdit(expense.status)"
+              :removable="props.editable && isExpenseEditable(expense.status)"
               @deleted="$emit('attachmentDeleted', expense)"
             />
           </div>
@@ -157,8 +128,8 @@ function shouldShowReviewNote(expense: ExpenseClaim) {
           </div>
         </div>
         <div class="finance-row-side">
-          <StatusBadge :label="statusLabel(expense.status)" :tone="tone(expense.status)" />
-          <div v-if="props.reviewable && canReview(expense.status)" class="finance-actions">
+          <StatusBadge :label="expenseStatusLabel(expense.status)" :tone="expenseStatusTone(expense.status)" />
+          <div v-if="props.reviewable && isExpenseReviewable(expense.status)" class="finance-actions">
             <button
               class="mini-button"
               type="button"
@@ -187,9 +158,9 @@ function shouldShowReviewNote(expense: ExpenseClaim) {
               <CheckCircle2 :size="14" />
             </button>
           </div>
-          <div v-else-if="props.editable && canEdit(expense.status)" class="finance-actions">
+          <div v-else-if="props.editable && isExpenseEditable(expense.status)" class="finance-actions">
             <button
-              v-if="canSupplement(expense.status)"
+              v-if="isExpenseSupplementable(expense.status)"
               class="mini-button"
               type="button"
               :disabled="props.actioningId === expense.id"
