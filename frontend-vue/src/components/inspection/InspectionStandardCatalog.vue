@@ -101,7 +101,12 @@ function riskClass(level: InspectionRiskLevel) {
       <div><span>合格线</span><b>{{ stats.passScore }} 分</b></div>
     </section>
 
-    <section v-if="standard.validationError" class="content-card inspection-standard-error" role="alert">
+    <section
+      v-if="standard.validationError"
+      class="content-card inspection-standard-error"
+      role="alert"
+      data-persistent-error-state
+    >
       <div class="inspection-standard-error-head">
         <div>
           <b>标准校验未通过，以下条款仅供核对</b>

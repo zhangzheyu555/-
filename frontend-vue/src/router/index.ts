@@ -12,7 +12,6 @@ const DataExportPage = () => import('../pages/DataExportPage.vue')
 const DataEntryPage = () => import('../pages/DataEntryPage.vue')
 const ProfitOverviewPage = () => import('../pages/ProfitOverviewPage.vue')
 const ProfitTablePage = () => import('../pages/ProfitTablePage.vue')
-const StoreDetailPage = () => import('../pages/StoreDetailPage.vue')
 const StoreManagementPage = () => import('../pages/StoreManagementPage.vue')
 const StaffProfilePage = () => import('../pages/StaffProfilePage.vue')
 const SupervisorWorkbenchPage = () => import('../pages/SupervisorWorkbenchPage.vue')
@@ -32,7 +31,6 @@ const UserPermissionPage = () => import('../pages/UserPermissionPage.vue')
 const BossWorkspace = () => import('../pages/workspaces/BossWorkspace.vue')
 const FinanceWorkspace = () => import('../pages/workspaces/FinanceWorkspace.vue')
 const WarehouseWorkspace = () => import('../pages/workspaces/WarehouseWorkspace.vue')
-const StoreManagerWorkspace = () => import('../pages/workspaces/StoreManagerWorkspace.vue')
 const OperationsWorkspace = () => import('../pages/workspaces/OperationsWorkspace.vue')
 const CentralWarehouseWorkspace = () => import('../pages/workspaces/business/CentralWarehouseWorkspace.vue')
 const StoreInventoryWorkspace = () => import('../pages/workspaces/business/StoreInventoryWorkspace.vue')
@@ -55,8 +53,8 @@ const appChildren: RouteRecordRaw[] = [
   { path: 'finance', name: 'finance-workspace', component: FinanceWorkspace, meta: permissionMeta(PERMISSIONS.FINANCE_PROFIT_READ, { menuKey: 'finance-workspace', title: '财务工作台', allowedRoles: ['FINANCE'] }) },
   { path: 'warehouse', name: 'warehouse-overview', component: WarehouseWorkspace, meta: permissionMeta(PERMISSIONS.WAREHOUSE_READ, { moduleKey: 'warehouse', menuKey: 'warehouse-center', warehouseTab: 'overview', title: '仓库中心' }) },
   { path: 'warehouse/workspace', redirect: '/warehouse' },
-  // 店长默认工作区继续保留 /store 兼容旧链接，但与门店详情共用唯一侧栏入口。
-  { path: 'store', name: 'store-workspace', component: StoreManagerWorkspace, meta: permissionMeta(PERMISSIONS.STORE_READ, { menuKey: 'store-detail', title: '门店详情', allowedRoles: ['STORE_MANAGER'] }) },
+  // 门店详情已下线；保留旧工作区地址只用于兼容历史会话和书签。
+  { path: 'store', name: 'store-workspace', redirect: () => retiredStoreModuleRoute('/store') },
   { path: 'operations', name: 'operations-workspace', component: OperationsWorkspace, meta: permissionMeta(PERMISSIONS.OPERATIONS_DASHBOARD_READ, { menuKey: 'supervisor-workspace', title: '督导工作台', allowedRoles: ['SUPERVISOR'] }) },
   { path: 'employee', name: 'employee-workspace', component: EmployeeWorkbenchPage, meta: permissionMeta(PERMISSIONS.EXAM_LEARN, { menuKey: 'employee-workspace', title: '员工工作台', allowedRoles: ['EMPLOYEE'] }) },
   { path: 'employee/profile', name: 'employee-profile', component: EmployeeProfilePage, meta: permissionMeta(PERMISSIONS.EXAM_LEARN, { menuKey: 'employee-profile', title: '我的资料', allowedRoles: ['EMPLOYEE'] }) },
@@ -92,7 +90,7 @@ const appChildren: RouteRecordRaw[] = [
   },
   { path: 'expenses', name: 'expenses', component: ExpensePage, meta: permissionMeta(PERMISSIONS.EXPENSE_READ, { menuKey: 'expenses', title: '报销栏' }) },
   { path: 'export', name: 'export', component: DataExportPage, meta: permissionMeta(PERMISSIONS.FINANCE_EXPORT, { menuKey: 'data-export', title: '数据导出', allowedRoles: ['FINANCE'] }) },
-  { path: 'store-detail', name: 'store-detail', component: StoreDetailPage, meta: permissionMeta(PERMISSIONS.STORE_READ, { menuKey: 'store-detail', title: '门店详情' }) },
+  { path: 'store-detail', name: 'store-detail-retired', redirect: () => retiredStoreModuleRoute('/store-detail') },
   { path: 'stores', name: 'stores', component: StoreManagementPage, meta: permissionMeta(PERMISSIONS.STORE_MANAGE, { menuKey: 'store-management', title: '门店管理', bossOnly: true }) },
   { path: 'staff', name: 'staff-profiles', component: StaffProfilePage, meta: permissionMeta(PERMISSIONS.EMPLOYEE_READ, { menuKey: 'staff-profiles', title: '员工档案' }) },
   { path: 'logs', name: 'logs', component: OperationLogPage, meta: permissionMeta(PERMISSIONS.SYSTEM_AUDIT_READ, { menuKey: 'operation-logs', title: '操作日志' }) },
@@ -209,6 +207,14 @@ function defaultRouteForSession(): RouteLocationRaw {
   return resolveAvailableWorkspace(auth) || '/no-permission'
 }
 
+function retiredStoreModuleRoute(from: string): RouteLocationRaw {
+  const auth = useAuthStore()
+  if (!auth.isLoggedIn) return { name: 'login', query: { redirect: from } }
+  const role = normalizeRoleCode(auth.role)
+  if (role === 'STORE_MANAGER' || isBossRole(role)) return '/profit'
+  return { name: 'no-permission', query: { from } }
+}
+
 function salaryRouteForSession(): RouteLocationRaw {
   const auth = useAuthStore()
   const mode = auth.dataScope('SALARY')?.mode
@@ -289,7 +295,7 @@ router.beforeEach(async (to) => {
   if (requiresBoss && auth.isLoggedIn && !isBossRole(auth.role)) {
     if (auth.role === 'STORE_MANAGER') {
       return {
-        path: '/store',
+        path: '/profit',
         query: { notice: 'STORE_MANAGEMENT_FORBIDDEN' },
       }
     }
@@ -300,7 +306,6 @@ router.beforeEach(async (to) => {
     && (to.path === '/assistant'
       || to.path === '/employee-assistant'
       || to.path.startsWith('/employee-assistant/')
-      || to.path === '/store-detail'
       || to.path === '/warehouse'
       || to.path.startsWith('/warehouse/')
       || to.path === '/store/inventory'

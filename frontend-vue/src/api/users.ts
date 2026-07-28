@@ -1,4 +1,5 @@
 import { apiGet, apiPost, apiPut } from './http'
+import type { AxiosRequestConfig } from 'axios'
 
 export interface UserAccount {
   id: number
@@ -116,8 +117,9 @@ export function getAuthorizationCatalog() {
   return apiGet<AuthorizationCatalog>('/api/users/authorization/catalog')
 }
 
-export function getUserAuthorization(id: number) {
-  return apiGet<UserAuthorization>(`/api/users/${id}/authorization`)
+export function getUserAuthorization(id: number, signal?: AbortSignal) {
+  const config: AxiosRequestConfig = signal ? { signal } : {}
+  return apiGet<UserAuthorization>(`/api/users/${id}/authorization`, config)
 }
 
 export function updateUserAuthorization(id: number, payload: UserAuthorizationUpdate) {

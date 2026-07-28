@@ -1,4 +1,4 @@
-import { reactive, ref, type Ref } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, type Ref } from 'vue'
 import {
   approveSalaryRecord, deleteSalaryRecord, exportSalaryCsv,
   generateSalaryWithReport, lockSalaryRecord,
@@ -36,6 +36,11 @@ export interface SalaryActionConfirmation {
   notePlaceholder?: string
 }
 
+export interface SalaryPreviewContext {
+  storeId: string
+  month: string
+}
+
 export function emptyForm(): SalaryRecordPayload {
   return {
     storeId: '', month: currentMonth(), employeeId: '', employeeName: '',
@@ -64,16 +69,20 @@ export function useSalaryWorkflow(opts: {
   canEdit: Ref<boolean>,
   pageError: Ref<string>,
   successMessage: Ref<string>,
-  loadPage: () => Promise<void>,
+  isPreviewContextAllowed?: (context: SalaryPreviewContext) => boolean,
+  loadPage: () => Promise<boolean | void>,
   onDeleted?: (record: SalaryRecord) => void,
 }) {
   const generating = ref(false)
+  const exporting = ref(false)
   const saving = ref(false)
   const actioningId = ref('')
   const deletingId = ref('')
   const formError = ref('')
   const previewLoading = ref(false)
   const previewData = ref<SalaryGenerateReport | null>(null)
+  const previewError = ref('')
+  const previewContext = ref<SalaryPreviewContext | null>(null)
   const showPreview = ref(false)
   const showDrawer = ref(false)
   const drawerMode = ref<'view' | 'edit'>('view')
@@ -81,7 +90,41 @@ export function useSalaryWorkflow(opts: {
   const form = reactive<SalaryRecordPayload>(emptyForm())
   const actionConfirmation = ref<SalaryActionConfirmation | null>(null)
   const actionConfirmationBusy = ref(false)
+  const actionConfirmationError = ref('')
   const actionNote = ref('')
+  let previewRequestController: AbortController | null = null
+
+  function isPreviewContextValid(context: SalaryPreviewContext | null) {
+    if (
+      !context
+      || !context.storeId
+      || context.month !== opts.selectedMonth.value
+      || !opts.hasValidMonth.value
+    ) return false
+    if (opts.isPreviewContextAllowed) return opts.isPreviewContextAllowed(context)
+    return context.storeId === opts.selectedStoreId.value && opts.canGenerate.value
+  }
+
+  const canConfirmGeneration = computed(() => Boolean(
+    isPreviewContextValid(previewContext.value)
+    && Number(previewData.value?.generated || 0) > 0
+    && !previewLoading.value
+    && !generating.value,
+  ))
+
+  async function refreshAfterMutation(actionLabel: string) {
+    try {
+      const loaded = await opts.loadPage()
+      if (loaded === false) {
+        opts.pageError.value = `${actionLabel}已成功，但最新数据刷新失败，请点击重试。`
+        return false
+      }
+      return true
+    } catch {
+      opts.pageError.value = `${actionLabel}已成功，但最新数据刷新失败，请点击重试。`
+      return false
+    }
+  }
 
   function openDrawer(record: SalaryRecord, mode: 'view' | 'edit' = 'view') {
     drawerRecord.value = record
@@ -133,74 +176,143 @@ export function useSalaryWorkflow(opts: {
     return Array.from(new Set(employeeIds.map((id) => String(id || '').trim()).filter(Boolean)))
   }
 
-  function generationPayload(employeeIds?: string[]): SalaryGenerateRequest {
-    const payload: SalaryGenerateRequest = {
+  function generationPayload(
+    employeeIds?: string[],
+    context: SalaryPreviewContext = previewContext.value || {
+      storeId: opts.selectedStoreId.value,
       month: opts.selectedMonth.value,
+    },
+  ): SalaryGenerateRequest {
+    const payload: SalaryGenerateRequest = {
+      month: context.month,
     }
-    if (opts.selectedStoreId.value !== 'all') payload.storeId = opts.selectedStoreId.value
+    if (context.storeId !== 'all') payload.storeId = context.storeId
     if (employeeIds !== undefined) payload.employeeIds = normalizedEmployeeIds(employeeIds)
     return payload
   }
 
-  async function doPreview(employeeIds?: string[]) {
-    if (!opts.canGenerate.value) return null
+  async function doPreview(
+    employeeIdsOrContext?: string[] | SalaryPreviewContext,
+    requestedContext?: SalaryPreviewContext,
+  ) {
+    const employeeIds = Array.isArray(employeeIdsOrContext)
+      ? normalizedEmployeeIds(employeeIdsOrContext)
+      : undefined
+    const context = (
+      !Array.isArray(employeeIdsOrContext) && employeeIdsOrContext
+        ? employeeIdsOrContext
+        : requestedContext
+    ) || previewContext.value || {
+      storeId: opts.selectedStoreId.value,
+      month: opts.selectedMonth.value,
+    }
+    if (!isPreviewContextValid(context)) {
+      opts.pageError.value = '请先选择有效月份和授权门店，再预览本月工资。'
+      return null
+    }
+    previewRequestController?.abort()
+    const controller = new AbortController()
+    previewRequestController = controller
+    previewContext.value = context
+    previewData.value = null
+    previewError.value = ''
+    showPreview.value = true
     previewLoading.value = true
     opts.pageError.value = ''
     try {
-      previewData.value = await previewSalaryGeneration(generationPayload(employeeIds))
-      showPreview.value = true
-      return previewData.value
+      const report = employeeIds === undefined && context.storeId !== 'all'
+        ? await previewSalaryGeneration(context.storeId, context.month, controller.signal)
+        : await previewSalaryGeneration(generationPayload(employeeIds, context))
+      if (
+        controller.signal.aborted
+        || previewContext.value?.storeId !== context.storeId
+        || previewContext.value?.month !== context.month
+      ) return null
+      previewData.value = report
+      return report
     } catch (e) {
-      opts.pageError.value = userError(e, '预览生成失败。')
+      if (controller.signal.aborted) return null
+      previewError.value = userError(e, '工资生成预览失败，请稍后重试。')
       return null
     } finally {
-      previewLoading.value = false
+      if (previewRequestController === controller) {
+        previewRequestController = null
+        previewLoading.value = false
+      }
     }
   }
 
-  async function doGenerate(employeeIds: string[]) {
-    if (!opts.canGenerate.value) return false
+  function closePreview() {
+    if (generating.value) return
+    previewRequestController?.abort()
+    previewRequestController = null
+    previewLoading.value = false
+    showPreview.value = false
+    previewData.value = null
+    previewError.value = ''
+    previewContext.value = null
+  }
+
+  async function doGenerate(employeeIds: string[] = []) {
+    const context = previewContext.value
+    if (!context || !canConfirmGeneration.value) {
+      previewError.value = context && !isPreviewContextValid(context)
+        ? '工资范围已经变化，请关闭后重新预览。'
+        : '当前没有可生成的员工，请先补齐考勤或检查跳过原因。'
+      return false
+    }
     const selectedIds = normalizedEmployeeIds(employeeIds)
     if (!selectedIds.length) {
-      opts.pageError.value = '请至少选择一名可生成工资的员工。'
+      previewError.value = '请至少选择一名可生成工资的员工。'
       return false
     }
     generating.value = true
+    previewError.value = ''
     opts.pageError.value = ''
     opts.successMessage.value = ''
+    let generated = false
     try {
-      const payload = generationPayload(selectedIds)
+      const payload = generationPayload(selectedIds, context)
       // Selection can change after the dialog opens. Re-run the preview with
       // the exact same employee IDs that will be sent to generation.
       const confirmedPreview = await previewSalaryGeneration(payload)
+      if (!isPreviewContextValid(context)) {
+        previewError.value = '工资范围已经变化，请关闭后重新预览。'
+        return false
+      }
       previewData.value = confirmedPreview
       if (confirmedPreview.generated <= 0) {
-        opts.pageError.value = '所选员工当前没有可生成的工资，请刷新名单后重试。'
+        previewError.value = '所选员工当前没有可生成的工资，请刷新名单后重试。'
         return false
       }
       const report = await generateSalaryWithReport(payload)
       const parts = [`已生成 ${report.generated} 条工资记录`]
       if (report.skipped > 0) parts.push(`跳过 ${report.skipped} 条`)
       if (report.errors > 0) parts.push(`${report.errors} 条异常`)
-      if (report.skipDetails?.length) parts.push('点击"预览"查看跳过原因')
       opts.successMessage.value = parts.join('，')
+      generated = true
       previewData.value = null
       showPreview.value = false
-      await opts.loadPage()
-      return true
+      previewContext.value = null
     } catch (e) {
-      opts.pageError.value = userError(e, '工资记录生成失败。')
-      return false
+      previewError.value = userError(e, '工资记录生成失败，请检查后重试。')
     } finally {
       generating.value = false
     }
+    if (!generated) return false
+    await refreshAfterMutation('工资生成')
+    return true
   }
 
   async function doExport() {
+    if (exporting.value) return
     if (!opts.hasValidMonth.value) {
       opts.pageError.value = '请选择有效月份。'
       return
     }
+    exporting.value = true
+    opts.pageError.value = ''
+    opts.successMessage.value = ''
     try {
       await exportSalaryCsv({
         month: opts.selectedMonth.value || undefined,
@@ -210,24 +322,37 @@ export function useSalaryWorkflow(opts: {
       opts.successMessage.value = '工资 CSV 已导出'
     } catch (e) {
       opts.pageError.value = userError(e, '导出失败。')
+    } finally {
+      exporting.value = false
     }
   }
 
   async function doSubmit(r: SalaryRecord) {
+    if (actioningId.value) return
     actioningId.value = r.id; opts.pageError.value = ''
-    try { await submitSalaryRecord(r.id); opts.successMessage.value = '已提交审核'; await opts.loadPage() }
+    try {
+      await submitSalaryRecord(r.id)
+      opts.successMessage.value = '已提交审核'
+      await refreshAfterMutation('提交审核')
+    }
     catch (e) { opts.pageError.value = userError(e, '提交审核失败。') }
     finally { actioningId.value = '' }
   }
 
   async function doApprove(r: SalaryRecord) {
+    if (actioningId.value) return
     actioningId.value = r.id; opts.pageError.value = ''
-    try { await approveSalaryRecord(r.id); opts.successMessage.value = '已审核通过'; await opts.loadPage() }
+    try {
+      await approveSalaryRecord(r.id)
+      opts.successMessage.value = '已审核通过'
+      await refreshAfterMutation('审核')
+    }
     catch (e) { opts.pageError.value = userError(e, '审核失败。') }
     finally { actioningId.value = '' }
   }
 
   function doReject(r: SalaryRecord) {
+    actionConfirmationError.value = ''
     actionNote.value = '请调整工资明细后重新提交'
     actionConfirmation.value = {
       kind: 'reject',
@@ -244,6 +369,7 @@ export function useSalaryWorkflow(opts: {
   function doDelete(r: SalaryRecord) {
     if (!opts.canEdit.value || !r.id || !['DRAFT', 'REJECTED'].includes(r.status || '')) return
     const assignedEmployee = /^SALADD-/i.test(r.id)
+    actionConfirmationError.value = ''
     actionNote.value = ''
     actionConfirmation.value = {
       kind: 'delete',
@@ -258,6 +384,7 @@ export function useSalaryWorkflow(opts: {
   }
 
   function doMarkPaid(r: SalaryRecord) {
+    actionConfirmationError.value = ''
     actionNote.value = ''
     actionConfirmation.value = {
       kind: 'mark-paid',
@@ -270,6 +397,7 @@ export function useSalaryWorkflow(opts: {
   }
 
   function doLock(r: SalaryRecord) {
+    actionConfirmationError.value = ''
     actionNote.value = ''
     actionConfirmation.value = {
       kind: 'lock',
@@ -284,6 +412,7 @@ export function useSalaryWorkflow(opts: {
   function cancelActionConfirmation() {
     if (actionConfirmationBusy.value) return
     actionConfirmation.value = null
+    actionConfirmationError.value = ''
     actionNote.value = ''
   }
 
@@ -292,10 +421,12 @@ export function useSalaryWorkflow(opts: {
     if (!confirmation || actionConfirmationBusy.value) return
 
     actionConfirmationBusy.value = true
+    actionConfirmationError.value = ''
     opts.pageError.value = ''
     if (confirmation.kind === 'delete') deletingId.value = confirmation.record.id
     else actioningId.value = confirmation.record.id
 
+    let completed = false
     try {
       if (confirmation.kind === 'reject') {
         await rejectSalaryRecord(confirmation.record.id, actionNote.value || '请调整后重新提交')
@@ -314,32 +445,50 @@ export function useSalaryWorkflow(opts: {
         await lockSalaryRecord(confirmation.record.id)
         opts.successMessage.value = '工资记录已锁定'
       }
-      await opts.loadPage()
+      completed = true
     } catch (e) {
       const fallback = confirmation.kind === 'reject'
         ? '驳回失败。'
         : confirmation.kind === 'delete'
           ? '删除失败。'
           : '操作失败。'
-      opts.pageError.value = userError(e, fallback)
+      actionConfirmationError.value = userError(e, fallback)
     } finally {
       actioningId.value = ''
       deletingId.value = ''
       actionConfirmationBusy.value = false
+    }
+    if (completed) {
       actionConfirmation.value = null
+      actionConfirmationError.value = ''
       actionNote.value = ''
+      await refreshAfterMutation(
+        confirmation.kind === 'delete'
+          ? '删除工资记录'
+          : confirmation.kind === 'reject'
+            ? '驳回'
+            : confirmation.kind === 'mark-paid'
+              ? '标记发放'
+              : '锁定工资记录',
+      )
     }
   }
 
+  onBeforeUnmount(() => {
+    previewRequestController?.abort()
+    previewRequestController = null
+  })
+
   return {
     // generation state
-    generating, previewLoading, previewData, showPreview,
+    generating, exporting, previewLoading, previewData, previewError, previewContext,
+    showPreview, canConfirmGeneration,
     // drawer state
     showDrawer, drawerMode, drawerRecord, form, formError, saving,
     // action state
-    actioningId, deletingId, actionConfirmation, actionConfirmationBusy, actionNote,
+    actioningId, deletingId, actionConfirmation, actionConfirmationBusy, actionConfirmationError, actionNote,
     // methods
-    openDrawer, closeDrawer, doSave, doPreview, doGenerate, doExport,
+    openDrawer, closeDrawer, doSave, doPreview, closePreview, doGenerate, doExport,
     doSubmit, doApprove, doReject, doDelete, doMarkPaid, doLock,
     cancelActionConfirmation, confirmAction,
   }

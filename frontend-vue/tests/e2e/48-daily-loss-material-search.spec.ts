@@ -84,6 +84,7 @@ function localDate() {
 }
 
 test('每日报损支持品类搜索和去皮换算，提交数值型 itemConfigId 与形态', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
   const saveBodies: Array<Record<string, unknown>> = []
   let uploadCount = 0
   const today = localDate()
@@ -171,7 +172,39 @@ test('每日报损支持品类搜索和去皮换算，提交数值型 itemConfig
   await page.goto('/daily-loss')
   await expect(page.getByRole('heading', { name: '今日报损' })).toBeVisible()
   await expect(page.getByText('已报 2 次', { exact: true })).toBeVisible()
+  await expect(page.getByText(/厂商赔付/)).toHaveCount(0)
+  await expect(page.getByText('总计损耗金额', { exact: true })).toBeVisible()
+  await expect(page.getByText(/店铺承担/)).toHaveCount(0)
+  await expect(page.getByLabel('报损结算')).toBeVisible()
+  await expect(page.getByText('茹菓测试店 · 茹菓', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '增加品类' })).toBeVisible()
+  await expect(page.getByText('选择照片', { exact: true })).toBeVisible()
+  expect(await page.evaluate(() => Math.max(
+    document.documentElement.scrollWidth,
+    document.body.scrollWidth,
+  ) - window.innerWidth)).toBeLessThanOrEqual(1)
+
+  await page.locator('.record-row').first().click()
+  const detailDialog = page.getByRole('dialog', { name: '报损详情' })
+  await expect(detailDialog).toBeVisible()
+  await expect(detailDialog.locator('.detail-settlement')).toBeVisible()
+  await expect(detailDialog.getByText('总计损耗金额', { exact: true })).toBeVisible()
+  await expect(detailDialog.getByText(/店铺承担/)).toHaveCount(0)
+  await expect(detailDialog.getByText(/厂商赔付/)).toHaveCount(0)
+  await expect(detailDialog.getByRole('button', { name: '关闭报损详情' })).toBeInViewport()
+  const detailBox = await detailDialog.boundingBox()
+  expect(detailBox).not.toBeNull()
+  expect(detailBox!.x).toBeGreaterThanOrEqual(0)
+  expect(detailBox!.x + detailBox!.width).toBeLessThanOrEqual(390)
+  await detailDialog.getByRole('button', { name: '关闭报损详情' }).click()
   await page.locator('.item-picker-trigger').first().click()
+
+  const pickerDialog = page.getByRole('dialog', { name: '选择报损品类' })
+  await expect(pickerDialog.getByRole('button', { name: '关闭品类选择' })).toBeInViewport()
+  const pickerBox = await pickerDialog.boundingBox()
+  expect(pickerBox).not.toBeNull()
+  expect(pickerBox!.x).toBeGreaterThanOrEqual(0)
+  expect(pickerBox!.x + pickerBox!.width).toBeLessThanOrEqual(390)
 
   const material = page.getByRole('combobox', { name: '搜索报损品类', exact: true })
   await material.fill('奶制品 瓶')
@@ -180,6 +213,7 @@ test('每日报损支持品类搜索和去皮换算，提交数值型 itemConfig
   await page.getByRole('option', { name: /鲜牛奶.*MILK-202.*奶制品.*瓶/ }).click()
 
   await page.locator('.quantity-control input').first().fill('2')
+  await expect(page.getByLabel('报损结算')).toBeVisible()
   await page.getByRole('button', { name: '变质', exact: true }).click()
   await page.locator('.attachment-field input[type="file"]').setInputFiles({
     name: 'milk-loss.png',
@@ -197,6 +231,8 @@ test('每日报损支持品类搜索和去皮换算，提交数值型 itemConfig
       lossReason: '变质',
     }],
   })
+  expect(saveBodies[0]).not.toHaveProperty('supplierCompensationAmount')
+  expect(saveBodies[0]).not.toHaveProperty('storeBorneAmount')
   expect(typeof (saveBodies[0].details as Array<{ itemConfigId: unknown }>)[0].itemConfigId).toBe('number')
 
   await page.locator('.item-picker-trigger').first().click()
@@ -222,7 +258,7 @@ test('每日报损支持品类搜索和去皮换算，提交数值型 itemConfig
   await page.getByRole('button', { name: '提交本次报损', exact: true }).click()
 
   await expect.poll(() => saveBodies.length).toBe(2)
-  expect(uploadCount).toBe(2)
+  await expect.poll(() => uploadCount).toBe(2)
   expect(saveBodies[1]).toMatchObject({
     storeId: 'rg1',
     details: [{
@@ -232,4 +268,8 @@ test('每日报损支持品类搜索和去皮换算，提交数值型 itemConfig
       peelState: 'PEELED',
     }],
   })
+  expect(await page.evaluate(() => Math.max(
+    document.documentElement.scrollWidth,
+    document.body.scrollWidth,
+  ) - window.innerWidth)).toBeLessThanOrEqual(1)
 })

@@ -338,7 +338,7 @@ test('non-BOSS users cannot enter store management even when a stale session cla
     await prepare(page, newState(), session)
     await page.goto('/stores')
     if (role === 'STORE_MANAGER') {
-      await expect(page).toHaveURL(/\/store\?notice=STORE_MANAGEMENT_FORBIDDEN/)
+      await expect(page).toHaveURL(/\/profit\?notice=STORE_MANAGEMENT_FORBIDDEN/)
     } else {
       await expect(page).toHaveURL(/\/no-permission\?from=\/stores/)
     }

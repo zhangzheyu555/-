@@ -13,6 +13,8 @@ import static org.mockito.Mockito.when;
 import com.storeprofit.system.audit.AuditRepository;
 import com.storeprofit.system.common.BusinessException;
 import com.storeprofit.system.platform.authorization.AuthorizationService;
+import com.storeprofit.system.platform.authorization.DataScope;
+import com.storeprofit.system.platform.authorization.DataScopeDomains;
 import com.storeprofit.system.platform.authorization.DataScopeService;
 import com.storeprofit.system.platform.authorization.PermissionCodes;
 import java.util.List;
@@ -52,6 +54,21 @@ class AccessControlServiceTest {
     assertThatThrownBy(() -> service.requireFinanceRead(supervisor))
         .isInstanceOf(BusinessException.class)
         .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
+  }
+
+  @Test
+  void supervisorAllStoreScopeAppliesToKnowledgeBaseManagement() {
+    AuthUser supervisor = user("SUPERVISOR", null);
+    DataScopeService dataScopeService = mock(DataScopeService.class);
+    AccessControlService knowledgeAccess = new AccessControlService(
+        authService, authRepository, auditRepository, mock(AuthorizationService.class), dataScopeService);
+    when(dataScopeService.configuredScope(supervisor, DataScopeDomains.STORE))
+        .thenReturn(DataScope.all());
+
+    DataScope scope = knowledgeAccess.knowledgeBaseManagementStoreScope(supervisor);
+
+    assertThat(scope.allowsAllStores()).isTrue();
+    assertThat(scope.allowsStore("new-store")).isTrue();
   }
 
   @Test

@@ -62,7 +62,6 @@ test('all management workspaces and learner-only route are wired', () => {
     'BossWorkspace.vue',
     'FinanceWorkspace.vue',
     'WarehouseWorkspace.vue',
-    'StoreManagerWorkspace.vue',
     'OperationsWorkspace.vue',
   ]) {
     expect(() => source(`src/pages/workspaces/${workspace}`)).not.toThrow()

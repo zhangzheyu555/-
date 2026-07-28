@@ -1,0 +1,116 @@
+version: '1.0'
+name: production-deploy
+displayName: ProductionDeploy
+triggers:
+  trigger: manual
+  push:
+    branches:
+      precise:
+        - main
+stages:
+  - name: build_and_deploy
+    displayName: 构建并发布
+    strategy: naturally
+    trigger: auto
+    executor: []
+    steps:
+      - step: build@maven
+        name: build_backend
+        displayName: 构建后端
+        jdkVersion: '21'
+        mavenVersion: 3.9.11
+        commands:
+          - cd backend
+          - mvn -B -ntp test
+          - mvn -B -ntp -DskipTests package
+          - tar -czf ../backend-release.tar.gz -C target store-profit-backend-0.1.0-SNAPSHOT.jar
+        artifacts:
+          - name: BACKEND_ARTIFACT
+            path:
+              - backend-release.tar.gz
+        settings: []
+        caches:
+          - ~/.m2
+        notify: []
+        strategy:
+          retry: '0'
+      - step: build@nodejs
+        name: build_frontend
+        displayName: 构建前端
+        nodeVersion: 22.22.0
+        commands:
+          - cd frontend-vue
+          - npm ci
+          - npm run build
+          - tar -czf ../frontend-release.tar.gz dist
+        artifacts:
+          - name: FRONTEND_ARTIFACT
+            path:
+              - frontend-release.tar.gz
+        caches:
+          - ~/.npm
+          - ~/.yarn
+        notify: []
+        strategy:
+          retry: '0'
+  - name: deploy_production
+    displayName: 发布到生产服务器
+    strategy: naturally
+    trigger: auto
+    executor: []
+    steps:
+      - step: deploy@agent
+        name: deploy_agent
+        displayName: 主机部署
+        hostGroupID:
+          ID: store-profit-production
+          hostID:
+            - 8f89dcbb-5d38-493a-b51c-54caddba7985
+        deployArtifact:
+          - source: build
+            name: backend_release
+            target: ~/gitee_go/deploy
+            dependArtifact: BACKEND_ARTIFACT
+          - name: frontend_release
+            target: ~/gitee_go/deploy
+            source: build
+            dependArtifact: FRONTEND_ARTIFACT
+        script:
+          - set -Eeuo pipefail
+          - ''
+          - deploy_dir="/home/deploy/gitee_go/deploy"
+          - backend_source="$deploy_dir/backend_release.tar.gz"
+          - frontend_source="$deploy_dir/frontend_release.tar.gz"
+          - artifact_dir="$(mktemp -d /home/deploy/.gitee-artifact.XXXXXX)"
+          - release_id="gitee-$(date -u +%Y%m%d%H%M%S)-${RANDOM}${RANDOM}"
+          - release_dir="/home/deploy/releases/$release_id"
+          - ''
+          - cleanup() {
+          - '  rm -rf "$artifact_dir"'
+          - '}'
+          - trap cleanup EXIT
+          - ''
+          - test -f "$backend_source"
+          - test -f "$frontend_source"
+          - ''
+          - mkdir -p "$artifact_dir/backend" "$artifact_dir/frontend"
+          - tar -xzf "$backend_source" -C "$artifact_dir/backend"
+          - tar -xzf "$frontend_source" -C "$artifact_dir/frontend"
+          - ''
+          - backend_archive="$(find "$artifact_dir/backend" -type f -name 'backend-release.tar.gz' -print -quit)"
+          - frontend_archive="$(find "$artifact_dir/frontend" -type f -name 'frontend-release.tar.gz' -print -quit)"
+          - ''
+          - test -n "$backend_archive"
+          - test -n "$frontend_archive"
+          - ''
+          - tar -tzf "$backend_archive" >/dev/null
+          - tar -tzf "$frontend_archive" >/dev/null
+          - ''
+          - install -d -m 0700 "$release_dir"
+          - install -m 0600 "$backend_archive" "$release_dir/backend-release.tar.gz"
+          - install -m 0600 "$frontend_archive" "$release_dir/frontend-release.tar.gz"
+          - ''
+          - sudo -n /usr/local/sbin/store-profit-release "$release_id"
+        notify: []
+        strategy:
+          retry: '0'

@@ -3,7 +3,6 @@ defineProps<{
   note: string
   saving: boolean
   uploading: boolean
-  saveBlockedReason: string
 }>()
 
 const emit = defineEmits<{
@@ -24,17 +23,18 @@ function updateNote(event: Event) {
       <textarea
         :value="note"
         rows="3"
+        maxlength="1000"
         placeholder="写清楚整改要求、责任人或复查时间"
         @input="updateNote"
       />
+      <small class="inspection-note-count">当前 {{ note.length }}/1000 字</small>
     </label>
     <div class="inspection-form-actions">
-      <button class="secondary-button" type="button" @click="emit('reset')">清空表单</button>
+      <button class="secondary-button" type="button" :disabled="saving || uploading" @click="emit('reset')">清空表单</button>
       <button
         class="primary-button"
         type="button"
-        :disabled="saving || uploading || Boolean(saveBlockedReason)"
-        :title="saveBlockedReason"
+        :disabled="saving || uploading"
         @click="emit('save')"
       >
         {{ saving ? '保存中...' : '保存巡检' }}
@@ -48,5 +48,10 @@ function updateNote(event: Event) {
 .inspection-note-card label { display: grid; gap: 6px; }
 .inspection-note-card label span { color: var(--muted); font-size: 12px; font-weight: 800; }
 .inspection-note-card textarea { resize: vertical; }
+.inspection-note-count { justify-self: end; color: var(--muted); font-size: 12px; }
 .inspection-note-card .inspection-form-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+@media (max-width: 640px) {
+  .inspection-note-card .inspection-form-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .inspection-note-card .inspection-form-actions button { width: 100%; min-height: 44px; }
+}
 </style>

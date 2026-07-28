@@ -81,7 +81,6 @@ test.describe('page and API permission guardrails', () => {
     { path: '/boss', text: '今日待办' },
     { path: '/profit', text: '利润概览' },
     { path: '/profit-table', text: '利润表' },
-    { path: '/store-detail', text: '门店详情' },
     { path: '/data-entry', text: '数据录入' },
     { path: '/expenses', text: '报销栏' },
     { path: '/export', text: '数据导出' },

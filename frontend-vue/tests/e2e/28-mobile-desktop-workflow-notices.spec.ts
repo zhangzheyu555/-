@@ -44,15 +44,15 @@ const dashboard = {
 const workflows = [
   {
     path: '/data-entry',
-    description: '财务数据录入、月度导入与覆盖确认',
+    controlName: '保存',
   },
   {
     path: '/users',
-    description: '账号、权限和数据范围设置',
+    controlName: '新增账号',
   },
   {
     path: '/export',
-    description: '大批量数据导出',
+    controlName: '下载利润 CSV',
   },
 ]
 
@@ -81,21 +81,22 @@ async function prepare(page: Page) {
   })
 }
 
-test('复杂桌面流程只在 768px 以下提示请在电脑端完成', async ({ page }) => {
+test('复杂业务流程在 390px 和 768px 下保持完整可操作', async ({ page }) => {
   await prepare(page)
 
   for (const workflow of workflows) {
     for (const width of [390, 768]) {
       await page.setViewportSize({ width, height: 844 })
       await page.goto(workflow.path)
-      const notice = page.locator('.desktop-workflow-notice')
-      await expect(notice).toBeVisible()
-      await expect(notice).toContainText('请在电脑端完成')
-      await expect(notice).toContainText(workflow.description)
+      await expect(page.locator('.desktop-workflow-notice')).toHaveCount(0)
+      const control = page.getByRole('button', { name: workflow.controlName, exact: true })
+      await control.scrollIntoViewIfNeeded()
+      await expect(control).toBeVisible()
+      await expect(control).toBeInViewport()
+      expect(await page.evaluate(() => Math.max(
+        document.documentElement.scrollWidth,
+        document.body.scrollWidth,
+      ) - window.innerWidth)).toBeLessThanOrEqual(1)
     }
-
-    await page.setViewportSize({ width: 769, height: 900 })
-    const notice = page.locator('.desktop-workflow-notice')
-    await expect(notice).toBeHidden()
   }
 })

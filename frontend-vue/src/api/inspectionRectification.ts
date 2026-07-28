@@ -91,7 +91,7 @@ export function submitInspectionRectification(
   )
 }
 
-/** 运营复核只能由后端确认状态迁移，前端不自行把任务标记为完成。 */
+/** 督导复核只能由后端确认状态迁移，前端不自行把任务标记为完成。 */
 export function reviewInspectionRectification(
   recordId: string,
   payload: ReviewInspectionRectificationPayload,

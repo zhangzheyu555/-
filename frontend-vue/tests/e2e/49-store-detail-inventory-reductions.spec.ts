@@ -134,10 +134,10 @@ async function prepare(page: Page) {
   })
 }
 
-test('门店详情按门店显示库存减少记录，并适配 390px 手机宽度', async ({ page }, testInfo) => {
+test('利润概览按所选门店显示库存减少记录，并适配 390px 手机宽度', async ({ page }, testInfo) => {
   await prepare(page)
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto('/store-detail?storeId=rg4')
+  await page.goto('/profit?storeId=rg4&month=2026-07')
 
   const card = page.getByRole('region', { name: '库存减少记录' })
   await expect(card).toBeVisible()
@@ -160,6 +160,6 @@ test('门店详情按门店显示库存减少记录，并适配 390px 手机宽�
   expect(tableOverflow.overflowX).toBe('auto')
 
   await card.screenshot({
-    path: testInfo.outputPath('store-detail-inventory-mobile.png'),
+    path: testInfo.outputPath('profit-store-inventory-mobile.png'),
   })
 })

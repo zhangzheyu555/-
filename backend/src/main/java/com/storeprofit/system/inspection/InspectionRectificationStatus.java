@@ -7,7 +7,7 @@ package com.storeprofit.system.inspection;
  */
 public enum InspectionRectificationStatus {
   PENDING_SUBMISSION("待整改"),
-  PENDING_REVIEW("待运营复核"),
+  PENDING_REVIEW("待督导复核"),
   APPROVED("整改已通过"),
   REJECTED("整改已驳回");
 

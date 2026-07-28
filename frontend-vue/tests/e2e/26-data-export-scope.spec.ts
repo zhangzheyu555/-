@@ -195,20 +195,14 @@ function assertScopedCsvRequests(requests: ExportRequestLog, storeId: string, br
   }
 }
 
-test('全局门店从全部切换至 rg1 后，范围摘要与三项 CSV 请求同步更新', async ({ page }) => {
+test('带门店参数进入导出页后，范围摘要与三项 CSV 请求保持一致', async ({ page }) => {
   const requests = await prepareExportPage(page, bossSession)
 
-  await page.goto('/export')
+  await page.goto('/export?storeId=rg1')
   const toolbar = page.getByLabel('导出筛选')
-  await expect(toolbar.getByText('全部门店 · 全部品牌 · 2026-07', { exact: true })).toBeVisible()
-
-  const globalStore = page.getByRole('combobox', { name: '全局门店' })
-  await globalStore.fill('rg1')
-  await expect(page.getByRole('option', { name: /荆州之星店/ })).toBeVisible()
-  await page.getByRole('option', { name: /荆州之星店/ }).click()
 
   await expect(page).toHaveURL(/\/export\?storeId=rg1/)
-  await expect(page.getByText('导出范围已更新：荆州之星店 · 茹菓 · 2026-07', { exact: true })).toBeVisible()
+  await expect(page.getByLabel('全局门店')).toHaveCount(0)
   await expect(toolbar.getByText('荆州之星店 · 茹菓 · 2026-07', { exact: true })).toBeVisible()
   await expect(page.getByLabel('当前品牌')).toContainText('茹菓')
 
@@ -227,15 +221,15 @@ test('全局门店从全部切换至 rg1 后，范围摘要与三项 CSV 请求�
   expect(profitDownload.suggestedFilename()).toBe('门店利润_荆州之星店_茹菓_2026-07.csv')
   expect(expenseDownload.suggestedFilename()).toBe('报销记录_荆州之星店_茹菓_2026-07.csv')
   expect(salaryDownload.suggestedFilename()).toBe('员工工资_荆州之星店_茹菓_2026-07.csv')
-  expect(requests.dashboardUrls.some((request) => !new URL(request).searchParams.has('storeId'))).toBe(true)
-  expect(requests.dashboardUrls.some((request) => new URL(request).searchParams.get('storeId') === 'rg1')).toBe(true)
+  expect(requests.dashboardUrls.length).toBeGreaterThan(0)
+  expect(requests.dashboardUrls.every((request) => new URL(request).searchParams.get('storeId') === 'rg1')).toBe(true)
   await expect(page.getByText('员工工资 CSV 已开始下载。', { exact: true })).toBeVisible()
 })
 
 test('即使误配 finance.export，店长也不能进入或请求数据导出', async ({ page }) => {
   const requests = await prepareExportPage(page, managerSession)
 
-  await page.goto('/store')
+  await page.goto('/profit')
   await expect(page.locator('.app-sidebar--desktop')).not.toContainText('数据导出')
   const dashboardRequestCount = requests.dashboardUrls.length
 
@@ -298,7 +292,10 @@ test('门店目录加载失败不会把导出范围标记为最新，恢复前�
   })
 
   await page.goto('/export?storeId=rg1')
-  await expect(page.getByRole('alert')).toContainText('门店目录加载失败，请稍后重试。')
+  const errorDialog = page.getByRole('alertdialog', { name: '数据加载失败' })
+  await expect(errorDialog).toContainText('门店目录加载失败，请稍后重试。')
+  await expect(page.getByRole('alert')).toBeHidden()
+  await errorDialog.getByRole('button', { name: '我知道了' }).click()
   const requestsAfterFailure = storeCatalogRequests
   expect(requestsAfterFailure).toBeGreaterThan(0)
 
@@ -329,7 +326,8 @@ test('前台自动更新失败时保留当前范围并显示业务化失败提�
     document.dispatchEvent(new Event('visibilitychange'))
   })
 
-  await expect(page.getByRole('alert')).toContainText('利润数据加载失败，请稍后重试。')
+  await expect(page.getByRole('alertdialog', { name: '数据加载失败' }))
+    .toContainText('利润数据加载失败，请稍后重试。')
   await expect(toolbar).toContainText('荆州之星店 · 茹菓 · 2026-07')
 })
 

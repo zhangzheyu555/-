@@ -80,6 +80,35 @@ class InspectionServiceHealthTest {
     assertThat(response.message()).contains("本机 Mock");
   }
 
+  @Test
+  void qaInternalModeAllowsOnlyTheFixedDockerInspectionSidecar() {
+    InspectionService sidecar = new InspectionService(
+        mock(InspectionRecordRepository.class), null, null, null,
+        "http://inspection-service:8000/detect", "http://inspection-service:8000/export",
+        Duration.ofMillis(100), "QA", "INTERNAL", true, null);
+
+    InspectionServiceHealthResponse sidecarResponse = sidecar.serviceHealth();
+
+    assertThat(sidecarResponse.status()).isNotEqualTo("OUTBOUND_BLOCKED");
+    assertThat(sidecarResponse.configured()).isTrue();
+
+    for (String blockedTarget : new String[] {
+        "https://inspection-service:8000/detect",
+        "http://inspection-service:8001/detect",
+        "http://inspection-service.example:8000/detect",
+        "http://inspection-service:8000/admin"
+    }) {
+      InspectionService blocked = new InspectionService(
+          mock(InspectionRecordRepository.class), null, null, null,
+          blockedTarget, blockedTarget.replace("/detect", "/export"),
+          Duration.ofMillis(100), "QA", "INTERNAL", true, null);
+
+      assertThat(blocked.serviceHealth().status())
+          .as("target must remain blocked: %s", blockedTarget)
+          .isEqualTo("OUTBOUND_BLOCKED");
+    }
+  }
+
   private InspectionService serviceFor(String detectUrl) {
     String exportUrl = detectUrl == null || detectUrl.isBlank()
         ? ""

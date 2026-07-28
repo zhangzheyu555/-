@@ -555,9 +555,12 @@ export function getSalaryRecord(id: string) {
   return apiGet<SalaryRecord>(`/api/salaries/${encodeURIComponent(id)}`)
 }
 
-export function getSalaryAssignmentCandidates(storeId: string, month: string) {
+export function getSalaryAssignmentCandidates(storeId: string, month: string, signal?: AbortSignal) {
   const query = new URLSearchParams({ storeId, month })
-  return apiGet<SalaryAssignmentCandidate[]>(`/api/salaries/assignment-candidates?${query.toString()}`)
+  return apiGet<SalaryAssignmentCandidate[]>(
+    `/api/salaries/assignment-candidates?${query.toString()}`,
+    { signal },
+  )
 }
 
 export function assignSalaryEmployee(payload: { storeId: string; month: string; employeeId: string }) {
@@ -567,8 +570,20 @@ export function assignSalaryEmployee(payload: { storeId: string; month: string; 
   )
 }
 
-export function previewSalaryGeneration(payload: SalaryGenerateRequest) {
-  return apiPost<SalaryGenerateReport, SalaryGenerateRequest>('/api/salaries/preview', payload)
+export function previewSalaryGeneration(payload: SalaryGenerateRequest): Promise<SalaryGenerateReport>
+export function previewSalaryGeneration(storeId: string, month: string, signal?: AbortSignal): Promise<SalaryGenerateReport>
+export function previewSalaryGeneration(
+  payloadOrStoreId: SalaryGenerateRequest | string,
+  month?: string,
+  signal?: AbortSignal,
+) {
+  if (typeof payloadOrStoreId !== 'string') {
+    return apiPost<SalaryGenerateReport, SalaryGenerateRequest>('/api/salaries/preview', payloadOrStoreId)
+  }
+  return apiGet<SalaryGenerateReport>(
+    `/api/salaries/preview?storeId=${encodeURIComponent(payloadOrStoreId)}&month=${encodeURIComponent(month || '')}`,
+    { signal },
+  )
 }
 
 export function generateSalaryWithReport(payload: SalaryGenerateRequest) {

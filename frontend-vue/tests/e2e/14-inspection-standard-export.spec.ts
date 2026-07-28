@@ -104,6 +104,11 @@ const canonicalExportStandard = {
   }),
 }
 
+const tinyPng = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL13wAAAABJRU5ErkJggg==',
+  'base64',
+)
+
 const bossUser = {
   id: 9001,
   tenantId: 1,
@@ -235,10 +240,10 @@ test('latest 200-point standard calculates 180/179 and red-line result while sav
   await page.getByRole('option').filter({ hasText: 'M-01 · M-01 检查条款' }).click()
   await expect(clausePicker).toHaveValue('M-01 · M-01 检查条款')
   await expect(manualDeduct).toHaveValue('37')
-  await manualDeduct.fill('1')
+  await expect(manualDeduct).toHaveAttribute('readonly', '')
   await page.getByLabel('问题描述').fill('物料手工扣分使用稳定条款 ID')
   await page.getByRole('button', { name: '添加', exact: true }).click()
-  await expect(page.locator('.inspection-deduction-card').getByRole('row', { name: /M-01 M-01 检查条款/ })).toContainText('1分')
+  await expect(page.locator('.inspection-deduction-card').getByRole('row', { name: /M-01 M-01 检查条款/ })).toContainText('37分')
 
   await page.getByLabel('督导人').fill('测试督导')
   await page.getByRole('button', { name: '保存巡检' }).first().click()
@@ -247,7 +252,7 @@ test('latest 200-point standard calculates 180/179 and red-line result while sav
   const itemResults = savedPayload?.itemResults as Array<Record<string, unknown>>
   expect(itemResults).toHaveLength(105)
   expect(itemResults.find((item) => item.standardItemId === 1)?.issueFound).toBe(true)
-  expect(itemResults.find((item) => item.standardItemId === 2)?.actualScore).toBe(36)
+  expect(itemResults.find((item) => item.standardItemId === 2)?.actualScore).toBe(0)
   expect(itemResults.find((item) => item.standardItemId === 2)?.deductionReason).toBe('物料手工扣分使用稳定条款 ID')
   expect(itemResults.find((item) => item.standardItemId === 3)?.actualScore).toBe(0)
   expect(itemResults.find((item) => item.standardItemId === 88)?.actualScore).toBe(79)
@@ -264,7 +269,51 @@ test('latest 200-point standard calculates 180/179 and red-line result while sav
   expect(photosJson).toContain('"attachmentId":501')
 })
 
-test('manual review appears before the clause list and clause search filters all supported text fields', async ({ page }) => {
+test('manual red-line selection keeps the prescribed zero score and cannot be edited', async ({ page }) => {
+  await mockInspectionApi(page)
+  await seedSession(page)
+  await page.goto('/operations/inspection/tasks')
+
+  const clausePicker = page.getByRole('combobox', { name: '搜索选择检查条款' })
+  const prescribedScore = page.getByLabel('条款规定扣分')
+
+  await clausePicker.fill('M-RED-01')
+  await page.getByRole('option').filter({ hasText: 'M-RED-01 · M-RED-01 检查条款' }).click()
+
+  await expect(prescribedScore).toHaveValue('0')
+  await expect(prescribedScore).toHaveAttribute('readonly', '')
+  await expect(page.getByText('红线条款：命中即判定不合格，本条款规定扣分为 0 分。')).toBeVisible()
+
+  await page.getByLabel('问题描述').fill('发现红线违规')
+  await page.getByRole('button', { name: '添加', exact: true }).click()
+
+  const redLineRecord = page.locator('.inspection-deduction-card').getByRole('row', { name: /M-RED-01 M-RED-01 检查条款/ })
+  await expect(redLineRecord).toContainText('红线')
+  await expect(redLineRecord).not.toContainText('1分')
+  await expect(page.getByRole('row', { name: /M-RED-01/ }).getByRole('checkbox').first()).toBeChecked()
+})
+
+test('manual deduction validation is shown next to the action in a modal instead of the page banner', async ({ page }) => {
+  await mockInspectionApi(page)
+  await seedSession(page)
+  await page.goto('/operations/inspection/tasks')
+
+  const clausePicker = page.getByRole('combobox', { name: '搜索选择检查条款' })
+  await clausePicker.fill('M-01')
+  await page.getByRole('option').filter({ hasText: 'M-01 · M-01 检查条款' }).click()
+  await page.getByRole('button', { name: '添加', exact: true }).click()
+
+  const dialog = page.getByRole('alertdialog', { name: '无法添加扣分项' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText('请写清楚现场问题，方便门店整改。')
+  await expect(page.locator('.error-box').filter({ hasText: '请写清楚现场问题' })).toHaveCount(0)
+
+  await dialog.getByRole('button', { name: '返回修改' }).click()
+  await expect(dialog).toBeHidden()
+  await expect(page.getByRole('button', { name: '添加', exact: true })).toBeFocused()
+})
+
+test('manual review precedes the clause list, final save follows it, and standards render only on their tab', async ({ page }) => {
   await mockInspectionApi(page)
   await seedSession(page)
   await page.goto('/operations/inspection/tasks')
@@ -278,11 +327,13 @@ test('manual review appears before the clause list and clause search filters all
     const reviewCards = [
       document.querySelector('.inspection-deduction-card'),
       document.querySelector('.inspection-add-card'),
-      document.querySelector('.inspection-note-card'),
     ]
-    return Boolean(clauseSearch) && reviewCards.every((card) => (
-      Boolean(card) && Boolean(card?.compareDocumentPosition(clauseSearch as Node) & Node.DOCUMENT_POSITION_FOLLOWING)
-    ))
+    const noteCard = document.querySelector('.inspection-note-card')
+    return Boolean(clauseSearch)
+      && reviewCards.every((card) => (
+        Boolean(card) && Boolean(card?.compareDocumentPosition(clauseSearch as Node) & Node.DOCUMENT_POSITION_FOLLOWING)
+      ))
+      && Boolean(noteCard?.compareDocumentPosition(clauseSearch as Node) & Node.DOCUMENT_POSITION_PRECEDING)
   })
   expect(manualReviewComesFirst).toBe(true)
 
@@ -313,6 +364,8 @@ test('manual review appears before the clause list and clause search filters all
   await expect(page.locator('[data-category="HYGIENE"] tbody tr')).toHaveCount(47)
   await expect(page.locator('[data-category="SERVICE"] tbody tr')).toHaveCount(18)
 
+  await expect(page.locator('.inspection-standards-view')).toHaveCount(0)
+  await page.goto('/operations/inspection/standards')
   const standardCatalog = page.locator('.inspection-standards-view')
   const standardSearch = standardCatalog.getByRole('searchbox', { name: '搜索标准条款' })
   await expect(standardSearch).toBeVisible()
@@ -326,6 +379,249 @@ test('manual review appears before the clause list and clause search filters all
   await expect(standardCatalog.getByText('当前维度没有包含“S-01”的标准条款。')).toBeVisible()
   await standardCatalog.getByRole('button', { name: '全部维度', exact: true }).click()
   await expect(standardCatalog.locator('.standards-table tbody tr')).toHaveCount(1)
+})
+
+test('dirty inspection drafts require confirmation before being cleared', async ({ page }) => {
+  await mockInspectionApi(page)
+  await seedSession(page)
+  await page.goto('/operations/inspection/tasks')
+
+  await page.getByLabel('督导人').fill('测试督导')
+  await page.getByLabel('整改要求 / 备注').fill('闭店前完成复查')
+  await page.getByRole('button', { name: '清空表单' }).click()
+
+  const dialog = page.getByRole('alertdialog', { name: '放弃未保存的巡店草稿？' })
+  await expect(dialog).toBeVisible()
+  await page.getByRole('button', { name: '继续填写' }).click()
+  await expect(page.getByLabel('督导人')).toHaveValue('测试督导')
+  await expect(page.getByLabel('整改要求 / 备注')).toHaveValue('闭店前完成复查')
+
+  await page.getByRole('button', { name: '清空表单' }).click()
+  await page.getByRole('button', { name: '放弃草稿' }).click()
+  await expect(page.getByLabel('督导人')).toHaveValue('')
+  await expect(page.getByLabel('整改要求 / 备注')).toHaveValue('')
+})
+
+test('save stays clickable and reports incomplete inspection fields in an error dialog', async ({ page }) => {
+  await mockInspectionApi(page)
+  await seedSession(page)
+  await page.goto('/operations/inspection/tasks')
+
+  const saveButtons = page.getByRole('button', { name: '保存巡检' })
+  await expect(saveButtons).toHaveCount(2)
+  await expect(saveButtons.first()).toBeEnabled()
+  await expect(saveButtons.last()).toBeEnabled()
+  await expect(page.locator('.inspection-save-hint')).toHaveCount(0)
+
+  await saveButtons.first().click()
+
+  const dialog = page.getByRole('alertdialog', { name: '无法保存巡检' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText('请填写督导人姓名')
+  await page.getByRole('button', { name: '返回填写' }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(saveButtons.first()).toBeEnabled()
+})
+
+test('inspection detail exposes a back button while detail data is still loading', async ({ page }) => {
+  const recordId = 'INS-DETAIL-LOADING'
+  let releaseDetailRequest!: () => void
+  const detailRequestGate = new Promise<void>((resolve) => {
+    releaseDetailRequest = resolve
+  })
+  const record = {
+    id: recordId,
+    storeId: 'STORE-1',
+    storeName: '测试门店',
+    brand: '茹菓',
+    inspectionDate: '2026-07-28',
+    inspector: '测试督导',
+    fullScore: 200,
+    score: 200,
+    maxScore: 200,
+    passScore: 180,
+    passed: true,
+    resultCode: 'PASSED',
+    standardVersionId: canonicalExportStandard.id,
+    standardVersion: canonicalExportStandard.version,
+    photosJson: '[]',
+    deductionsJson: '[]',
+    redlinesJson: '[]',
+    itemResults: [],
+  }
+  await mockInspectionApi(
+    page,
+    [record],
+    undefined,
+    canonicalExportStandard,
+    undefined,
+    { [recordId]: record },
+  )
+  await page.route(`**/api/inspections/${recordId}`, async (route) => {
+    await detailRequestGate
+    await json(route, record)
+  })
+  await seedSession(page)
+  await page.goto(`/operations/inspection/records?recordId=${recordId}`)
+
+  await expect(page.getByText('正在读取巡检详情...', { exact: true })).toBeVisible()
+  const backButton = page.getByRole('button', { name: '返回巡检列表', exact: true })
+  await expect(backButton).toBeVisible()
+  await backButton.click()
+  await expect(page).toHaveURL('/operations/inspection/records')
+  await expect(page.getByRole('table')).toBeVisible()
+
+  releaseDetailRequest()
+})
+
+test('inspection detail prioritizes the issue with evidence and keeps the 105-clause audit snapshot collapsed', async ({ page }) => {
+  const recordId = 'INS-DETAIL-PRIORITY-ISSUE'
+  const attachmentId = 777
+  const issueClauseId = 70
+  const reason = '角落、灯带及边角有积灰污点，需及时清理干净'
+  const itemResults = canonicalExportStandard.items.map((item) => {
+    const isIssue = item.id === issueClauseId
+    return {
+      snapshotId: item.id,
+      standardItemId: item.id,
+      code: isIssue ? 'H-4.1.2' : item.code,
+      dimension: item.dimension,
+      categoryName: item.dimension.replace('标准', ''),
+      categoryCode: item.dimension.includes('物料') ? 'MATERIAL' : item.dimension.includes('卫生') ? 'HYGIENE' : 'SERVICE',
+      title: isIssue ? '店铺内部' : item.title,
+      standardScore: isIssue ? 2 : item.suggestedScore,
+      actualScore: isIssue ? 0 : item.suggestedScore,
+      deductionScore: isIssue ? 4 : 0,
+      deductionReason: isIssue ? reason : '',
+      riskLevel: item.riskLevel,
+      issueFound: isIssue,
+      redLineHit: false,
+      photoAttachmentIds: isIssue ? [attachmentId] : [],
+    }
+  })
+  const record = {
+    id: recordId,
+    storeId: 'STORE-1',
+    storeName: '测试门店',
+    brand: '茹菓',
+    inspectionDate: '2026-07-28',
+    inspector: '测试督导',
+    fullScore: 200,
+    score: 196,
+    maxScore: 200,
+    passScore: 180,
+    passed: true,
+    resultCode: 'PASSED',
+    standardVersionId: canonicalExportStandard.id,
+    standardVersion: canonicalExportStandard.version,
+    materialScore: 37,
+    hygieneScore: 59,
+    serviceScore: 100,
+    photosJson: JSON.stringify([{ attachmentId, fileName: '店铺内部问题.jpg', contentType: 'image/jpeg' }]),
+    deductionsJson: '[]',
+    redlinesJson: '[]',
+    itemResults,
+  }
+  await mockInspectionApi(
+    page,
+    [record],
+    undefined,
+    canonicalExportStandard,
+    undefined,
+    { [recordId]: record },
+  )
+  await page.route(`**/api/inspections/${recordId}/evidence/attachments`, (route) => json(route, {
+    recordId,
+    storeId: 'STORE-1',
+    candidates: [{
+      attachmentId,
+      photoIndex: 0,
+      fileName: '店铺内部问题.jpg',
+      contentType: 'image/jpeg',
+      status: 'LINKED',
+      linkedClauseIds: [issueClauseId],
+    }],
+  }))
+  await page.route(`**/api/storage/attachments/${attachmentId}`, (route) => route.fulfill({
+    status: 200,
+    contentType: 'image/png',
+    body: tinyPng,
+  }))
+  await seedSession(page)
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await page.goto(`/operations/inspection/records?recordId=${recordId}`)
+
+  const issues = page.getByRole('region', { name: '本次发现的问题（1项）' })
+  await expect(issues).toBeVisible()
+  await expect(issues.getByText('H-4.1.2', { exact: true })).toBeVisible()
+  await expect(issues.getByText('扣 4 分', { exact: true })).toBeVisible()
+  await expect(issues.getByText(reason, { exact: true })).toBeVisible()
+  await expect(issues.getByRole('button', { name: '预览 店铺内部问题.jpg' })).toBeVisible()
+  const issueBox = await issues.boundingBox()
+  expect(issueBox).not.toBeNull()
+  expect(issueBox!.y + issueBox!.height).toBeLessThanOrEqual(720)
+
+  await page.setViewportSize({ width: 1464, height: 1000 })
+  const backButton = page.getByRole('button', { name: '返回巡检列表', exact: true })
+  await expect(backButton).toBeVisible()
+  const backButtonBox = await backButton.boundingBox()
+  const detailCardBox = await page.locator('.inspection-detail-card').boundingBox()
+  expect(backButtonBox).not.toBeNull()
+  expect(detailCardBox).not.toBeNull()
+  expect(backButtonBox!.y + backButtonBox!.height).toBeLessThanOrEqual(detailCardBox!.y)
+
+  const actionButtons = [
+    page.getByRole('button', { name: '补传并关联证据' }),
+    page.getByRole('button', { name: '导出Excel' }),
+  ]
+  const actionGeometry = await Promise.all(actionButtons.map(async (button) => {
+    await expect(button).toBeVisible()
+    const box = await button.boundingBox()
+    const layout = await button.evaluate((element) => {
+      const style = window.getComputedStyle(element)
+      return {
+        whiteSpace: style.whiteSpace,
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+      }
+    })
+    return { box, layout }
+  }))
+  const actionTops = actionGeometry.map(({ box }) => box!.y)
+  const actionHeights = actionGeometry.map(({ box }) => box!.height)
+  expect(Math.max(...actionTops) - Math.min(...actionTops)).toBeLessThanOrEqual(1)
+  expect(Math.max(...actionHeights) - Math.min(...actionHeights)).toBeLessThanOrEqual(1)
+  expect(Math.min(...actionHeights)).toBeGreaterThanOrEqual(40)
+  actionGeometry.forEach(({ layout }) => {
+    expect(layout.whiteSpace).toBe('nowrap')
+    expect(layout.scrollHeight).toBeLessThanOrEqual(layout.clientHeight)
+  })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true)
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  const mobileActionGeometry = await Promise.all(actionButtons.map(async (button) => {
+    const box = await button.boundingBox()
+    const whiteSpace = await button.evaluate((element) => window.getComputedStyle(element).whiteSpace)
+    return { box, whiteSpace }
+  }))
+  const mobileLefts = mobileActionGeometry.map(({ box }) => box!.x)
+  const mobileWidths = mobileActionGeometry.map(({ box }) => box!.width)
+  const mobileHeights = mobileActionGeometry.map(({ box }) => box!.height)
+  expect(Math.max(...mobileLefts) - Math.min(...mobileLefts)).toBeLessThanOrEqual(1)
+  expect(Math.max(...mobileWidths) - Math.min(...mobileWidths)).toBeLessThanOrEqual(1)
+  expect(Math.max(...mobileHeights) - Math.min(...mobileHeights)).toBeLessThanOrEqual(1)
+  expect(Math.min(...mobileHeights)).toBeGreaterThanOrEqual(44)
+  mobileActionGeometry.forEach(({ whiteSpace }) => expect(whiteSpace).toBe('nowrap'))
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true)
+
+  const expandSnapshot = page.getByRole('button', { name: '查看完整标准快照（105条）' })
+  await expect(expandSnapshot).toBeVisible()
+  const snapshotTable = page.getByRole('table', { name: '当时使用的完整标准快照（105条）条款' })
+  await expect(snapshotTable).toHaveCount(0)
+  await expandSnapshot.click()
+  await expect(page.getByRole('button', { name: '收起完整标准快照（105条）' })).toBeVisible()
+  await expect(snapshotTable).toBeVisible()
+  await expect(snapshotTable.locator('tbody tr')).toHaveCount(105)
 })
 
 test('canonical E2E red-line fixture uses a complete formal standard and downloads xlsx with an authenticated request', async ({ page }) => {
@@ -384,8 +680,10 @@ test('canonical E2E red-line fixture uses a complete formal standard and downloa
   await expect(page.locator('.inspection-detail-grid').getByText('100 / 100', { exact: true })).toBeVisible()
   await expect(page.locator('.inspection-detail-grid').getByText('196 / 200')).toBeVisible()
   await expect(page.locator('.inspection-detail-grid').getByText('1 / 0', { exact: true })).toBeVisible()
-  await expect(page.getByRole('cell', { name: '食安红线：E2E 导出回归' })).toBeVisible()
-  await expect(page.getByText('扣 4 分', { exact: true })).toBeVisible()
+  const issues = page.getByRole('region', { name: '本次发现的问题（1项）' })
+  await expect(issues.getByText('食安红线：E2E 导出回归', { exact: true })).toBeVisible()
+  await expect(issues.getByText('扣 4 分', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '查看完整标准快照（105条）' })).toBeVisible()
 
   await page.setViewportSize({ width: 1280, height: 720 })
   await expect(page.locator('.inspection-detail-grid').getByText('2026.07-R1', { exact: true })).toBeVisible()
@@ -479,7 +777,7 @@ test('inspection export labels only an optimistic-lock conflict as reopen and re
   await expect(page.getByText(/需人工修复评分后导出/)).toHaveCount(0)
 })
 
-test('invalid 105-item standard remains visible with category diagnostics and blocks new inspection saving', async ({ page }) => {
+test('invalid 105-item standard remains visible and explains the save failure in a dialog', async ({ page }) => {
   await mockInspectionApi(page, [], undefined, invalidStandard)
   await seedSession(page)
   await page.goto('/operations/inspection/standards')
@@ -492,12 +790,22 @@ test('invalid 105-item standard remains visible with category diagnostics and bl
   await expect(page.getByRole('table', { name: '卫生标准条款' }).locator('tbody tr')).toHaveCount(47)
   await expect(page.getByRole('table', { name: '服务标准条款' }).locator('tbody tr')).toHaveCount(15)
 
-  await page.getByRole('button', { name: '发起巡检' }).click()
+  await page.getByRole('tab', { name: '发起巡检' }).click()
   await expect(page.getByText('当前标准未通过校验，只能只读查看，不能保存巡检。')).toBeVisible()
   await expect(page.locator('[data-category="MATERIAL"] tbody tr')).toHaveCount(43)
   await expect(page.locator('[data-category="HYGIENE"] tbody tr')).toHaveCount(47)
   await expect(page.locator('[data-category="SERVICE"] tbody tr')).toHaveCount(15)
-  await expect(page.getByRole('button', { name: '保存巡检' }).first()).toBeDisabled()
+  await expect(page.getByRole('button', { name: '拍照/选图' })).toBeEnabled()
+  await page.getByRole('button', { name: '拍照/选图' }).click()
+  const uploadDialog = page.getByRole('alertdialog', { name: '无法上传巡检照片' })
+  await expect(uploadDialog).toContainText('当前稽核标准尚未就绪')
+  await uploadDialog.getByRole('button', { name: '返回检查' }).click()
+  await page.getByLabel('督导人').fill('测试督导')
+  await expect(page.getByRole('button', { name: '保存巡检' }).first()).toBeEnabled()
+  await page.getByRole('button', { name: '保存巡检' }).first().click()
+  const saveDialog = page.getByRole('alertdialog', { name: '无法保存巡检' })
+  await expect(saveDialog).toContainText('当前标准未通过校验，请重试获取标准后再保存')
+  await saveDialog.getByRole('button', { name: '返回填写' }).click()
   await expect(page.getByRole('button', { name: '重试获取标准' }).first()).toBeEnabled()
 })
 
@@ -576,6 +884,7 @@ test('only an inspection record conflict is labelled as another-user concurrent 
   await page.getByRole('button', { name: '保存巡检' }).first().click()
   await expect(page.getByText('当前巡检标准校验未通过，已禁止保存。请重试获取标准后再试。')).toBeVisible()
   await expect(page.getByText(/其他人更新/)).toHaveCount(0)
+  await page.getByRole('alertdialog', { name: '无法保存巡检' }).getByRole('button', { name: '返回填写' }).click()
 
   failure = {
     code: 'INSPECTION_STANDARD_STALE',
@@ -584,6 +893,7 @@ test('only an inspection record conflict is labelled as another-user concurrent 
   await page.getByRole('button', { name: '保存巡检' }).first().click()
   await expect(page.getByText('巡检标准已更新，请清空当前草稿并重试获取标准后重新评分。')).toBeVisible()
   await expect(page.getByText(/其他人更新/)).toHaveCount(0)
+  await page.getByRole('alertdialog', { name: '无法保存巡检' }).getByRole('button', { name: '返回填写' }).click()
 
   failure = {
     code: 'INSPECTION_RECORD_CONFLICT',
@@ -591,6 +901,7 @@ test('only an inspection record conflict is labelled as another-user concurrent 
   }
   await page.getByRole('button', { name: '保存巡检' }).first().click()
   await expect(page.getByText('这条巡检已被其他人更新，请重新打开当前记录后再提交。')).toBeVisible()
+  await expect(page.locator('.error-box').filter({ hasText: '这条巡检已被其他人更新' })).toHaveCount(0)
 })
 
 test('read-only store manager is routed to records and cannot see manage tabs', async ({ page }) => {
@@ -610,7 +921,7 @@ test('read-only store manager is routed to records and cannot see manage tabs', 
   await page.goto('/operations/inspection')
 
   await expect(page).toHaveURL(/\/operations\/inspection\/records$/)
-  await expect(page.getByRole('button', { name: '巡检记录' })).toBeVisible()
-  await expect(page.getByRole('button', { name: '发起巡检' })).toHaveCount(0)
-  await expect(page.getByRole('button', { name: '稽核标准' })).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: '巡检记录' })).toBeVisible()
+  await expect(page.getByRole('tab', { name: '发起巡检' })).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: '稽核标准' })).toHaveCount(0)
 })

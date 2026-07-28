@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { AlertTriangle, CheckCircle2, KeyRound, Pencil, Plus, Shield, ShieldCheck, Store, X } from 'lucide-vue-next'
 import { onBeforeRouteLeave } from 'vue-router'
 import { getStores, type StoreInfo } from '../api/operations'
@@ -37,6 +37,13 @@ import { useForegroundReload } from '../composables/useForegroundReload'
 
 type AccountForm = UserCreatePayload
 type OverrideChoice = PermissionEffect | ''
+
+type ActiveAccountOverlay =
+  | { type: 'create' }
+  | { type: 'edit'; userId: number }
+  | { type: 'authorization'; userId: number }
+  | { type: 'password'; userId: number }
+  | null
 
 interface PermissionGroup {
   moduleCode: string
@@ -115,9 +122,27 @@ const stores = ref<StoreInfo[]>([])
 const warehouses = ref<WarehouseInfo[]>([])
 const loading = ref(false)
 const saving = ref(false)
-const error = ref('')
+const pageError = ref('')
 const successMessage = ref('')
-const editorOpen = ref(false)
+
+// ─── Unified Overlay State ──────────────────────────────────────────
+const activeOverlay = ref<ActiveAccountOverlay>(null)
+const overlayError = ref('')
+const fieldErrors = reactive<Record<string, string>>({})
+let editAbortController: AbortController | null = null
+
+// Backward-compatible computed: reads pageError (page-level) by default;
+// overlay-level writes go to overlayError. Page-level functions use error.value
+// and overlay-level functions use overlayError.value directly.
+const error = computed({
+  get: () => pageError.value,
+  set: (value: string) => { pageError.value = value },
+})
+const editorOpen = computed({
+  get: () => activeOverlay.value?.type === 'create' || activeOverlay.value?.type === 'edit',
+  set: () => { /* no-op; use forceCloseEditor/openCreate/openEdit */ },
+})
+
 const editingUser = ref<UserAccount | null>(null)
 const editingAuthorization = ref<UserAuthorization | null>(null)
 const editingAuthorizationLoading = ref(false)
@@ -133,6 +158,7 @@ const authorizationLoading = ref(false)
 const authorizationSaving = ref(false)
 const authorizationError = ref('')
 const authorizationSuccess = ref('')
+const authorizationDrawerRef = ref<HTMLElement | null>(null)
 const draftScopes = reactive<Record<string, UserDataScopeAssignment>>({})
 const draftOverrides = reactive<Record<string, OverrideChoice>>({})
 const initialAuthorizationSignature = ref('')
@@ -143,6 +169,12 @@ let authorizationRequestSequence = 0
 let permissionPageRequestSequence = 0
 let pendingDiscardAction: (() => void) | null = null
 let pendingDiscardCancel: (() => void) | null = null
+let authorizationTriggerElement: HTMLElement | null = null
+let authorizationAppRoot: HTMLElement | null = null
+let authorizationAppWasInert = false
+let authorizationBodyOverflow = ''
+let authorizationDocumentOverflow = ''
+let authorizationScrollLocked = false
 
 const roles = [
   { value: 'BOSS', label: '老板（系统管理员）' },
@@ -161,6 +193,9 @@ const canManage = computed(() => isBossRole(auth.role))
 const bossAccountForm = computed(() => isBossRole(form.role))
 const globalStoreRoleForm = computed(() => isFixedGlobalStoreRole(form.role) && !bossAccountForm.value)
 const supervisorAccountForm = computed(() => normalizeRoleCode(form.role) === 'SUPERVISOR')
+const supervisorAllStoresAccountForm = computed(
+  () => supervisorAccountForm.value && form.storeScope.includes('all'),
+)
 const storeManagerAccountForm = computed(() => normalizeRoleCode(form.role) === 'STORE_MANAGER')
 const activeBossCount = computed(() => users.value.filter((user) => isBossRole(user.role) && user.enabled).length)
 const protectedBoss = computed(() => Boolean(
@@ -192,7 +227,6 @@ const roleRows = computed(() => {
   return Array.from(groups.entries()).map(([label, count]) => ({ label, count }))
 })
 const selectedAuthorizationIsBoss = computed(() => isBossRole(selectedAuthorizationUser.value?.role))
-const selectedAuthorizationIsGlobalStoreRole = computed(() => isFixedGlobalStoreRole(selectedAuthorizationUser.value?.role))
 const selectedAuthorizationIsSupervisor = computed(
   () => normalizeRoleCode(selectedAuthorizationUser.value?.role) === 'SUPERVISOR',
 )
@@ -289,6 +323,149 @@ function requestDiscardConfirmation(message: string, action: () => void, cancel:
   discardDialogOpen.value = true
 }
 
+// ─── Unified Overlay State Machine ──────────────────────────────────
+
+function overlayIsDirty(): boolean {
+  const ol = activeOverlay.value
+  if (!ol) return false
+  if (ol.type === 'create' || ol.type === 'edit') return accountDirty.value
+  if (ol.type === 'authorization') return authorizationDirty.value
+  if (ol.type === 'password') return passwordDirty.value
+  return false
+}
+
+function requestOpenOverlay(next: NonNullable<ActiveAccountOverlay>, triggerElement?: HTMLElement) {
+  if (!overlayIsDirty()) {
+    applyOverlay(next)
+    return
+  }
+  requestDiscardConfirmation(
+    '切换后当前未保存的内容将不会保留。',
+    () => { forceCloseOverlay(); applyOverlay(next) },
+    () => { triggerElement?.focus() },
+  )
+}
+
+function applyOverlay(next: NonNullable<ActiveAccountOverlay>) {
+  if (next.type === 'create') { _openCreateImpl(); return }
+  const user = 'userId' in next ? users.value.find(u => u.id === next.userId) : null
+  if (!user) return
+  if (next.type === 'edit') openEdit(user)
+  else if (next.type === 'authorization') openAuthorization(user)
+  else if (next.type === 'password') openPasswordReset(user)
+}
+
+async function openEdit(user: UserAccount) {
+  if (!user) return
+  if (editAbortController) { editAbortController.abort() }
+  editAbortController = new AbortController()
+  const controller = editAbortController
+  const { signal } = controller
+  const targetUserId = user.id
+  activeOverlay.value = { type: 'edit', userId: targetUserId }
+  editingUser.value = user
+  editingAuthorization.value = null
+  overlayError.value = ''
+  Object.keys(fieldErrors).forEach(k => delete fieldErrors[k])
+  Object.assign(form, {
+    username: user.username,
+    displayName: user.displayName || '',
+    role: normalizeRoleCode(user.role),
+    storeId: user.storeId || '',
+    storeScope: [...(user.storeScope || [])],
+    enabled: user.enabled,
+    password: '',
+  })
+  captureAccountFormSnapshot()
+  editingAuthorizationLoading.value = true
+  let result: UserAuthorization | null = null
+  let loadError: unknown = null
+  try {
+    result = await getUserAuthorization(targetUserId, signal)
+  } catch (reason) { loadError = reason }
+
+  if (controller !== editAbortController) return
+  if (signal.aborted) return
+  if (activeOverlay.value?.type !== 'edit') return
+  if (activeOverlay.value.userId !== targetUserId) return
+
+  editingAuthorizationLoading.value = false
+  if (loadError) {
+    overlayError.value = displayError(loadError, '账号授权加载失败，暂不能编辑该账号。')
+    return
+  }
+  editingAuthorization.value = result
+}
+
+function openPasswordReset(user: UserAccount) {
+  if (!user || !canResetPassword(user)) return
+  activeOverlay.value = { type: 'password', userId: user.id }
+  resetTarget.value = user
+  resetError.value = ''
+  Object.assign(resetForm, { currentPassword: '', password: '', confirmPassword: '' })
+}
+
+function requestCloseOverlay() {
+  if (saving.value || resetting.value || authorizationSaving.value) return
+  if (!overlayIsDirty()) { forceCloseOverlay(); return }
+  requestDiscardConfirmation('关闭后本次填写的内容将不会保留。', forceCloseOverlay)
+}
+
+function forceCloseOverlay() {
+  const ol = activeOverlay.value
+  const triggerToRestore = ol?.type === 'authorization' ? authorizationTriggerElement : null
+  activeOverlay.value = null
+  if (editAbortController) { editAbortController.abort(); editAbortController = null }
+  if (ol?.type === 'create' || ol?.type === 'edit') {
+    editingAuthorization.value = null
+    editingAuthorizationLoading.value = false
+    overlayError.value = ''
+    Object.keys(fieldErrors).forEach(k => delete fieldErrors[k])
+    accountFormSnapshot.value = ''
+    Object.assign(form, emptyForm())
+  }
+  if (ol?.type === 'password') {
+    resetTarget.value = null
+    resetError.value = ''
+    Object.assign(resetForm, { currentPassword: '', password: '', confirmPassword: '' })
+  }
+  if (ol?.type === 'authorization') {
+    authorizationRequestSequence += 1
+    selectedAuthorizationUser.value = null
+    userAuthorization.value = null
+    authorizationLoading.value = false
+    authorizationError.value = ''
+    authorizationSuccess.value = ''
+    clearAuthorizationDraft()
+    authorizationTriggerElement = null
+    void nextTick(() => {
+      if (triggerToRestore?.isConnected) triggerToRestore.focus()
+    })
+  }
+}
+
+// Direct implementations called by applyOverlay (skip dirty check)
+function _openCreateImpl() {
+  activeOverlay.value = { type: 'create' }
+  editingUser.value = null
+  editingAuthorization.value = null
+  editingAuthorizationLoading.value = false
+  overlayError.value = ''
+  Object.keys(fieldErrors).forEach(k => delete fieldErrors[k])
+  if (editAbortController) { editAbortController.abort(); editAbortController = null }
+  Object.assign(form, emptyForm())
+  captureAccountFormSnapshot()
+}
+function openCreate() { requestOpenOverlay({ type: 'create' }) }
+
+// Thin wrappers for inline button bindings
+function closeEditor() { requestCloseOverlay() }
+function forceCloseEditor() { forceCloseOverlay() }
+function closePasswordReset() { requestCloseOverlay() }
+function forceClosePasswordReset() { forceCloseOverlay() }
+function closeAuthorization() { requestCloseOverlay() }
+function forceCloseAuthorization() { forceCloseOverlay() }
+
 function keepEditing() {
   const cancel = pendingDiscardCancel
   pendingDiscardAction = null
@@ -307,6 +484,11 @@ function discardChanges() {
 
 function handleDialogEscape(event: KeyboardEvent) {
   if (event.key !== 'Escape' || discardDialogOpen.value) return
+  if (activeOverlay.value?.type === 'authorization') {
+    event.preventDefault()
+    closeAuthorization()
+    return
+  }
   if (resetTarget.value) {
     event.preventDefault()
     closePasswordReset()
@@ -316,6 +498,53 @@ function handleDialogEscape(event: KeyboardEvent) {
     event.preventDefault()
     closeEditor()
   }
+}
+
+function authorizationFocusableElements() {
+  return Array.from(authorizationDrawerRef.value?.querySelectorAll<HTMLElement>(
+    'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+  ) || [])
+}
+
+function handleAuthorizationKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Tab' || activeOverlay.value?.type !== 'authorization') return
+  const focusable = authorizationFocusableElements()
+  if (!focusable.length) {
+    event.preventDefault()
+    authorizationDrawerRef.value?.focus()
+    return
+  }
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  const active = document.activeElement
+  if (event.shiftKey && (active === first || active === authorizationDrawerRef.value || !authorizationDrawerRef.value?.contains(active))) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && (active === last || !authorizationDrawerRef.value?.contains(active))) {
+    event.preventDefault()
+    first.focus()
+  }
+}
+
+function lockAuthorizationBackground() {
+  if (authorizationScrollLocked) return
+  authorizationScrollLocked = true
+  authorizationBodyOverflow = document.body.style.overflow
+  authorizationDocumentOverflow = document.documentElement.style.overflow
+  document.body.style.overflow = 'hidden'
+  document.documentElement.style.overflow = 'hidden'
+  authorizationAppRoot = document.getElementById('app')
+  authorizationAppWasInert = Boolean(authorizationAppRoot?.inert)
+  if (authorizationAppRoot) authorizationAppRoot.inert = true
+}
+
+function unlockAuthorizationBackground() {
+  if (!authorizationScrollLocked) return
+  document.body.style.overflow = authorizationBodyOverflow
+  document.documentElement.style.overflow = authorizationDocumentOverflow
+  if (authorizationAppRoot && !authorizationAppWasInert) authorizationAppRoot.inert = false
+  authorizationScrollLocked = false
+  authorizationAppRoot = null
 }
 
 function groupPermissions(permissions: PermissionCatalogEntry[]) {
@@ -351,12 +580,17 @@ function highRiskHint(permission: PermissionCatalogEntry) {
 function scopeModeOptions(domainCode: string) {
   const role = normalizeRoleCode(selectedAuthorizationUser.value?.role)
   let modes = DOMAIN_MODES[domainCode] || DATA_SCOPE_MODE_ORDER
-  if (role === 'SUPERVISOR') {
-    modes = SUPERVISOR_STORE_SCOPE_DOMAINS.has(domainCode) ? ['STORE_LIST', 'NONE'] : ['NONE']
-  } else if (isGlobalStoreRole(role)) modes = ['ALL']
-  if (role === 'BOSS') modes = ['ALL']
-  if (role === 'STORE_MANAGER') modes = ['OWN_STORE', 'NONE']
-  if (role === 'EMPLOYEE') modes = domainCode === 'EXAM' ? ['SELF', 'NONE'] : ['NONE']
+  if (role === 'BOSS') {
+    modes = ['ALL']
+  } else if (role === 'SUPERVISOR') {
+    modes = SUPERVISOR_STORE_SCOPE_DOMAINS.has(domainCode)
+      ? ['ALL', 'STORE_LIST', 'OWN_STORE', 'NONE']
+      : ['NONE']
+  } else if (role === 'STORE_MANAGER') {
+    modes = ['OWN_STORE', 'NONE']
+  } else if (role === 'EMPLOYEE') {
+    modes = domainCode === 'EXAM' ? ['SELF', 'NONE'] : ['NONE']
+  }
   const supported = new Set(authorizationCatalog.value?.dataScopeModes || DATA_SCOPE_MODE_ORDER)
   return modes.filter((mode) => supported.has(mode))
 }
@@ -395,9 +629,10 @@ function compatibilityScopeFallback(user: UserAccount) {
   }
   const role = normalizeRoleCode(user.role)
   if (role === 'SUPERVISOR') {
+    const hasAllStores = (user.storeScope || []).includes('all')
     const storeIds = [...new Set((user.storeScope || []).filter((storeId) => storeId && storeId !== 'all'))]
     for (const domainCode of SUPERVISOR_STORE_SCOPE_DOMAINS) {
-      assign(domainCode, storeIds.length ? 'STORE_LIST' : 'NONE', storeIds)
+      assign(domainCode, hasAllStores ? 'ALL' : storeIds.length ? 'STORE_LIST' : 'NONE', storeIds)
     }
     return fallback
   }
@@ -446,7 +681,7 @@ function applyAuthorizationDraft(detail: UserAuthorization) {
     draftScopes[domainCode] = {
       domainCode,
       mode: supervisorScope?.mode
-        || ((selectedAuthorizationIsBoss.value || selectedAuthorizationIsGlobalStoreRole.value) ? 'ALL' : source?.mode || 'NONE'),
+        || (selectedAuthorizationIsBoss.value ? 'ALL' : source?.mode || 'NONE'),
       storeIds: [...(supervisorScope?.storeIds || source?.storeIds || [])],
       warehouseIds: supervisorScope ? [] : [...(source?.warehouseIds || [])],
     }
@@ -463,6 +698,9 @@ function supervisorDraftScope(
   if (!SUPERVISOR_STORE_SCOPE_DOMAINS.has(domainCode)) {
     return { mode: 'NONE', storeIds: [] }
   }
+  if (source?.mode === 'ALL') {
+    return { mode: 'ALL', storeIds: [] }
+  }
   if (source?.mode === 'STORE_LIST' && source.storeIds.length) {
     return { mode: 'STORE_LIST', storeIds: [...new Set(source.storeIds)] }
   }
@@ -472,6 +710,9 @@ function supervisorDraftScope(
   const accountStores = [...new Set(
     (selectedAuthorizationUser.value?.storeScope || []).filter((storeId) => storeId && storeId !== 'all'),
   )]
+  if (selectedAuthorizationUser.value?.storeScope?.includes('all')) {
+    return { mode: 'ALL', storeIds: [] }
+  }
   return accountStores.length
     ? { mode: 'STORE_LIST', storeIds: accountStores }
     : { mode: 'NONE', storeIds: [] }
@@ -515,14 +756,16 @@ function accessProfileScopes(
   const normalizedRole = normalizeRoleCode(role)
   const roleChanged = normalizeRoleCode(detail.role) !== normalizedRole
   const existing = new Map(detail.dataScopes.map((scope) => [scope.domainCode, scope]))
+  const supervisorAllStores = storeScope.includes('all')
   const supervisorStoreIds = [...new Set(storeScope.filter((value) => value && value !== 'all'))]
   return DATA_SCOPE_DOMAINS.map((domainCode) => {
     const current = existing.get(domainCode) || { domainCode, mode: 'NONE' as DataScopeMode, storeIds: [], warehouseIds: [] }
     if (normalizedRole === 'SUPERVISOR') {
-      const scoped = SUPERVISOR_STORE_SCOPE_DOMAINS.has(domainCode) && supervisorStoreIds.length
+      const supervisorDomain = SUPERVISOR_STORE_SCOPE_DOMAINS.has(domainCode)
+      const scoped = supervisorDomain && supervisorStoreIds.length
       return {
         domainCode,
-        mode: scoped ? 'STORE_LIST' : 'NONE',
+        mode: supervisorDomain && supervisorAllStores ? 'ALL' : scoped ? 'STORE_LIST' : 'NONE',
         storeIds: scoped ? [...supervisorStoreIds] : [],
         warehouseIds: [],
       }
@@ -556,9 +799,13 @@ function accessProfilePayload(
   scopes = accessProfileScopes(detail, profile.role, profile.storeId || null, profile.storeScope),
   overrides = detail.overrides,
 ): UserAccessProfileUpdate {
+  const storeScope = normalizeRoleCode(profile.role) === 'SUPERVISOR' && profile.storeScope.includes('all')
+    ? []
+    : [...profile.storeScope]
   return {
     ...profile,
     storeId: profile.storeId || null,
+    storeScope,
     overrides: overrides.map((override) => ({ ...override })),
     dataScopes: scopes.map((scope) => ({ ...scope, storeIds: [...scope.storeIds], warehouseIds: [...(scope.warehouseIds || [])] })),
   }
@@ -649,73 +896,31 @@ const { markFresh } = useForegroundReload(() => loadPermissionPage({
   canReload: () => !loading.value && !saving.value && !resetting.value,
 })
 
-function openCreate() {
-  editingUser.value = null
-  editingAuthorization.value = null
-  editingAuthorizationLoading.value = false
-  Object.assign(form, emptyForm())
-  captureAccountFormSnapshot()
-  editorOpen.value = true
-}
 
-async function openEdit(user: UserAccount) {
-  editingUser.value = user
-  editingAuthorization.value = null
-  Object.assign(form, {
-    username: user.username,
-    displayName: user.displayName || '',
-    role: normalizeRoleCode(user.role),
-    storeId: user.storeId || '',
-    storeScope: (user.storeScope || []).filter((value) => value !== 'all'),
-    enabled: user.enabled,
-    password: '',
-  })
-  captureAccountFormSnapshot()
-  editorOpen.value = true
-  editingAuthorizationLoading.value = true
-  try {
-    editingAuthorization.value = await getUserAuthorization(user.id)
-  } catch (reason) {
-    error.value = displayError(reason, '账号授权加载失败，暂时不能编辑该账号。')
-    forceCloseEditor()
-  } finally {
-    editingAuthorizationLoading.value = false
-  }
-}
 
-function closeEditor() {
-  if (saving.value) return
-  if (accountDirty.value) {
-    requestDiscardConfirmation('关闭账号编辑后，本次填写的账号资料将不会保留。', forceCloseEditor)
-    return
-  }
-  forceCloseEditor()
-}
-
-function forceCloseEditor() {
-  editorOpen.value = false
-  editingAuthorization.value = null
-  editingAuthorizationLoading.value = false
-  accountFormSnapshot.value = ''
-}
 
 async function save() {
-  error.value = ''
+  overlayError.value = ''
+  Object.keys(fieldErrors).forEach(k => delete fieldErrors[k])
   successMessage.value = ''
   if (!form.displayName.trim()) {
-    error.value = '请填写姓名或显示名称。'
+    overlayError.value = '请填写姓名或显示名称。'
+    fieldErrors['displayName'] = '请填写姓名或显示名称。'
     return
   }
   if (!editingUser.value && !/^[a-z0-9_.-]{3,40}$/.test(form.username.trim().toLowerCase())) {
-    error.value = '登录账号为 3 至 40 位小写字母、数字、点、下划线或短横线。'
+    overlayError.value = '登录账号为 3 至 40 位小写字母、数字、点、下划线或短横线。'
+    fieldErrors['username'] = '登录账号为 3 至 40 位小写字母、数字、点、下划线或短横线。'
     return
   }
   if (!editingUser.value && form.password.length < 8) {
-    error.value = '初始密码至少需要 8 位。'
+    overlayError.value = '初始密码至少需要 8 位。'
+    fieldErrors['password'] = '初始密码至少需要 8 位。'
     return
   }
   if (storeManagerAccountForm.value && !form.storeId) {
-    error.value = '店长账号必须绑定且只能绑定一家门店。'
+    overlayError.value = '店长账号必须绑定且只能绑定一家门店。'
+    fieldErrors['storeId'] = '店长账号必须绑定且只能绑定一家门店。'
     return
   }
 
@@ -735,7 +940,7 @@ async function save() {
     enabled: form.enabled,
   }
   if (editingUser.value && !editingAuthorization.value) {
-    error.value = editingAuthorizationLoading.value
+    overlayError.value = editingAuthorizationLoading.value
       ? '正在读取账号权限，请稍后再保存。'
       : '账号权限尚未加载，不能保存。请关闭后重新编辑。'
     return
@@ -752,10 +957,10 @@ async function save() {
       ? []
       : previewAvailableWorkspaces(role, editingAuthorization.value.effectivePermissions, previewScopes, profile.storeId)
     if (!availableWorkspaces.length) {
-      error.value = roleChanged
+      overlayError.value = roleChanged
         ? '更换角色并启用账号前，请先保持停用状态保存，再配置该角色的可用工作台。'
         : role === 'STORE_MANAGER'
-          ? '店长工作台未授权：请先确认角色模板包含“门店查看”，并将门店数据范围设为绑定门店。'
+          ? '店长工作台未授权：请先确认角色模板包含"门店查看"，并将门店数据范围设为绑定门店。'
           : '该账号没有任何可用工作台，暂时不能启用。请先配置角色权限和数据范围。'
       return
     }
@@ -780,7 +985,7 @@ async function save() {
     forceCloseEditor()
     await loadPermissionPage()
   } catch (saveError) {
-    error.value = displayError(saveError, '账号保存失败，请稍后重试。')
+    overlayError.value = displayError(saveError, '账号保存失败，请稍后重试。')
   } finally {
     saving.value = false
   }
@@ -790,27 +995,6 @@ function canResetPassword(user: UserAccount) {
   return !isBossRole(user.role) || user.id === auth.user?.id
 }
 
-function openPasswordReset(user: UserAccount) {
-  if (!canResetPassword(user)) return
-  resetTarget.value = user
-  resetError.value = ''
-  Object.assign(resetForm, { currentPassword: '', password: '', confirmPassword: '' })
-}
-
-function closePasswordReset() {
-  if (resetting.value) return
-  if (passwordDirty.value) {
-    requestDiscardConfirmation('关闭密码编辑后，本次输入的密码将不会保留。', forceClosePasswordReset)
-    return
-  }
-  forceClosePasswordReset()
-}
-
-function forceClosePasswordReset() {
-  resetTarget.value = null
-  resetError.value = ''
-  Object.assign(resetForm, { currentPassword: '', password: '', confirmPassword: '' })
-}
 
 async function submitPasswordReset() {
   if (!resetTarget.value || resetting.value) return
@@ -851,6 +1035,7 @@ async function submitPasswordReset() {
 
 async function openAuthorization(user: UserAccount, clearFeedback = true) {
   const requestSequence = ++authorizationRequestSequence
+  activeOverlay.value = { type: 'authorization', userId: user.id }
   selectedAuthorizationUser.value = user
   userAuthorization.value = null
   clearAuthorizationDraft()
@@ -905,36 +1090,12 @@ async function reloadAuthorizationDetail(
   }
 }
 
-function requestOpenAuthorization(user: UserAccount) {
-  if (selectedAuthorizationUser.value?.id === user.id) return
-  if (authorizationDirty.value) {
-    requestDiscardConfirmation(
-      '切换账号后，当前尚未保存的授权调整将不会保留。',
-      () => { void openAuthorization(user) },
-    )
-    return
-  }
-  void openAuthorization(user)
+function requestOpenAuthorization(user: UserAccount, event?: Event) {
+  if (activeOverlay.value?.type === 'authorization' && selectedAuthorizationUser.value?.id === user.id) return
+  authorizationTriggerElement = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null
+  requestOpenOverlay({ type: 'authorization', userId: user.id })
 }
 
-function closeAuthorization() {
-  if (authorizationSaving.value) return
-  if (authorizationDirty.value) {
-    requestDiscardConfirmation('关闭账号授权后，本次尚未保存的授权调整将不会保留。', forceCloseAuthorization)
-    return
-  }
-  forceCloseAuthorization()
-}
-
-function forceCloseAuthorization() {
-  authorizationRequestSequence += 1
-  selectedAuthorizationUser.value = null
-  userAuthorization.value = null
-  authorizationLoading.value = false
-  authorizationError.value = ''
-  authorizationSuccess.value = ''
-  clearAuthorizationDraft()
-}
 
 function onScopeModeChanged(domainCode: string) {
   const scope = draftScopes[domainCode]
@@ -955,9 +1116,21 @@ function learnerAllowDisabled(permissionCode: string) {
 
 function scopeEditingDisabled(domainCode: string) {
   return selectedAuthorizationIsBoss.value
-    || selectedAuthorizationIsGlobalStoreRole.value
     || authorizationSaving.value
     || (selectedAuthorizationIsSupervisor.value && !SUPERVISOR_STORE_SCOPE_DOMAINS.has(domainCode))
+}
+
+function accountWithAuthorizationScope(user: UserAccount, authorization: UserAuthorization): UserAccount {
+  if (normalizeRoleCode(user.role) !== 'SUPERVISOR') return user
+  const storeScope = authorization.dataScopes.find((scope) => scope.domainCode === 'STORE')
+  return {
+    ...user,
+    storeScope: storeScope?.mode === 'ALL'
+      ? ['all']
+      : storeScope?.mode === 'STORE_LIST'
+        ? [...storeScope.storeIds]
+        : [],
+  }
 }
 
 async function saveAuthorization() {
@@ -1009,9 +1182,10 @@ async function saveAuthorization() {
       target.id,
       accessProfilePayload(profile, userAuthorization.value, dataScopes, overrides),
     )
+    const updatedUser = accountWithAuthorizationScope(updated.user, updated.authorization)
     const rowIndex = users.value.findIndex((user) => user.id === target.id)
-    if (rowIndex >= 0) users.value[rowIndex] = updated.user
-    selectedAuthorizationUser.value = updated.user
+    if (rowIndex >= 0) users.value[rowIndex] = updatedUser
+    selectedAuthorizationUser.value = updatedUser
     userAuthorization.value = updated.authorization
     applyAuthorizationDraft(updated.authorization)
     authorizationSuccess.value = `权限已更新，该账号需要重新登录。权限版本 v${updated.authorization.permissionVersion}。`
@@ -1039,7 +1213,7 @@ const WORKSPACE_LABELS: Record<string, string> = {
   '/boss': '老板工作台',
   '/finance': '财务工作台',
   '/warehouse': '仓库中心',
-  '/store': '门店详情',
+  '/store': '本店经营概览',
   '/operations': '运营工作台',
   '/learn/exams': '学习考试',
 }
@@ -1113,7 +1287,7 @@ watch(
       return
     }
     if (normalizeRoleCode(role) === 'STORE_MANAGER') {
-      const storeId = form.storeId || form.storeScope[0] || ''
+      const storeId = form.storeId || form.storeScope.find((value) => value !== 'all') || ''
       form.storeId = storeId
       form.storeScope = storeId ? [storeId] : []
       return
@@ -1125,6 +1299,23 @@ watch(
   },
 )
 
+watch(
+  () => activeOverlay.value?.type === 'authorization',
+  async (open) => {
+    if (!open) {
+      unlockAuthorizationBackground()
+      return
+    }
+    lockAuthorizationBackground()
+    await nextTick()
+    authorizationDrawerRef.value?.focus()
+  },
+)
+
+watch(discardDialogOpen, (open) => {
+  if (authorizationDrawerRef.value) authorizationDrawerRef.value.inert = open
+})
+
 onMounted(() => {
   document.addEventListener('keydown', handleDialogEscape)
   void loadPermissionPage()
@@ -1132,6 +1323,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleDialogEscape)
+  unlockAuthorizationBackground()
+  if (authorizationDrawerRef.value) authorizationDrawerRef.value.inert = false
 })
 
 onBeforeRouteLeave(() => {
@@ -1158,11 +1351,6 @@ onBeforeRouteLeave(() => {
         </div>
       </template>
     </PageHeader>
-
-    <aside class="desktop-workflow-notice" role="note">
-      <strong>请在电脑端完成</strong>
-      <span>账号、权限和数据范围设置涉及高风险授权，请使用电脑端完成并仔细核对后保存。</span>
-    </aside>
 
     <div v-if="error" class="error-box page-load-error">
       <span>{{ error }}</span>
@@ -1212,8 +1400,10 @@ onBeforeRouteLeave(() => {
                   <td>{{ scopeText(user) }}</td>
                   <td class="workspace-cell">{{ workspaceText(user) }}</td>
                   <td class="permission-status-cell">
-                    <span class="status-badge" :class="effectivePermissionTone(user)">{{ effectivePermissionText(user) }}</span>
-                    <small>{{ effectivePermissionDetail(user) }}</small>
+                    <div class="permission-status-content">
+                      <span class="status-badge" :class="effectivePermissionTone(user)">{{ effectivePermissionText(user) }}</span>
+                      <small>{{ effectivePermissionDetail(user) }}</small>
+                    </div>
                   </td>
                   <td><span class="status-badge" :class="user.enabled ? 'ok' : 'bad'">{{ user.enabled ? '启用' : '停用' }}</span></td>
                   <td v-if="canManage" class="r actions-cell sticky-actions-col">
@@ -1224,7 +1414,7 @@ onBeforeRouteLeave(() => {
                         type="button"
                         title="配置角色模板、数据范围和个人权限"
                         :aria-label="`配置 ${user.username} 的账号授权`"
-                        @click="requestOpenAuthorization(user)"
+                        @click="requestOpenAuthorization(user, $event)"
                       ><Shield :size="15" /></button>
                       <button class="icon-button" type="button" title="编辑账号" @click="openEdit(user)"><Pencil :size="15" /></button>
                       <button
@@ -1262,22 +1452,37 @@ onBeforeRouteLeave(() => {
         </aside>
       </div>
 
-      <section v-if="canManage" class="authorization-workspace" aria-labelledby="authorization-title">
+      <Teleport to="body">
+        <div
+          v-if="canManage && activeOverlay?.type === 'authorization' && selectedAuthorizationUser"
+          class="editor-backdrop authorization-backdrop"
+          role="presentation"
+          @click.self="closeAuthorization"
+        >
+          <aside
+            ref="authorizationDrawerRef"
+            class="authorization-workspace authorization-drawer"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="authorization-title"
+            aria-describedby="authorization-subtitle"
+            :aria-busy="authorizationLoading"
+            tabindex="-1"
+            @keydown="handleAuthorizationKeydown"
+          >
         <header class="authorization-head">
           <div class="authorization-heading">
             <span class="authorization-icon"><ShieldCheck :size="19" /></span>
             <div>
               <h3 id="authorization-title">账号授权</h3>
-              <p v-if="selectedAuthorizationUser">
+              <p id="authorization-subtitle">
                 {{ selectedAuthorizationUser.displayName || selectedAuthorizationUser.username }} ·
                 {{ selectedAuthorizationUser.roleLabel || selectedAuthorizationUser.role }} ·
                 权限版本 v{{ userAuthorization?.permissionVersion ?? '—' }}
               </p>
-              <p v-else>选择账号后，按角色模板、数据范围、个人覆盖和最终权限四部分核对。</p>
             </div>
           </div>
           <UiButton
-            v-if="selectedAuthorizationUser"
             variant="ghost"
             type="button"
             icon-only
@@ -1290,12 +1495,8 @@ onBeforeRouteLeave(() => {
           </UiButton>
         </header>
 
-        <div v-if="!selectedAuthorizationUser" class="authorization-empty">
-          <Shield :size="24" />
-          <div><b>尚未选择账号</b><span>点击账号列表操作栏中的盾牌按钮开始配置。</span></div>
-        </div>
-
-        <div v-else-if="authorizationLoading" class="authorization-loading" aria-label="正在读取账号授权">
+        <div class="authorization-drawer-body">
+        <div v-if="authorizationLoading" class="authorization-loading" aria-label="正在读取账号授权">
           <span v-for="index in 4" :key="index"></span>
         </div>
 
@@ -1311,13 +1512,9 @@ onBeforeRouteLeave(() => {
               <ShieldCheck :size="18" />
               <div><b>老板权限由系统固定</b><span>老板始终拥有当前公司全部权限和全部数据范围，本页只读且不会发起授权保存请求。</span></div>
             </div>
-            <div v-if="selectedAuthorizationIsGlobalStoreRole && !selectedAuthorizationIsBoss" class="fixed-authorization-note">
-              <ShieldCheck :size="18" />
-              <div><b>该角色默认拥有全部门店范围</b><span>门店数据范围固定为“全部”，无需单独配置。功能权限仍可在下方调整。</span></div>
-            </div>
             <div v-if="selectedAuthorizationIsSupervisor" class="fixed-authorization-note">
               <ShieldCheck :size="18" />
-              <div><b>督导门店范围可配置</b><span>指定门店范围用于知识库资料的发布、列表、搜索和下载；其他督导工作台继续沿用现有角色规则。</span></div>
+              <div><b>督导门店范围可配置</b><span>可选择全部门店、指定门店或无权限；该范围同时用于督导工作台与知识库资料的列表、搜索、下载和发布。</span></div>
             </div>
 
             <div
@@ -1472,25 +1669,34 @@ onBeforeRouteLeave(() => {
                 </div>
               </section>
             </div>
-
-            <ModalFooter class="authorization-actions" sticky>
-              <template #info>
-                <div>
-                  <b>{{ authorizationDirty ? '有尚未保存的授权调整' : '当前授权已与服务器一致' }}</b>
-                  <span v-if="!selectedAuthorizationIsBoss">保存会使目标账号旧登录立即失效。</span>
-                </div>
-              </template>
-              <UiButton
-                v-if="!selectedAuthorizationIsBoss"
-                variant="primary"
-                type="button"
-                :disabled="authorizationSaving || !authorizationDirty"
-                @click="saveAuthorization"
-              >{{ authorizationSaving ? '正在保存授权' : '保存账号授权' }}</UiButton>
-            </ModalFooter>
           </template>
         </template>
-      </section>
+        </div>
+
+        <ModalFooter v-if="!authorizationLoading && userAuthorization" class="authorization-actions">
+          <template #info>
+            <div>
+              <b>{{ authorizationDirty ? '有尚未保存的授权调整' : '当前授权已与服务器一致' }}</b>
+              <span v-if="!selectedAuthorizationIsBoss">保存会使目标账号旧登录立即失效。</span>
+            </div>
+          </template>
+          <UiButton
+            variant="secondary"
+            type="button"
+            :disabled="authorizationSaving"
+            @click="closeAuthorization"
+          >关闭</UiButton>
+          <UiButton
+            v-if="!selectedAuthorizationIsBoss"
+            variant="primary"
+            type="button"
+            :disabled="authorizationSaving || !authorizationDirty"
+            @click="saveAuthorization"
+          >{{ authorizationSaving ? '正在保存授权' : '保存账号授权' }}</UiButton>
+        </ModalFooter>
+          </aside>
+        </div>
+      </Teleport>
 
       <section class="content-card pending-manager-card">
         <div class="table-heading pending-manager-heading">
@@ -1525,13 +1731,16 @@ onBeforeRouteLeave(() => {
           </UiButton>
         </div>
         <div class="editor-body">
-          <label>
+          <div v-if="overlayError" class="editor-inline-error" role="alert">{{ overlayError }}</div>
+          <label :class="{ 'field-error': fieldErrors['username'] }">
             登录账号
             <input v-model.trim="form.username" type="text" autocomplete="off" :disabled="Boolean(editingUser) || saving" placeholder="例如：store-manager-01" />
+            <small v-if="fieldErrors['username']" class="field-error-text" role="alert">{{ fieldErrors['username'] }}</small>
           </label>
-          <label>
+          <label :class="{ 'field-error': fieldErrors['displayName'] }">
             姓名或显示名称
             <input v-model.trim="form.displayName" type="text" :disabled="saving" placeholder="例如：荆州之星店店长" />
+            <small v-if="fieldErrors['displayName']" class="field-error-text" role="alert">{{ fieldErrors['displayName'] }}</small>
           </label>
           <label>
             角色
@@ -1540,7 +1749,7 @@ onBeforeRouteLeave(() => {
             </select>
           </label>
           <template v-if="storeManagerAccountForm">
-            <label>
+            <label :class="{ 'field-error': fieldErrors['storeId'] }">
               绑定门店
               <SearchableSingleSelect
                 v-model="form.storeId"
@@ -1550,13 +1759,18 @@ onBeforeRouteLeave(() => {
                 search-placeholder="搜索门店名称、编号、区域或状态"
                 aria-label="搜索并绑定门店"
               />
+              <small v-if="fieldErrors['storeId']" class="field-error-text" role="alert">{{ fieldErrors['storeId'] }}</small>
             </label>
             <p class="account-role-hint">店长账号必须且只能绑定一家门店；详细业务范围在账号授权中配置。</p>
           </template>
           <template v-else-if="supervisorAccountForm">
             <fieldset class="account-store-scope">
               <legend>知识库管理门店范围</legend>
+              <p v-if="supervisorAllStoresAccountForm" class="account-role-hint">
+                当前为全部门店；如需缩小范围，请在账号列表点击盾牌按钮修改账号授权。
+              </p>
               <SearchableMultiSelect
+                v-else
                 :model-value="form.storeScope"
                 :options="searchableStoreOptions"
                 :disabled="saving"
@@ -1565,15 +1779,17 @@ onBeforeRouteLeave(() => {
                 aria-label="搜索并选择知识库管理门店范围"
                 @update:model-value="form.storeScope = $event.map(String)"
               />
-              <small>保存后同步为督导的知识库门店范围；搜索不会改变已选择的门店。</small>
+              <small v-if="supervisorAllStoresAccountForm">详细范围以账号授权中的门店数据范围为准。</small>
+              <small v-else>保存后同步为督导的知识库门店范围；搜索不会改变已选择的门店。</small>
             </fieldset>
           </template>
-          <p v-else-if="globalStoreRoleForm" class="account-role-hint">该角色默认拥有全部门店范围，无需单独配置。</p>
+          <p v-else-if="globalStoreRoleForm" class="account-role-hint">基础账号无需绑定门店；各业务域的数据范围请在账号授权中分别配置。</p>
           <p v-else-if="bossAccountForm" class="account-role-hint">老板固定拥有当前公司全部功能和数据范围，无需单独授权。</p>
           <p v-else class="account-role-hint">基础账号只设置身份。保存后请在账号列表点击盾牌按钮，分别配置业务数据范围和个人权限。</p>
-          <label v-if="!editingUser">
+          <label v-if="!editingUser" :class="{ 'field-error': fieldErrors['password'] }">
             初始密码
             <input v-model="form.password" type="password" autocomplete="new-password" :disabled="saving" placeholder="至少 8 位" />
+            <small v-if="fieldErrors['password']" class="field-error-text" role="alert">{{ fieldErrors['password'] }}</small>
           </label>
           <label class="enabled-row">
             <input v-model="form.enabled" type="checkbox" :disabled="saving || editingSelf || protectedBoss" />
@@ -1644,10 +1860,6 @@ onBeforeRouteLeave(() => {
   gap: 14px;
 }
 
-.desktop-workflow-notice {
-  display: none;
-}
-
 .page-actions,
 .actions-cell-inner {
   display: flex;
@@ -1680,7 +1892,13 @@ th, td { padding: 10px; border-bottom: 1px solid var(--line); text-align: left; 
 th { color: var(--muted); font-size: 12px; font-weight: 800; }
 .r { text-align: right; }
 .workspace-cell { min-width: 150px; color: #415a57; }
-.permission-status-cell { display: grid; min-width: 190px; gap: 5px; }
+.permission-status-cell { min-width: 190px; }
+.permission-status-content {
+  display: grid;
+  align-content: center;
+  justify-items: start;
+  gap: 5px;
+}
 .permission-status-cell .status-badge { width: fit-content; }
 .permission-status-cell small { color: var(--muted); line-height: 1.45; }
 .actions-cell {
@@ -1738,10 +1956,29 @@ tbody tr:hover .sticky-actions-col {
 }
 
 .authorization-workspace {
+  display: flex;
+  width: min(920px, 100vw);
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border-left: 1px solid var(--line);
   background: #fff;
+  box-shadow: -12px 0 32px rgba(22, 26, 34, .18);
+  outline: none;
+}
+
+.authorization-backdrop {
+  z-index: 1450;
+}
+
+.authorization-drawer-body {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .authorization-head,
@@ -1758,6 +1995,7 @@ tbody tr:hover .sticky-actions-col {
 }
 
 .authorization-head {
+  flex: 0 0 auto;
   min-height: 68px;
   justify-content: space-between;
   gap: 16px;
@@ -1768,6 +2006,7 @@ tbody tr:hover .sticky-actions-col {
 
 .authorization-heading {
   min-width: 0;
+  flex: 1 1 auto;
   gap: 10px;
 }
 
@@ -1787,6 +2026,10 @@ tbody tr:hover .sticky-actions-col {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.55;
+}
+
+.authorization-heading p {
+  overflow-wrap: anywhere;
 }
 
 .authorization-icon {
@@ -1845,6 +2088,10 @@ tbody tr:hover .sticky-actions-col {
   justify-content: space-between;
   gap: 12px;
   margin: 14px 16px 0;
+}
+
+.authorization-actions {
+  flex: 0 0 auto;
 }
 
 .authorization-message .ghost-button {
@@ -2166,6 +2413,10 @@ tbody tr:hover .sticky-actions-col {
   50% { opacity: 1; }
 }
 
+@keyframes authorization-drawer-in {
+  from { transform: translateX(20px); opacity: .82; }
+}
+
 .editor-backdrop {
   position: fixed;
   inset: 0;
@@ -2238,22 +2489,51 @@ tbody tr:hover .sticky-actions-col {
 .editor-body :deep(.searchable-multi-select) { width: 100%; }
 .editor-body > label.enabled-row { display: flex; align-items: center; gap: 8px; font-weight: 600; }
 .editor-loading-note { margin: 0 18px 14px; color: var(--muted); font-size: 12px; }
+.editor-inline-error { margin: 0 0 8px; padding: 10px 12px; border-radius: 7px; background: var(--ds-danger-soft, #fff0f1); color: var(--ds-danger, #c33f4d); font-size: 13px; font-weight: 700; }
+.field-error input, .field-error select, .field-error :deep(input) { border-color: var(--ds-danger, #c33f4d); }
+.field-error-text { display: block; margin-top: 4px; color: var(--ds-danger, #c33f4d); font-size: 12px; font-weight: 600; }
 @media (max-width: 768px) {
-  .desktop-workflow-notice {
-    display: grid;
-    gap: var(--space-1);
-    padding: var(--space-3);
-    border: 1px solid #efd19f;
-    border-radius: var(--radius-md);
-    background: #fff8ed;
-    color: #73450f;
-    font-size: 13px;
-    line-height: 1.5;
+  .authorization-workspace {
+    width: 100vw;
+    border-left: 0;
   }
 
-  .desktop-workflow-notice strong {
-    color: #73450f;
-    font-size: 14px;
+  .authorization-head {
+    min-height: 64px;
+    align-items: flex-start;
+    padding: 12px 14px;
+  }
+
+  .authorization-section {
+    padding: 16px 14px;
+  }
+
+  .authorization-section-head {
+    align-items: flex-start;
+  }
+
+  .authorization-drawer .data-scope-row,
+  .permission-override-row,
+  .permission-summary-group {
+    grid-template-columns: 1fr;
+  }
+
+  .authorization-drawer .data-scope-row {
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .permission-override-row {
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .permission-summary-group {
+    gap: 6px;
+  }
+
+  .permission-summary-group > b {
+    padding-top: 0;
   }
 }
 
@@ -2264,5 +2544,9 @@ tbody tr:hover .sticky-actions-col {
 
 @media (prefers-reduced-motion: reduce) {
   .authorization-loading span { animation: none; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .authorization-drawer { animation: authorization-drawer-in 160ms ease-out; }
 }
 </style>

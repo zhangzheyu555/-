@@ -255,15 +255,56 @@ async function fillDateRange(page: Page, startDate = '2026-07-01', endDate = '20
 
 function multiSelect(page: Page, label: string) {
   return page.locator('.searchable-multi-select').filter({
-    has: page.getByRole('searchbox', { name: label }),
+    has: page.getByRole('button', { name: new RegExp(`^${label}：`) }),
   })
 }
 
-async function selectMultiOption(page: Page, label: string, query: string, optionName: RegExp) {
+function selectedScopeName(label: string) {
+  if (label === '报表门店') return '指定门店'
+  if (label === '报表物料') return '指定物料'
+  throw new Error(`没有配置选择范围：${label}`)
+}
+
+async function openMultiSelect(page: Page, label: string) {
   const selector = multiSelect(page, label)
+  const searchbox = selector.getByRole('searchbox', { name: label })
+  if (!await searchbox.isVisible()) {
+    await selector.getByRole('button', { name: new RegExp(`^${label}：`) }).click()
+  }
+  await expect(searchbox).toBeVisible()
+  return selector
+}
+
+async function selectMultiOption(page: Page, label: string, query: string, optionName: RegExp) {
+  await page.getByRole('radio', { name: selectedScopeName(label) }).check()
+  const selector = await openMultiSelect(page, label)
   await selector.getByRole('searchbox', { name: label }).fill(query)
   await selector.getByRole('checkbox', { name: optionName }).check()
+  await selector.getByRole('button', { name: '完成选择' }).click()
 }
+
+async function acknowledgeValidationError(page: Page, message: string) {
+  const dialog = page.getByRole('alertdialog', { name: '操作未完成' })
+  await expect(dialog).toContainText(message)
+  await dialog.getByRole('button', { name: '我知道了' }).click()
+  await expect(dialog).toHaveCount(0)
+}
+
+test('指定门店或物料时必须完成选择，不能把空范围静默当成全部', async ({ page }) => {
+  const log = await prepare(page)
+  await fillDateRange(page)
+
+  await expect(page.getByRole('radio', { name: '全部门店' })).toBeChecked()
+  await expect(page.getByRole('radio', { name: '全部物料' })).toBeChecked()
+  await expect(page.getByRole('searchbox', { name: '报表门店' })).toHaveCount(0)
+  await expect(page.getByRole('searchbox', { name: '报表物料' })).toHaveCount(0)
+
+  await page.getByRole('radio', { name: '指定门店' }).check()
+  await page.getByRole('button', { name: '导出聚合报表' }).click()
+
+  await acknowledgeValidationError(page, '请至少选择一家门店')
+  expect(log.summaryBodies).toHaveLength(0)
+})
 
 test('按门店、物料和月份导出聚合报表，并使用响应文件名', async ({ page }) => {
   const log = await prepare(page)
@@ -336,10 +377,11 @@ test('可仅选择物料导出，未选门店表示全部门店', async ({ page 
   })
 })
 
-test('物料全选仅作用于当前搜索结果，且清空后仍按全部物料导出', async ({ page }) => {
+test('物料全选仅作用于当前搜索结果，清空后必须明确切回全部物料', async ({ page }) => {
   const log = await prepare(page)
   await fillDateRange(page)
-  const selector = multiSelect(page, '报表物料')
+  await page.getByRole('radio', { name: '指定物料' }).check()
+  const selector = await openMultiSelect(page, '报表物料')
   const search = selector.getByRole('searchbox', { name: '报表物料' })
 
   await search.fill('MILK-11')
@@ -352,7 +394,13 @@ test('物料全选仅作用于当前搜索结果，且清空后仍按全部物�
 
   await selector.getByRole('button', { name: '清空已选' }).click()
   await expect(selector).toContainText('已选择 0 项物料')
+  await selector.getByRole('button', { name: '完成选择' }).click()
 
+  await page.getByRole('button', { name: '导出聚合报表' }).click()
+  await acknowledgeValidationError(page, '请至少选择一项物料')
+  expect(log.summaryBodies).toHaveLength(0)
+
+  await page.getByRole('radio', { name: '全部物料' }).check()
   const downloadPromise = page.waitForEvent('download')
   await page.getByRole('button', { name: '导出聚合报表' }).click()
   await downloadPromise
@@ -384,7 +432,7 @@ test('日期区间反选时显示中文提示且不发送导出请求', async ({
 
   await page.getByRole('button', { name: '导出聚合报表' }).click()
 
-  await expect(page.getByRole('alert')).toContainText('开始日期不能晚于结束日期')
+  await acknowledgeValidationError(page, '开始日期不能晚于结束日期')
   expect(log.summaryBodies).toHaveLength(0)
 })
 
@@ -403,7 +451,7 @@ test('日报、周报、月报切换会提交对应周期粒度', async ({ page 
   expect(log.summaryBodies.map((body) => body.periodType)).toEqual(['DAY', 'WEEK', 'MONTH'])
 })
 
-test('切换仓库会更新导出仓库并清理已不可见物料', async ({ page }) => {
+test('切换仓库会清理越界选择，但保留指定意图以防静默扩大范围', async ({ page }) => {
   const log = await prepare(page)
   await fillDateRange(page)
   await selectMultiOption(page, '报表门店', 'RG1', /荆州之星店.*RG1/)
@@ -411,17 +459,26 @@ test('切换仓库会更新导出仓库并清理已不可见物料', async ({ pa
 
   await page.getByLabel('当前仓库').selectOption('2')
   await expect(page).toHaveURL(/warehouseId=2/)
-  const storeSelector = multiSelect(page, '报表门店')
-  const productSelector = multiSelect(page, '报表物料')
+  const storeSelector = await openMultiSelect(page, '报表门店')
   await storeSelector.getByRole('searchbox', { name: '报表门店' }).fill('')
-  await productSelector.getByRole('searchbox', { name: '报表物料' }).fill('')
   await expect(storeSelector.getByRole('checkbox')).toHaveCount(1)
   await expect(storeSelector.getByRole('checkbox', { name: /山东首店.*SD1/ })).not.toBeChecked()
+  await expect(storeSelector).toContainText('已选择 0 家门店')
+  await storeSelector.getByRole('button', { name: '完成选择' }).click()
+
+  const productSelector = await openMultiSelect(page, '报表物料')
+  await productSelector.getByRole('searchbox', { name: '报表物料' }).fill('')
   await expect(productSelector.getByRole('checkbox')).toHaveCount(1)
   await expect(productSelector.getByRole('checkbox', { name: /吸管.*STRAW-22/ })).not.toBeChecked()
-  await expect(storeSelector).toContainText('已选择 0 家门店')
   await expect(productSelector).toContainText('已选择 0 项物料')
+  await productSelector.getByRole('button', { name: '完成选择' }).click()
 
+  await page.getByRole('button', { name: '导出聚合报表' }).click()
+  await acknowledgeValidationError(page, '请至少选择一家门店')
+  expect(log.summaryBodies).toHaveLength(0)
+
+  await page.getByRole('radio', { name: '全部门店' }).check()
+  await page.getByRole('radio', { name: '全部物料' }).check()
   const downloadPromise = page.waitForEvent('download')
   await page.getByRole('button', { name: '导出聚合报表' }).click()
   await downloadPromise
@@ -445,4 +502,21 @@ test('原叫货单配送单下载与聚合导出入口并行保留', async ({ pa
   await expect.poll(() => log.deliveryDownloads.length).toBe(1)
   expect(log.summaryBodies).toHaveLength(0)
   expect(download.suggestedFilename()).toBe('delivery-REQ-EXISTING-PDF.pdf')
+})
+
+test('小屏下门店与物料范围保持单列，紧凑选择器不产生横向溢出', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await prepare(page)
+  const report = page.getByRole('region', { name: '叫货汇总报表' })
+  await report.scrollIntoViewIfNeeded()
+
+  await expect.poll(() => report.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
+  await page.getByRole('radio', { name: '指定物料' }).check()
+  const selector = await openMultiSelect(page, '报表物料')
+  const panel = selector.locator('.searchable-multi-select__panel')
+  const box = await panel.boundingBox()
+
+  expect(box).not.toBeNull()
+  expect(box!.x).toBeGreaterThanOrEqual(0)
+  expect(box!.x + box!.width).toBeLessThanOrEqual(390)
 })

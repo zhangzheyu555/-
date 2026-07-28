@@ -4,6 +4,7 @@ import { AlertCircle, Eye, EyeOff, Headphones, LockKeyhole, ShieldCheck, UserRou
 import { useRoute, useRouter } from 'vue-router'
 import { ApiError } from '../api/http'
 import { changeInitialPasswordApi } from '../api/auth'
+import { reportAppError } from '../errors/appErrorDialog'
 import { getHealth } from '../api/health'
 import { useAuthStore } from '../stores/auth'
 
@@ -58,6 +59,7 @@ async function submit() {
     await router.push(redirect)
   } catch (err) {
     applyLoginError(err)
+    reportAppError(submitError.value || passwordError.value || err, { title: '登录未完成' })
   }
 }
 
@@ -84,6 +86,7 @@ async function submitInitialPasswordChange() {
     passwordChangeSuccess.value = '密码修改成功，请使用新密码重新登录'
   } catch (err) {
     newPasswordError.value = err instanceof Error ? err.message : '密码修改失败，请重新登录后重试'
+    reportAppError(newPasswordError.value, { title: '密码修改未完成' })
     if (err instanceof ApiError && err.status === 401) clearPasswordChangeState()
   } finally {
     changingPassword.value = false

@@ -172,3 +172,26 @@ shortage alone is not a valid rejection reason.
   upload-and-publish/draft actions, and selecting two stores with the checkbox selector.
 - No `flyway repair` was used. No migration source file was added or modified during the alignment
   and deployment.
+
+### 2026-07-27 — Canonical Employee Archive Recovery: PASSED
+
+- The canonical `ai_profit_os_real_qa` database had zero `employee`, `salary_policy`, and
+  `employee_salary_profile` rows even though Flyway V69 was recorded as successful. The tenant and
+  employee data did not exist when that conditional seed migration originally ran, so it inserted
+  nothing and Flyway correctly did not rerun it later.
+- The project database snapshot `database/store_profit_mysql8.sql` was restored into an isolated
+  MySQL container and audited before import. It contained 194 historical formal employee archives
+  plus 3 explicitly marked local demo employees. The 3 demo employees and their demo salary rows
+  were excluded.
+- A verified backup of the target tables was created before import:
+  `/private/tmp/ai_profit_os_real_qa_pre_employee_import_20260727.sql.gz`, SHA-256
+  `63beca45cd98d88650424b129d7ce83b3f7c4f87f955418ad83952582f2ba5f1`.
+- One transaction imported 194 formal employee archives covering the 13 RG stores, created the
+  existing V69 standard 2026 salary policy, and created 164 policy-linked salary profiles for
+  non-part-time employees. Final employee status is 181 `在职` plus 13 `离职`; there are zero
+  orphan stores, profiles, policies, or imported demo employees.
+- Historical salary records and current-month attendance were intentionally not copied. The salary
+  employee-page API now exposes all 181 active employees as `PENDING_GENERATION`; `rg1` exposes 9.
+  Salary generation correctly remains blocked until current-month attendance is confirmed.
+- Operation log target `employee-history-import-20260727` records the source, counts, and explicit
+  demo-data exclusion. The temporary verification token and isolated audit container were removed.

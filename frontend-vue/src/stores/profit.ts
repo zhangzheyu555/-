@@ -46,7 +46,7 @@ export const useProfitStore = defineStore('profit', {
       return this.allEntries.filter((entry) => entry.storeId === this.storeId)
     },
     summary(): ProfitSummary {
-      if (!this.dashboard) return emptySummary
+      if (!this.dashboard?.summary) return emptySummary
       if (!this.storeId) return this.dashboard.summary
       return summarizeEntries(this.entries, this.dashboard.summary.month)
     },

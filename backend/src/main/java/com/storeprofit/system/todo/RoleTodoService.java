@@ -248,7 +248,7 @@ public class RoleTodoService {
       ));
       throw new BusinessException(
           "INSPECTION_RECTIFICATION_WORKFLOW_REQUIRED",
-          "巡检整改需先上传现场证据并提交运营复核，不能通过通用待办直接完成",
+          "巡检整改需先上传现场证据并提交督导复核，不能通过通用待办直接完成",
           HttpStatus.CONFLICT);
     }
     if (isExpenseTodo(visibleTodo)) {

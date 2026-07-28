@@ -9,6 +9,8 @@ import {
 import type { StoreInfo } from '../../api/operations'
 import SearchableMultiSelect from '../common/SearchableMultiSelect.vue'
 
+type ScopeMode = 'ALL' | 'SELECTED'
+
 const props = defineProps<{
   warehouseId?: string | number
   stores: StoreInfo[]
@@ -25,6 +27,8 @@ function localDateValue(date: Date) {
 const today = new Date()
 const startDate = ref(localDateValue(new Date(today.getFullYear(), today.getMonth(), 1)))
 const endDate = ref(localDateValue(today))
+const storeScopeMode = ref<ScopeMode>('ALL')
+const productScopeMode = ref<ScopeMode>('ALL')
 const selectedStoreIds = ref<string[]>([])
 const selectedProductIds = ref<number[]>([])
 const periodType = ref<WarehouseRequisitionSummaryPeriodType>('MONTH')
@@ -77,6 +81,11 @@ const searchableProductOptions = computed(() => productOptions.value.map((item) 
   }
 }))
 
+function clearResultMessages() {
+  errorMessage.value = ''
+  successMessage.value = ''
+}
+
 watch(
   () => storeOptions.value.map((store) => String(store.id)),
   (storeIds) => {
@@ -95,13 +104,49 @@ watch(
   { immediate: true },
 )
 
+watch(storeScopeMode, (mode) => {
+  if (mode === 'ALL') selectedStoreIds.value = []
+})
+
+watch(productScopeMode, (mode) => {
+  if (mode === 'ALL') selectedProductIds.value = []
+})
+
+watch(
+  [
+    startDate,
+    endDate,
+    storeScopeMode,
+    productScopeMode,
+    selectedStoreIds,
+    selectedProductIds,
+    periodType,
+    includeZeroRows,
+  ],
+  clearResultMessages,
+)
+
+const storeSelectionError = computed(() => {
+  if (storeScopeMode.value !== 'SELECTED' || selectedStoreIds.value.length) return ''
+  return storeOptions.value.length
+    ? '请至少选择一家门店'
+    : '当前仓库没有可供指定的门店'
+})
+
+const productSelectionError = computed(() => {
+  if (productScopeMode.value !== 'SELECTED' || selectedProductIds.value.length) return ''
+  return productOptions.value.length
+    ? '请至少选择一项物料'
+    : '当前仓库没有可供指定的物料'
+})
+
 const selectedScopeSummary = computed(() => {
-  const stores = selectedStoreIds.value.length
-    ? `已选 ${selectedStoreIds.value.length} 家门店`
-    : '全部授权门店'
-  const products = selectedProductIds.value.length
-    ? `已选 ${selectedProductIds.value.length} 项物料`
-    : '全部可见物料'
+  const stores = storeScopeMode.value === 'ALL'
+    ? `全部门店（${storeOptions.value.length} 家）`
+    : `指定门店（${selectedStoreIds.value.length} 家）`
+  const products = productScopeMode.value === 'ALL'
+    ? `全部物料（${productOptions.value.length} 项）`
+    : `指定物料（${selectedProductIds.value.length} 项）`
   return `${stores}，${products}`
 })
 
@@ -109,6 +154,8 @@ function validate() {
   if (!startDate.value || !endDate.value) return '请选择完整的开始日期和结束日期'
   if (startDate.value > endDate.value) return '开始日期不能晚于结束日期'
   if (!periodType.value) return '请选择周期粒度'
+  if (storeSelectionError.value) return storeSelectionError.value
+  if (productSelectionError.value) return productSelectionError.value
   return ''
 }
 
@@ -118,6 +165,7 @@ function fallbackFilename() {
 }
 
 async function exportSummary() {
+  if (exporting.value) return
   errorMessage.value = validate()
   successMessage.value = ''
   if (errorMessage.value) return
@@ -130,8 +178,10 @@ async function exportSummary() {
         : { warehouseId: props.warehouseId }),
       startDate: startDate.value,
       endDate: endDate.value,
-      storeIds: [...selectedStoreIds.value],
-      productIds: selectedProductIds.value.map(Number),
+      storeIds: storeScopeMode.value === 'SELECTED' ? [...selectedStoreIds.value] : [],
+      productIds: productScopeMode.value === 'SELECTED'
+        ? selectedProductIds.value.map(Number)
+        : [],
       periodType: periodType.value,
       includeZeroRows: includeZeroRows.value,
       groupBy: ['store', 'product', 'period'],
@@ -144,6 +194,14 @@ async function exportSummary() {
   } finally {
     exporting.value = false
   }
+}
+
+function resetScopeSelection() {
+  storeScopeMode.value = 'ALL'
+  productScopeMode.value = 'ALL'
+  selectedStoreIds.value = []
+  selectedProductIds.value = []
+  clearResultMessages()
 }
 </script>
 
@@ -162,15 +220,27 @@ async function exportSummary() {
       <div class="date-fields">
         <label class="summary-field">
           <span>开始日期 <b aria-hidden="true">*</b></span>
-          <input v-model="startDate" type="date" aria-label="报表开始日期" required />
+          <input
+            v-model="startDate"
+            type="date"
+            aria-label="报表开始日期"
+            :disabled="exporting"
+            required
+          />
         </label>
         <label class="summary-field">
           <span>结束日期 <b aria-hidden="true">*</b></span>
-          <input v-model="endDate" type="date" aria-label="报表结束日期" required />
+          <input
+            v-model="endDate"
+            type="date"
+            aria-label="报表结束日期"
+            :disabled="exporting"
+            required
+          />
         </label>
         <label class="summary-field">
           <span>周期粒度 <b aria-hidden="true">*</b></span>
-          <select v-model="periodType" aria-label="周期粒度" required>
+          <select v-model="periodType" aria-label="周期粒度" :disabled="exporting" required>
             <option value="DAY">日报</option>
             <option value="WEEK">周报</option>
             <option value="MONTH">月报</option>
@@ -179,34 +249,100 @@ async function exportSummary() {
       </div>
 
       <div class="scope-fields">
-        <label class="summary-field">
-          <span>门店（可多选）</span>
+        <fieldset class="scope-field" :disabled="exporting">
+          <legend>门店范围 <b aria-hidden="true">*</b></legend>
+          <div class="scope-mode-options">
+            <label :class="{ active: storeScopeMode === 'ALL' }">
+              <input
+                v-model="storeScopeMode"
+                type="radio"
+                name="requisition-summary-store-scope"
+                value="ALL"
+              />
+              <span>全部门店</span>
+            </label>
+            <label :class="{ active: storeScopeMode === 'SELECTED' }">
+              <input
+                v-model="storeScopeMode"
+                type="radio"
+                name="requisition-summary-store-scope"
+                value="SELECTED"
+              />
+              <span>指定门店</span>
+            </label>
+          </div>
           <SearchableMultiSelect
+            v-if="storeScopeMode === 'SELECTED'"
             :model-value="selectedStoreIds"
             :options="searchableStoreOptions"
             selected-noun="家门店"
             search-placeholder="搜索门店名称、编号或区域"
             aria-label="报表门店"
+            :placeholder="storeOptions.length ? '请选择门店' : '当前仓库没有可选门店'"
+            :disabled="exporting || !storeOptions.length"
+            compact
             @update:model-value="selectedStoreIds = $event.map(String)"
           />
-          <small>不选择表示全部授权门店</small>
-        </label>
-        <label class="summary-field">
-          <span>物料（可多选）</span>
+          <small v-if="storeScopeMode === 'ALL'" class="scope-help">
+            导出当前仓库内账号有权查看的全部门店
+          </small>
+          <small v-else-if="storeSelectionError" class="scope-error" role="status">
+            {{ storeSelectionError }}
+          </small>
+          <small v-else class="scope-help">已指定 {{ selectedStoreIds.length }} 家门店</small>
+        </fieldset>
+
+        <fieldset class="scope-field" :disabled="exporting">
+          <legend>物料范围 <b aria-hidden="true">*</b></legend>
+          <div class="scope-mode-options">
+            <label :class="{ active: productScopeMode === 'ALL' }">
+              <input
+                v-model="productScopeMode"
+                type="radio"
+                name="requisition-summary-product-scope"
+                value="ALL"
+              />
+              <span>全部物料</span>
+            </label>
+            <label :class="{ active: productScopeMode === 'SELECTED' }">
+              <input
+                v-model="productScopeMode"
+                type="radio"
+                name="requisition-summary-product-scope"
+                value="SELECTED"
+              />
+              <span>指定物料</span>
+            </label>
+          </div>
           <SearchableMultiSelect
+            v-if="productScopeMode === 'SELECTED'"
             :model-value="selectedProductIds"
             :options="searchableProductOptions"
             selected-noun="项物料"
             search-placeholder="搜索物料名称、编号、分类或单位"
             aria-label="报表物料"
+            :placeholder="productOptions.length ? '请选择物料' : '当前仓库没有可选物料'"
+            :disabled="exporting || !productOptions.length"
+            compact
             @update:model-value="selectedProductIds = $event.map(Number)"
           />
-          <small>不选择表示全部可见物料</small>
-        </label>
+          <small v-if="productScopeMode === 'ALL'" class="scope-help">
+            导出当前仓库内账号有权查看的全部物料
+          </small>
+          <small v-else-if="productSelectionError" class="scope-error" role="status">
+            {{ productSelectionError }}
+          </small>
+          <small v-else class="scope-help">已指定 {{ selectedProductIds.length }} 项物料</small>
+        </fieldset>
       </div>
 
       <label class="zero-row-option">
-        <input v-model="includeZeroRows" type="checkbox" aria-label="包含零量组合" />
+        <input
+          v-model="includeZeroRows"
+          type="checkbox"
+          aria-label="包含零量组合"
+          :disabled="exporting"
+        />
         <span>
           <strong>包含零量组合</strong>
           <small>会补齐所选门店、物料和周期中没有叫货记录的行；范围较大时文件会明显增大。</small>
@@ -216,12 +352,22 @@ async function exportSummary() {
       <div class="summary-actions">
         <div>
           <strong>{{ selectedScopeSummary }}</strong>
-          <span>导出维度固定为门店、物料、周期组合</span>
+          <span>门店与物料按同时满足（AND）筛选；“全部”仅限当前仓库及当前账号的数据权限。</span>
         </div>
-        <button class="primary-action" type="submit" :disabled="exporting">
-          <Download :size="16" aria-hidden="true" />
-          {{ exporting ? '正在导出…' : '导出聚合报表' }}
-        </button>
+        <div class="action-buttons">
+          <button
+            class="secondary-action"
+            type="button"
+            :disabled="exporting || (storeScopeMode === 'ALL' && productScopeMode === 'ALL')"
+            @click="resetScopeSelection"
+          >
+            重置选择
+          </button>
+          <button class="primary-action" type="submit" :disabled="exporting">
+            <Download :size="16" aria-hidden="true" />
+            {{ exporting ? '正在导出…' : '导出聚合报表' }}
+          </button>
+        </div>
       </div>
 
       <p v-if="errorMessage" class="form-message error" role="alert">{{ errorMessage }}</p>
@@ -322,6 +468,84 @@ async function exportSummary() {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.scope-field {
+  display: grid;
+  min-width: 0;
+  margin: 0;
+  padding: 13px;
+  gap: 10px;
+  border: 1px solid var(--ds-line);
+  border-radius: 9px;
+  background: var(--ds-surface-muted);
+}
+
+.scope-field legend {
+  padding: 0 5px;
+  color: var(--ds-secondary);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.scope-field legend b {
+  color: var(--ds-danger);
+}
+
+.scope-mode-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.scope-mode-options label {
+  display: flex;
+  min-width: 0;
+  min-height: 38px;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border: 1px solid var(--ds-line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--ds-secondary);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.scope-mode-options label.active {
+  border-color: var(--ds-primary-hover);
+  background: var(--ds-primary-soft);
+  color: var(--ds-primary-hover);
+}
+
+.scope-mode-options input {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--ds-primary-hover);
+}
+
+.scope-field:disabled .scope-mode-options label {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.scope-help,
+.scope-error {
+  min-height: 18px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.scope-help {
+  color: var(--ds-muted);
+}
+
+.scope-error {
+  color: var(--ds-danger);
+}
+
 .summary-field {
   display: grid;
   min-width: 0;
@@ -355,8 +579,9 @@ async function exportSummary() {
   padding-top: 2px;
 }
 
-.summary-actions > div {
+.summary-actions > div:first-child {
   display: grid;
+  min-width: 0;
   gap: 3px;
 }
 
@@ -370,6 +595,14 @@ async function exportSummary() {
   font-size: 12px;
 }
 
+.action-buttons {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.secondary-action,
 .primary-action {
   min-height: 42px;
   display: inline-flex;
@@ -383,6 +616,18 @@ async function exportSummary() {
   color: #fff;
   font-weight: 800;
   cursor: pointer;
+}
+
+.secondary-action {
+  border-color: var(--ds-line);
+  background: #fff;
+  color: var(--ds-primary-hover);
+}
+
+.secondary-action:disabled {
+  color: var(--ds-muted);
+  cursor: not-allowed;
+  opacity: 0.65;
 }
 
 .primary-action:disabled {
@@ -419,8 +664,30 @@ async function exportSummary() {
     flex-direction: column;
   }
 
+  .action-buttons {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+    width: 100%;
+  }
+
+  .secondary-action,
   .primary-action {
     width: 100%;
+  }
+}
+
+@media (max-width: 430px) {
+  .scope-mode-options,
+  .action-buttons {
+    grid-template-columns: 1fr;
+  }
+
+  .scope-field :deep(.searchable-multi-select.is-compact .searchable-multi-select__panel) {
+    right: auto;
+    left: 0;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
   }
 }
 </style>

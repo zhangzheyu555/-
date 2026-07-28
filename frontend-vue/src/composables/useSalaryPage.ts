@@ -1,4 +1,4 @@
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { PERMISSIONS } from '../permissions/permissions'
@@ -122,6 +122,8 @@ export function useSalaryPage() {
 
   const pageData = ref<SalaryPageResponse | null>(null)
   const loadedPageScopeKey = ref('')
+  let listFilterWatchSuspended = false
+  let keywordTimer: ReturnType<typeof setTimeout> | undefined
 
   /* ---- computed ---- */
   const canEdit = computed(() => auth.hasPermission(PERMISSIONS.SALARY_EDIT))
@@ -178,13 +180,26 @@ export function useSalaryPage() {
   const total = computed(() => pageData.value?.totalElements ?? pageData.value?.total ?? 0)
   const totalPages = computed(() => pageData.value?.totalPages || 1)
   const summary = computed(() => pageData.value?.summary)
-  const employeeCount = computed(() => total.value)
+  const employeeCount = computed(() => {
+    const summaryCount = Number(pageData.value?.summary?.recordCount)
+    const statusCount = Object.values(pageData.value?.statusCounts || {})
+      .reduce((sum, count) => sum + Number(count || 0), 0)
+    return Math.max(
+      total.value,
+      Number.isFinite(summaryCount) ? summaryCount : 0,
+      Number.isFinite(statusCount) ? statusCount : 0,
+    )
+  })
+  const filteredEmployeeCount = computed(() => total.value)
   const employeesLoading = computed(() => loading.value)
   const employeesError = computed(() => error.value)
   const hasValidMonth = computed(() => /^\d{4}-(0[1-9]|1[0-2])$/.test(selectedMonth.value))
+  const hasActiveListFilters = computed(() => Boolean(
+    (statusFilter.value && statusFilter.value !== 'ACTIVE') || keyword.value.trim(),
+  ))
   const isEmployeeEmpty = computed(() => !employeesLoading.value && !employeesError.value && employeeCount.value === 0)
   const isEmpty = computed(() =>
-    !loading.value && !error.value && employeeCount.value > 0 && total.value === 0,
+    !loading.value && !error.value && employeeCount.value > 0 && filteredEmployeeCount.value === 0,
   )
   const showTable = computed(() => loading.value || total.value > 0)
   const canGenerate = computed(() =>
@@ -317,7 +332,7 @@ export function useSalaryPage() {
     } else {
       const ids = new Set(accessibleStores.value.map((s) => s.id))
       if (qStoreId && ids.has(qStoreId)) selectedStoreId.value = qStoreId
-      else if (qStoreId && storeMap.value.has(qStoreId)) selectedStoreId.value = qStoreId
+      else if (qStoreId && salaryScope.value?.mode === 'ALL' && storeMap.value.has(qStoreId)) selectedStoreId.value = qStoreId
       else if (isOwnStoreScope.value && accessibleStores.value.length)
         selectedStoreId.value = accessibleStores.value[0].id
     }
@@ -325,9 +340,23 @@ export function useSalaryPage() {
     if (SALARY_FILTERS.has(qStatus)) statusFilter.value = qStatus
   }
 
+  async function setListFiltersWithoutReload(status: string, searchKeyword: string) {
+    if (keywordTimer) {
+      clearTimeout(keywordTimer)
+      keywordTimer = undefined
+    }
+    listFilterWatchSuspended = true
+    statusFilter.value = status
+    keyword.value = searchKeyword
+    page.value = 1
+    await nextTick()
+    listFilterWatchSuspended = false
+  }
+
   /* ---- watchers ---- */
   watch([selectedMonth, selectedBrandId, selectedStoreId, statusFilter], () => {
-    if (initializing.value) return
+    if (initializing.value || listFilterWatchSuspended) return
+    successMessage.value = ''
     if (isStoreManager.value) {
       if (
         selectedStoreId.value !== businessScope.boundStoreId.value
@@ -359,9 +388,9 @@ export function useSalaryPage() {
     void loadPage(1)
   })
 
-  let keywordTimer: ReturnType<typeof setTimeout> | undefined
   watch(keyword, () => {
-    if (initializing.value) return
+    if (initializing.value || listFilterWatchSuspended) return
+    successMessage.value = ''
     if (keywordTimer) clearTimeout(keywordTimer)
     keywordTimer = setTimeout(() => {
       page.value = 1
@@ -374,6 +403,12 @@ export function useSalaryPage() {
     () => { applyRouteDefaults() },
   )
 
+  onBeforeUnmount(() => {
+    pageRequestController?.abort()
+    pageRequestController = null
+    if (keywordTimer) clearTimeout(keywordTimer)
+  })
+
   return {
     // state
     stores, selectedMonth, selectedBrandId, selectedStoreId, statusFilter, keyword, page,
@@ -384,11 +419,13 @@ export function useSalaryPage() {
     managerScopeLabel, scopeConfigurationError, effectiveStoreId, effectiveBrandId,
     accessibleStores, brandOptions, filteredAccessibleStores, storeMap, selectedStoreName,
     isEffectiveStoreActive,
-    rows, total, totalPages, summary, employeeCount, hasValidMonth,
+    rows, total, totalPages, summary, employeeCount, filteredEmployeeCount, hasValidMonth,
+    hasActiveListFilters,
     isEmployeeEmpty, isEmpty, showTable, canGenerate,
     statusCounts, filteredRows,
     // methods
     loadStores, loadPage, reloadScopeData, reloadAll, applyRouteDefaults,
+    setListFiltersWithoutReload,
     // constants
     PAGE_SIZE,
   }

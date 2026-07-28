@@ -220,36 +220,18 @@ test('store manager salary and warehouse pages expose only current-store control
   await expect(warehouse).not.toContainText('总仓管理')
 })
 
-test('store manager detail and assistant ignore another store from the URL and requests', async ({ page }) => {
+test('store manager profit overview ignores another store from the URL and requests', async ({ page }) => {
   const requests = await prepare(page, managerSession)
 
-  await page.goto('/store?storeId=other-store')
-  const detail = page.locator('.store-detail-page')
-  await expect(detail.getByRole('heading', { name: '荆州之星店详情' })).toBeVisible()
-  await expect(detail.getByText('茹菓 · 门店编号 rg1 · 营业中')).toBeVisible()
-  await expect(detail.locator('.fixed-store-chip')).toHaveCount(0)
-  await expect(detail.getByLabel('品牌')).toHaveCount(0)
-  await expect(detail.getByLabel('门店')).toHaveCount(0)
-  await expect(detail.getByText('月份', { exact: true })).toBeVisible()
+  await page.goto('/profit?storeId=other-store&brandId=2')
+  const profitOverview = page.locator('.profit-overview-page')
+  await expect(profitOverview.getByRole('heading', { name: '本店经营概览' })).toBeVisible()
+  await expect(profitOverview.getByLabel('品牌')).toHaveCount(0)
+  await expect(profitOverview.getByLabel('门店')).toHaveCount(0)
+  await expect(profitOverview.getByLabel('月份')).toBeVisible()
 
   const dashboardUrl = matchingUrl(requests, '/api/finance/dashboard')
   expect(dashboardUrl?.searchParams.get('storeId')).toBe('rg1')
-  expect(dashboardUrl?.searchParams.get('brandId')).toBe('1')
-
-  await page.goto('/assistant?storeId=other-store')
-  const assistant = page.locator('.store-assistant-page')
-  await expect(assistant.getByText('荆州之星店 · 茹菓')).toBeVisible()
-  await expect(assistant.locator('.context-bar').getByText('门店', { exact: true })).toHaveCount(0)
-  await expect(assistant.locator('.context-bar').getByText('月份', { exact: true })).toBeVisible()
-  await assistant.getByLabel('经营问题').fill('本月净利润如何')
-  await assistant.getByRole('button', { name: '发送' }).click()
-  await expect.poll(() => requests.assistantBody).not.toBeNull()
-  expect(requests.assistantBody).toMatchObject({ storeId: 'rg1', month: '2026-07' })
-
-  const financeUrl = requests.urls
-    .map((url) => new URL(url))
-    .find((url) => url.pathname === '/api/finance/entries' && url.searchParams.has('storeId'))
-  expect(financeUrl?.searchParams.get('storeId')).toBe('rg1')
 })
 
 test('store manager cannot enter store management even with a stale store.manage permission', async ({ page }) => {
@@ -260,8 +242,8 @@ test('store manager cannot enter store management even with a stale store.manage
 
   await page.goto('/stores')
 
-  await expect.poll(() => new URL(page.url()).pathname).toBe('/store')
-  await expect(page.getByRole('alert')).toHaveText('当前账号无权进入门店管理，已返回本店工作台。')
+  await expect.poll(() => new URL(page.url()).pathname).toBe('/profit')
+  await expect(page.getByRole('alert')).toHaveText('当前账号无权进入门店管理，已返回本店经营概览。')
   await expect(page.locator('.app-sidebar--desktop')).not.toContainText('门店管理')
   await expect(page.getByRole('button', { name: '清空全部数据' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '删除' })).toHaveCount(0)
@@ -275,8 +257,8 @@ test('store management remains hidden from the store manager mobile navigation',
   })
 
   await page.goto('/stores')
-  await expect.poll(() => new URL(page.url()).pathname).toBe('/store')
-  await expect(page.getByRole('alert')).toHaveText('当前账号无权进入门店管理，已返回本店工作台。')
+  await expect.poll(() => new URL(page.url()).pathname).toBe('/profit')
+  await expect(page.getByRole('alert')).toHaveText('当前账号无权进入门店管理，已返回本店经营概览。')
 
   await page.getByRole('button', { name: '打开菜单' }).click()
   await expect(page.locator('.app-sidebar--mobile')).not.toContainText('门店管理')
@@ -284,22 +266,11 @@ test('store management remains hidden from the store manager mobile navigation',
   await expect(page.getByRole('button', { name: '删除' })).toHaveCount(0)
 })
 
-test('boss retains store and brand selectors on the same pages', async ({ page }) => {
+test('retired detail route falls back to profit for boss without a legacy sidebar entry', async ({ page }) => {
   await prepare(page, bossSession)
 
-  await page.goto('/stores')
-  await expect(page.getByRole('button', { name: '清空全部数据' })).toBeVisible()
-  await expect(page.getByRole('button', { name: '编辑' }).first()).toBeVisible()
-  await expect(page.getByRole('button', { name: '停用' }).first()).toBeVisible()
-  await expect(page.getByRole('button', { name: '删除' }).first()).toBeVisible()
-
   await page.goto('/store-detail')
-  await expect(page.locator('.store-detail-page').getByLabel('品牌')).toBeVisible()
-  await expect(page.locator('.store-detail-page').getByLabel('门店', { exact: true })).toBeVisible()
-
-  await page.goto('/assistant')
-  await expect(page.locator('.store-assistant-page').getByText('门店', { exact: true })).toBeVisible()
-
-  await page.goto('/finance/salary')
-  await expect(page.locator('.salary-workbench').getByLabel('门店')).toBeVisible()
+  await expect(page).toHaveURL(/\/profit(?:\?|$)/)
+  await expect(page.getByRole('heading', { name: '利润概览', exact: true })).toBeVisible()
+  await expect(page.locator('.app-sidebar--desktop')).not.toContainText('门店详情')
 })

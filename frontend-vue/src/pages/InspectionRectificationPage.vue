@@ -28,6 +28,8 @@ const error = ref('')
 const loadFailed = ref(false)
 const actionMessage = ref('')
 const discardDialogOpen = ref(false)
+const submitDialogOpen = ref(false)
+const submitDialogError = ref('')
 let pendingDiscardAction: (() => void) | null = null
 let pendingDiscardCancel: (() => void) | null = null
 
@@ -105,6 +107,28 @@ function requestDiscardConfirmation(action: () => void, cancel: () => void = () 
   discardDialogOpen.value = true
 }
 
+function requestSubmit() {
+  const task = selectedTask.value
+  if (!task || !isActionableStatus(task.status) || submitting.value || uploading.value) return
+  if (!note.value.trim()) {
+    error.value = '请填写整改说明后再提交。'
+    return
+  }
+  if (!files.value.length && !uploadedEvidence.value.length) {
+    error.value = '请至少上传一份现场证据后再提交整改。'
+    return
+  }
+  error.value = ''
+  submitDialogError.value = ''
+  submitDialogOpen.value = true
+}
+
+function cancelSubmit() {
+  if (submitting.value || uploading.value) return
+  submitDialogOpen.value = false
+  submitDialogError.value = ''
+}
+
 function requestSelectTask(task: InspectionRectificationTask) {
   if (task.recordId === selectedRecordId.value) return
   requestDiscardConfirmation(() => selectTask(task))
@@ -175,20 +199,16 @@ function removeFile(index: number) {
   files.value = files.value.filter((_, current) => current !== index)
 }
 
-async function submit() {
+async function confirmSubmit() {
   const task = selectedTask.value
-  if (!task || !isActionableStatus(task.status)) return
-  if (!note.value.trim()) {
-    error.value = '请填写整改说明后再提交。'
-    return
-  }
-  if (!files.value.length && !uploadedEvidence.value.length) {
-    error.value = '请至少上传一份现场证据后再提交整改。'
+  if (!task || !isActionableStatus(task.status)) {
+    submitDialogOpen.value = false
     return
   }
 
   submitting.value = true
   error.value = ''
+  submitDialogError.value = ''
   actionMessage.value = ''
   try {
     const evidence = await ensureEvidenceUploaded(task)
@@ -205,30 +225,36 @@ async function submit() {
     note.value = ''
     files.value = []
     uploadedEvidence.value = []
-    actionMessage.value = '整改已提交，等待运营复核。'
+    submitDialogOpen.value = false
+    actionMessage.value = '整改已提交，等待督导复核。'
     markFresh()
   } catch (submitError) {
     const uploadedHint = uploadedEvidence.value.length
       ? '现场证据已上传，但整改尚未提交；请保留当前页面后重新提交。'
       : ''
-    error.value = [unavailableMessage(submitError, '整改提交失败，请稍后重试。'), uploadedHint]
+    const message = [unavailableMessage(submitError, '整改提交失败，请稍后重试。'), uploadedHint]
       .filter(Boolean)
       .join(' ')
+    error.value = message
+    submitDialogError.value = message
   } finally {
     submitting.value = false
   }
 }
 
 async function ensureEvidenceUploaded(task: InspectionRectificationTask) {
-  if (uploadedEvidence.value.length) return uploadedEvidence.value
+  if (uploadedEvidence.value.length >= files.value.length) return uploadedEvidence.value
   uploading.value = true
   try {
-    const uploaded: InspectionRectificationEvidenceUpload[] = []
-    for (const file of files.value) {
+    const uploaded: InspectionRectificationEvidenceUpload[] = [...uploadedEvidence.value]
+    for (let index = uploaded.length; index < files.value.length; index += 1) {
+      const file = files.value[index]
       // 复用已有受认证、门店范围校验的附件入口；页面不会构造磁盘路径或匿名链接。
       uploaded.push(await uploadInspectionRectificationEvidence(task.recordId, file))
+      // 每成功一份就持久化到页面草稿，后续文件失败时可从断点继续，
+      // 避免重试造成已上传附件重复。
+      uploadedEvidence.value = [...uploaded]
     }
-    uploadedEvidence.value = uploaded
     return uploaded
   } finally {
     uploading.value = false
@@ -245,7 +271,7 @@ function taskStatusLabel(task: InspectionRectificationTask) {
   if (task.statusLabel) return task.statusLabel
   const labels: Record<string, string> = {
     PENDING_SUBMISSION: '待整改',
-    PENDING_REVIEW: '待运营复核',
+    PENDING_REVIEW: '待督导复核',
     APPROVED: '复核通过',
     REJECTED: '已驳回，需重新整改',
   }
@@ -366,6 +392,7 @@ function unavailableMessage(reason: unknown, fallback: string) {
                 :disabled="submitting"
                 placeholder="说明已采取的整改措施、完成时间和现场核对结果"
               />
+              <small class="rectification-note-count">当前 {{ note.length }}/1000 字</small>
 
               <div class="evidence-toolbar">
                 <div>
@@ -406,9 +433,9 @@ function unavailableMessage(reason: unknown, fallback: string) {
               </p>
 
               <div class="form-actions">
-                <UiButton variant="primary" :loading="submitting" :disabled="uploading" @click="submit">
+                <UiButton variant="primary" :loading="submitting" :disabled="uploading" @click="requestSubmit">
                   <template #icon><Send :size="16" /></template>
-                  提交整改复核
+                  提交至督导复核
                 </UiButton>
               </div>
             </section>
@@ -416,8 +443,8 @@ function unavailableMessage(reason: unknown, fallback: string) {
 
           <section v-else class="rectification-result" :class="statusTone(selectedTask.status)">
             <b>{{ taskStatusLabel(selectedTask) }}</b>
-            <p v-if="selectedTask.reviewNote">运营备注：{{ selectedTask.reviewNote }}</p>
-            <p v-else-if="selectedTask.managerNote">已提交整改说明，等待运营处理。</p>
+            <p v-if="selectedTask.reviewNote">督导备注：{{ selectedTask.reviewNote }}</p>
+            <p v-else-if="selectedTask.managerNote">已提交整改说明，等待督导处理。</p>
             <small>更新时间：{{ formatTime(selectedTask.updatedAt) }}</small>
           </section>
         </section>
@@ -432,6 +459,17 @@ function unavailableMessage(reason: unknown, fallback: string) {
       confirm-variant="danger"
       @cancel="keepEditing"
       @confirm="discardChanges"
+    />
+    <ActionConfirmDialog
+      :open="submitDialogOpen"
+      title="确认提交本次整改？"
+      :message="`将提交 ${Math.max(files.length, uploadedEvidence.length)} 份现场证据和整改说明；提交后需等待督导复核。`"
+      confirm-label="确认提交"
+      cancel-label="返回检查"
+      :busy="submitting || uploading"
+      :error="submitDialogError"
+      @cancel="cancelSubmit"
+      @confirm="confirmSubmit"
     />
   </section>
 </template>
@@ -455,5 +493,6 @@ function unavailableMessage(reason: unknown, fallback: string) {
 .task-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; margin: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--line); }.task-meta div { padding: 10px 12px; background: #fafbfc; }.task-meta dt { color: var(--muted); font-size: 12px; }.task-meta dd { margin: 4px 0 0; color: var(--ink); font-size: 14px; font-weight: 800; overflow-wrap: anywhere; }
 .problem-card { padding: 13px 14px; border-left: 4px solid var(--warn); background: #fffbf2; }.problem-card > div { display: flex; align-items: center; gap: 8px; color: var(--ink); }.problem-card p { margin: 8px 0 0; color: var(--ink); line-height: 1.65; white-space: pre-wrap; }.requirement-card { border-left-color: var(--primary); background: var(--primary-soft); }
 .rectification-form { display: grid; gap: 10px; padding-top: 18px; border-top: 1px solid var(--line); }.rectification-form > label { color: var(--ink); font-weight: 800; }.rectification-form textarea { width: 100%; min-height: 110px; resize: vertical; }.evidence-toolbar { justify-content: space-between; flex-wrap: wrap; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fafbfc; }.evidence-toolbar > div { display: grid; gap: 3px; }.evidence-toolbar span, .upload-pending-note { color: var(--muted); font-size: 12px; }.evidence-file-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }.evidence-file-list li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 9px; font-size: 13px; }.evidence-file-list span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.evidence-file-list small { color: var(--muted); }.evidence-file-list button { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border: 0; background: transparent; color: var(--bad); cursor: pointer; }.upload-pending-note { margin: 0; }.form-actions { display: flex; justify-content: flex-end; gap: 10px; }.rectification-result { padding: 14px; border-radius: 10px; background: #f5f7f8; }.rectification-result.ok { background: rgba(34, 197, 94, .1); }.rectification-result.bad { background: rgba(220, 38, 38, .08); }.rectification-result.warn { background: var(--ds-warning-soft, #fff7e7); }.rectification-result p { margin: 8px 0; line-height: 1.6; white-space: pre-wrap; }.rectification-result small { color: var(--muted); }.rectification-loading { display: flex; align-items: center; justify-content: center; gap: 9px; min-height: 180px; color: var(--muted); }.success-box { padding: 11px 13px; border: 1px solid rgba(34, 197, 94, .35); border-radius: 10px; background: rgba(34, 197, 94, .08); color: #177443; }.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }.spin { animation: spin .8s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
+.rectification-note-count { justify-self: end; color: var(--muted); font-size: 12px; }
 @media (max-width: 780px) { .rectification-layout { grid-template-columns: 1fr; }.rectification-list { grid-auto-flow: column; grid-auto-columns: minmax(220px, 78vw); overflow-x: auto; padding-bottom: 12px; }.list-heading { grid-column: 1 / -1; grid-row: 1; }.rectification-task { grid-row: 2; }.task-meta { grid-template-columns: 1fr; }.form-actions :deep(button) { width: 100%; } }
 </style>

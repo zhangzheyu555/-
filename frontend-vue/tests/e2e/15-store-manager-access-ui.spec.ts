@@ -125,7 +125,11 @@ test('account row actions stay visible and open permission controls without hori
 
   await actionButtons.nth(0).click()
   await expect(actionButtons.nth(0)).toHaveClass(/selected/)
-  await expect(page.locator('.authorization-sections')).toBeVisible()
+  const authorizationDrawer = page.getByRole('dialog', { name: '账号授权' })
+  await expect(authorizationDrawer).toBeVisible()
+  await expect(authorizationDrawer.locator('.authorization-sections')).toBeVisible()
+  await authorizationDrawer.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(authorizationDrawer).toBeHidden()
 
   await actionButtons.nth(1).click()
   await expect(page.locator('.account-editor')).toBeVisible()
@@ -202,7 +206,7 @@ test('authorization save uses the atomic access-profile endpoint', async ({ page
   expect(Array.isArray(requestBody?.dataScopes)).toBe(true)
 })
 
-test('supervisor authorization saves an actual knowledge-base store list instead of ALL', async ({ page }) => {
+test('supervisor authorization can select all stores and save the all-store scope', async ({ page }) => {
   await prepare(page)
   const supervisor = {
     id: 12,
@@ -226,7 +230,7 @@ test('supervisor authorization saves an actual knowledge-base store list instead
     permissionVersion: 1,
     roleTemplatePermissions: ['operations.dashboard.read'],
     dataScopes: [
-      { domainCode: 'STORE', mode: 'ALL', storeIds: [], warehouseIds: [] },
+      { domainCode: 'STORE', mode: 'STORE_LIST', storeIds: ['STORE-A'], warehouseIds: [] },
     ],
     overrides: [],
     effectivePermissions: ['operations.dashboard.read'],
@@ -265,19 +269,21 @@ test('supervisor authorization saves an actual knowledge-base store list instead
 
   const storeScopeRow = page.locator('.data-scope-row').filter({ hasText: '门店资料、组织和经营信息' })
   await expect(storeScopeRow.getByRole('combobox')).toHaveValue('STORE_LIST')
-  await storeScopeRow.getByText('茹菓 · 二店').click()
+  await expect(storeScopeRow.getByRole('option', { name: '全部门店' })).toBeAttached()
+  await expect(storeScopeRow.getByRole('option', { name: '绑定门店（本店）' })).toBeDisabled()
+  await storeScopeRow.getByRole('combobox').selectOption('ALL')
   await page.getByRole('button', { name: '保存账号授权' }).click()
 
   await expect.poll(() => requestBody).not.toBeNull()
   expect(requestBody).toMatchObject({
     role: 'SUPERVISOR',
     storeId: null,
-    storeScope: ['STORE-A', 'STORE-B'],
+    storeScope: [],
   })
   const scopes = requestBody?.dataScopes as Array<Record<string, unknown>>
   expect(scopes.find((scope) => scope.domainCode === 'STORE')).toMatchObject({
-    mode: 'STORE_LIST',
-    storeIds: ['STORE-A', 'STORE-B'],
+    mode: 'ALL',
+    storeIds: [],
     warehouseIds: [],
   })
 })

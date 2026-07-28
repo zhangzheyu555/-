@@ -154,6 +154,13 @@ class InspectionRectificationWorkflowH2Test {
 
     void pendingReview(long tenantId, String rectificationId, String recordId, String storeId) {
       rectifications.create(tenantId, rectificationId, recordId, storeId);
+      jdbc.update("""
+          insert into warehouse_attachment(
+            tenant_id, store_id, business_type, business_id, file_name,
+            content_type, file_size, storage_path, uploaded_by, uploaded_at
+          ) values (?, ?, 'INSPECTION_RECTIFICATION', ?, '整改现场.png',
+            'image/png', 12, null, 801, current_timestamp)
+          """, tenantId, storeId, rectificationId);
       boolean submitted = rectifications.submit(tenantId, recordId, "店长已提交整改", 801L, "测试店长");
       assertThat(submitted).isTrue();
       assertThat(status(this, tenantId, recordId)).isEqualTo("PENDING_REVIEW");

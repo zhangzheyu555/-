@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Building2, Check, ChevronDown, Clock3, History, Save, Send, UserRound, XCircle } from 'lucide-vue-next'
+import { Building2, Check, ChevronDown, Clock3, History, Lock, Save, Send, UserRound, XCircle } from 'lucide-vue-next'
 import type { SalaryRecord, SalaryRecordPayload } from '../../api/finance'
 import { isHourlySalaryRecord, money, statusClass, statusLabel, wholeNumber } from '../../composables/useSalaryPage'
 
@@ -11,6 +11,8 @@ const props = defineProps<{
   canReview: boolean
   canPay: boolean
   actioningId: string
+  saving: boolean
+  operationError: string
 }>()
 
 const emit = defineEmits<{
@@ -18,7 +20,8 @@ const emit = defineEmits<{
   approve: [record: SalaryRecord]
   reject: [record: SalaryRecord]
   markPaid: [record: SalaryRecord]
-  preview: []
+  lock: [record: SalaryRecord]
+  preview: [record: SalaryRecord]
   saveAttendance: [record: SalaryRecord, attendanceDays: number, overtimeHours: number, normalHours: number]
   saveDetails: [record: SalaryRecord, attendanceDays: number, overtimeHours: number, normalHours: number, attendanceChanged: boolean, payload: SalaryRecordPayload]
   dirtyChange: [dirty: boolean]
@@ -150,6 +153,8 @@ const isPendingGeneration = computed(() => props.record?.status === 'PENDING_GEN
 const canEditRecord = computed(() => props.canEdit && (
   isPendingGeneration.value || ['DRAFT', 'REJECTED'].includes(props.record?.status || '')
 ))
+const interactionBusy = computed(() => busy.value || props.saving)
+const editorDisabled = computed(() => !canEditRecord.value || interactionBusy.value)
 const productivityHours = computed(() => calculatedTotalHours.value)
 
 // 保底补足和部分历史调整只体现在后端生成的 gross 中，没有独立 API 字段。
@@ -204,7 +209,7 @@ function detailPayload(): SalaryRecordPayload {
 </script>
 
 <template>
-  <aside class="salary-detail-panel">
+  <aside class="salary-detail-panel" :class="{ 'has-record': record }">
     <div v-if="!record" class="detail-empty">
       <UserRound :size="25" />
       <b>暂无员工</b>
@@ -222,38 +227,39 @@ function detailPayload(): SalaryRecordPayload {
         <span><UserRound :size="15" />{{ record.position || '未设置岗位' }}</span>
       </div>
 
-      <section v-if="isPendingGeneration" class="pending-generation">
-        <b>尚未生成工资</b>
-        <span>先保存本月考勤和工时，再进入生成预览。</span>
-      </section>
+      <div class="detail-scroll-area">
+        <section v-if="isPendingGeneration" class="pending-generation">
+          <b>尚未生成工资</b>
+          <span>先保存本月考勤和工时，再进入生成预览。</span>
+        </section>
 
-      <section class="editor-section">
-        <h3>考勤录入</h3>
-        <div class="input-grid">
-          <label v-if="!isPartTime">出勤天数<input v-model.number="attendanceInput" :disabled="!canEditRecord" type="number" min="0" max="31" step="0.5" @input="markDirty('attendanceDays')" /></label>
-          <label v-else>正常工时<input v-model.number="partTimeHoursInput" :disabled="!canEditRecord" type="number" min="0" max="744" step="1" @input="markDirty('normalHours')" /></label>
-          <label>加班小时<input v-model.number="overtimeInput" :disabled="!canEditRecord" type="number" min="0" max="300" step="1" @input="markDirty('otHours')" /></label>
-          <div class="wide-field overtime-kind"><span>加班类型</span><b>普通加班</b></div>
-        </div>
-        <div class="hour-summary">
-          <div><span>正常工时</span><b>{{ wholeNumber(effectiveNormalHours) }} 小时</b></div>
-          <div><span>总工时</span><b>{{ wholeNumber(calculatedTotalHours) }} 小时</b></div>
-          <div><span>产值工时</span><b>{{ wholeNumber(productivityHours) }} 小时</b></div>
-        </div>
-        <p class="formula-note">{{ isPartTime ? '实习、兼职、长期兼职按实际录入工时计算工资；正常与加班合计后，按半工时计入门店经营指标。' : '正常工时 = 出勤天数 × 8小时；正常工时与加班工时都计入月产值。' }}</p>
-        <small v-if="attendanceError" class="attendance-error">{{ attendanceError }}</small>
-      </section>
+        <section class="editor-section">
+          <h3>考勤录入</h3>
+          <div class="input-grid">
+            <label v-if="!isPartTime">出勤天数<input v-model.number="attendanceInput" :disabled="editorDisabled" :aria-invalid="Boolean(attendanceError)" type="number" min="0" max="31" step="0.5" @input="markDirty('attendanceDays')" /></label>
+            <label v-else>正常工时<input v-model.number="partTimeHoursInput" :disabled="editorDisabled" :aria-invalid="Boolean(attendanceError)" type="number" min="0" max="744" step="1" @input="markDirty('normalHours')" /></label>
+            <label>加班小时<input v-model.number="overtimeInput" :disabled="editorDisabled" :aria-invalid="Boolean(attendanceError)" type="number" min="0" max="300" step="1" @input="markDirty('otHours')" /></label>
+            <div class="wide-field overtime-kind"><span>加班类型</span><b>普通加班</b></div>
+          </div>
+          <div class="hour-summary">
+            <div><span>正常工时</span><b>{{ wholeNumber(effectiveNormalHours) }} 小时</b></div>
+            <div><span>总工时</span><b>{{ wholeNumber(calculatedTotalHours) }} 小时</b></div>
+            <div><span>产值工时</span><b>{{ wholeNumber(productivityHours) }} 小时</b></div>
+          </div>
+          <p class="formula-note">{{ isPartTime ? '实习、兼职、长期兼职按实际录入工时计算工资；正常与加班合计后，按半工时计入门店经营指标。' : '正常工时 = 出勤天数 × 8小时；正常工时与加班工时都计入月产值。' }}</p>
+          <small v-if="attendanceError" class="attendance-error">{{ attendanceError }}</small>
+        </section>
 
       <section v-if="!isPendingGeneration" class="editor-section">
         <h3>人工调整</h3>
         <div class="input-grid adjustments">
-          <label>工龄工资（元）<input v-model.number="seniorityInput" :disabled="!canEditRecord" type="number" min="0" step="1" @input="markDirty('seniority')" /></label>
-          <label>员工福利（生日）<input v-model.number="birthdayBenefitInput" :disabled="!canEditRecord" type="number" min="0" step="1" @input="markDirty('birthdayBenefit')" /></label>
-          <label>绩效奖罚<input v-model.number="performanceInput" :disabled="!canEditRecord" type="number" step="1" @input="markDirty('performance')" /></label>
-          <label>深夜加班（元）<input v-model.number="lateNightInput" :disabled="!canEditRecord" type="number" min="0" step="1" @input="markDirty('lateNight')" /></label>
-          <label>其他补贴<input v-model.number="subsidyInput" :disabled="!canEditRecord" type="number" step="1" @input="markDirty('subsidy')" /></label>
-          <label>其他扣款<input v-model.number="deductionInput" :disabled="!canEditRecord" type="number" min="0" step="1" @input="markDirty('deductUniform')" /></label>
-          <label class="wide-field">最终提成金额<input v-model.number="commissionInput" :disabled="!canEditRecord" type="number" min="0" step="1" @input="markDirty('commission')" /></label>
+          <label>工龄工资（元）<input v-model.number="seniorityInput" :disabled="editorDisabled" :aria-invalid="Boolean(adjustmentError)" type="number" min="0" step="1" @input="markDirty('seniority')" /></label>
+          <label>员工福利（生日）<input v-model.number="birthdayBenefitInput" :disabled="editorDisabled" :aria-invalid="Boolean(adjustmentError)" type="number" min="0" step="1" @input="markDirty('birthdayBenefit')" /></label>
+          <label>绩效奖罚<input v-model.number="performanceInput" :disabled="editorDisabled" type="number" step="1" @input="markDirty('performance')" /></label>
+          <label>深夜加班（元）<input v-model.number="lateNightInput" :disabled="editorDisabled" :aria-invalid="Boolean(adjustmentError)" type="number" min="0" step="1" @input="markDirty('lateNight')" /></label>
+          <label>其他补贴<input v-model.number="subsidyInput" :disabled="editorDisabled" type="number" step="1" @input="markDirty('subsidy')" /></label>
+          <label>其他扣款<input v-model.number="deductionInput" :disabled="editorDisabled" type="number" min="0" step="1" @input="markDirty('deductUniform')" /></label>
+          <label class="wide-field">最终提成金额<input v-model.number="commissionInput" :disabled="editorDisabled" type="number" min="0" step="1" @input="markDirty('commission')" /></label>
         </div>
         <p class="adjustment-help">工龄工资会按现有档位带入，也可直接手动输入金额。深夜加班按元手动输入，会在保底工资之外直接相加。<span v-if="preservedGuaranteeTopUp !== 0">当前系统生成的保底补足/历史差额 {{ money(preservedGuaranteeTopUp) }} 会原样保留。</span></p>
         <div class="night-overtime-preview">
@@ -267,8 +273,8 @@ function detailPayload(): SalaryRecordPayload {
       <section v-if="!isPendingGeneration" class="editor-section vacation-section">
         <h3>假期</h3>
         <div class="input-grid">
-          <label>假期余额（天）<input v-model.number="vacationLeftInput" :disabled="!canEditRecord" type="number" min="0" max="365" step="0.5" @input="markDirty('vacationLeft')" /></label>
-          <label class="wide-field">休息日期备注<textarea v-model="vacationNoteInput" :disabled="!canEditRecord" rows="3" maxlength="255" placeholder="例如：7月5日、12日、19日休息" @input="markDirty('vacationNote')" /></label>
+          <label>假期余额（天）<input v-model.number="vacationLeftInput" :disabled="editorDisabled" :aria-invalid="Boolean(vacationError)" type="number" min="0" max="365" step="0.5" @input="markDirty('vacationLeft')" /></label>
+          <label class="wide-field">休息日期备注<textarea v-model="vacationNoteInput" :disabled="editorDisabled" :aria-invalid="Boolean(vacationError)" rows="3" maxlength="255" placeholder="例如：7月5日、12日、19日休息" @input="markDirty('vacationNote')" /></label>
         </div>
         <div class="vacation-note-meta"><span>记录本月具体休息日期，方便后续核对。</span><span>{{ vacationNoteInput.length }}/255</span></div>
         <small v-if="vacationError" class="attendance-error">{{ vacationError }}</small>
@@ -315,14 +321,28 @@ function detailPayload(): SalaryRecordPayload {
         <div v-if="!record.reviewedAt"><i /><span><b>休假记录</b><small>{{ vacationNoteInput || '暂无休息日期备注' }}</small></span></div>
       </section>
 
+        <div v-if="operationError" class="detail-operation-error" role="alert">{{ operationError }}</div>
+        <p v-if="dirty && canEditRecord" class="save-reminder" role="status">
+          {{ isPendingGeneration ? '工时有未保存修改，请先保存后再进入生成预览。' : '工资明细有未保存修改，请先保存后再提交审核。' }}
+        </p>
+      </div>
+
       <footer class="detail-actions">
-        <button v-if="canEditRecord" class="primary-action wide" :disabled="busy || Boolean(attendanceError) || Boolean(vacationError) || Boolean(adjustmentError)" @click="isPendingGeneration ? emit('saveAttendance', record, isPartTime ? 0 : attendanceInput, effectiveOvertimeHours, effectiveNormalHours) : emit('saveDetails', record, isPartTime ? 0 : attendanceInput, effectiveOvertimeHours, effectiveNormalHours, attendanceChanged, detailPayload())"><Save :size="16" />{{ isPendingGeneration ? '保存工时' : '保存工资与假期' }}</button>
-        <button v-if="canEditRecord && isPendingGeneration" class="secondary-action wide" :disabled="busy" @click="emit('preview')"><Clock3 :size="16" />进入生成预览</button>
+        <button
+          v-if="canEditRecord"
+          type="button"
+          class="primary-action wide"
+          :disabled="interactionBusy || (isPendingGeneration && !dirty) || Boolean(attendanceError) || Boolean(vacationError) || Boolean(adjustmentError)"
+          :title="isPendingGeneration && !dirty ? '请先录入或修改工时' : ''"
+          @click="isPendingGeneration ? emit('saveAttendance', record, isPartTime ? 0 : attendanceInput, effectiveOvertimeHours, effectiveNormalHours) : emit('saveDetails', record, isPartTime ? 0 : attendanceInput, effectiveOvertimeHours, effectiveNormalHours, attendanceChanged, detailPayload())"
+        ><Save :size="16" />{{ saving ? '正在保存…' : isPendingGeneration ? '保存工时' : '保存工资与假期' }}</button>
+        <button v-if="canEditRecord && isPendingGeneration" type="button" class="secondary-action wide" :disabled="interactionBusy || dirty" :title="dirty ? '请先保存工时' : ''" @click="emit('preview', record)"><Clock3 :size="16" />进入生成预览</button>
         <template v-else>
-          <button v-if="canReview && ['SUBMITTED', 'PENDING_REVIEW'].includes(record.status || '')" class="secondary-action" :disabled="busy" @click="emit('reject', record)"><XCircle :size="16" />退回修改</button>
-          <button v-if="canReview && ['SUBMITTED', 'PENDING_REVIEW'].includes(record.status || '')" class="primary-action" :disabled="busy" @click="emit('approve', record)"><Check :size="16" />审核通过</button>
-          <button v-else-if="canEdit && ['DRAFT', 'REJECTED'].includes(record.status || '')" class="primary-action wide" :disabled="busy" @click="emit('submit', record)"><Send :size="16" />提交审核</button>
-          <button v-else-if="canPay && record.status === 'APPROVED'" class="primary-action wide" :disabled="busy" @click="emit('markPaid', record)"><Clock3 :size="16" />确认发放</button>
+          <button v-if="canReview && ['SUBMITTED', 'PENDING_REVIEW'].includes(record.status || '')" type="button" class="secondary-action" :disabled="interactionBusy" @click="emit('reject', record)"><XCircle :size="16" />退回修改</button>
+          <button v-if="canReview && ['SUBMITTED', 'PENDING_REVIEW'].includes(record.status || '')" type="button" class="primary-action" :disabled="interactionBusy" @click="emit('approve', record)"><Check :size="16" />审核通过</button>
+          <button v-else-if="canEdit && ['DRAFT', 'REJECTED'].includes(record.status || '')" type="button" class="primary-action wide" :disabled="interactionBusy || dirty" :title="dirty ? '请先保存工资修改' : ''" @click="emit('submit', record)"><Send :size="16" />提交审核</button>
+          <button v-else-if="canPay && record.status === 'APPROVED'" type="button" class="primary-action wide" :disabled="interactionBusy" @click="emit('markPaid', record)"><Clock3 :size="16" />确认发放</button>
+          <button v-else-if="canEdit && record.status === 'PAID'" type="button" class="secondary-action wide" :disabled="interactionBusy" @click="emit('lock', record)"><Lock :size="16" />锁定工资记录</button>
         </template>
         <button v-if="!isPendingGeneration" class="history-action wide" type="button" @click="showHistory = !showHistory"><History :size="16" />{{ showHistory ? '收起修改记录' : '查看修改记录' }}</button>
       </footer>
@@ -331,7 +351,8 @@ function detailPayload(): SalaryRecordPayload {
 </template>
 
 <style scoped>
-.salary-detail-panel { min-width: 0; border-left: 1px solid #dfe8e6; background: #fff; padding: 0 0 0 18px; color: #182424; }
+.salary-detail-panel { min-width: 0; box-sizing: border-box; border-left: 1px solid #dfe8e6; background: #fff; padding: 0 0 0 18px; color: #182424; }
+.detail-scroll-area { min-width: 0; }
 .detail-empty { min-height: 120px; display: grid; place-items: center; align-content: center; gap: 7px; color: #6f817f; text-align: center; }
 .detail-empty b { color: #182424; font-size: 15px; }.detail-empty span { font-size: 13px; }
 .detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 3px 0 14px; border-bottom: 1px solid #e4ecea; }
@@ -350,7 +371,7 @@ function detailPayload(): SalaryRecordPayload {
 .commission-box header, .commission-box > div { display: flex; justify-content: space-between; gap: 10px; }.commission-box header { margin-bottom: 8px; }.commission-box header span, .commission-box > div { color: #526765; font-size: 12px; }.commission-box > div { padding: 3px 0; }.commission-box b { color: #182424; }
 .audit-timeline { margin-top: 10px; padding: 10px 12px; border: 1px solid #dfe8e6; border-radius: 5px; }.audit-timeline h3 { margin: 0 0 9px; font-size: 14px; }
 .audit-timeline > div { position: relative; display: flex; gap: 9px; padding: 4px 0 7px; }.audit-timeline i { width: 7px; height: 7px; margin-top: 5px; border-radius: 50%; background: #276b65; }.audit-timeline span { display: grid; }.audit-timeline b { font-size: 12px; }.audit-timeline small { color: #6f817f; font-size: 11px; }
-.detail-actions { display: flex; gap: 10px; padding-top: 12px; }.detail-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 38px; flex: 1; border-radius: 5px; font-size: 14px; font-weight: 600; cursor: pointer; }.detail-actions .wide { flex-basis: 100%; }
+.detail-actions { display: flex; gap: 10px; padding-top: 12px; }.detail-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 38px; flex: 1; border-radius: 5px; font-size: 14px; font-weight: 600; cursor: pointer; }.detail-actions .wide { flex: 1 1 calc(50% - 5px); }
 .primary-action { border: 1px solid #276b65; background: #276b65; color: #fff; }.secondary-action { border: 1px solid #4f948e; background: #fff; color: #276b65; }.detail-actions button:disabled { opacity: .55; cursor: wait; }
 .status-pill { display: inline-flex; padding: 4px 8px; border-radius: 4px; background: #e7f5ef; color: #28795f; font-size: 12px; font-weight: 600; white-space: nowrap; }.status-pill.warn,.status-pill.pending { background: #fff2e2; color: #d46a16; }.status-pill.rejected { background: #fdeceb; color: #c34b40; }.status-pill.muted { background: #edf1f0; color: #637572; }
 .salary-detail-panel { border: 1px solid #dfe8e6; border-radius: 7px; padding: 18px; box-shadow: 0 2px 10px rgba(25,73,68,.04); }
@@ -359,11 +380,35 @@ function detailPayload(): SalaryRecordPayload {
 .input-grid input,.input-grid select,.input-grid textarea { width: 100%; min-width: 0; min-height: 36px; box-sizing: border-box; padding: 7px 9px; border: 1px solid #ccdcd9; border-radius: 5px; background: #fff; color: #182424; font: inherit; }.input-grid textarea { resize: vertical; }.input-grid :disabled { background: #f3f6f5; color: #73827f; }
 .hour-summary { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); margin-top: 11px; border: 1px solid #dce8e6; border-radius: 5px; background: #f7fbfa; }.hour-summary div { padding: 9px 6px; text-align: center; border-right: 1px solid #dce8e6; }.hour-summary div:last-child { border-right: 0; }.hour-summary span { display: block; color: #6f817f; font-size: 11px; }.hour-summary b { display: block; margin-top: 4px; color: #244c48; font-size: 13px; }
 .attendance-error { display: block; margin-top: 7px; color: #c34b40; font-size: 12px; }
+.detail-operation-error { margin-top: 12px; padding: 10px 12px; border: 1px solid #efc9c2; border-radius: 5px; background: #fff5f3; color: #a93f31; font-size: 12px; line-height: 1.55; }
+.save-reminder { margin: 12px 0 0; padding: 9px 11px; border-left: 3px solid #d49a34; background: #fff9ec; color: #77571d; font-size: 12px; line-height: 1.5; }
 .formula-note { margin: 8px 0 0; color: #748481; font-size: 11px; line-height: 1.5; }.adjustment-help { margin: 9px 0 0; color: #748481; font-size: 11px; line-height: 1.6; }.adjustment-help span { display: block; margin-top: 3px; }.result-section { padding-top: 15px; }
 .night-overtime-preview { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 9px; padding: 9px 10px; border: 1px solid #dce8e6; border-radius: 5px; background: #f7fbfa; color: #526765; font-size: 12px; }.night-overtime-preview b { margin-left: auto; color: #176c64; font-size: 14px; font-variant-numeric: tabular-nums; }
 .overtime-kind { display: flex; align-items: center; justify-content: space-between; min-height: 36px; padding: 0 10px; border: 1px solid #dce8e6; border-radius: 5px; background: #f7fbfa; color: #526765; font-size: 12px; }.overtime-kind b { color: #244c48; font-size: 13px; }
 .calculation-details { margin-top: 10px; border: 1px solid #dce8e6; border-radius: 5px; background: #f9fbfb; }.calculation-details summary { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; color: #276b65; font-size: 13px; font-weight: 600; cursor: pointer; list-style: none; }.calculation-details summary::-webkit-details-marker { display: none; }.calculation-details[open] summary svg { transform: rotate(180deg); }.calculation-details div { padding: 10px 12px; border-top: 1px solid #e1eae8; color: #617370; font-size: 12px; line-height: 1.6; }.calculation-details p { margin: 0; }.calculation-details p + p { margin-top: 7px; }
 .vacation-note-meta { display: flex; justify-content: space-between; gap: 12px; margin-top: 7px; color: #748481; font-size: 11px; }
-.detail-actions { flex-wrap: wrap; }.history-action { border: 0; background: transparent; color: #5c706d; font-weight: 500 !important; }
+.detail-actions { flex-wrap: wrap; }.detail-actions .history-action { flex-basis: 100%; border: 0; background: transparent; color: #5c706d; font-weight: 500 !important; }
+@media (min-width: 1121px) {
+  .salary-detail-panel.has-record {
+    position: sticky;
+    top: 12px;
+    display: grid;
+    height: min(760px, calc(100dvh - 24px));
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    overflow: hidden;
+  }
+  .detail-scroll-area {
+    min-height: 0;
+    padding-right: 6px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+  .detail-actions {
+    padding-top: 12px;
+    border-top: 1px solid #e4ecea;
+    background: #fff;
+  }
+}
 @media (max-width: 600px) { .input-grid { grid-template-columns: 1fr; }.hour-summary { grid-template-columns: 1fr; }.hour-summary div { border-right: 0; border-bottom: 1px solid #dce8e6; }.hour-summary div:last-child { border-bottom: 0; } }
 </style>

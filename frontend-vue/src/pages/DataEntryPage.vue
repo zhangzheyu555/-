@@ -763,11 +763,6 @@ watch(
       </template>
     </PageHeader>
 
-    <aside class="desktop-workflow-notice" role="note">
-      <strong>请在电脑端完成</strong>
-      <span>财务数据录入、月度导入与覆盖确认需要核对门店、月份和多项金额，请使用电脑端完成。</span>
-    </aside>
-
     <div class="entry-toolbar" aria-label="数据录入筛选条件">
       <div class="entry-toolbar__fields">
         <div v-if="scope.isStoreManager.value" class="entry-manager-context" aria-label="当前录入门店">
@@ -980,7 +975,7 @@ watch(
             <button class="text-action" type="button" :disabled="!historyRows.length" @click="historyDrawerOpen = true">查看全部</button>
           </div>
           <div v-if="loadingHistory" class="history-placeholder">正在读取历史记录…</div>
-          <div v-else-if="historyError" class="history-placeholder">{{ historyError }}</div>
+          <div v-else-if="historyError" class="history-placeholder" role="alert">{{ historyError }}</div>
           <div v-else-if="!selectedStoreId" class="history-placeholder">请选择门店</div>
           <div v-else-if="!historyPreview.length" class="history-placeholder">暂无历史记录</div>
           <template v-else>
@@ -1062,10 +1057,6 @@ watch(
   gap: 16px;
   padding: 0 0 24px;
   color: var(--entry-ink);
-}
-
-.desktop-workflow-notice {
-  display: none;
 }
 
 .entry-toolbar {
@@ -1798,7 +1789,8 @@ watch(
   }
 
   :global(#app .app-main > .page-panel.data-entry-page) {
-    margin: 0 16px 24px !important;
+    width: 100% !important;
+    margin: 0 0 24px !important;
   }
 
   .data-entry-page {
@@ -1850,51 +1842,7 @@ watch(
   }
 }
 
-@media (max-width: 768px) {
-  .desktop-workflow-notice {
-    display: grid;
-    gap: var(--space-1);
-    padding: var(--space-3);
-    border: 1px solid #efd19f;
-    border-radius: var(--entry-radius);
-    background: #fff8ed;
-    color: #73450f;
-    font-size: 13px;
-    line-height: 1.5;
-  }
-
-  .desktop-workflow-notice strong {
-    color: #73450f;
-    font-size: 14px;
-  }
-}
-
 @media (max-width: 520px) {
-  :global(.app-main:has(.data-entry-page) .topbar-primary-row) {
-    justify-content: flex-start;
-    gap: 8px;
-  }
-
-  :global(.app-main:has(.data-entry-page) .topbar-context) {
-    flex: 1;
-    min-width: 0;
-    gap: 8px;
-  }
-
-  :global(.app-main:has(.data-entry-page) .date-display) {
-    display: none;
-  }
-
-  :global(.app-main:has(.data-entry-page) .scope-display) {
-    flex: 1;
-    min-width: 0;
-  }
-
-  :global(.app-main:has(.data-entry-page) .scope-display select) {
-    width: 100%;
-    min-width: 0;
-  }
-
   .data-entry-page :deep(.business-page-header) {
     align-items: stretch;
     flex-direction: column;

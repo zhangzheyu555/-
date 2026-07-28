@@ -42,4 +42,34 @@ defineProps<{
 .salary-summary-strip span { color: #526765; font-size: 14px; font-weight: 500; }
 .salary-summary-strip b { color: #176c64; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .salary-summary-strip small { color: #526765; font-size: 13px; }
+
+@media (max-width: 768px) {
+  .salary-summary-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .salary-summary-strip > div {
+    padding: 12px;
+    border-right: 0;
+    border-bottom: 1px solid #dfe9e7;
+  }
+
+  .salary-summary-strip > div:nth-last-child(-n + 2) {
+    border-bottom: 0;
+  }
+}
+
+@media (max-width: 480px) {
+  .salary-summary-strip {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .salary-summary-strip > div:nth-last-child(-n + 2) {
+    border-bottom: 1px solid #dfe9e7;
+  }
+
+  .salary-summary-strip > div:last-child {
+    border-bottom: 0;
+  }
+}
 </style>

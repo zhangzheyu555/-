@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { AlertTriangle, CheckCircle2, ClipboardList, ImagePlus, XCircle } from 'lucide-vue-next'
-import { useRoute, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import PageHeader from '../components/common/PageHeader.vue'
 import SearchableSingleSelect from '../components/common/SearchableSingleSelect.vue'
+import ActionConfirmDialog from '../components/ui/ActionConfirmDialog.vue'
 import InspectionHistoricalEvidenceDialog from '../components/inspection/InspectionHistoricalEvidenceDialog.vue'
 import InspectionHistoricalEvidencePanel from '../components/inspection/InspectionHistoricalEvidencePanel.vue'
 import InspectionRecordDetailSummary from '../components/inspection/InspectionRecordDetailSummary.vue'
+import InspectionRecordIssueSummary from '../components/inspection/InspectionRecordIssueSummary.vue'
 import InspectionStandardReadinessNotice from '../components/inspection/InspectionStandardReadinessNotice.vue'
 import InspectionPhotoDetectionList from '../components/inspection/InspectionPhotoDetectionList.vue'
 import InspectionScoreSummary from '../components/inspection/InspectionScoreSummary.vue'
@@ -106,11 +108,13 @@ const persistedDecisionBusyKeys = ref<string[]>([])
 const draftReviewTimers = new Map<string, number>()
 const exportingRecordId = ref('')
 const uploading = ref(false)
+const photoFileInput = ref<HTMLInputElement | null>(null)
 const loadingDetectionService = ref(false)
 const loadingStandard = ref(false)
 const detectionService = ref<InspectionServiceHealth | null>(null)
 const errorMessage = ref('')
 const actionMessage = ref('')
+const actionErrorDialog = ref<{ title: string; message: string; confirmLabel: string } | null>(null)
 const selectedRecordId = ref('')
 const detailRecord = ref<InspectionRecord | null>(null)
 const detailLoading = ref(false)
@@ -134,6 +138,18 @@ const historicalEvidenceDialog = ref<{
 const filterBrand = ref('')
 const filterMonth = ref('')
 const inspectionStandard = ref<InspectionStandardSet>(emptyInspectionStandard)
+const draftDiscardDialogOpen = ref(false)
+let pendingDraftDiscardAction: (() => void) | null = null
+let pendingDraftDiscardCancel: (() => void) | null = null
+
+function showActionError(title: string, message: string, confirmLabel = '返回修改') {
+  errorMessage.value = ''
+  actionErrorDialog.value = { title, message, confirmLabel }
+}
+
+function closeActionError() {
+  actionErrorDialog.value = null
+}
 
 const canManageInspection = computed(() => auth.hasPermission(PERMISSIONS.INSPECTION_MANAGE))
 const canReadDailyLoss = computed(() => auth.hasPermission(PERMISSIONS.DAILY_LOSS_READ))
@@ -221,9 +237,48 @@ function captureDeductionFormBaseline() {
   deductionFormBaselineSignature.value = deductionFormMutationSignature()
 }
 
-function resetInspectionDraft() {
+function forceResetInspectionDraft() {
   resetDraft()
   captureDeductionFormBaseline()
+}
+
+function requestDraftDiscard(action: () => void, cancel: () => void = () => {}) {
+  if (!hasInspectionDraftChanges.value) {
+    action()
+    return
+  }
+  if (draftDiscardDialogOpen.value || saving.value || uploading.value) {
+    cancel()
+    return
+  }
+  pendingDraftDiscardAction = action
+  pendingDraftDiscardCancel = cancel
+  draftDiscardDialogOpen.value = true
+}
+
+function requestResetInspectionDraft() {
+  if (!hasInspectionDraftChanges.value) {
+    forceResetInspectionDraft()
+    return
+  }
+  requestDraftDiscard(() => {})
+}
+
+function keepInspectionDraft() {
+  const cancel = pendingDraftDiscardCancel
+  pendingDraftDiscardAction = null
+  pendingDraftDiscardCancel = null
+  draftDiscardDialogOpen.value = false
+  cancel?.()
+}
+
+function discardInspectionDraft() {
+  const action = pendingDraftDiscardAction
+  pendingDraftDiscardAction = null
+  pendingDraftDiscardCancel = null
+  draftDiscardDialogOpen.value = false
+  forceResetInspectionDraft()
+  action?.()
 }
 
 captureDeductionFormBaseline()
@@ -401,16 +456,20 @@ function applyRouteState() {
 }
 
 function switchTab(tab: InspectionTab) {
-  actionMessage.value = ''
-  errorMessage.value = ''
   const target = tabs.value.find((item) => item.id === tab)
-  if (!target) return
-  const query: Record<string, string> = {}
-  if (tab === 'records') {
-    if (filterBrand.value) query.brand = filterBrand.value
-    if (filterMonth.value) query.month = filterMonth.value
+  if (!target || tab === activeTab.value) return
+  const navigate = () => {
+    actionMessage.value = ''
+    errorMessage.value = ''
+    const query: Record<string, string> = {}
+    if (tab === 'records') {
+      if (filterBrand.value) query.brand = filterBrand.value
+      if (filterMonth.value) query.month = filterMonth.value
+    }
+    void router.push({ path: target.to, query })
   }
-  void router.push({ path: target.to, query })
+  if (activeTab.value === 'create') requestDraftDiscard(navigate)
+  else navigate()
 }
 
 function setBrandFilter(brandName: string) {
@@ -608,7 +667,7 @@ async function loadPageData(options: { protectDraft?: boolean } = {}) {
 
 async function retryLoadStandard() {
   if (hasInspectionDraftChanges.value || uploading.value || saving.value) {
-    errorMessage.value = '当前巡检草稿包含未保存内容。请先完成或清空草稿，再重试获取标准。'
+    showActionError('无法重新获取标准', '当前巡检草稿包含未保存内容。请先保存或清空草稿，再重新获取标准。', '返回处理')
     return
   }
   loadingStandard.value = true
@@ -623,7 +682,7 @@ async function retryLoadStandard() {
       ? `已获取有效标准 ${globalStandard.value.version || ''}，共 ${globalStandardStats.value.clauseCount} 条。`
       : `已重新获取标准，当前仍有 ${invalidStandardDiagnostics.value.length} 项校验未通过。`
   } catch (error) {
-    errorMessage.value = friendlyError(error, '稽核标准获取失败，请稍后重试。')
+    showActionError('稽核标准获取失败', friendlyError(error, '稽核标准获取失败，请稍后重试。'), '返回重试')
   } finally {
     loadingStandard.value = false
   }
@@ -1117,6 +1176,10 @@ function deductionCount(record: InspectionRecord) {
   return recordItemResults(record).filter((item) => itemDeduction(item) > 0 || item.issueFound || item.redLineHit).length
 }
 
+function recordIssueItems(record: InspectionRecord) {
+  return recordItemResults(record).filter((item) => itemDeduction(item) > 0 || item.issueFound || item.redLineHit)
+}
+
 function recordScore(record: InspectionRecord) {
   return inspectionScoreView(record)
 }
@@ -1139,7 +1202,7 @@ async function exportRecord(record: InspectionRecord) {
     await downloadInspectionExcel(String(record.id), `茹菓-${store}-巡检报告-${date}-${record.id}.xlsx`)
     actionMessage.value = '巡检报告已生成并开始下载。'
   } catch (error) {
-    errorMessage.value = inspectionExportError(error)
+    showActionError('无法导出巡检报告', inspectionExportError(error), '返回重试')
   } finally {
     exportingRecordId.value = ''
   }
@@ -1165,7 +1228,11 @@ async function decidePersistedDetection(photo: DraftPhoto, action: 'confirm' | '
       : (response.changed ? '已撤销模型建议，系统已恢复该条款原评分。' : '该模型建议已处于撤销状态。')
     markFresh()
   } catch (error) {
-    errorMessage.value = friendlyError(error, action === 'confirm' ? '模型建议确认失败，请重试。' : '模型建议撤销失败，请重试。')
+    showActionError(
+      action === 'confirm' ? '无法确认模型建议' : '无法撤销模型建议',
+      friendlyError(error, action === 'confirm' ? '模型建议确认失败，请重试。' : '模型建议撤销失败，请重试。'),
+      '返回重试',
+    )
   } finally {
     persistedDecisionBusyKeys.value = persistedDecisionBusyKeys.value.filter((item) => item !== key)
   }
@@ -1191,6 +1258,18 @@ async function handleAttachmentChange(event: Event) {
   input.value = ''
 }
 
+function requestPhotoSelection() {
+  if (!standardReady.value) {
+    showActionError('无法上传巡检照片', '当前稽核标准尚未就绪，请先点击“重试获取标准”，确认标准有效后再上传。', '返回检查')
+    return
+  }
+  if (!draft.storeId) {
+    showActionError('无法上传巡检照片', '请先选择本次巡检门店，再拍照或选择现场图片。', '返回填写')
+    return
+  }
+  photoFileInput.value?.click()
+}
+
 async function handlePhotoDrop(event: DragEvent) {
   await uploadPhotos(Array.from(event.dataTransfer?.files || []))
 }
@@ -1213,20 +1292,36 @@ async function loadDetectionServiceStatus() {
   }
 }
 
+async function retryDetectionServiceStatus() {
+  const available = await loadDetectionServiceStatus()
+  if (!available) {
+    showActionError(
+      '识别服务不可用',
+      detectionService.value?.message || '识别服务不可用，请确认本机图片识别服务已启动。',
+      '返回重试',
+    )
+  }
+}
+
 async function uploadPhotos(files: File[]) {
   const imageFiles = files.filter((file) => file.type.startsWith('image/'))
-  if (!imageFiles.length) return
+  if (!files.length) return
+  if (!imageFiles.length) {
+    showActionError('无法上传巡检照片', '请选择 JPG、PNG、WEBP 等图片文件。')
+    return
+  }
   if (!standardReady.value) {
-    errorMessage.value = '当前标准未通过校验，重新获取并确认标准有效后才能上传巡检证据。'
+    showActionError('无法上传巡检照片', '当前标准未通过校验，重新获取并确认标准有效后才能上传巡检证据。', '返回检查')
     return
   }
   if (!draft.storeId) {
-    errorMessage.value = '请先选择巡检门店后再上传照片。'
+    showActionError('无法上传巡检照片', '请先选择巡检门店后再上传照片。', '返回填写')
     return
   }
   uploading.value = true
   errorMessage.value = ''
   let detectedCount = 0
+  let failedCount = 0
   try {
     for (const file of imageFiles) {
       const uploaded = await uploadInspectionAttachment(file, draft.storeId, `inspection-${draft.storeId}-draft`)
@@ -1234,12 +1329,16 @@ async function uploadPhotos(files: File[]) {
       const photo = draft.photos[draft.photos.length - 1]
       await runPhotoDetection(photo)
       if (photo.detectionStatus === 'success') detectedCount += 1
+      else failedCount += 1
     }
     actionMessage.value = detectedCount > 0
       ? `已上传并识别 ${detectedCount} 张现场照片，请督导确认模型建议。`
       : ''
+    if (failedCount > 0) {
+      showActionError('图片识别未完成', `有 ${failedCount} 张照片识别失败。照片和草稿均已保留，请关闭弹窗后重试识别或移除失败照片。`, '返回处理')
+    }
   } catch (error) {
-    errorMessage.value = friendlyError(error, '照片上传失败。')
+    showActionError('无法上传巡检照片', friendlyError(error, '照片上传失败，当前草稿已保留，请稍后重试。'), '返回重试')
   } finally {
     uploading.value = false
   }
@@ -1290,14 +1389,25 @@ async function retryPhotoDetection(photo: DraftPhoto) {
   errorMessage.value = ''
   actionMessage.value = ''
   await runPhotoDetection(photo)
+  if (photo.detectionStatus === 'failed') {
+    showActionError('图片识别未完成', photo.detectionError || '识别服务不可用，请启动服务后重试。', '返回重试')
+  }
 }
 
 async function confirmModelIssue(photo: DraftPhoto) {
   const result = photo.detection
-  if (!result || detectionCount(result) <= 0 || isDraftReviewBusy(photo)) return
+  if (isDraftReviewBusy(photo)) return
+  if (!result || detectionCount(result) <= 0) {
+    showActionError('无法确认模型问题', '当前照片没有可确认的模型问题，请重新识别或人工核对条款。')
+    return
+  }
+  if (!detectionClauseId(result)) {
+    showActionError('无法确认模型问题', '模型建议尚未匹配到正式稽核条款，不能直接形成扣分。请在“添加扣分项”中选择正式条款并记录现场问题。')
+    return
+  }
   const key = detectionKey(result)
   if (!key) {
-    errorMessage.value = '识别结果缺少服务端确认编号，请重新识别后再确认。'
+    showActionError('无法确认模型问题', '识别结果缺少服务端确认编号，请重新识别后再确认。')
     return
   }
 
@@ -1330,7 +1440,10 @@ async function confirmModelIssue(photo: DraftPhoto) {
     actionMessage.value = '已通过服务端规则确认；预计扣分已展示，正式保存时服务端会再次按条款重算。'
   } catch (error) {
     photo.reviewStatus = 'pending'
-    errorMessage.value = friendlyError(error, '模型建议确认失败，已保留待确认状态，请重试。')
+    showActionError(
+      '无法确认模型问题',
+      friendlyError(error, '模型建议确认失败，已保留待确认状态，请重试。'),
+    )
   } finally {
     unlockDraftReviewAction(photo)
   }
@@ -1535,60 +1648,72 @@ function releaseDraftPhotos() {
 function addDeduction() {
   errorMessage.value = ''
   actionMessage.value = ''
-  const score = safeNumber(deductionForm.deduct)
   const clause = selectedClause.value
-  const itemTitle = (clause?.item || deductionForm.manualItem).trim()
 
+  if (!standardReady.value) {
+    showActionError('无法添加扣分项', '当前稽核标准尚未就绪，请先点击“重试获取标准”，确认标准有效后再添加。')
+    return
+  }
   if (!deductionForm.dimension) {
-    errorMessage.value = '请选择问题维度。'
+    showActionError('无法添加扣分项', '请选择问题维度。')
     return
   }
-  if (!itemTitle) {
-    errorMessage.value = '请填写或选择检查条款。'
-    return
-  }
-  if (!score || score <= 0) {
-    errorMessage.value = '扣分必须大于 0。'
-    return
-  }
-  if (score > safeNumber(draft.fullScore)) {
-    errorMessage.value = '扣分不能超过满分基准。'
+  if (!clause) {
+    showActionError('无法添加扣分项', '请从最新稽核标准中选择具体条款。')
     return
   }
   if (!deductionForm.issue.trim()) {
-    errorMessage.value = '请写清楚现场问题，方便门店整改。'
+    showActionError('无法添加扣分项', '请写清楚现场问题，方便门店整改。')
+    return
+  }
+  const score = Math.max(0, safeNumber(clause.score))
+  const isRedLine = clause.riskLevel === 'RED'
+  deductionForm.deduct = score
+  if (score <= 0 && !isRedLine) {
+    showActionError('无法添加扣分项', '该条款规定扣分为 0 分，不能形成扣分记录。请在完整条款区记录现场情况。')
+    return
+  }
+  if (score > safeNumber(draft.fullScore)) {
+    showActionError('无法添加扣分项', '条款规定扣分超过满分基准，请重新获取稽核标准。')
     return
   }
 
-  if (!clause) {
-    errorMessage.value = '请从最新稽核标准中选择具体条款。'
-    return
-  }
   const target = draft.itemResults.find((item) => item.standardItemId === clause.id)
   if (!target) {
-    errorMessage.value = '请从最新稽核标准中选择具体条款。'
+    showActionError('无法添加扣分项', '当前草稿中找不到该正式条款，请重新获取稽核标准后再试。')
     return
   }
-  const appliedDeduction = Math.min(score, safeNumber(target.actualScore))
-  target.actualScore = roundScore(safeNumber(target.actualScore) - appliedDeduction)
+  const alreadyRecorded = [...draft.deductions, ...draft.redlines]
+    .some((item) => Number(item.standardId) === clause.id)
+  if (alreadyRecorded || target.issueFound || itemDeduction(target) > 0) {
+    showActionError('无法重复添加', '该条款已经记录现场问题，请直接在下方完整条款中修改问题说明。')
+    return
+  }
+
+  const standardScore = Math.max(0, safeNumber(target.standardScore))
+  const appliedDeduction = Math.min(score, standardScore)
+  target.actualScore = roundScore(standardScore - appliedDeduction)
+  target.issueFound = true
   target.deductionReason = [target.deductionReason, deductionForm.issue.trim()].filter(Boolean).join('；')
   normalizeItemScore(target)
 
-  draft.deductions.push({
-    id: `${Date.now()}-${draft.deductions.length}`,
+  const detail: DeductionDetail = {
+    id: `${Date.now()}-${draft.deductions.length + draft.redlines.length}`,
     standardId: String(clause.id),
-    standardTitle: clause?.item || itemTitle,
-    standardDescription: clause?.method,
-    suggestedScore: clause?.score,
+    standardTitle: clause.item,
+    standardDescription: clause.method,
+    suggestedScore: score,
     dim: clause.categoryName,
     categoryCode: clause.categoryCode,
-    code: clause?.code,
-    item: itemTitle,
-    method: clause?.method,
+    code: clause.code,
+    item: clause.item,
+    method: clause.method,
     issue: deductionForm.issue.trim(),
     deduct: appliedDeduction,
-    redline: clause.riskLevel === 'RED',
-  })
+    redline: isRedLine,
+  }
+  if (isRedLine) draft.redlines.push(detail)
+  else draft.deductions.push(detail)
   deductionForm.issue = ''
   deductionForm.manualItem = ''
   fillDeductionFromClause()
@@ -1599,8 +1724,10 @@ function removeDraftRow(kind: 'deduction' | 'redline', index: number) {
   if (kind === 'deduction') {
     const [removed] = draft.deductions.splice(index, 1)
     if (removed) restoreDeduction(removed)
+  } else {
+    const [removed] = draft.redlines.splice(index, 1)
+    if (removed) restoreDeduction(removed)
   }
-  else draft.redlines.splice(index, 1)
 }
 
 function restoreDeduction(detail: DeductionDetail) {
@@ -1609,37 +1736,37 @@ function restoreDeduction(detail: DeductionDetail) {
   const target = draft.itemResults.find((item) => item.standardItemId === standardItemId)
   if (!target) return
   target.actualScore = Math.min(safeNumber(target.standardScore), roundScore(safeNumber(target.actualScore) + safeNumber(detail.deduct)))
-  const remaining = draft.deductions.filter((item) => item !== detail && Number(item.standardId) === standardItemId)
-  target.deductionReason = remaining.map((item) => item.issue).filter(Boolean).join('；')
+  const remaining = [...draft.deductions, ...draft.redlines]
+    .filter((item) => Number(item.standardId) === standardItemId)
+  const reasons = String(target.deductionReason || '').split('；').filter(Boolean)
+  const removedReasonIndex = reasons.indexOf(String(detail.issue || ''))
+  if (removedReasonIndex >= 0) reasons.splice(removedReasonIndex, 1)
+  target.deductionReason = reasons.join('；')
+  if (detail.redline && !remaining.some((item) => item.redline) && !target.deductionReason) {
+    target.issueFound = false
+  }
   normalizeItemScore(target)
 }
 
+function showInspectionSaveError(message: string) {
+  showActionError('无法保存巡检', message, '返回填写')
+}
+
 async function submitRecord() {
+  if (saving.value || uploading.value) return
   errorMessage.value = ''
   actionMessage.value = ''
   if (saveBlockedReason.value) {
-    errorMessage.value = saveBlockedReason.value
-    return
-  }
-  if (!draft.storeId) {
-    errorMessage.value = '请选择巡检门店。'
-    return
-  }
-  if (!draft.inspectionDate) {
-    errorMessage.value = '请选择巡检日期。'
-    return
-  }
-  if (!draft.inspector.trim()) {
-    errorMessage.value = '请填写督导人姓名。'
+    showInspectionSaveError(saveBlockedReason.value)
     return
   }
   if (!Number.isFinite(Number(draft.fullScore)) || Number(draft.fullScore) <= 0) {
-    errorMessage.value = '满分基准必须大于 0。'
+    showInspectionSaveError('满分基准必须大于 0。')
     return
   }
   const missingReason = draft.itemResults.find((item) => (item.issueFound || itemDeduction(item) > 0) && !item.deductionReason?.trim())
   if (missingReason) {
-    errorMessage.value = `请填写 ${missingReason.code || missingReason.title || '扣分条款'} 的扣分原因。`
+    showInspectionSaveError(`请填写 ${missingReason.code || missingReason.title || '扣分条款'} 的扣分原因。`)
     return
   }
 
@@ -1671,12 +1798,12 @@ async function submitRecord() {
 
     const savedRecordId = String(savedRecord.id)
     actionMessage.value = `巡检已在一个事务中保存，图片识别扣分已由服务端按正式条款确认。最终得分 ${recordScore(savedRecord).scoreText}。`
-    resetInspectionDraft()
+    forceResetInspectionDraft()
     const loaded = await loadPageData()
     if (loaded) markFresh()
     await router.push({ path: '/operations/inspection/records', query: { recordId: savedRecordId } })
   } catch (error) {
-    errorMessage.value = inspectionSaveError(error)
+    showInspectionSaveError(inspectionSaveError(error))
   } finally {
     saving.value = false
   }
@@ -1687,7 +1814,7 @@ function toDetectionBindingResult(photo: DraftPhoto): Record<string, unknown> {
   if (!result) throw new Error(`${photo.fileName || '现场照片'} 缺少识别结果，请重新识别。`)
   return {
     image_id: detectionImageId(result),
-    filename: photo.fileName || result.filename,
+    filename: result.filename || photo.fileName,
     attachmentId: photo.attachmentId,
     passed: result.passed,
     detection_count: detectionCount(result),
@@ -1841,6 +1968,17 @@ watch(detailPhotoPreview, (preview) => {
   } else window.removeEventListener('keydown', handleDetailPhotoPreviewKeydown)
 })
 
+onBeforeRouteLeave(() => {
+  if (!hasInspectionDraftChanges.value) return true
+  if (draftDiscardDialogOpen.value || saving.value || uploading.value) return false
+  return new Promise<boolean>((resolve) => {
+    requestDraftDiscard(
+      () => resolve(true),
+      () => resolve(false),
+    )
+  })
+})
+
 onMounted(() => {
   void loadForegroundInspectionData().then((loaded) => {
     if (loaded) markFresh()
@@ -1866,6 +2004,7 @@ onUnmounted(() => {
               :key="tab.id"
               type="button"
               class="inspection-segment-button"
+              role="tab"
               :class="{ on: activeTab === tab.id }"
               :aria-selected="activeTab === tab.id"
               @click="switchTab(tab.id)"
@@ -1878,8 +2017,8 @@ onUnmounted(() => {
       </template>
     </PageHeader>
 
-    <div v-if="errorMessage" class="error-box">{{ errorMessage }}</div>
-    <div v-if="actionMessage" class="success-box">{{ actionMessage }}</div>
+    <div v-if="errorMessage" class="error-box" role="alert">{{ errorMessage }}</div>
+    <div v-if="actionMessage" class="success-box" role="status">{{ actionMessage }}</div>
 
     <div v-if="activeTab === 'records'" class="inspection-records-view">
       <section class="content-card weekly-inspection-target" aria-label="本周巡店目标">
@@ -1921,6 +2060,7 @@ onUnmounted(() => {
         @update:brand="setBrandFilter"
         @update:month="setMonthFilter"
         @select="openRecordDetail"
+        @back="closeRecordDetail"
       >
       <section v-if="selectedRecordId && detailLoading && !detailRecord" class="content-card inspection-detail-card">
         <div class="empty-state">正在读取巡检详情...</div>
@@ -1929,7 +2069,6 @@ onUnmounted(() => {
       <section v-else-if="selectedRecordId && detailError" class="content-card inspection-detail-card">
         <div class="error-state">{{ detailError }}</div>
         <div class="inspection-detail-actions">
-          <button class="secondary-button" type="button" @click="closeRecordDetail">返回巡检记录</button>
           <button class="primary-button" type="button" @click="loadSelectedRecord(selectedRecordId)">重试</button>
         </div>
       </section>
@@ -1954,12 +2093,25 @@ onUnmounted(() => {
           :has-migration-audit="hasMigrationAudit"
           :migration-audit-text="migrationAuditText"
           :requires-manual-review="requiresManualReview"
-          :deduction-items="recordItemResults(selectedRecord).filter((item) => itemDeduction(item) > 0)"
-          :item-deduction="itemDeduction"
           @supplement="openHistoricalEvidenceDialog()"
           @export="exportRecord(selectedRecord)"
-          @close="closeRecordDetail"
-        />
+        >
+          <template #priority>
+            <InspectionRecordIssueSummary
+              :record="selectedRecord"
+              :items="recordIssueItems(selectedRecord)"
+              :format-score="formatScore"
+              :item-deduction="itemDeduction"
+              :risk-label="riskLabel"
+              :clause-photos="recordClausePhotos"
+              :photo-state="detailPhotoState"
+              :photo-message="detailPhotoMessage"
+              @preview="openDetailPhotoPreview"
+              @retry="retryDetailPhoto"
+              @image-error="markDetailPhotoFailed"
+            />
+          </template>
+        </InspectionRecordDetailSummary>
         <InspectionRecordSnapshotTable
           :record="selectedRecord"
           :items="recordItemResults(selectedRecord)"
@@ -2077,13 +2229,22 @@ onUnmounted(() => {
               v-if="detectionService && !detectionServiceUp && !loadingDetectionService"
               class="secondary-button"
               type="button"
-              @click="loadDetectionServiceStatus"
+              @click="retryDetectionServiceStatus"
             >重试</button>
-            <label class="primary-button upload-button" :class="{ disabled: !standardReady }">
+            <button class="primary-button upload-button" type="button" :disabled="uploading" @click="requestPhotoSelection">
               <ImagePlus :size="16" />
               {{ uploading ? '上传识别中...' : '拍照/选图' }}
-              <input type="file" accept="image/*" capture="environment" multiple :disabled="uploading || !standardReady" @change="handleAttachmentChange" />
-            </label>
+            </button>
+            <input
+              ref="photoFileInput"
+              hidden
+              type="file"
+              accept="image/*"
+              capture="environment"
+              multiple
+              :disabled="uploading"
+              @change="handleAttachmentChange"
+            />
           </div>
         </div>
         <InspectionPhotoDetectionList
@@ -2118,7 +2279,6 @@ onUnmounted(() => {
         :yellow-risk-count="yellowRiskCount"
         :saving="saving"
         :uploading="uploading"
-        :save-blocked-reason="saveBlockedReason"
         @save="submitRecord"
       />
 
@@ -2133,21 +2293,10 @@ onUnmounted(() => {
         :form="deductionForm"
         :dimensions="draftDimensions"
         :clauses="clausesForDimension"
-        :full-score="draft.fullScore"
         :standard-ready="standardReady"
         @add="addDeduction"
       />
 
-
-      <InspectionDraftActions
-        :note="draft.note"
-        :saving="saving"
-        :uploading="uploading"
-        :save-blocked-reason="saveBlockedReason"
-        @update:note="draft.note = $event"
-        @reset="resetInspectionDraft"
-        @save="submitRecord"
-      />
 
       <InspectionClauseEditor
         :groups="globalStandard.groups"
@@ -2167,9 +2316,19 @@ onUnmounted(() => {
         @toggle-after-photo="toggleAfterPhoto"
       />
 
+      <InspectionDraftActions
+        :note="draft.note"
+        :saving="saving"
+        :uploading="uploading"
+        @update:note="draft.note = $event"
+        @reset="requestResetInspectionDraft"
+        @save="submitRecord"
+      />
+
     </div>
 
     <InspectionStandardCatalog
+      v-if="activeTab === 'standards'"
       :standard="selectedStandard"
       :stats="selectedStandardStats"
       :has-standard="hasGlobalStandard"
@@ -2178,6 +2337,28 @@ onUnmounted(() => {
       :safe-number="safeNumber"
       :risk-label="riskLabel"
       @retry="retryLoadStandard"
+    />
+
+    <ActionConfirmDialog
+      :open="draftDiscardDialogOpen"
+      title="放弃未保存的巡店草稿？"
+      message="当前填写的巡检信息、评分调整和现场照片将被清空，且无法恢复。"
+      confirm-label="放弃草稿"
+      cancel-label="继续填写"
+      confirm-variant="danger"
+      @cancel="keepInspectionDraft"
+      @confirm="discardInspectionDraft"
+    />
+
+    <ActionConfirmDialog
+      :open="Boolean(actionErrorDialog)"
+      :title="actionErrorDialog?.title || '操作未完成'"
+      :message="actionErrorDialog?.message || ''"
+      :confirm-label="actionErrorDialog?.confirmLabel || '返回修改'"
+      confirm-variant="danger"
+      acknowledge-only
+      @cancel="closeActionError"
+      @confirm="closeActionError"
     />
 
   </section>
@@ -2605,13 +2786,6 @@ onUnmounted(() => {
   position: relative;
 }
 
-.upload-button input {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  cursor: pointer;
-}
-
 .inspection-upload-actions,
 .inspection-review-actions {
   display: flex;
@@ -2690,11 +2864,6 @@ onUnmounted(() => {
   line-height: 1.5;
 }
 
-.upload-button.disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
 .detection-service-status.down {
   border-color: rgba(220, 53, 69, 0.3);
   background: var(--ds-danger-soft);
@@ -2707,12 +2876,6 @@ onUnmounted(() => {
 
 .inspection-score-bar {
   position: relative;
-}
-
-.inspection-save-hint {
-  grid-column: 1 / -1;
-  color: var(--warn);
-  text-align: right;
 }
 
 .inspection-score-bar,

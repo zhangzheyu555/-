@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { Search, X } from 'lucide-vue-next'
+import type { EmployeeUpsert } from '../../api/employees'
 import type { SalaryAssignmentCandidate } from '../../api/finance'
 import ModalFooter from '../ui/ModalFooter.vue'
 import UiButton from '../ui/UiButton.vue'
+import UnsavedChangesDialog from '../ui/UnsavedChangesDialog.vue'
 
 const props = defineProps<{
   show: boolean
@@ -11,6 +13,9 @@ const props = defineProps<{
   loading: boolean
   saving: boolean
   error: string
+  retryable: boolean
+  canCreateEmployee: boolean
+  targetStoreId: string
   targetStoreName: string
   month: string
 }>()
@@ -18,12 +23,30 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
   submit: [employeeId: string]
+  create: [payload: EmployeeUpsert]
+  retry: []
+  clearError: []
 }>()
 
+type AddMode = 'new' | 'existing'
+type NewEmployeeField = 'name' | 'position' | 'phone' | 'hourlyRate'
+
+const POSITION_OPTIONS = ['店长', '领班', '训练员', '营业员', '实习', '兼职', '长期兼职', '水果阿姨', '长期阿姨', '办公室']
 const dialogRef = ref<HTMLElement | null>(null)
 const searchInput = ref<HTMLInputElement | null>(null)
+const nameInput = ref<HTMLInputElement | null>(null)
 const searchTerm = ref('')
 const selectedEmployeeId = ref('')
+const mode = ref<AddMode>('new')
+const discardPromptOpen = ref(false)
+const formError = ref('')
+const newEmployee = reactive<EmployeeUpsert>(emptyNewEmployee())
+const fieldErrors = reactive<Record<NewEmployeeField, string>>({
+  name: '',
+  position: '',
+  phone: '',
+  hourlyRate: '',
+})
 const instanceId = `salary-add-employee-${Math.random().toString(36).slice(2, 9)}`
 const titleId = `${instanceId}-title`
 const descriptionId = `${instanceId}-description`
@@ -43,21 +66,41 @@ const filteredCandidates = computed(() => {
   ].some((value) => value.toLocaleLowerCase().includes(keyword)))
 })
 
-const canSubmit = computed(() => Boolean(selectedEmployeeId.value) && !props.loading && !props.saving)
+const visibleError = computed(() => props.error && (!props.retryable || mode.value === 'existing'))
+const canSubmit = computed(() => {
+  if (props.saving) return false
+  if (mode.value === 'new') return props.canCreateEmployee
+  return Boolean(selectedEmployeeId.value) && !props.loading
+})
+const newEmployeeDirty = computed(() => Boolean(
+  newEmployee.name?.trim()
+  || newEmployee.position
+  || newEmployee.phone
+  || newEmployee.hireDate
+  || newEmployee.employmentType !== '全职'
+  || (newEmployee.hourlyRate !== null && newEmployee.hourlyRate !== undefined),
+))
+const descriptionText = computed(() => mode.value === 'new'
+  ? `新人员将建立正式员工档案，所属门店为${props.targetStoreName}，并自动进入 ${props.month} 工资名单。`
+  : `从其他门店选择员工加入${props.targetStoreName}的 ${props.month} 工资名单；不会修改其档案归属和岗位。`)
 
 watch(() => props.show, async (show) => {
   if (show) {
     searchTerm.value = ''
     selectedEmployeeId.value = ''
+    mode.value = props.canCreateEmployee ? 'new' : 'existing'
+    discardPromptOpen.value = false
+    resetNewEmployee()
     previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null
     appRoot = document.getElementById('app')
     appWasInert = Boolean(appRoot?.inert)
     if (appRoot) appRoot.inert = true
     document.addEventListener('keydown', handleKeydown, true)
     await nextTick()
-    const initialControl = searchInput.value?.disabled
-      ? dialogRef.value?.querySelector<HTMLElement>('button:not(:disabled), input:not(:disabled)')
-      : searchInput.value
+    const preferredControl = mode.value === 'new' ? nameInput.value : searchInput.value
+    const initialControl = preferredControl?.disabled
+      ? dialogRef.value?.querySelector<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled)')
+      : preferredControl
     ;(initialControl || dialogRef.value)?.focus()
     return
   }
@@ -71,20 +114,119 @@ watch(() => props.candidates, (candidates) => {
   }
 })
 
+watch(() => props.canCreateEmployee, (allowed) => {
+  if (!allowed && mode.value === 'new') mode.value = 'existing'
+})
+
 onBeforeUnmount(releaseDialogFocus)
 
 function requestClose() {
   if (props.saving) return
+  if (newEmployeeDirty.value) {
+    discardPromptOpen.value = true
+    return
+  }
   emit('close')
 }
 
 function submit() {
   if (!canSubmit.value) return
+  if (mode.value === 'new') {
+    if (!validateNewEmployee()) return
+    emit('create', {
+      storeId: props.targetStoreId,
+      name: String(newEmployee.name || '').trim(),
+      phone: String(newEmployee.phone || '').trim(),
+      position: String(newEmployee.position || '').trim(),
+      employmentType: newEmployee.employmentType || '全职',
+      status: '在职',
+      hireDate: newEmployee.hireDate || '',
+      hourlyRate: typeof newEmployee.hourlyRate === 'number' && newEmployee.hourlyRate > 0
+        ? newEmployee.hourlyRate
+        : null,
+    })
+    return
+  }
   emit('submit', selectedEmployeeId.value)
+}
+
+function emptyNewEmployee(): EmployeeUpsert {
+  return {
+    storeId: props.targetStoreId,
+    name: '',
+    phone: '',
+    position: '',
+    employmentType: '全职',
+    status: '在职',
+    hireDate: '',
+    hourlyRate: null,
+  }
+}
+
+function resetNewEmployee() {
+  Object.assign(newEmployee, emptyNewEmployee())
+  formError.value = ''
+  for (const field of Object.keys(fieldErrors) as NewEmployeeField[]) fieldErrors[field] = ''
+}
+
+async function selectMode(nextMode: AddMode) {
+  if (nextMode === 'new' && !props.canCreateEmployee) return
+  mode.value = nextMode
+  formError.value = ''
+  if (!props.retryable) emit('clearError')
+  await nextTick()
+  ;(nextMode === 'new' ? nameInput.value : searchInput.value)?.focus()
+}
+
+function clearFieldError(field: NewEmployeeField) {
+  fieldErrors[field] = ''
+  formError.value = ''
+  if (!props.retryable) emit('clearError')
+}
+
+function onPhoneInput(event: Event) {
+  newEmployee.phone = (event.target as HTMLInputElement).value.replace(/\D/g, '').slice(0, 11)
+  clearFieldError('phone')
+}
+
+function validateNewEmployee() {
+  for (const field of Object.keys(fieldErrors) as NewEmployeeField[]) fieldErrors[field] = ''
+  const name = String(newEmployee.name || '').trim()
+  const position = String(newEmployee.position || '').trim()
+  const phone = String(newEmployee.phone || '').trim()
+  const hourlyRate = newEmployee.hourlyRate
+
+  if (!name) fieldErrors.name = '请填写员工姓名。'
+  else if (name.length > 120) fieldErrors.name = '员工姓名不能超过120个字。'
+  if (!position) fieldErrors.position = '请选择岗位，工资计算会使用该岗位。'
+  if (phone && !/^\d{11}$/.test(phone)) fieldErrors.phone = '手机号码必须是11位数字。'
+  if (hourlyRate !== null && hourlyRate !== undefined
+      && (!Number.isFinite(Number(hourlyRate)) || Number(hourlyRate) <= 0 || Number(hourlyRate) > 9999)) {
+    fieldErrors.hourlyRate = '时薪需大于0且不超过9999元。'
+  }
+
+  const firstError = (Object.keys(fieldErrors) as NewEmployeeField[]).find((field) => fieldErrors[field])
+  if (!firstError) return true
+  formError.value = '请检查标红的必填项或格式。'
+  nextTick(() => {
+    dialogRef.value?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus()
+  })
+  return false
+}
+
+function keepDraft() {
+  discardPromptOpen.value = false
+}
+
+function discardDraftAndClose() {
+  discardPromptOpen.value = false
+  resetNewEmployee()
+  emit('close')
 }
 
 function handleKeydown(event: KeyboardEvent) {
   if (!props.show) return
+  if (discardPromptOpen.value) return
   if (event.key === 'Escape') {
     if (props.saving) return
     event.preventDefault()
@@ -121,6 +263,7 @@ function releaseDialogFocus() {
   previouslyFocused?.focus()
   previouslyFocused = null
   appRoot = null
+  discardPromptOpen.value = false
 }
 </script>
 
@@ -139,9 +282,7 @@ function releaseDialogFocus() {
         <header class="salary-add-dialog__head">
           <div>
             <h3 :id="titleId">添加人员</h3>
-            <p :id="descriptionId">
-              将员工加入 <b>{{ targetStoreName }}</b> 的 {{ month }} 工资名单。仅影响当月工资，不会修改员工档案所属门店，岗位也保持不变。
-            </p>
+            <p :id="descriptionId">{{ descriptionText }}</p>
           </div>
           <UiButton
             variant="ghost"
@@ -158,84 +299,237 @@ function releaseDialogFocus() {
 
         <form class="salary-add-dialog__content" @submit.prevent="submit">
           <div class="salary-add-dialog__body">
-            <div v-if="error" class="salary-add-error" role="alert">{{ error }}</div>
+            <div v-if="canCreateEmployee" class="salary-add-tabs" role="tablist" aria-label="添加人员方式">
+              <button
+                type="button"
+                role="tab"
+                :aria-selected="mode === 'new'"
+                :tabindex="mode === 'new' ? 0 : -1"
+                :disabled="saving"
+                @click="selectMode('new')"
+              >
+                新建人员
+              </button>
+              <button
+                type="button"
+                role="tab"
+                :aria-selected="mode === 'existing'"
+                :tabindex="mode === 'existing' ? 0 : -1"
+                :disabled="saving"
+                @click="selectMode('existing')"
+              >
+                选择已有人员
+              </button>
+            </div>
 
-            <label class="salary-add-search" :for="searchId">
-              <span class="visually-hidden">搜索员工</span>
-              <Search :size="18" aria-hidden="true" />
-              <input
-                :id="searchId"
-                ref="searchInput"
-                v-model="searchTerm"
-                type="search"
-                autocomplete="off"
-                placeholder="搜索姓名、原门店或岗位"
+            <div v-if="visibleError" class="salary-add-error" role="alert">
+              <span>{{ error }}</span>
+              <UiButton
+                v-if="retryable && mode === 'existing'"
+                variant="secondary"
+                type="button"
                 :disabled="loading || saving"
-                :aria-controls="resultsId"
-              />
-            </label>
-
-            <div class="salary-add-results-summary" aria-live="polite">
-              <span v-if="loading">正在加载可添加人员……</span>
-              <span v-else-if="searchTerm.trim()">找到 {{ filteredCandidates.length }} 人</span>
-              <span v-else>可添加 {{ candidates.length }} 人</span>
+                @click="emit('retry')"
+              >
+                重新加载
+              </UiButton>
             </div>
 
-            <div :id="resultsId" class="salary-add-results" :aria-busy="loading || undefined">
-              <div v-if="loading" class="salary-add-state" role="status">
-                <span class="salary-add-spinner" aria-hidden="true" />
-                <span>正在加载员工名单……</span>
+            <template v-if="mode === 'new'">
+              <div class="salary-new-note" role="note">
+                <strong>新建后立即进入当前工资名单</strong>
+                <span>系统会同步建立正式员工档案；身份证、健康证等资料可稍后在“员工档案”中补充。</span>
               </div>
 
-              <div v-else-if="!filteredCandidates.length" class="salary-add-state">
-                <template v-if="candidates.length">
-                  <strong>没有找到匹配的员工</strong>
-                  <span>请尝试其他姓名、门店或岗位关键词。</span>
-                </template>
-                <template v-else-if="error">
-                  <strong>暂时无法获取人员名单</strong>
-                  <span>请根据上方提示稍后重试。</span>
-                </template>
-                <template v-else>
-                  <strong>暂无可添加人员</strong>
-                  <span>当月符合条件的员工都已在工资名单中。</span>
-                </template>
-              </div>
+              <div v-if="formError" class="salary-add-form-error" role="alert">{{ formError }}</div>
 
-              <fieldset v-else class="salary-add-list" :disabled="saving">
-                <legend class="visually-hidden">选择一名要添加的员工</legend>
-                <label
-                  v-for="candidate in filteredCandidates"
-                  :key="candidate.employeeId"
-                  class="salary-add-candidate"
-                  :class="{ 'salary-add-candidate--selected': selectedEmployeeId === candidate.employeeId }"
-                >
-                  <input v-model="selectedEmployeeId" type="radio" name="salary-add-employee" :value="candidate.employeeId" />
-                  <span class="salary-add-candidate__details">
-                    <strong>{{ candidate.employeeName }}</strong>
-                    <span>
-                      <span>{{ candidate.sourceStoreName }}</span>
-                      <span aria-hidden="true">·</span>
-                      <span>{{ candidate.position || '岗位未填写' }}</span>
-                    </span>
-                  </span>
+              <div class="salary-new-grid">
+                <label class="salary-new-field">
+                  <span>员工姓名 <b aria-hidden="true">*</b></span>
+                  <input
+                    ref="nameInput"
+                    v-model="newEmployee.name"
+                    type="text"
+                    maxlength="120"
+                    autocomplete="name"
+                    placeholder="请输入员工姓名"
+                    :disabled="saving"
+                    :aria-invalid="Boolean(fieldErrors.name)"
+                    @input="clearFieldError('name')"
+                  />
+                  <small v-if="fieldErrors.name" role="alert">{{ fieldErrors.name }}</small>
                 </label>
-              </fieldset>
-            </div>
+
+                <label class="salary-new-field">
+                  <span>岗位 <b aria-hidden="true">*</b></span>
+                  <select
+                    v-model="newEmployee.position"
+                    :disabled="saving"
+                    :aria-invalid="Boolean(fieldErrors.position)"
+                    @change="clearFieldError('position')"
+                  >
+                    <option value="" disabled>请选择岗位</option>
+                    <option v-for="position in POSITION_OPTIONS" :key="position" :value="position">{{ position }}</option>
+                  </select>
+                  <small v-if="fieldErrors.position" role="alert">{{ fieldErrors.position }}</small>
+                </label>
+
+                <label class="salary-new-field">
+                  <span>用工类型</span>
+                  <select
+                    v-model="newEmployee.employmentType"
+                    :disabled="saving"
+                    @change="emit('clearError')"
+                  >
+                    <option value="全职">全职</option>
+                    <option value="长期兼职">长期兼职</option>
+                    <option value="兼职">兼职</option>
+                  </select>
+                </label>
+
+                <label class="salary-new-field">
+                  <span>手机号码（选填）</span>
+                  <input
+                    :value="newEmployee.phone"
+                    type="tel"
+                    inputmode="numeric"
+                    maxlength="11"
+                    autocomplete="tel"
+                    placeholder="请输入11位手机号码"
+                    :disabled="saving"
+                    :aria-invalid="Boolean(fieldErrors.phone)"
+                    @input="onPhoneInput"
+                  />
+                  <small v-if="fieldErrors.phone" role="alert">{{ fieldErrors.phone }}</small>
+                </label>
+
+                <label class="salary-new-field">
+                  <span>入职日期（选填）</span>
+                  <input
+                    v-model="newEmployee.hireDate"
+                    type="date"
+                    :disabled="saving"
+                    @change="emit('clearError')"
+                  />
+                </label>
+
+                <label class="salary-new-field">
+                  <span>时薪（选填）</span>
+                  <div class="salary-new-money-input">
+                    <input
+                      v-model.number="newEmployee.hourlyRate"
+                      type="number"
+                      min="0.01"
+                      max="9999"
+                      step="0.5"
+                      inputmode="decimal"
+                      placeholder="按默认规则计算"
+                      :disabled="saving"
+                      :aria-invalid="Boolean(fieldErrors.hourlyRate)"
+                      @input="clearFieldError('hourlyRate')"
+                    />
+                    <span>元/小时</span>
+                  </div>
+                  <small v-if="fieldErrors.hourlyRate" role="alert">{{ fieldErrors.hourlyRate }}</small>
+                </label>
+              </div>
+            </template>
+
+            <template v-else>
+              <label class="salary-add-search" :for="searchId">
+                <span class="visually-hidden">搜索员工</span>
+                <Search :size="18" aria-hidden="true" />
+                <input
+                  :id="searchId"
+                  ref="searchInput"
+                  v-model="searchTerm"
+                  type="search"
+                  autocomplete="off"
+                  placeholder="搜索姓名、原门店或岗位"
+                  :disabled="loading || saving"
+                  :aria-controls="resultsId"
+                />
+              </label>
+
+              <div class="salary-add-results-summary" aria-live="polite">
+                <span v-if="loading">正在加载可添加人员……</span>
+                <span v-else-if="searchTerm.trim()">找到 {{ filteredCandidates.length }} 人</span>
+                <span v-else>可添加 {{ candidates.length }} 人</span>
+              </div>
+
+              <div :id="resultsId" class="salary-add-results" :aria-busy="loading || undefined">
+                <div v-if="loading" class="salary-add-state" role="status">
+                  <span class="salary-add-spinner" aria-hidden="true" />
+                  <span>正在加载员工名单……</span>
+                </div>
+
+                <div v-else-if="!filteredCandidates.length" class="salary-add-state">
+                  <template v-if="candidates.length">
+                    <strong>没有找到匹配的员工</strong>
+                    <span>请尝试其他姓名、门店或岗位关键词。</span>
+                  </template>
+                  <template v-else-if="error">
+                    <strong>暂时无法获取人员名单</strong>
+                    <span>请根据上方提示稍后重试。</span>
+                  </template>
+                  <template v-else>
+                    <strong>暂无可添加人员</strong>
+                    <span>当月符合条件的员工都已在工资名单中。</span>
+                  </template>
+                </div>
+
+                <fieldset v-else class="salary-add-list" :disabled="saving">
+                  <legend class="visually-hidden">选择一名要添加的员工</legend>
+                  <label
+                    v-for="candidate in filteredCandidates"
+                    :key="candidate.employeeId"
+                    class="salary-add-candidate"
+                    :class="{ 'salary-add-candidate--selected': selectedEmployeeId === candidate.employeeId }"
+                  >
+                    <input v-model="selectedEmployeeId" type="radio" name="salary-add-employee" :value="candidate.employeeId" />
+                    <span class="salary-add-candidate__details">
+                      <strong>{{ candidate.employeeName }}</strong>
+                      <span>
+                        <span>{{ candidate.sourceStoreName }}</span>
+                        <span aria-hidden="true">·</span>
+                        <span>{{ candidate.position || '岗位未填写' }}</span>
+                      </span>
+                    </span>
+                  </label>
+                </fieldset>
+              </div>
+            </template>
           </div>
 
           <ModalFooter>
             <template #info>
-              <span v-if="selectedEmployeeId">已选择 1 人，添加后可继续填写当月工资。</span>
-              <span v-else>请先选择一名员工。</span>
+              <template v-if="mode === 'new'">
+                <span>所属门店：{{ targetStoreName }}；状态：在职。</span>
+              </template>
+              <template v-else>
+                <span v-if="selectedEmployeeId">已选择 1 人，添加后可继续填写当月工资。</span>
+                <span v-else>请先选择一名员工。</span>
+              </template>
             </template>
             <UiButton variant="secondary" type="button" :disabled="saving" @click="requestClose">取消</UiButton>
-            <UiButton variant="primary" type="submit" :disabled="!canSubmit" :loading="saving">添加到工资名单</UiButton>
+            <UiButton variant="primary" type="submit" :disabled="!canSubmit" :loading="saving">
+              {{ mode === 'new' ? '新建并加入名单' : '添加到工资名单' }}
+            </UiButton>
           </ModalFooter>
         </form>
       </section>
     </div>
   </Teleport>
+
+  <UnsavedChangesDialog
+    :open="discardPromptOpen"
+    title="尚未保存新人员"
+    message="关闭后，当前填写的员工姓名、岗位等内容将被清空。"
+    discard-label="放弃并关闭"
+    keep-label="继续填写"
+    @keep-editing="keepDraft"
+    @discard="discardDraftAndClose"
+  />
 </template>
 
 <style scoped>
@@ -303,7 +597,50 @@ function releaseDialogFocus() {
   padding: 18px 20px 20px;
 }
 
+.salary-add-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 16px;
+  padding: 4px;
+  border: 1px solid var(--ds-line, #d8e4e2);
+  border-radius: 7px;
+  background: var(--ds-surface-muted, #f5f8f7);
+}
+
+.salary-add-tabs button {
+  min-height: 38px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ds-secondary, #526765);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.salary-add-tabs button[aria-selected='true'] {
+  background: var(--ds-surface, #fff);
+  color: var(--ds-action-primary, #276b65);
+  box-shadow: 0 1px 4px rgba(24, 36, 36, .1);
+}
+
+.salary-add-tabs button:focus-visible {
+  outline: 3px solid rgba(39, 107, 101, .2);
+  outline-offset: 1px;
+}
+
+.salary-add-tabs button:disabled {
+  cursor: not-allowed;
+  opacity: .6;
+}
+
 .salary-add-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 14px;
   padding: 10px 12px;
   border: 1px solid var(--ds-danger, #c33f4d);
@@ -312,6 +649,116 @@ function releaseDialogFocus() {
   color: var(--ds-danger, #a52f3b);
   font-size: 13px;
   line-height: 1.55;
+}
+
+.salary-add-error span {
+  min-width: 0;
+}
+
+.salary-new-note {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 16px;
+  padding: 11px 12px;
+  border: 1px solid var(--ds-primary, #9fcfcb);
+  border-radius: 6px;
+  background: var(--ds-primary-soft, #edf8f7);
+  color: var(--ds-secondary, #526765);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.salary-new-note strong {
+  color: var(--ds-action-primary, #276b65);
+  font-size: 13px;
+}
+
+.salary-add-form-error {
+  margin-bottom: 12px;
+  color: var(--ds-danger, #a52f3b);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.salary-new-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+}
+
+.salary-new-field {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 6px;
+  color: var(--ds-secondary, #526765);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.salary-new-field > span b {
+  color: var(--ds-danger, #a52f3b);
+}
+
+.salary-new-field input,
+.salary-new-field select {
+  width: 100%;
+  min-width: 0;
+  height: 42px;
+  padding: 0 11px;
+  border: 1px solid var(--ds-action-secondary-border, #c9d7d5);
+  border-radius: 6px;
+  outline: 0;
+  background: var(--ds-surface, #fff);
+  color: var(--ds-text, #182424);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.salary-new-field input:focus,
+.salary-new-field select:focus {
+  border-color: var(--ds-action-primary, #276b65);
+  box-shadow: 0 0 0 3px rgba(39, 107, 101, .16);
+}
+
+.salary-new-field input[aria-invalid='true'],
+.salary-new-field select[aria-invalid='true'] {
+  border-color: var(--ds-danger, #c33f4d);
+}
+
+.salary-new-field input:disabled,
+.salary-new-field select:disabled {
+  cursor: not-allowed;
+  background: var(--ds-surface-muted, #f5f8f7);
+  opacity: .7;
+}
+
+.salary-new-field small {
+  color: var(--ds-danger, #a52f3b);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.salary-new-money-input {
+  position: relative;
+  min-width: 0;
+}
+
+.salary-new-money-input input {
+  padding-right: 64px;
+}
+
+.salary-new-money-input > span {
+  position: absolute;
+  top: 50%;
+  right: 11px;
+  color: var(--ds-muted, #7a8b89);
+  font-size: 12px;
+  font-weight: 500;
+  pointer-events: none;
+  transform: translateY(-50%);
 }
 
 .salary-add-search {
@@ -502,6 +949,15 @@ function releaseDialogFocus() {
 
   .salary-add-dialog__body {
     padding: 14px 16px 16px;
+  }
+
+  .salary-new-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .salary-add-error {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .salary-add-results {

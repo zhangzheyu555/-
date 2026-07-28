@@ -17,6 +17,9 @@ const props = withDefaults(defineProps<{
   notePlaceholder?: string
   noteMaxLength?: number
   noteRequired?: boolean
+  error?: string
+  acknowledgeOnly?: boolean
+  confirmAutofocus?: boolean
 }>(), {
   message: '',
   confirmLabel: '确认',
@@ -28,6 +31,9 @@ const props = withDefaults(defineProps<{
   notePlaceholder: '',
   noteMaxLength: 0,
   noteRequired: false,
+  error: '',
+  acknowledgeOnly: false,
+  confirmAutofocus: false,
 })
 
 const emit = defineEmits<{
@@ -41,6 +47,8 @@ const instanceId = `action-confirm-${Math.random().toString(36).slice(2, 9)}`
 const titleId = `${instanceId}-title`
 const descriptionId = `${instanceId}-description`
 const noteId = `${instanceId}-note`
+const errorId = `${instanceId}-error`
+const errorRef = ref<HTMLElement | null>(null)
 let previouslyFocused: HTMLElement | null = null
 let appRoot: HTMLElement | null = null
 let appWasInert = false
@@ -104,6 +112,12 @@ watch(() => props.open, async (open) => {
   appRoot = null
 }, { immediate: true })
 
+watch(() => props.error, async (error) => {
+  if (!props.open || !error) return
+  await nextTick()
+  errorRef.value?.focus()
+})
+
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleKeydown, true)
   if (appRoot && !appWasInert) appRoot.inert = false
@@ -143,6 +157,18 @@ onBeforeUnmount(() => {
           </UiButton>
         </header>
 
+        <div
+          v-if="error"
+          :id="errorId"
+          ref="errorRef"
+          class="action-confirm-dialog__error"
+          role="alert"
+          aria-live="assertive"
+          tabindex="-1"
+        >
+          {{ error }}
+        </div>
+
         <div v-if="noteLabel" class="action-confirm-dialog__body">
           <label :for="noteId">{{ noteLabel }}</label>
           <textarea
@@ -162,10 +188,11 @@ onBeforeUnmount(() => {
         </div>
 
         <ModalFooter>
-          <UiButton variant="secondary" type="button" :disabled="busy" @click="cancel">{{ cancelLabel }}</UiButton>
+          <UiButton v-if="!acknowledgeOnly" variant="secondary" type="button" :disabled="busy" @click="cancel">{{ cancelLabel }}</UiButton>
           <UiButton
             :variant="confirmVariant"
             type="button"
+            :data-autofocus="confirmAutofocus ? '' : undefined"
             :loading="busy"
             :disabled="confirmDisabled"
             @click="emit('confirm')"
@@ -241,6 +268,23 @@ onBeforeUnmount(() => {
   padding: 0 20px 20px 72px;
 }
 
+.action-confirm-dialog__error {
+  margin: 0 20px 20px 72px;
+  padding: 10px 12px;
+  border: 1px solid #efb5b5;
+  border-radius: 6px;
+  background: #fff5f5;
+  color: #9b2c2c;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.55;
+  outline: none;
+}
+
+.action-confirm-dialog__error:focus-visible {
+  box-shadow: 0 0 0 3px rgba(195, 63, 77, .18);
+}
+
 .action-confirm-dialog__body label {
   color: var(--ds-text, #182424);
   font-size: 14px;
@@ -273,6 +317,12 @@ onBeforeUnmount(() => {
 @media (max-width: 560px) {
   .action-confirm-dialog__body {
     padding: 0 16px 16px;
+  }
+
+  .action-confirm-dialog__error {
+    margin-right: 16px;
+    margin-left: 16px;
+    padding: 10px 12px;
   }
 }
 

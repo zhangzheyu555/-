@@ -17,6 +17,7 @@ import com.storeprofit.system.common.GlobalExceptionHandler;
 import com.storeprofit.system.common.RequestIdFilter;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
+import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -45,6 +46,27 @@ class AuditControllerTest {
   }
 
   @Test
+  void pagedSearchKeepsAuditPermissionAndDelegatesNormalizedQuery() {
+    when(accessControl.requireUser("Bearer token")).thenReturn(boss);
+    OperationLogQueryResponse page = new OperationLogQueryResponse(
+        List.of(), 0, 1, 30, 1, List.of("老板"), List.of("login"));
+    when(auditRepository.search(1L, new OperationLogQuery(
+        "工资", "老板", "login", "STORE", "rg1",
+        LocalDate.parse("2026-07-01"), LocalDate.parse("2026-07-27"), 1, 30)))
+        .thenReturn(page);
+
+    ApiResponse<OperationLogQueryResponse> response = controller.search(
+        "Bearer token", "工资", "老板", "login", "STORE", "rg1",
+        LocalDate.parse("2026-07-01"), LocalDate.parse("2026-07-27"), 1, 30);
+
+    assertThat(response.data()).isSameAs(page);
+    verify(accessControl).requireAuditRead(boss);
+    verify(auditRepository).search(1L, new OperationLogQuery(
+        "工资", "老板", "login", "STORE", "rg1",
+        LocalDate.parse("2026-07-01"), LocalDate.parse("2026-07-27"), 1, 30));
+  }
+
+  @Test
   void logsWithoutTokenReturnsHttp401() throws Exception {
     when(accessControl.requireUser(null)).thenThrow(
         new BusinessException("UNAUTHORIZED", "请先登录", HttpStatus.UNAUTHORIZED));
@@ -55,6 +77,35 @@ class AuditControllerTest {
         .andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
 
     verify(accessControl).requireUser(null);
+    verifyNoInteractions(auditRepository);
+  }
+
+  @Test
+  void pagedSearchWithoutTokenReturnsHttp401() throws Exception {
+    when(accessControl.requireUser(null)).thenThrow(
+        new BusinessException("UNAUTHORIZED", "请先登录", HttpStatus.UNAUTHORIZED));
+
+    mockMvc().perform(get("/api/audit/logs/search"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(header().exists("X-Request-Id"))
+        .andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
+
+    verify(accessControl).requireUser(null);
+    verifyNoInteractions(auditRepository);
+  }
+
+  @Test
+  void pagedSearchRejectsIncompleteStoreScopeWithBusinessError() throws Exception {
+    when(accessControl.requireUser("Bearer token")).thenReturn(boss);
+
+    mockMvc().perform(get("/api/audit/logs/search")
+            .header("Authorization", "Bearer token")
+            .queryParam("storeScope", "STORE"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("AUDIT_QUERY_INVALID"))
+        .andExpect(jsonPath("$.message").value("选择“指定门店”时必须选择一个门店"));
+
+    verify(accessControl).requireAuditRead(boss);
     verifyNoInteractions(auditRepository);
   }
 

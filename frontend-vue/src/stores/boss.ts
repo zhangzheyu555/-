@@ -302,7 +302,7 @@ export function routeForSource(source: string) {
   if (includesText(source, ['salary', '工资'])) return '/salary'
   if (includesText(source, ['warehouse', '仓库', '库存', '叫货', '退货'])) return '/warehouse'
   if (includesText(source, ['inspection', 'supervisor', '巡店', '整改'])) return '/inspection'
-  if (includesText(source, ['store', '门店', '店长', '经营'])) return '/store-detail'
+  if (includesText(source, ['store', '门店', '店长', '经营'])) return '/profit'
   if (includesText(source, ['平台', '账号'])) return '/platform-login'
   if (includesText(source, ['operation', 'ops', '运营', '导入'])) return '/boss'
   return '/boss'
@@ -312,7 +312,7 @@ function routeForOwner(ownerName: string, source: string) {
   if (includesText(ownerName, ['财务']) || includesText(source, ['财务', '利润', '报销'])) return '/profit-table'
   if (includesText(ownerName, ['仓库']) || includesText(source, ['仓库'])) return '/warehouse'
   if (includesText(ownerName, ['督导']) || includesText(source, ['督导'])) return '/inspection'
-  if (includesText(ownerName, ['店长']) || includesText(source, ['门店'])) return '/store-detail'
+  if (includesText(ownerName, ['店长']) || includesText(source, ['门店'])) return '/profit'
   if (includesText(ownerName, ['运营']) || includesText(source, ['运营'])) return '/boss'
   return '/boss'
 }
@@ -333,7 +333,7 @@ export function sourceLabel(source: string) {
   if (includesText(source, ['salary', '工资'])) return '员工工资'
   if (includesText(source, ['warehouse', '仓库', '库存', '叫货', '退货'])) return '仓库中心'
   if (includesText(source, ['inspection', 'supervisor', '巡店', '整改'])) return '督导巡店'
-  if (includesText(source, ['store', '门店', '店长'])) return '门店详情'
+  if (includesText(source, ['store', '门店', '店长'])) return '门店经营'
   if (includesText(source, ['operation', 'ops', '运营', '导入'])) return '运营事项'
   if (includesText(source, ['escalation', '上报'])) return '岗位上报'
   return cleanText(source || '业务事项')

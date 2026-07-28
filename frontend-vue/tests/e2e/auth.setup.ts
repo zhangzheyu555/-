@@ -26,7 +26,6 @@ export const roles: RoleConfig[] = [
     expectedMenus: [
       '利润概览',
       '利润表',
-      '门店详情',
       '督导巡店',
       '门店经营助手',
       '数据录入',
@@ -39,7 +38,7 @@ export const roles: RoleConfig[] = [
       '店铺盘存',
       '退出登录',
     ],
-    forbiddenMenus: ['决策支持', '今日待办', '财务工作台', '数据核对', '运营中心'],
+    forbiddenMenus: ['决策支持', '今日待办', '财务工作台', '数据核对', '运营中心', '门店详情'],
     layout: 'app',
   },
   {
@@ -64,9 +63,9 @@ export const roles: RoleConfig[] = [
     key: 'store',
     username: env.E2E_STORE_USERNAME || '',
     password: env.E2E_STORE_PASSWORD || '',
-    expectedPath: '/store',
-    expectedMenus: ['仓库中心', '店铺盘存', '本店工资核对', '门店详情', '巡检记录', '培训考试', '门店经营助手'],
-    forbiddenMenus: ['老板工作台', '财务工作台', '仓库工作台', '总仓库存', '物料档案', '采购入库', '账号权限', '导入月度汇总'],
+    expectedPath: '/profit',
+    expectedMenus: ['利润概览', '利润表', '仓库中心', '店铺盘存', '本店工资核对', '巡检记录', '培训考试', '门店经营助手'],
+    forbiddenMenus: ['老板工作台', '财务工作台', '仓库工作台', '总仓库存', '物料档案', '采购入库', '账号权限', '导入月度汇总', '门店详情'],
     layout: 'app',
   },
   {
