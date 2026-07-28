@@ -340,7 +340,8 @@ class DailyLossServiceTest {
     try (XSSFWorkbook workbook = new XSSFWorkbook(new java.io.ByteArrayInputStream(export.content()))) {
       assertThat(workbook.getSheet("每日汇总").getLastRowNum()).isEqualTo(31);
       assertThat(workbook.getSheet("报损明细").getLastRowNum()).isZero();
-      assertThat(workbook.getSheet("每日汇总").getRow(1).getCell(8).getStringCellValue()).isEqualTo("未报");
+      assertThat(workbook.getSheet("每日汇总").getRow(0).getCell(6).getStringCellValue()).isEqualTo("上报状态");
+      assertThat(workbook.getSheet("每日汇总").getRow(1).getCell(6).getStringCellValue()).isEqualTo("未报");
       assertThat(workbook.getSheet("每日汇总").getRow(1).getCell(5).getNumericCellValue()).isZero();
     }
   }
