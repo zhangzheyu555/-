@@ -9,6 +9,7 @@ import java.sql.SQLException;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -47,6 +48,19 @@ public class GlobalExceptionHandler {
         Map.of("missingFields", ex.missingFields()),
         requestId
     ));
+  }
+
+  @ExceptionHandler(RateLimitException.class)
+  public ResponseEntity<ApiResponse<Void>> handleRateLimit(
+      RateLimitException ex,
+      HttpServletRequest request
+  ) {
+    String requestId = RequestIdFilter.getRequestId(request);
+    log.warn("Rate limit: code={} retryAfterSeconds={} requestId={}",
+        ex.getCode(), ex.getRetryAfterSeconds(), requestId);
+    return ResponseEntity.status(ex.getStatus())
+        .header(HttpHeaders.RETRY_AFTER, String.valueOf(ex.getRetryAfterSeconds()))
+        .body(ApiResponse.fail(ex.getCode(), ex.getMessage(), requestId));
   }
 
   @ExceptionHandler(BusinessException.class)

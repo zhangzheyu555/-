@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -142,7 +143,7 @@ class AuthServiceLoginTest {
   }
 
   @Test
-  void repeatedFailuresFromOneSourceAreRateLimitedAcrossUsernames() {
+  void repeatedFailuresFromOneSourceDoNotRateLimitAnotherUsername() {
     AuthRepository repository = mock(AuthRepository.class);
     when(repository.findByUsername(eq(1L), anyString())).thenReturn(Optional.empty());
     AuthService service = service(
@@ -158,13 +159,37 @@ class AuthServiceLoginTest {
       assertThat(error.getStatus()).isEqualTo(HttpStatus.UNAUTHORIZED);
     }
 
-    BusinessException limited = catchThrowableOfType(
+    BusinessException nextAccountFailure = catchThrowableOfType(
         () -> service.login(
             new LoginRequest("different-user", "submitted-password", null),
             "198.51.100.10"),
         BusinessException.class);
 
+    assertThat(nextAccountFailure.getStatus()).isEqualTo(HttpStatus.UNAUTHORIZED);
+    assertThat(nextAccountFailure.getCode()).isEqualTo("LOGIN_FAILED");
+  }
+
+  @Test
+  void rateLimitedAccountIsRejectedBeforePasswordHashing() {
+    AuthRepository repository = mock(AuthRepository.class);
+    PasswordService passwordService = mock(PasswordService.class);
+    when(repository.findByUsername(1L, "boss")).thenReturn(Optional.of(user(true)));
+    when(passwordService.matches("wrong-password", "stored-hash")).thenReturn(false);
+    AuthService service = service(repository, passwordService, mock(AuditRepository.class));
+
+    for (int attempt = 0; attempt < 5; attempt++) {
+      BusinessException error = catchThrowableOfType(
+          () -> service.login(new LoginRequest("boss", "wrong-password", null), "198.51.100.10"),
+          BusinessException.class);
+      assertThat(error.getStatus()).isEqualTo(HttpStatus.UNAUTHORIZED);
+    }
+
+    BusinessException limited = catchThrowableOfType(
+        () -> service.login(new LoginRequest("boss", "wrong-password", null), "198.51.100.10"),
+        BusinessException.class);
+
     assertThat(limited.getStatus()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+    verify(passwordService, times(5)).matches("wrong-password", "stored-hash");
   }
 
   @Test

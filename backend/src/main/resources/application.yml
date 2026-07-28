@@ -92,6 +92,13 @@ app:
     shops: ${QMAI_SHOPS:}
   auth:
     token-ttl-hours: 12
+    login-protection:
+      initial-attempts: ${AUTH_LOGIN_INITIAL_ATTEMPTS:5}
+      base-cooldown: ${AUTH_LOGIN_BASE_COOLDOWN:30s}
+      max-cooldown: ${AUTH_LOGIN_MAX_COOLDOWN:5m}
+      reset-after: ${AUTH_LOGIN_RESET_AFTER:5m}
+      max-tracked-accounts: ${AUTH_LOGIN_MAX_TRACKED_ACCOUNTS:10000}
+      max-concurrent-password-verifications: ${AUTH_LOGIN_MAX_CONCURRENT_PASSWORD_VERIFICATIONS:4}
   wechat-mini-program:
     app-id: ${WECHAT_MINI_APP_ID:}
     app-secret: ${WECHAT_MINI_APP_SECRET:}

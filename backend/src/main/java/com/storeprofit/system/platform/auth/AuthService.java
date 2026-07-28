@@ -18,12 +18,12 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
+import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -40,9 +40,6 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class AuthService {
   private static final Logger log = LoggerFactory.getLogger(AuthService.class);
-  private static final int MAX_FAILED_LOGIN_ATTEMPTS = 5;
-  private static final long FAILED_LOGIN_WINDOW_MILLIS = 5 * 60 * 1000L;
-  private static final int MAX_TRACKED_LOGIN_FAILURE_KEYS = 10_000;
   private static final long PASSWORD_CHANGE_GRANT_TTL_MILLIS = 10 * 60 * 1000L;
   private final AuthRepository authRepository;
   private final PasswordService passwordService;
@@ -53,10 +50,11 @@ public class AuthService {
   private final BusinessScopeResolver businessScopeResolver;
   private final WeChatMiniProgramService weChatMiniProgramService;
   private final WeChatMiniProgramRepository weChatMiniProgramRepository;
+  private final LoginAttemptGuard loginAttemptGuard;
+  private final PasswordVerificationGuard passwordVerificationGuard;
   private final long tokenTtlHours;
   private final long passwordChangeGrantTtlMillis;
   private final SecureRandom secureRandom = new SecureRandom();
-  private final ConcurrentMap<String, FailedLoginWindow> failedLogins = new ConcurrentHashMap<>();
   private final ConcurrentMap<String, PasswordChangeGrant> passwordChangeGrants = new ConcurrentHashMap<>();
 
   @Autowired
@@ -71,7 +69,9 @@ public class AuthService {
       @Value("${app.auth.token-ttl-hours:12}") long tokenTtlHours,
       @Value("${app.auth.password-change-grant-ttl-minutes:10}") long passwordChangeGrantTtlMinutes,
       WeChatMiniProgramService weChatMiniProgramService,
-      WeChatMiniProgramRepository weChatMiniProgramRepository
+      WeChatMiniProgramRepository weChatMiniProgramRepository,
+      LoginAttemptGuard loginAttemptGuard,
+      PasswordVerificationGuard passwordVerificationGuard
   ) {
     this.authRepository = authRepository;
     this.passwordService = passwordService;
@@ -82,8 +82,41 @@ public class AuthService {
     this.businessScopeResolver = businessScopeResolver;
     this.weChatMiniProgramService = weChatMiniProgramService;
     this.weChatMiniProgramRepository = weChatMiniProgramRepository;
+    this.loginAttemptGuard = loginAttemptGuard;
+    this.passwordVerificationGuard = passwordVerificationGuard;
     this.tokenTtlHours = tokenTtlHours;
     this.passwordChangeGrantTtlMillis = Math.max(0, passwordChangeGrantTtlMinutes) * 60 * 1000L;
+  }
+
+  /** Compatibility constructor retained for focused tests that provide WeChat collaborators. */
+  public AuthService(
+      AuthRepository authRepository,
+      PasswordService passwordService,
+      AuditRepository auditRepository,
+      AuthorizationService authorizationService,
+      DataScopeService dataScopeService,
+      WorkspaceAccessResolver workspaceAccessResolver,
+      BusinessScopeResolver businessScopeResolver,
+      long tokenTtlHours,
+      long passwordChangeGrantTtlMinutes,
+      WeChatMiniProgramService weChatMiniProgramService,
+      WeChatMiniProgramRepository weChatMiniProgramRepository
+  ) {
+    this(
+        authRepository,
+        passwordService,
+        auditRepository,
+        authorizationService,
+        dataScopeService,
+        workspaceAccessResolver,
+        businessScopeResolver,
+        tokenTtlHours,
+        passwordChangeGrantTtlMinutes,
+        weChatMiniProgramService,
+        weChatMiniProgramRepository,
+        defaultLoginAttemptGuard(),
+        defaultPasswordVerificationGuard()
+    );
   }
 
   /** Compatibility constructor retained for focused authorization tests. */
@@ -177,28 +210,27 @@ public class AuthService {
 
   @Transactional
   public LoginResponse login(LoginRequest request) {
-    return loginInternal(request, "unknown");
+    return loginInternal(request);
   }
 
   @Transactional
   public LoginResponse login(LoginRequest request, String sourceIp) {
-    return loginInternal(request, sourceIp);
+    return loginInternal(request);
   }
 
-  private LoginResponse loginInternal(LoginRequest request, String sourceIp) {
+  private LoginResponse loginInternal(LoginRequest request) {
     long tenantId = request.tenantId() == null ? TenantDefaults.DEFAULT_TENANT_ID : request.tenantId();
     String username = request.username().trim();
-    List<String> attemptKeys = loginAttemptKeys(tenantId, username, sourceIp);
+    loginAttemptGuard.acquire(tenantId, username);
     AuthUser user = authRepository.findByUsername(tenantId, username).orElse(null);
     boolean passwordAccepted = user != null
         && user.enabled()
-        && passwordService.matches(request.password(), user.passwordHash());
+        && passwordVerificationGuard.verify(
+            () -> passwordService.matches(request.password(), user.passwordHash()));
     if (!passwordAccepted) {
-      requireLoginAllowed(attemptKeys);
-      recordLoginFailure(attemptKeys);
       throw new BusinessException("LOGIN_FAILED", "账号或密码错误", HttpStatus.UNAUTHORIZED);
     }
-    attemptKeys.forEach(failedLogins::remove);
+    loginAttemptGuard.clear(tenantId, username);
     if (authRepository.passwordChangeRequired(user.tenantId(), user.id())) {
       authRepository.deleteTokensForUser(user.tenantId(), user.id());
       return LoginResponse.passwordChangeRequired(issuePasswordChangeGrant(user));
@@ -334,61 +366,6 @@ public class AuthService {
   private BusinessException invalidPasswordChangeCredential() {
     return new BusinessException(
         "PASSWORD_CHANGE_CREDENTIAL_INVALID", "改密凭据无效或已过期，请重新登录", HttpStatus.UNAUTHORIZED);
-  }
-
-  private List<String> loginAttemptKeys(long tenantId, String username, String sourceIp) {
-    String normalizedUsername = username.toLowerCase(Locale.ROOT);
-    if (normalizedUsername.length() > 160) {
-      normalizedUsername = normalizedUsername.substring(0, 160);
-    }
-    String normalizedIp = sourceIp == null ? "unknown" : sourceIp.trim().toLowerCase(Locale.ROOT);
-    if (normalizedIp.isBlank()) {
-      normalizedIp = "unknown";
-    } else if (normalizedIp.length() > 64) {
-      normalizedIp = normalizedIp.substring(0, 64);
-    }
-    return List.of(
-        "account:" + tenantId + ':' + normalizedUsername,
-        "source:" + normalizedIp
-    );
-  }
-
-  private void requireLoginAllowed(List<String> attemptKeys) {
-    long now = System.currentTimeMillis();
-    for (String attemptKey : attemptKeys) {
-      FailedLoginWindow state = failedLogins.get(attemptKey);
-      if (state == null || now - state.startedAtMillis() >= FAILED_LOGIN_WINDOW_MILLIS) {
-        if (state != null) {
-          failedLogins.remove(attemptKey, state);
-        }
-        continue;
-      }
-      if (state.attempts() >= MAX_FAILED_LOGIN_ATTEMPTS) {
-        throw new BusinessException(
-            "LOGIN_RATE_LIMITED", "登录尝试过多，请稍后再试", HttpStatus.TOO_MANY_REQUESTS);
-      }
-    }
-  }
-
-  private void recordLoginFailure(List<String> attemptKeys) {
-    long now = System.currentTimeMillis();
-    for (String attemptKey : attemptKeys) {
-      failedLogins.compute(attemptKey, (key, state) -> {
-        if (state == null && failedLogins.size() >= MAX_TRACKED_LOGIN_FAILURE_KEYS) {
-          return null;
-        }
-        if (state == null || now - state.startedAtMillis() >= FAILED_LOGIN_WINDOW_MILLIS) {
-          return new FailedLoginWindow(1, now);
-        }
-        return new FailedLoginWindow(state.attempts() + 1, state.startedAtMillis());
-      });
-    }
-  }
-
-  @Scheduled(fixedDelay = FAILED_LOGIN_WINDOW_MILLIS)
-  public void deleteExpiredLoginFailures() {
-    long cutoff = System.currentTimeMillis() - FAILED_LOGIN_WINDOW_MILLIS;
-    failedLogins.entrySet().removeIf(entry -> entry.getValue().startedAtMillis() <= cutoff);
   }
 
   @Scheduled(fixedDelay = PASSWORD_CHANGE_GRANT_TTL_MILLIS)
@@ -539,7 +516,13 @@ public class AuthService {
     };
   }
 
-  private record FailedLoginWindow(int attempts, long startedAtMillis) {
+  private static LoginAttemptGuard defaultLoginAttemptGuard() {
+    LoginProtectionProperties properties = new LoginProtectionProperties();
+    return new LoginAttemptGuard(properties, null, Clock.systemUTC());
+  }
+
+  private static PasswordVerificationGuard defaultPasswordVerificationGuard() {
+    return new PasswordVerificationGuard(new LoginProtectionProperties());
   }
 
   private record PasswordChangeGrant(long tenantId, long userId, long expiresAtMillis) {
