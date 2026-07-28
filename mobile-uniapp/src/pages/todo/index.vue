@@ -163,7 +163,7 @@ function askNote(title: string) {
 
 <style scoped lang="scss">
 .todo-page { display: flex; flex-direction: column; gap: 20rpx; color: #1f2b2a; }
-.todo-heading { display: flex; align-items: center; justify-content: space-between; gap: 20rpx; }
+.todo-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20rpx; }
 .todo-heading__copy { display: flex; min-width: 0; flex-direction: column; gap: 7rpx; }
 .todo-heading__eyebrow { color: #6e8682; font-size: 22rpx; font-weight: 700; }
 .todo-heading__title { color: #1f2b2a; font-family: $mobile-font-display; font-size: 42rpx; font-weight: 850; line-height: 1.18; }

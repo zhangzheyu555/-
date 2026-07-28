@@ -311,7 +311,7 @@ function storeStatusLabel(status: string | undefined): string {
 .home-page { display: flex; flex-direction: column; gap: 22rpx; color: #1f2b2a; }
 .home-page :deep(.state-panel) { border-color: #dbe7e4; box-shadow: none; }
 .menu-card::after,.todo-row::after,.all-todos::after,.text-button::after { border: 0; }
-.workspace-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 20rpx; }
+.workspace-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20rpx; }
 .workspace-head > view { display: flex; min-width: 0; flex-direction: column; gap: 7rpx; }
 .workspace-head__actions { flex: 0 0 auto; align-items: flex-end; }
 .workspace-head__date { display: flex; align-items: center; flex-direction: row; gap: 8rpx; color: #58706d; font-size: 21rpx; font-weight: 700; white-space: nowrap; }

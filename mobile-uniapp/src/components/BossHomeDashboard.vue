@@ -199,7 +199,7 @@ defineExpose({ refresh })
 <template>
   <view class="boss-dashboard">
     <view class="boss-topbar">
-      <view>
+      <view class="boss-topbar__text">
         <text class="boss-topbar__eyebrow">老板（系统管理员）</text>
         <text class="boss-topbar__title">老板工作台</text>
         <text class="boss-topbar__copy">经营结果、风险提醒和岗位进度集中查看</text>
@@ -354,8 +354,8 @@ defineExpose({ refresh })
 <style scoped lang="scss">
 .boss-dashboard { display: flex; flex-direction: column; gap: 20rpx; color: #1f2b2a; }
 .boss-topbar,.focus-card__head,.section-head,.risk-row__head,.progress-row { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; }
-.boss-topbar { align-items: flex-end; padding-top: 4rpx; }
-.boss-topbar > view,.focus-card__head > view,.section-head > view { display: flex; min-width: 0; flex-direction: column; gap: 5rpx; }
+.boss-topbar { align-items: flex-start; }
+.boss-topbar__text,.focus-card__head > view,.section-head > view { display: flex; min-width: 0; flex-direction: column; gap: 5rpx; }
 .boss-topbar__eyebrow,.section-eyebrow { color: #6b8581; font-size: 21rpx; font-weight: 700; }
 .boss-topbar__title { color: #1f2b2a; font-family: $mobile-font-display; font-size: 42rpx; font-weight: 850; line-height: 1.18; }
 .boss-topbar__copy { color: #788b87; font-size: 22rpx; line-height: 1.5; }

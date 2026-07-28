@@ -28,6 +28,7 @@ test('老板工作台移除刷新按钮并在标题右侧显示品牌标识', ()
   assert.doesNotMatch(bossTemplate, /class="refresh-button"/)
   assert.match(
     bossTemplate,
-    /<view class="boss-topbar">[\s\S]*?老板工作台[\s\S]*?<BrandLockup compact \/>\s*<\/view>/,
+    /<view class="boss-topbar">\s*<view class="boss-topbar__text">[\s\S]*?老板工作台[\s\S]*?<BrandLockup compact \/>\s*<\/view>/,
   )
+  assert.doesNotMatch(bossDashboardSource, /\.boss-topbar\s*>\s*view/)
 })

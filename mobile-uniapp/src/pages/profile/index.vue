@@ -214,7 +214,7 @@ async function logout(): Promise<void> {
 .employee-grid > view { display: flex; min-height: 104rpx; padding: 16rpx; flex-direction: column; justify-content: center; gap: 8rpx; background: #f4f8f7; border-radius: 12rpx; }
 .employee-grid text { color: $mobile-muted; font-size: 22rpx; }.employee-grid strong { overflow: hidden; color: $mobile-ink; font-size: 25rpx; text-overflow: ellipsis; white-space: nowrap; }
 .salary-card { padding: 20rpx; flex-direction: column; gap: 16rpx; background: $mobile-green-soft; border-radius: 14rpx; }.salary-card__total { color: $mobile-green; font-size: 46rpx; font-weight: 850; }.employee-grid--salary > view { background: rgba(255,255,255,.7); }.employee-tip { display: block; }.employee-refresh { margin: 0; color: $mobile-green; background: #e6f3f1; font-size: 25rpx; }.employee-error { padding: 16rpx; color: #9d3c35; background: #fff0ed; border-radius: 12rpx; font-size: 24rpx; }.employee-error button { margin: 0; color: #9d3c35; background: transparent; font-size: 22rpx; }.employee-state { padding: 24rpx 0; color: $mobile-muted; font-size: 25rpx; text-align: center; }
-.profile-hero { display: flex; min-height: 104rpx; align-items: center; justify-content: space-between; gap: 20rpx; }
+.profile-hero { display: flex; min-height: 104rpx; align-items: flex-start; justify-content: space-between; gap: 20rpx; }
 .profile-hero :deep(.brand-lockup) { flex: 0 0 auto; }
 .profile-identity { display: flex; min-width: 0; flex: 1; align-items: center; gap: 18rpx; }
 .profile-avatar { display: flex; width: 80rpx; height: 80rpx; flex: 0 0 80rpx; align-items: center; justify-content: center; color: #fff; background: #71bcb4; border-radius: 50%; font-size: 32rpx; font-weight: 800; }
