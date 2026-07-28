@@ -1879,8 +1879,8 @@ public class WarehouseRepository {
     );
   }
 
-  public void receiveReturnOrder(long tenantId, String returnOrderId, String checkedBy, String note) {
-    jdbcTemplate.update("""
+  public int receiveReturnOrder(long tenantId, String returnOrderId, String checkedBy, String note) {
+    return jdbcTemplate.update("""
         update warehouse_return_order
         set status = 'RECEIVED',
             checked_by = ?,

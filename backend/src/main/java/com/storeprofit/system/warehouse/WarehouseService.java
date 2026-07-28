@@ -1355,6 +1355,11 @@ public class WarehouseService {
       throw new BusinessException("BAD_RETURN_STATUS", "只有仓库已通过的退货单可以确认收货", HttpStatus.CONFLICT);
     }
     String note = request == null ? null : request.note();
+    if (warehouseRepository.receiveReturnOrder(
+        user.tenantId(), order.id(), user.displayName(), note) != 1) {
+      throw new BusinessException(
+          "BAD_RETURN_STATUS", "该配送退货单已被处理，请刷新后重试", HttpStatus.CONFLICT);
+    }
     for (WarehouseReturnLineResponse line : order.lines()) {
       if (line.batchId() == null) {
         throw new BusinessException("RETURN_BATCH_NOT_FOUND", "退货明细缺少原出库批次，不能回库", HttpStatus.CONFLICT);
@@ -1393,7 +1398,6 @@ public class WarehouseService {
         }
       }
     }
-    warehouseRepository.receiveReturnOrder(user.tenantId(), order.id(), user.displayName(), note);
     warehouseRepository.logAction(user.tenantId(), user.id(), user.displayName(), "确认收到配送退货", order.id(), order.returnStoreId(), note);
     warehouseRepository.insertTodoAction(
         "todo-act-" + UUID.randomUUID(),

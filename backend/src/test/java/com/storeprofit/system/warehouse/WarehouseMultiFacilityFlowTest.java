@@ -28,11 +28,13 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
 import org.h2.jdbcx.JdbcDataSource;
@@ -534,6 +536,148 @@ class WarehouseMultiFacilityFlowTest {
   }
 
   @Test
+  void receiveReturnClaimsApprovedStatusBeforeMutatingInventoryUnderConcurrency() throws Exception {
+    String returnId = "RETURN-CONCURRENT-1";
+    String batchNo = "SD-RETURN-CONCURRENT-1";
+    jdbc.execute("""
+        alter table warehouse_return_order
+        add column if not exists receive_warehouse_code_snapshot varchar(64)
+        """);
+    jdbc.execute("""
+        alter table warehouse_return_order
+        add column if not exists receive_warehouse_name_snapshot varchar(160)
+        """);
+    jdbc.update("""
+        insert into warehouse_stock_batch(
+          tenant_id, warehouse_id, item_id, batch_no, received_date, expiry_date,
+          quantity, reserved_quantity, unit_cost, note, version, created_at
+        ) values (1, ?, ?, ?, '2026-07-20', '2027-07-20',
+          10.00, 0.00, 138.00, '并发退货测试批次', 0, current_timestamp)
+        """, regionalWarehouseId, itemId, batchNo);
+    long batchId = jdbc.queryForObject("""
+        select id from warehouse_stock_batch
+        where tenant_id = 1 and warehouse_id = ? and item_id = ? and batch_no = ?
+        """, Long.class, regionalWarehouseId, itemId, batchNo);
+    jdbc.update("""
+        update warehouse_inventory
+        set on_hand_quantity = 10.00, reserved_quantity = 0.00,
+            in_transit_quantity = 0.00, unit_cost = 138.00, version = 0
+        where tenant_id = 1 and warehouse_id = ? and item_id = ?
+        """, regionalWarehouseId, itemId);
+    jdbc.update("""
+        insert into store_inventory(
+          tenant_id, store_id, item_id, quantity, unit, updated_at
+        ) values (1, 'sd-store-1', ?, 10.00, '件', current_timestamp)
+        on duplicate key update quantity = values(quantity), updated_at = current_timestamp
+        """, itemId);
+
+    WarehouseTopologyRepository.FacilityRow regionalWarehouse = topologyRepository
+        .facility(TENANT_ID, regionalWarehouseId)
+        .orElseThrow();
+    warehouseRepository.insertReturnOrder(
+        TENANT_ID,
+        new WarehouseRepository.WarehouseFacilitySnapshot(
+            regionalWarehouse.id(), regionalWarehouse.code(), regionalWarehouse.name()),
+        returnId,
+        returnId,
+        null,
+        null,
+        "sd-store-1",
+        "山东测试门店",
+        "APPROVED",
+        new BigDecimal("276.00"),
+        "山东仓管理员",
+        "山东店长",
+        "包装破损",
+        "并发确认退货",
+        "2026-07-28"
+    );
+    warehouseRepository.insertReturnOrderLine(
+        TENANT_ID,
+        returnId,
+        null,
+        itemId,
+        "700ml杯子",
+        "1000个/件",
+        batchId,
+        batchNo,
+        new BigDecimal("2.00"),
+        "件",
+        new BigDecimal("138.00"),
+        new BigDecimal("138.00"),
+        "包装破损",
+        "并发确认退货"
+    );
+
+    CountDownLatch bothTransactionsReadApproved = new CountDownLatch(2);
+    WarehouseRepository coordinatedRepository = new WarehouseRepository(jdbc) {
+      private final ThreadLocal<Boolean> firstRead = ThreadLocal.withInitial(() -> true);
+
+      @Override
+      public Optional<WarehouseReturnResponse> returnOrder(long tenantId, String requestedReturnId) {
+        Optional<WarehouseReturnResponse> order = super.returnOrder(tenantId, requestedReturnId);
+        if (firstRead.get()) {
+          firstRead.set(false);
+          bothTransactionsReadApproved.countDown();
+          try {
+            if (!bothTransactionsReadApproved.await(5, TimeUnit.SECONDS)) {
+              throw new IllegalStateException("并发退货确认未能同时读取初始状态");
+            }
+          } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("并发退货确认测试被中断", ex);
+          }
+        }
+        return order;
+      }
+    };
+    WarehouseService concurrentService = new WarehouseService(
+        coordinatedRepository, accessControl, businessScopeResolver,
+        topologyService, topologyRepository);
+    DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<String> first = executor.submit(() ->
+          receiveReturnInTransaction(transactionManager, concurrentService, returnId));
+      Future<String> second = executor.submit(() ->
+          receiveReturnInTransaction(transactionManager, concurrentService, returnId));
+
+      assertThat(List.of(
+          first.get(10, TimeUnit.SECONDS),
+          second.get(10, TimeUnit.SECONDS)
+      )).containsExactlyInAnyOrder("RECEIVED", "BAD_RETURN_STATUS");
+    } finally {
+      executor.shutdownNow();
+    }
+
+    assertThat(batchQuantity(regionalWarehouseId, itemId, "quantity"))
+        .isEqualByComparingTo("12.00");
+    assertThat(inventoryQuantity(regionalWarehouseId, itemId, "on_hand_quantity"))
+        .isEqualByComparingTo("12.00");
+    assertThat(jdbc.queryForObject("""
+        select quantity from store_inventory
+        where tenant_id = 1 and store_id = 'sd-store-1' and item_id = ?
+        """, BigDecimal.class, itemId)).isEqualByComparingTo("8.00");
+    assertThat(jdbc.queryForObject("""
+        select count(*) from warehouse_stock_movement
+        where tenant_id = 1 and source_type = 'RETURN' and source_id = ?
+          and movement_type = 'RETURN_IN'
+        """, Integer.class, returnId)).isOne();
+    assertThat(jdbc.queryForObject("""
+        select count(*) from store_inventory_movement
+        where tenant_id = 1 and source_type = 'STORE_RETURN' and source_id = ?
+        """, Integer.class, returnId)).isOne();
+    assertThat(jdbc.queryForObject("""
+        select count(*) from operation_log
+        where tenant_id = 1 and action = '确认收到配送退货' and target_id = ?
+        """, Integer.class, returnId)).isOne();
+    assertThat(jdbc.queryForObject("""
+        select count(*) from todo_action
+        where tenant_id = 1 and todo_id = ? and action_type = 'WAREHOUSE_RETURN_RECEIVE'
+        """, Integer.class, "warehouse-return-" + returnId)).isOne();
+  }
+
+  @Test
   void warehouseListScopeKeepsStoreAndWarehouseIdentifiersIndependent() {
     DataScope scope = new DataScope(
         DataScopeModes.WAREHOUSE_LIST,
@@ -934,6 +1078,23 @@ class WarehouseMultiFacilityFlowTest {
               transferId,
               new WarehouseTransferReviewRequest(true, "并发审批")));
       return "APPROVED";
+    } catch (BusinessException ex) {
+      return ex.getCode();
+    }
+  }
+
+  private String receiveReturnInTransaction(
+      DataSourceTransactionManager transactionManager,
+      WarehouseService service,
+      String returnId
+  ) {
+    try {
+      WarehouseReturnResponse response = new TransactionTemplate(transactionManager).execute(status ->
+          service.receiveReturn(
+              regionalManager,
+              returnId,
+              new WarehouseReturnReceiveRequest("并发确认退货")));
+      return response == null ? "NO_RESPONSE" : response.status();
     } catch (BusinessException ex) {
       return ex.getCode();
     }
