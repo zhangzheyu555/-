@@ -16,6 +16,13 @@ import java.util.Objects;
  */
 final class InspectionScoreSnapshotValidator {
   private static final BigDecimal ZERO_AMOUNT = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+  private static final String SCALE_ADJUSTMENT_CLAUSE_CODE = "H-4.1.2";
+  private static final String SCALE_ADJUSTMENT_POLICY = "LEGACY_100_TO_200_H412_V1";
+  private static final BigDecimal LEGACY_SCORE_SCALE = amount("100");
+  private static final BigDecimal PERSISTED_SCORE_SCALE = amount("200");
+  private static final BigDecimal SCALE_ADJUSTMENT_CLAUSE_DEDUCTION = amount("2");
+  private static final BigDecimal SCALE_ADJUSTMENT_DEDUCTION = amount("2");
+  private static final BigDecimal SCALE_ADJUSTMENT_TOTAL_DEDUCTION = amount("4");
 
   private InspectionScoreSnapshotValidator() {}
 
@@ -91,6 +98,7 @@ final class InspectionScoreSnapshotValidator {
       List<InspectionStandardItemResponse> standards,
       List<InspectionItemResultResponse> snapshots,
       InspectionStandardRepository.VersionRow version,
+      String photosJson,
       List<String> missingFields
   ) {
     if (snapshots.size() != standards.size()) {
@@ -105,7 +113,6 @@ final class InspectionScoreSnapshotValidator {
         return ScoreRepair.empty();
       }
     }
-    BigDecimal score = ZERO_AMOUNT;
     BigDecimal material = ZERO_AMOUNT;
     BigDecimal hygiene = ZERO_AMOUNT;
     BigDecimal service = ZERO_AMOUNT;
@@ -130,9 +137,18 @@ final class InspectionScoreSnapshotValidator {
         missingFields.add("标准快照分值一致性：" + standard.code());
         return ScoreRepair.empty();
       }
-      if (deduction == null || deduction.signum() < 0 || deduction.compareTo(maximum) > 0) {
+      if (deduction == null || deduction.signum() < 0) {
         missingFields.add("条款扣分：" + standard.code());
         return ScoreRepair.empty();
+      }
+      ScaleAdjustmentEvidence scaleAdjustment = null;
+      if (deduction.compareTo(maximum) > 0) {
+        scaleAdjustment = confirmedScaleAdjustment(
+            standard, snapshot, deduction, photosJson);
+        if (scaleAdjustment == null) {
+          missingFields.add("条款扣分：" + standard.code());
+          return ScoreRepair.empty();
+        }
       }
       if (deduction.signum() > 0 && !snapshot.issueFound()) {
         missingFields.add("扣分问题状态：" + standard.code());
@@ -142,26 +158,36 @@ final class InspectionScoreSnapshotValidator {
         missingFields.add("扣分原因：" + standard.code());
         return ScoreRepair.empty();
       }
-      BigDecimal actual = maximum.subtract(deduction).setScale(2, RoundingMode.HALF_UP);
+      BigDecimal actual = scaleAdjustment == null
+          ? maximum.subtract(deduction).setScale(2, RoundingMode.HALF_UP)
+          : maximum.subtract(scaleAdjustment.clauseDeduction())
+              .max(ZERO_AMOUNT).setScale(2, RoundingMode.HALF_UP);
       if (snapshotActual == null || snapshotActual.compareTo(actual) != 0) {
         missingFields.add("标准快照分值一致性：" + standard.code());
         return ScoreRepair.empty();
       }
+      BigDecimal scoreContribution = scaleAdjustment == null
+          ? actual
+          : actual.subtract(scaleAdjustment.scaleAdjustmentDeduction())
+              .setScale(2, RoundingMode.HALF_UP);
       String bucket = InspectionStandardValidator.category(standard.dimension());
       if (bucket == null) {
         missingFields.add("条款分类：" + standard.code());
         return ScoreRepair.empty();
       }
-      score = score.add(actual);
       switch (bucket) {
-        case "MATERIAL" -> material = material.add(actual);
-        case "HYGIENE" -> hygiene = hygiene.add(actual);
-        case "SERVICE" -> service = service.add(actual);
+        case "MATERIAL" -> material = material.add(scoreContribution);
+        case "HYGIENE" -> hygiene = hygiene.add(scoreContribution);
+        case "SERVICE" -> service = service.add(scoreContribution);
         default -> throw new IllegalStateException("Unexpected inspection category: " + bucket);
       }
       redLineHit = redLineHit || (snapshot.issueFound()
           && "RED".equals(normalizeRiskLevel(standard.riskLevel(), standard.redLine())));
     }
+    material = material.max(ZERO_AMOUNT);
+    hygiene = hygiene.max(ZERO_AMOUNT);
+    service = service.max(ZERO_AMOUNT);
+    BigDecimal score = material.add(hygiene).add(service).setScale(2, RoundingMode.HALF_UP);
     if (!snapshotByCode.isEmpty() || score.compareTo(version.fullScore()) > 0) {
       missingFields.add("标准快照与标准版本一致性");
       return ScoreRepair.empty();
@@ -179,6 +205,134 @@ final class InspectionScoreSnapshotValidator {
     );
   }
 
+  /**
+   * Returns the only persisted scale adjustment that is allowed to exceed a clause's own score.
+   *
+   * <p>The detection payload is authorization evidence, so no deduction reason text or client
+   * policy flag is trusted. Every server-derived field, the terminal decision, the clause identity,
+   * and both attachment links must agree with the immutable snapshot.</p>
+   */
+  private static ScaleAdjustmentEvidence confirmedScaleAdjustment(
+      InspectionStandardItemResponse standard,
+      InspectionItemResultResponse snapshot,
+      BigDecimal deduction,
+      String photosJson
+  ) {
+    if (!SCALE_ADJUSTMENT_CLAUSE_CODE.equalsIgnoreCase(standard.code())
+        || !SCALE_ADJUSTMENT_CLAUSE_CODE.equalsIgnoreCase(snapshot.code())
+        || !Objects.equals(standard.id(), snapshot.standardItemId())
+        || standard.suggestedScore() == null
+        || standard.suggestedScore().compareTo(SCALE_ADJUSTMENT_CLAUSE_DEDUCTION) != 0
+        || deduction.compareTo(SCALE_ADJUSTMENT_TOTAL_DEDUCTION) != 0) {
+      return null;
+    }
+
+    List<Map<String, Object>> photos;
+    try {
+      photos = InspectionPhotoJsonCodec.parseDetectionPhotos(photosJson);
+    } catch (RuntimeException ex) {
+      return null;
+    }
+
+    ScaleAdjustmentEvidence resolved = null;
+    for (Map<String, Object> photo : photos) {
+      Object rawDetection = photo == null ? null : photo.get("detection");
+      if (!(rawDetection instanceof Map<?, ?> detection)) {
+        continue;
+      }
+      Long clauseId = longValue(detection, "clauseId");
+      String clauseCode = textValue(detection, "clauseCode");
+      String policy = textValue(detection, "deductionPolicyVersion");
+      boolean relevant = Objects.equals(clauseId, standard.id())
+          || SCALE_ADJUSTMENT_CLAUSE_CODE.equalsIgnoreCase(clauseCode)
+          || SCALE_ADJUSTMENT_POLICY.equals(policy);
+      if (!relevant || !"CONFIRMED".equals(textValue(detection, "decisionStatus"))) {
+        continue;
+      }
+
+      Long photoAttachmentId = longValue(photo, "attachmentId");
+      Long detectionAttachmentId = longValue(detection, "attachmentId");
+      BigDecimal scoreScale = decimalValue(detection, "scoreScale");
+      BigDecimal persistedScoreScale = decimalValue(detection, "persistedScoreScale");
+      BigDecimal clauseDeduction = decimalValue(detection, "clauseDeduction");
+      BigDecimal adjustmentDeduction = decimalValue(detection, "scaleAdjustmentDeduction");
+      BigDecimal standardDeduction = decimalValue(detection, "standardDeduction");
+      BigDecimal finalDeduction = decimalValue(detection, "finalDeduction");
+      BigDecimal confirmedDeduction = decimalValue(detection, "confirmedDeduction");
+
+      boolean valid = blankToNull(textValue(detection, "detectionKey")) != null
+          && Objects.equals(clauseId, standard.id())
+          && Objects.equals(clauseId, snapshot.standardItemId())
+          && SCALE_ADJUSTMENT_CLAUSE_CODE.equalsIgnoreCase(clauseCode)
+          && SCALE_ADJUSTMENT_POLICY.equals(policy)
+          && photoAttachmentId != null
+          && photoAttachmentId > 0
+          && Objects.equals(photoAttachmentId, detectionAttachmentId)
+          && snapshot.photoAttachmentIds().contains(photoAttachmentId)
+          && equalAmount(scoreScale, LEGACY_SCORE_SCALE)
+          && equalAmount(persistedScoreScale, PERSISTED_SCORE_SCALE)
+          && equalAmount(clauseDeduction, SCALE_ADJUSTMENT_CLAUSE_DEDUCTION)
+          && equalAmount(adjustmentDeduction, SCALE_ADJUSTMENT_DEDUCTION)
+          && equalAmount(standardDeduction, SCALE_ADJUSTMENT_TOTAL_DEDUCTION)
+          && equalAmount(finalDeduction, SCALE_ADJUSTMENT_TOTAL_DEDUCTION)
+          && equalAmount(confirmedDeduction, SCALE_ADJUSTMENT_TOTAL_DEDUCTION)
+          && equalAmount(clauseDeduction.add(adjustmentDeduction), confirmedDeduction)
+          && equalAmount(deduction, confirmedDeduction);
+      if (!valid) {
+        return null;
+      }
+
+      ScaleAdjustmentEvidence candidate =
+          new ScaleAdjustmentEvidence(clauseDeduction, adjustmentDeduction);
+      if (resolved != null && !resolved.equals(candidate)) {
+        return null;
+      }
+      resolved = candidate;
+    }
+    return resolved;
+  }
+
+  private static boolean equalAmount(BigDecimal left, BigDecimal right) {
+    return left != null && right != null && left.compareTo(right) == 0;
+  }
+
+  private static String textValue(Map<?, ?> source, String key) {
+    Object value = source == null ? null : source.get(key);
+    return value == null ? null : String.valueOf(value).trim();
+  }
+
+  private static Long longValue(Map<?, ?> source, String key) {
+    Object value = source == null ? null : source.get(key);
+    if (value instanceof Number number) {
+      return number.longValue();
+    }
+    try {
+      String text = value == null ? null : String.valueOf(value).trim();
+      return text == null || text.isBlank() ? null : Long.parseLong(text);
+    } catch (NumberFormatException ex) {
+      return null;
+    }
+  }
+
+  private static BigDecimal decimalValue(Map<?, ?> source, String key) {
+    Object value = source == null ? null : source.get(key);
+    if (value instanceof BigDecimal decimal) {
+      return decimal;
+    }
+    if (value instanceof Number || value instanceof String) {
+      try {
+        return new BigDecimal(String.valueOf(value).trim());
+      } catch (NumberFormatException ex) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  private static BigDecimal amount(String value) {
+    return new BigDecimal(value).setScale(2, RoundingMode.HALF_UP);
+  }
+
   private static String blankToNull(String value) {
     return value == null || value.isBlank() ? null : value.trim();
   }
@@ -193,6 +347,11 @@ final class InspectionScoreSnapshotValidator {
       default -> "NORMAL";
     };
   }
+
+  private record ScaleAdjustmentEvidence(
+      BigDecimal clauseDeduction,
+      BigDecimal scaleAdjustmentDeduction
+  ) {}
 
   record ScoreRepair(
       BigDecimal score,

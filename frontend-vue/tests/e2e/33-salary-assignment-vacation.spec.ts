@@ -559,7 +559,7 @@ test('实习员工按小时显示整数，仅修改备注不会丢失原工时�
   await expect(page.getByLabel('绩效奖罚')).toHaveValue('18')
   await expect(page.getByLabel('最终提成金额')).toHaveValue('300')
   await expect(page.getByText('出勤天数应在0—31天之间')).toHaveCount(0)
-  await expect(page.getByRole('button', { name: '保存工资与假期' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: '保存工资与假期' })).toBeEnabled()
 
   await page.getByLabel('休息日期备注').fill('7月5日休息')
   await expect(page.getByRole('button', { name: '保存工资与假期' })).toBeEnabled()
@@ -742,6 +742,59 @@ test('工资筛选、汇总、表格和明细在 390px 下保持可达且不撑�
   await expectNoWholePageOverflow(page, 'finance salary 390px')
 })
 
+test('桌面工资明细限制在可视高度内并保持底部操作可见', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const captured: CapturedRequests = {}
+  await prepare(page, captured)
+  await page.goto('/finance/salary?storeId=xls12&month=2026-07')
+
+  const panel = page.locator('.salary-detail-panel')
+  await panel.scrollIntoViewIfNeeded()
+  const layout = await panel.evaluate((element) => {
+    const scrollArea = element.querySelector<HTMLElement>('.detail-scroll-area')
+    const footer = element.querySelector<HTMLElement>('.detail-actions')
+    const panelBox = element.getBoundingClientRect()
+    const footerBox = footer?.getBoundingClientRect()
+    return {
+      panelHeight: panelBox.height,
+      scrollClientHeight: scrollArea?.clientHeight || 0,
+      scrollHeight: scrollArea?.scrollHeight || 0,
+      footerBottom: footerBox?.bottom || 0,
+      panelBottom: panelBox.bottom,
+    }
+  })
+
+  expect(layout.panelHeight).toBeLessThanOrEqual(761)
+  expect(layout.scrollHeight).toBeGreaterThan(layout.scrollClientHeight)
+  expect(layout.footerBottom).toBeLessThanOrEqual(layout.panelBottom + 1)
+  await expect(page.getByRole('button', { name: '保存工资与假期' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '提交审核' })).toBeVisible()
+
+  const saveBox = await page.getByRole('button', { name: '保存工资与假期' }).boundingBox()
+  const submitBox = await page.getByRole('button', { name: '提交审核' }).boundingBox()
+  expect(Math.abs(Number(saveBox?.y) - Number(submitBox?.y))).toBeLessThanOrEqual(1)
+})
+
+test('草稿工资即使没有新增修改也允许主动保存并反馈结果', async ({ page }) => {
+  const captured: CapturedRequests = {}
+  await prepare(page, captured)
+  await page.goto('/finance/salary?storeId=xls12&month=2026-07')
+
+  const saveButton = page.getByRole('button', { name: '保存工资与假期' })
+  await expect(saveButton).toBeEnabled()
+  await saveButton.click()
+
+  expect(captured.attendance).toBeUndefined()
+  await expect.poll(() => captured.salaryUpdate).toMatchObject({
+    storeId: 'xls12',
+    month: '2026-07',
+    employeeId: 'EMP-001',
+    vacationLeft: 2,
+    vacationNote: '7月1日休息',
+  })
+  await expect(page.getByText(/已保存 李店员 的工资与假期信息/)).toBeVisible()
+})
+
 test('工资修改必须先保存再提交，保存失败在当前明细内提示并可直接重试', async ({ page }) => {
   const captured: CapturedRequests = {}
   await prepare(page, captured)
@@ -767,7 +820,7 @@ test('工资修改必须先保存再提交，保存失败在当前明细内提�
 
   const saveButton = page.getByRole('button', { name: '保存工资与假期' })
   const submitButton = page.getByRole('button', { name: '提交审核' })
-  await expect(saveButton).toBeDisabled()
+  await expect(saveButton).toBeEnabled()
   await expect(submitButton).toBeEnabled()
 
   await page.getByLabel('其他补贴').fill('80')

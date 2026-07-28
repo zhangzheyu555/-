@@ -219,6 +219,57 @@ const overview = (warehouseId = 1, includeShortageRequisition = false) => ({
   movements: [],
 })
 
+function riskOverview() {
+  const baseOverview = overview(1)
+  return {
+    ...baseOverview,
+    summary: {
+      ...baseOverview.summary,
+      itemCount: 3,
+      lowStockCount: 1,
+      expiringCount: 1,
+    },
+    alerts: [{
+      severity: 'WARNING',
+      type: 'LOW_STOCK',
+      itemId: 11,
+      itemName: '低库存冻品',
+      message: '当前库存 1 箱，请安排补货',
+    }, {
+      severity: 'WARNING',
+      type: 'EXPIRING',
+      itemId: 12,
+      itemName: '临期原料',
+      message: '最近批次将在 3 天后到期',
+    }],
+    items: [{
+      ...baseOverview.items[0],
+      id: 11,
+      code: 'LOW-11',
+      name: '低库存冻品',
+      stockQuantity: 1,
+      minStockQuantity: 5,
+      stockStatus: '低库存',
+      alertLevel: 'LOW',
+    }, {
+      ...baseOverview.items[0],
+      id: 12,
+      code: 'EXP-12',
+      name: '临期原料',
+      nearestExpiryDate: '2026-07-31',
+      stockStatus: '临期',
+      alertLevel: 'EXPIRING',
+    }, {
+      ...baseOverview.items[0],
+      id: 13,
+      code: 'NORMAL-13',
+      name: '正常物料',
+      stockStatus: '正常',
+      alertLevel: 'NORMAL',
+    }],
+  }
+}
+
 const transferActions = (overrides: Partial<{
   canCreate: boolean
   canSubmit: boolean
@@ -390,6 +441,7 @@ let mockDeletedItemIds = new Set<number>()
 let mockOverviewFails = false
 let mockOverviewCallCount = 0
 let mockOverviewFailOnCall = -1
+let mockOverviewOverride: ReturnType<typeof overview> | null = null
 
 function resetItemSaveMock() {
   mockItemSaveResponses = []
@@ -401,6 +453,7 @@ function resetItemSaveMock() {
   mockOverviewFails = false
   mockOverviewCallCount = 0
   mockOverviewFailOnCall = -1
+  mockOverviewOverride = null
 }
 
 async function prepare(page: Page, session: typeof baseSession) {
@@ -451,7 +504,7 @@ async function fulfillApi(route: Route, session: typeof baseSession, log: Reques
       return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ success: false, code: 'SERVICE_UNAVAILABLE', message: '服务暂时不可用' }) })
     }
     const warehouseId = Number(url.searchParams.get('warehouseId') || (session.role === 'STORE_MANAGER' ? 1 : 1))
-    const data = overview(warehouseId, session.id === requisitionProcessorSession.id)
+    const data = mockOverviewOverride || overview(warehouseId, session.id === requisitionProcessorSession.id)
     return route.fulfill(ok({
       ...data,
       items: data.items.filter((item) => !mockDeletedItemIds.has(item.id)),
@@ -755,6 +808,42 @@ test('central warehouse without pending work falls back to proactive allocation 
   await expect(page.getByRole('link', { name: '向分仓配货', exact: true })).toBeVisible()
   await expect(page.getByText('当前没有需要优先处理的事项。', { exact: true })).toBeVisible()
   await expect(page.getByRole('link', { name: /处理 .*笔调拨/ })).toHaveCount(0)
+  expect(log.consoleErrors).toEqual([])
+})
+
+test('view inventory reveals the low-stock and expiring material union', async ({ page }) => {
+  mockOverviewOverride = riskOverview()
+  const log = await prepare(page, baseSession)
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await page.goto('/warehouse/detail/1')
+
+  const alertPanel = page.locator('.warehouse-alerts-panel')
+  const inventory = page.locator('.inventory-main')
+  await alertPanel.getByRole('button', { name: '查看库存', exact: true }).click()
+
+  await expect(inventory).toBeInViewport()
+  await expect(inventory.getByRole('checkbox', { name: '低库存', exact: true })).toBeChecked()
+  await expect(inventory.getByRole('checkbox', { name: '临期', exact: true })).toBeChecked()
+  await expect(inventory.locator('tbody tr').filter({ hasText: '低库存冻品' })).toBeVisible()
+  await expect(inventory.locator('tbody tr').filter({ hasText: '临期原料' })).toBeVisible()
+  await expect(inventory.locator('tbody tr').filter({ hasText: '正常物料' })).toHaveCount(0)
+  expect(log.consoleErrors).toEqual([])
+})
+
+test('clicking one inventory alert focuses its corresponding material row', async ({ page }) => {
+  mockOverviewOverride = riskOverview()
+  const log = await prepare(page, baseSession)
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await page.goto('/warehouse/detail/1')
+
+  const alertPanel = page.locator('.warehouse-alerts-panel')
+  const inventory = page.locator('.inventory-main')
+  await alertPanel.getByRole('button', { name: '查看临期原料库存', exact: true }).click()
+  const targetRow = inventory.locator('tbody tr[data-inventory-target="true"]')
+  await expect(targetRow).toHaveCount(1)
+  await expect(targetRow).toContainText('临期原料')
+  await expect(targetRow).toBeInViewport()
+  await expect(targetRow).toBeFocused()
   expect(log.consoleErrors).toEqual([])
 })
 

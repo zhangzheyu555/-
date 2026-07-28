@@ -106,7 +106,7 @@ function riskLabel(clause: InspectionStandardClause) {
         <span>问题描述</span>
         <input v-model.trim="form.issue" placeholder="写给门店看的问题，例如：开封物料未贴时效标签" />
       </label>
-      <button class="primary-button add-button" type="button" :disabled="!standardReady" @click="emit('add')">
+      <button class="primary-button add-button" type="button" @click="emit('add')">
         <Plus :size="16" />
         添加
       </button>
