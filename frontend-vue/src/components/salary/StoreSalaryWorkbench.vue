@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { Check, ChevronDown, Download, Eye, Filter, UserPlus } from 'lucide-vue-next'
 import {
@@ -30,10 +30,10 @@ const emit = defineEmits<{
 }>()
 
 const STATUS_OPTIONS = [
-  { value: '', label: '全部状态' }, { value: 'PENDING_GENERATION', label: '待生成' },
-  { value: 'DRAFT', label: '草稿' }, { value: 'SUBMITTED', label: '待审核' },
-  { value: 'APPROVED', label: '已审核' }, { value: 'REJECTED', label: '已驳回' },
-  { value: 'PAID', label: '已发放' }, { value: 'LOCKED', label: '已锁定' },
+  { value: 'ACTIVE', label: '全部' },
+  { value: 'PENDING_GENERATION', label: '待生成' },
+  { value: 'PENDING_REVIEW', label: '待审核' },
+  { value: 'PENDING_PAYMENT', label: '待发放' },
 ]
 
 const page = useSalaryPage()
@@ -43,7 +43,8 @@ const businessMetricsScopeKey = ref('')
 const businessMetricsLoading = ref(false)
 const businessMetricsError = ref('')
 const selectedRowKey = ref('')
-const checkedIds = ref(new Set<string>())
+const selectedApprovalRecordIds = ref(new Set<string>())
+const selectedGenerationEmployeeIds = ref(new Set<string>())
 const batchApprovalRecords = ref<SalaryRecord[]>([])
 const batchApprovalOpen = ref(false)
 const batchApproving = ref(false)
@@ -55,6 +56,9 @@ const addEmployeeError = ref('')
 const initialScopeBlocked = ref(false)
 const salaryDetailDirty = ref(false)
 const salaryDiscardOpen = ref(false)
+const filterMenuOpen = ref(false)
+const filterMenuRoot = ref<HTMLElement | null>(null)
+const filterButton = ref<HTMLButtonElement | null>(null)
 let pendingSalaryDiscardAction: (() => void) | null = null
 let pendingSalaryDiscardCancel: (() => void) | null = null
 let businessMetricsRequestController: AbortController | null = null
@@ -71,9 +75,9 @@ const workflow = useSalaryWorkflow({
   loadPage: async () => { await reloadSalaryData() },
   onDeleted: (record) => {
     if (selectedRowKey.value === rowKey(record)) selectedRowKey.value = ''
-    const nextCheckedIds = new Set(checkedIds.value)
+    const nextCheckedIds = new Set(selectedApprovalRecordIds.value)
     nextCheckedIds.delete(record.id)
-    checkedIds.value = nextCheckedIds
+    selectedApprovalRecordIds.value = nextCheckedIds
   },
 })
 
@@ -147,10 +151,23 @@ const salaryStatusModel = computed({
   get: () => page.statusFilter.value,
   set: (value: string) => requestSalaryDiscard(() => { page.statusFilter.value = value }),
 })
+const activeSalaryStatusLabel = computed(() =>
+  STATUS_OPTIONS.find((option) => option.value === page.statusFilter.value)?.label || '全部')
 const salaryKeywordModel = computed({
   get: () => page.keyword.value,
   set: (value: string) => requestSalaryDiscard(() => { page.keyword.value = value }),
 })
+const generationSelectionModel = computed({
+  get: () => [...selectedGenerationEmployeeIds.value],
+  set: (values: string[]) => {
+    selectedGenerationEmployeeIds.value = new Set(values
+      .map((value) => String(value || '').trim())
+      .filter(Boolean))
+  },
+})
+const generationScopeLabel = computed(() => page.effectiveStoreId.value === 'all'
+  ? '全部授权门店'
+  : page.selectedStoreName.value)
 
 function requestSalaryDiscard(action: () => void, cancel: () => void = () => {}) {
   if (!salaryDetailDirty.value) {
@@ -181,6 +198,66 @@ function discardSalaryChanges() {
   salaryDiscardOpen.value = false
   selectedRowKey.value = ''
   action?.()
+}
+
+function filterMenuItems() {
+  return Array.from(filterMenuRoot.value
+    ?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') || [])
+}
+
+async function openFilterMenu() {
+  if (filterMenuOpen.value) return
+  filterMenuOpen.value = true
+  await nextTick()
+  const items = filterMenuItems()
+  const activeIndex = STATUS_OPTIONS.findIndex(
+    (option) => option.value === page.statusFilter.value)
+  items[Math.max(0, activeIndex)]?.focus()
+}
+
+function closeFilterMenu(returnFocus = false) {
+  filterMenuOpen.value = false
+  if (returnFocus) void nextTick(() => filterButton.value?.focus())
+}
+
+function toggleFilterMenu() {
+  if (filterMenuOpen.value) {
+    closeFilterMenu()
+    return
+  }
+  void openFilterMenu()
+}
+
+function selectSalaryStatus(value: string) {
+  const changed = value !== page.statusFilter.value
+  closeFilterMenu(true)
+  if (changed) salaryStatusModel.value = value
+}
+
+function closeFilterMenuOnOutsideClick(event: PointerEvent) {
+  if (!filterMenuOpen.value) return
+  const target = event.target
+  if (target instanceof Node && !filterMenuRoot.value?.contains(target)) {
+    filterMenuOpen.value = false
+  }
+}
+
+function navigateFilterMenu(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeFilterMenu(true)
+    return
+  }
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+  const items = filterMenuItems()
+  if (!items.length) return
+  event.preventDefault()
+  const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement)
+  let nextIndex = 0
+  if (event.key === 'End') nextIndex = items.length - 1
+  else if (event.key === 'ArrowUp') nextIndex = currentIndex <= 0 ? items.length - 1 : currentIndex - 1
+  else if (event.key === 'ArrowDown') nextIndex = currentIndex < 0 || currentIndex === items.length - 1 ? 0 : currentIndex + 1
+  items[nextIndex]?.focus()
 }
 
 function metricNumber(value: number | null | undefined) {
@@ -290,20 +367,49 @@ function applyInitialScope() {
   actionError.value = '该门店已停用或不在当前工资权限范围内，不能继续查看或编辑工资。'
 }
 
-async function previewGeneration() {
-  if (!page.effectiveStoreId.value || page.effectiveStoreId.value === 'all') {
-    actionError.value = '请先选择具体门店，再生成本月工资。'
+async function previewGeneration(employeeIds?: string[]) {
+  if (!page.effectiveStoreId.value) {
+    actionError.value = '当前没有可生成工资的授权门店。'
     return
   }
   if (!page.isEffectiveStoreActive.value) {
     actionError.value = '该门店已停用，不能生成工资。'
     return
   }
-  await workflow.doPreview()
+  const requestedEmployeeIds = employeeIds === undefined
+    ? undefined
+    : Array.from(new Set(employeeIds.map((id) => String(id || '').trim()).filter(Boolean)))
+  if (requestedEmployeeIds !== undefined && !requestedEmployeeIds.length) {
+    actionError.value = '请先选择需要生成工资的员工。'
+    return
+  }
+  const report = await workflow.doPreview(requestedEmployeeIds)
+  if (!report) return
+  const candidateIds = Array.from(new Set((report.candidates || [])
+    .map((candidate) => String(candidate.employeeId || '').trim())
+    .filter(Boolean)))
+  const availableIds = new Set(candidateIds)
+  selectedGenerationEmployeeIds.value = new Set(requestedEmployeeIds === undefined
+    ? candidateIds
+    : requestedEmployeeIds.filter((employeeId) => availableIds.has(employeeId)))
+}
+
+async function previewSelectedGeneration() {
+  await previewGeneration([...selectedGenerationEmployeeIds.value])
 }
 
 async function confirmGeneration() {
-  await workflow.doGenerate()
+  const generated = await workflow.doGenerate([...selectedGenerationEmployeeIds.value])
+  if (generated) {
+    selectedGenerationEmployeeIds.value = new Set()
+    return
+  }
+  const availableIds = new Set((workflow.previewData.value?.candidates || [])
+    .map((candidate) => String(candidate.employeeId || '').trim())
+    .filter(Boolean))
+  selectedGenerationEmployeeIds.value = new Set(
+    [...selectedGenerationEmployeeIds.value].filter((employeeId) => availableIds.has(employeeId)),
+  )
 }
 
 async function openAddEmployee() {
@@ -345,7 +451,7 @@ async function confirmAddEmployee(employeeId: string) {
       employeeId,
     })
     addEmployeeOpen.value = false
-    page.statusFilter.value = ''
+    page.statusFilter.value = 'ACTIVE'
     page.keyword.value = ''
     page.successMessage.value = `已将 ${record.employeeName} 添加到当月工资名单，岗位保持为${record.position || '原岗位'}`
     await reloadSalaryData(1)
@@ -367,7 +473,7 @@ async function recordsInScope() {
 
 async function batchApprove() {
   actionError.value = ''
-  const selected = checkedIds.value
+  const selected = selectedApprovalRecordIds.value
   if (!selected.size) {
     actionError.value = '请先选择需要审核的员工。'
     return
@@ -398,7 +504,7 @@ async function confirmBatchApproval() {
   actionError.value = ''
   try {
     for (const record of records) await approveSalaryRecord(record.id)
-    checkedIds.value = new Set()
+    selectedApprovalRecordIds.value = new Set()
     page.successMessage.value = `已审核 ${records.length} 条工资记录`
     await reloadSalaryData(1)
   } catch (error) {
@@ -417,14 +523,32 @@ function selectRecord(record: SalaryRecord) {
   requestSalaryDiscard(() => { selectedRowKey.value = nextRowKey })
 }
 function toggleRow(record: SalaryRecord, checked: boolean) {
-  const next = new Set(checkedIds.value)
-  if (checked) next.add(record.id); else next.delete(record.id)
-  checkedIds.value = next
+  if (record.status === 'PENDING_GENERATION' && page.canEdit.value && record.employeeId) {
+    const next = new Set(selectedGenerationEmployeeIds.value)
+    if (checked) next.add(record.employeeId); else next.delete(record.employeeId)
+    selectedGenerationEmployeeIds.value = next
+    return
+  }
+  if (page.canReview.value && record.id && ['SUBMITTED', 'PENDING_REVIEW'].includes(record.status || '')) {
+    const next = new Set(selectedApprovalRecordIds.value)
+    if (checked) next.add(record.id); else next.delete(record.id)
+    selectedApprovalRecordIds.value = next
+  }
 }
 function toggleAll(checked: boolean) {
-  const next = new Set(checkedIds.value)
-  for (const row of page.filteredRows.value) checked ? next.add(row.id) : next.delete(row.id)
-  checkedIds.value = next
+  const nextApprovalIds = new Set(selectedApprovalRecordIds.value)
+  const nextGenerationIds = new Set(selectedGenerationEmployeeIds.value)
+  for (const row of page.filteredRows.value) {
+    if (page.canEdit.value && row.status === 'PENDING_GENERATION' && row.employeeId) {
+      if (checked) nextGenerationIds.add(row.employeeId)
+      else nextGenerationIds.delete(row.employeeId)
+    } else if (page.canReview.value && row.id && ['SUBMITTED', 'PENDING_REVIEW'].includes(row.status || '')) {
+      if (checked) nextApprovalIds.add(row.id)
+      else nextApprovalIds.delete(row.id)
+    }
+  }
+  selectedApprovalRecordIds.value = nextApprovalIds
+  selectedGenerationEmployeeIds.value = nextGenerationIds
 }
 
 async function markPaid(record: SalaryRecord) {
@@ -479,7 +603,8 @@ watch(page.filteredRows, (rows) => {
   if (!rows.some((row) => rowKey(row) === selectedRowKey.value)) selectedRowKey.value = rows[0] ? rowKey(rows[0]) : ''
 }, { immediate: true })
 watch([page.effectiveStoreId, page.selectedMonth, page.effectiveBrandId], () => {
-  checkedIds.value = new Set()
+  selectedApprovalRecordIds.value = new Set()
+  selectedGenerationEmployeeIds.value = new Set()
   actionError.value = ''
   if (!addEmployeeSaving.value) addEmployeeOpen.value = false
   if (page.initializing.value) return
@@ -494,12 +619,17 @@ watch(salaryDetailDirty, (dirty) => emit('dirtyChange', dirty), { immediate: tru
 watch(() => [props.initialStoreId, props.initialMonth], applyInitialScope)
 
 onMounted(async () => {
+  document.addEventListener('pointerdown', closeFilterMenuOnOutsideClick)
   await page.loadStores()
   page.applyRouteDefaults()
   applyInitialScope()
   page.initializing.value = false
   if (initialScopeBlocked.value) return
   await reloadSalaryData(1)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', closeFilterMenuOnOutsideClick)
 })
 
 onBeforeRouteLeave(() => {
@@ -533,7 +663,6 @@ onBeforeRouteLeave(() => {
           aria-label="门店"
           @update:model-value="salaryStoreModel = String($event)"
         />
-        <select v-model="salaryStatusModel" aria-label="工资状态"><option v-for="option in STATUS_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option></select>
         <button
           v-if="page.canEdit.value"
           class="add-person-button"
@@ -545,9 +674,9 @@ onBeforeRouteLeave(() => {
           v-if="page.canEdit.value"
           class="primary-button"
           :disabled="workflow.previewLoading.value || !page.canGenerate.value"
-          :title="!page.effectiveStoreId.value || page.effectiveStoreId.value === 'all' ? '请先选择具体门店' : ''"
-          @click="previewGeneration"
-        ><Eye :size="16" />生成本月工资</button>
+          :title="page.effectiveStoreId.value === 'all' ? '预览全部授权门店本月可生成工资的员工' : ''"
+          @click="previewGeneration()"
+        ><Eye :size="16" />{{ page.effectiveStoreId.value === 'all' ? '全部授权门店全选并生成' : '全选并生成' }}</button>
         <button v-if="page.canExport.value" class="export-button" :disabled="!page.hasValidMonth.value || page.loading.value" @click="workflow.doExport()"><Download :size="16" />导出工资表</button>
       </div>
     </header>
@@ -588,8 +717,57 @@ onBeforeRouteLeave(() => {
     <div class="table-tools">
       <SearchInput v-model="salaryKeywordModel" class="salary-search" placeholder="搜索姓名、工号或岗位" aria-label="搜索工资记录" />
       <div>
-        <button v-if="page.canReview.value" class="batch-button" :disabled="checkedIds.size === 0" @click="batchApprove"><Check :size="16" />批量审核</button>
-        <button class="filter-button"><Filter :size="16" />筛选</button>
+        <button
+          v-if="page.canEdit.value"
+          class="batch-button"
+          :disabled="selectedGenerationEmployeeIds.size === 0 || workflow.previewLoading.value"
+          @click="previewSelectedGeneration"
+        ><Eye :size="16" />生成所选工资</button>
+        <button v-if="page.canReview.value" class="batch-button" :disabled="selectedApprovalRecordIds.size === 0" @click="batchApprove"><Check :size="16" />批量审核</button>
+        <div ref="filterMenuRoot" class="salary-filter">
+          <button
+            ref="filterButton"
+            class="filter-button"
+            type="button"
+            aria-label="筛选"
+            aria-haspopup="menu"
+            :aria-expanded="filterMenuOpen"
+            aria-controls="salary-status-filter-menu"
+            @click="toggleFilterMenu"
+            @keydown.down.stop.prevent="openFilterMenu()"
+            @keydown.esc.stop.prevent="closeFilterMenu(true)"
+          >
+            <Filter :size="16" />
+            <span>筛选</span>
+            <span v-if="page.statusFilter.value !== 'ACTIVE'" class="filter-button__value">
+              {{ activeSalaryStatusLabel }}
+            </span>
+            <ChevronDown :size="15" :class="{ 'is-open': filterMenuOpen }" />
+          </button>
+          <div
+            v-if="filterMenuOpen"
+            id="salary-status-filter-menu"
+            class="salary-filter-menu"
+            role="menu"
+            aria-label="工资状态筛选"
+            aria-orientation="vertical"
+            @keydown="navigateFilterMenu"
+          >
+            <div class="salary-filter-menu__title">工资状态</div>
+            <button
+              v-for="option in STATUS_OPTIONS"
+              :key="option.value"
+              type="button"
+              role="menuitemradio"
+              :aria-checked="page.statusFilter.value === option.value"
+              :class="{ active: page.statusFilter.value === option.value }"
+              @click="selectSalaryStatus(option.value)"
+            >
+              <span>{{ option.label }}</span>
+              <Check v-if="page.statusFilter.value === option.value" :size="16" />
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -597,8 +775,11 @@ onBeforeRouteLeave(() => {
       <SalaryTable
         :rows="page.filteredRows.value" :total="page.total.value" :page="page.page.value"
         :total-pages="page.totalPages.value" :loading="page.loading.value"
-        :selected-row-key="selectedRowKey" :checked-ids="checkedIds"
-        :can-edit="page.canEdit.value" :deleting-id="workflow.deletingId.value"
+        :selected-row-key="selectedRowKey"
+        :approval-checked-ids="selectedApprovalRecordIds"
+        :generation-checked-employee-ids="selectedGenerationEmployeeIds"
+        :can-edit="page.canEdit.value" :can-review="page.canReview.value"
+        :deleting-id="workflow.deletingId.value"
         @page-change="requestSalaryPage" @select="selectRecord" @delete="workflow.doDelete" @toggle-row="toggleRow" @toggle-all="toggleAll"
       />
       <SalaryDetailPanel
@@ -616,6 +797,9 @@ onBeforeRouteLeave(() => {
       :show="workflow.showPreview.value" :preview-data="workflow.previewData.value"
       :preview-loading="workflow.previewLoading.value" :generating="workflow.generating.value"
       :can-generate="page.canGenerate.value"
+      :selected-employee-ids="generationSelectionModel"
+      :scope-label="generationScopeLabel"
+      @update:selected-employee-ids="generationSelectionModel = $event"
       @close="workflow.showPreview.value = false" @generate="confirmGeneration"
     />
 
@@ -682,7 +866,18 @@ onBeforeRouteLeave(() => {
 .business-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
 .business-metrics article { min-height: 92px; padding: 14px 18px; border: 1px solid #dfe8e6; border-radius: 6px; background: #fff; }.business-metrics > article > span { color: #526765; font-size: 14px; }.business-metrics b { display: block; margin-top: 8px; font-size: 25px; line-height: 1; font-variant-numeric: tabular-nums; }.business-metrics small { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 9px; color: #6f817f; font-size: 12px; }.business-metrics small span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.business-metrics small button,.aux-warning button,.page-error button { flex: none; padding: 0; border: 0; background: transparent; color: #27756e; font-size: 12px; font-weight: 600; cursor: pointer; }
 .rule-bar { border: 1px solid #d9e7e5; border-radius: 5px; background: #f9fbfb; }.rule-bar summary { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 40px; padding: 0 14px; color: #526765; cursor: pointer; list-style: none; }.rule-bar summary::-webkit-details-marker { display: none; }.rule-bar summary > span { display: inline-flex; align-items: center; gap: 10px; }.rule-bar summary b { color: #276b65; font-size: 14px; }.rule-bar summary span:last-child { color: #27756e; font-size: 13px; }.rule-bar[open] summary svg { transform: rotate(180deg); }.rule-bar > div { padding: 10px 14px; border-top: 1px solid #e2ebe9; color: #526765; font-size: 13px; }
-.table-tools { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 2px; }.table-tools > div { display: flex; gap: 8px; }.table-tools > .salary-search { width: 300px; flex: none; }.filter-button { border: 1px solid #d8e4e2; background: #fff; color: #526765; }
+.table-tools { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 2px; }.table-tools > div { display: flex; gap: 8px; }.table-tools > .salary-search { width: 300px; flex: none; }
+.salary-filter { position: relative; display: inline-flex; }
+.filter-button { border: 1px solid #d8e4e2; background: #fff; color: #526765; }
+.filter-button[aria-expanded='true'] { border-color: #4f948e; color: #276b65; box-shadow: 0 0 0 2px rgb(79 148 142 / 12%); }
+.filter-button__value { padding: 2px 6px; border-radius: 999px; background: #eaf5f3; color: #276b65; font-size: 11px; }
+.filter-button svg:last-child { transition: transform .16s ease; }
+.filter-button svg:last-child.is-open { transform: rotate(180deg); }
+.salary-filter-menu { position: absolute; z-index: 40; top: calc(100% + 7px); right: 0; display: grid; width: 180px; max-width: calc(100vw - 24px); max-height: min(320px, 48vh); overflow-y: auto; padding: 7px; border: 1px solid var(--ds-line, #d8e4e2); border-radius: 7px; background: #fff; box-shadow: 0 14px 28px rgb(32 59 56 / 16%); }
+.salary-filter-menu__title { padding: 7px 9px 6px; color: #7a8d8a; font-size: 12px; font-weight: 700; }
+.salary-filter-menu button { justify-content: space-between; width: 100%; min-height: 36px; padding: 0 9px; border: 0; border-radius: 5px; background: transparent; color: #405654; font-size: 13px; font-weight: 600; }
+.salary-filter-menu button:hover,.salary-filter-menu button:focus-visible { background: #f1f7f6; color: #276b65; outline: none; }
+.salary-filter-menu button.active { background: #eaf5f3; color: #276b65; }
 .salary-workspace { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 18px; align-items: start; min-width: 0; }
 .page-error,.aux-warning { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 12px; border-radius: 4px; font-size: 13px; }.page-error { border: 1px solid #efc9c2; background: #fff5f3; color: #a93f31; }.aux-warning { border: 1px solid #eadfbd; background: #fffaf0; color: #7b6533; }.inline-error,.success-box { padding: 9px 12px; border-radius: 4px; font-size: 13px; }.inline-error { border-left: 3px solid #d8583f; background: #fff2ef; color: #b94736; }.success-box { border-left: 3px solid #276b65; background: #eef7f5; color: #245f59; }
 @media (max-width: 1120px) { .salary-workspace { grid-template-columns: 1fr; }.business-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); } }

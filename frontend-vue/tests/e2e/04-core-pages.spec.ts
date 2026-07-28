@@ -93,7 +93,7 @@ test.describe('core business pages load', () => {
       { path: '/boss', texts: ['老板，你好', '今日待办', '需要我处理', '已处理复盘'] },
       { path: '/profit', texts: ['老板，你好', '合并营业收入', '合并净利润', '茹菓', '霸王茶姬', '瑞幸咖啡', '各店净利率排名'] },
       { path: '/profit-table', texts: ['单店利润表', '全部门店汇总', '收入', '成本', '费用', '净利润'] },
-      { path: '/store-detail', texts: ['累计营收', '累计净利', '平均净利率', '门店基础资料', '逐月经营明细'] },
+      { path: '/store-detail', texts: ['累计营收', '累计净利', '平均净利率', '门店基础资料', '库存减少记录', '逐月经营明细'] },
       { path: '/data-entry', texts: ['Excel 表格', '收入（元）', '成本（元）', '费用（元）', '实时利润核算'] },
     ]
     for (const check of checks) {
@@ -222,6 +222,7 @@ test.describe('core business pages load', () => {
 
     const body = await page.locator('body').innerText()
     expect(body).toContain('门店基础资料')
+    expect(body).toContain('库存减少记录')
     expect(body).toContain('逐月经营明细')
     expect(body).not.toContain('查看仓库记录')
     expect(body).not.toContain('查看巡检记录')

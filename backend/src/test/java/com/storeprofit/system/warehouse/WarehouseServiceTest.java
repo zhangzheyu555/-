@@ -131,7 +131,148 @@ class WarehouseServiceTest {
         .filter(row -> created.id().equals(row.id()))
         .findFirst()
         .orElseThrow();
-    assertThat(received.statusLabel()).isEqualTo("门店已收货");
+    assertThat(received.statusLabel()).isEqualTo("已完成");
+  }
+
+  @Test
+  void warehouseReviewCanChangePriceAndCompleteBothInventoryMovementsAtomically() {
+    BigDecimal warehouseStockBefore = itemStock(1L);
+    BigDecimal storeStockBefore = storeStock("rg1", 1L);
+    WarehouseRequisitionResponse created = service.createRequisition(
+        storeManager(),
+        new WarehouseRequisitionRequest(
+            "rg1",
+            List.of(new WarehouseRequisitionLineRequest(
+                1L, new BigDecimal("4"), "审核后直接完成")),
+            "审核改价并完成"
+        )
+    );
+
+    service.review(
+        warehouseManager(),
+        created.id(),
+        new WarehouseRequisitionReviewRequest(
+            true,
+            List.of(new WarehouseRequisitionReviewLineRequest(
+                1L, new BigDecimal("4"), new BigDecimal("72.35"))),
+            "审核价确认，直接完成出入库",
+            WarehouseRequisitionHandlingMode.FULL,
+            true
+        )
+    );
+
+    WarehouseRequisitionResponse completed = service.requisitions(warehouseManager()).stream()
+        .filter(row -> created.id().equals(row.id()))
+        .findFirst()
+        .orElseThrow();
+    assertThat(completed.status()).isEqualTo("RECEIVED");
+    assertThat(completed.statusLabel()).isEqualTo("已完成");
+    assertThat(completed.totalAmount()).isEqualByComparingTo("289.40");
+    assertThat(completed.lines().getFirst().approvedQuantity()).isEqualByComparingTo("4.00");
+    assertThat(completed.lines().getFirst().shippedQuantity()).isEqualByComparingTo("4.00");
+    assertThat(completed.lines().getFirst().unitPrice()).isEqualByComparingTo("72.35");
+    assertThat(completed.lines().getFirst().amount()).isEqualByComparingTo("289.40");
+    assertThat(itemStock(1L)).isEqualByComparingTo(
+        warehouseStockBefore.subtract(new BigDecimal("4.00")));
+    assertThat(storeStock("rg1", 1L)).isEqualByComparingTo(
+        storeStockBefore.add(new BigDecimal("4.00")));
+    assertThat(storeInventoryMovementCount("rg1", 1L, "IN", "STORE_RECEIPT"))
+        .isEqualTo(1);
+    assertThat(jdbcTemplate.queryForObject("""
+        select count(*)
+        from warehouse_delivery_order
+        where tenant_id = 1 and requisition_id = ? and status = 'RECEIVED'
+        """, Integer.class, created.id())).isEqualTo(1);
+    assertThat(jdbcTemplate.queryForObject("""
+        select count(*)
+        from store_receipt
+        where tenant_id = 1 and requisition_id = ? and status = 'RECEIVED'
+        """, Integer.class, created.id())).isEqualTo(1);
+    assertThat(todoActionCount("warehouse-" + created.id(), "WAREHOUSE_SHIP")).isEqualTo(1);
+
+    assertThatThrownBy(() -> service.review(
+        warehouseManager(),
+        created.id(),
+        new WarehouseRequisitionReviewRequest(
+            true,
+            List.of(new WarehouseRequisitionReviewLineRequest(
+                1L, new BigDecimal("4"), new BigDecimal("60.00"))),
+            "重复审核",
+            WarehouseRequisitionHandlingMode.FULL,
+            true
+        )
+    )).isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("BAD_STATUS"));
+    assertThat(itemStock(1L)).isEqualByComparingTo(
+        warehouseStockBefore.subtract(new BigDecimal("4.00")));
+    assertThat(storeStock("rg1", 1L)).isEqualByComparingTo(
+        storeStockBefore.add(new BigDecimal("4.00")));
+  }
+
+  @Test
+  void completeOnReviewSettlesFullRequestIntoNegativeStockWithoutBackorder() {
+    BigDecimal warehouseStockBefore = itemStock(1L);
+    WarehouseRequisitionResponse created = service.createRequisition(
+        storeManager(),
+        new WarehouseRequisitionRequest(
+            "rg1",
+            List.of(new WarehouseRequisitionLineRequest(
+                1L, warehouseStockBefore.add(BigDecimal.ONE), "库存不足")),
+            "库存不足时不得部分落账"
+        )
+    );
+
+    service.review(
+        warehouseManager(),
+        created.id(),
+        new WarehouseRequisitionReviewRequest(
+            true,
+            List.of(new WarehouseRequisitionReviewLineRequest(
+                1L,
+                BigDecimal.ONE,
+                new BigDecimal("66.00")
+            )),
+            "兼容旧客户端传入的部分批准数量",
+            WarehouseRequisitionHandlingMode.FULL,
+            true
+        )
+    );
+
+    assertThat(itemStock(1L)).isEqualByComparingTo("-1.00");
+    assertThat(storeStock("rg1", 1L)).isEqualByComparingTo(
+        warehouseStockBefore.add(BigDecimal.ONE));
+    assertThat(jdbcTemplate.queryForObject(
+        "select status from store_requisition where tenant_id = 1 and id = ?",
+        String.class,
+        created.id()
+    )).isEqualTo("RECEIVED");
+    assertThat(jdbcTemplate.queryForObject("""
+        select approved_quantity
+        from store_requisition_line
+        where tenant_id = 1 and requisition_id = ?
+        """, BigDecimal.class, created.id())).isEqualByComparingTo(
+            warehouseStockBefore.add(BigDecimal.ONE));
+    assertThat(jdbcTemplate.queryForObject("""
+        select unit_price
+        from store_requisition_line
+        where tenant_id = 1 and requisition_id = ?
+        """, BigDecimal.class, created.id())).isEqualByComparingTo("66.00");
+    assertThat(jdbcTemplate.queryForObject("""
+        select quantity
+        from warehouse_stock_batch
+        where tenant_id = 1 and item_id = 1 and batch_no = 'NEGATIVE-STOCK'
+        """, BigDecimal.class)).isEqualByComparingTo("-1.00");
+    assertThat(jdbcTemplate.queryForObject("""
+        select sum(quantity_delta)
+        from warehouse_stock_movement
+        where tenant_id = 1 and source_type = 'REQUISITION' and source_id = ?
+        """, BigDecimal.class, created.id())).isEqualByComparingTo(
+            warehouseStockBefore.add(BigDecimal.ONE).negate());
+    assertThat(jdbcTemplate.queryForObject("""
+        select count(*)
+        from warehouse_delivery_order
+        where tenant_id = 1 and requisition_id = ? and status = 'RECEIVED'
+        """, Integer.class, created.id())).isEqualTo(1);
   }
 
   @Test
@@ -784,9 +925,20 @@ class WarehouseServiceTest {
         )
     );
     service.review(warehouseManager(), tooMuch.id(), new WarehouseRequisitionReviewRequest(true, List.of(), "尝试发货"));
-    assertThatThrownBy(() -> service.ship(warehouseManager(), tooMuch.id()))
-        .isInstanceOf(BusinessException.class)
-        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("INSUFFICIENT_STOCK"));
+    service.ship(warehouseManager(), tooMuch.id());
+
+    WarehouseRequisitionResponse negativeStockShipment = service.requisitions(warehouseManager()).stream()
+        .filter(row -> tooMuch.id().equals(row.id()))
+        .findFirst()
+        .orElseThrow();
+    assertThat(negativeStockShipment.status()).isEqualTo("SHIPPED");
+    assertThat(itemStock(1L)).isEqualByComparingTo("-965.00");
+    assertThat(batchQuantity("NEGATIVE-STOCK")).isEqualByComparingTo("-965.00");
+    assertThat(jdbcTemplate.queryForObject("""
+        select sum(quantity_delta)
+        from warehouse_stock_movement
+        where tenant_id = 1 and source_type = 'REQUISITION' and source_id = ?
+        """, BigDecimal.class, tooMuch.id())).isEqualByComparingTo("-1000.00");
   }
 
   @Test
@@ -888,7 +1040,7 @@ class WarehouseServiceTest {
   }
 
   @Test
-  void allOutOfStockRequisitionCanWaitForReplenishmentWithoutDelivery() {
+  void requisitionCanNoLongerEnterWaitingForReplenishment() {
     jdbcTemplate.update("update warehouse_stock_batch set quantity = 0 where tenant_id = 1 and item_id = 1");
     WarehouseRequisitionResponse created = service.createRequisition(
         storeManager(),
@@ -899,7 +1051,7 @@ class WarehouseServiceTest {
         )
     );
 
-    service.review(
+    assertThatThrownBy(() -> service.review(
         warehouseManager(),
         created.id(),
         new WarehouseRequisitionReviewRequest(
@@ -908,14 +1060,17 @@ class WarehouseServiceTest {
             "等待补货后继续发货",
             WarehouseRequisitionHandlingMode.WAIT_REPLENISHMENT
         )
-    );
+    )).isInstanceOfSatisfying(BusinessException.class, error -> {
+      assertThat(error.getCode()).isEqualTo("REQUISITION_REPLENISHMENT_DISABLED");
+      assertThat(error.getMessage()).contains("直接审核完成", "负库存");
+    });
 
     WarehouseRequisitionResponse waiting = service.requisitions(storeManager()).stream()
         .filter(row -> created.id().equals(row.id()))
         .findFirst()
         .orElseThrow();
-    assertThat(waiting.status()).isEqualTo("WAITING_REPLENISHMENT");
-    assertThat(waiting.statusLabel()).isEqualTo("待补货");
+    assertThat(waiting.status()).isEqualTo("SUBMITTED");
+    assertThat(waiting.statusLabel()).isEqualTo("待仓库处理");
     assertThat(waiting.lines().getFirst().shippedQuantity()).isZero();
     assertThat(jdbcTemplate.queryForObject(
         "select count(*) from warehouse_delivery_order where tenant_id = 1 and requisition_id = ?",
@@ -1354,6 +1509,28 @@ class WarehouseServiceTest {
     assertThat(allowed.lines().get(0).quantity()).isEqualByComparingTo("1.00");
   }
 
+  @Test
+  void storeInventoryLossDeductionPreservesFourDecimalPrecision() {
+    WarehouseRepository repository = new WarehouseRepository(jdbcTemplate);
+    repository.addStoreInventory(
+        1L, "rg1", 1L, new BigDecimal("10.0000"),
+        "IN", "TEST_SETUP", "precision-test", "四位精度测试库存", 7L);
+
+    boolean deducted = repository.subtractStoreInventoryIfEnough(
+        1L, "rg1", 1L, new BigDecimal("0.2031"),
+        "LOSS_OUT", "DAILY_LOSS", "precision-loss", "葡萄去皮报损", 7L);
+
+    assertThat(deducted).isTrue();
+    assertThat(repository.storeInventoryQuantity(1L, "rg1", 1L))
+        .isEqualByComparingTo("9.7969");
+    assertThat(jdbcTemplate.queryForObject("""
+        select quantity_delta
+        from store_inventory_movement
+        where tenant_id = 1 and store_id = 'rg1' and item_id = 1
+          and movement_type = 'LOSS_OUT' and source_id = 'precision-loss'
+        """, BigDecimal.class)).isEqualByComparingTo("-0.2031");
+  }
+
   public static String dateFormat(Date date, String pattern) {
     if (date == null) {
       return null;
@@ -1751,8 +1928,8 @@ class WarehouseServiceTest {
     jdbcTemplate.execute("create table warehouse_delivery_order_line(id bigint auto_increment primary key, tenant_id bigint, delivery_id varchar(120), requisition_line_id bigint, item_id bigint, shipped_quantity decimal(14,2), received_quantity decimal(14,2) not null, unit_price decimal(14,2), amount decimal(14,2), note text)");
     jdbcTemplate.execute("create table store_receipt(id varchar(120) primary key, tenant_id bigint, delivery_id varchar(120), requisition_id varchar(120), store_id varchar(64), status varchar(40), received_by bigint, received_at timestamp default current_timestamp, note text)");
     jdbcTemplate.execute("create table store_receipt_line(id bigint auto_increment primary key, tenant_id bigint, receipt_id varchar(120), item_id bigint, received_quantity decimal(14,2), note text)");
-    jdbcTemplate.execute("create table store_inventory(id bigint auto_increment primary key, tenant_id bigint not null, store_id varchar(64) not null, item_id bigint not null, quantity decimal(14,2) not null default 0, unit varchar(40), updated_at timestamp default current_timestamp, unique key uk_store_inventory_item(tenant_id, store_id, item_id))");
-    jdbcTemplate.execute("create table store_inventory_movement(id bigint auto_increment primary key, tenant_id bigint not null, store_id varchar(64) not null, item_id bigint not null, quantity_delta decimal(14,2) not null, movement_type varchar(40) not null, source_type varchar(60), source_id varchar(120), note text, created_by bigint, created_at timestamp default current_timestamp)");
+    jdbcTemplate.execute("create table store_inventory(id bigint auto_increment primary key, tenant_id bigint not null, store_id varchar(64) not null, item_id bigint not null, quantity decimal(18,4) not null default 0, unit varchar(40), updated_at timestamp default current_timestamp, unique key uk_store_inventory_item(tenant_id, store_id, item_id))");
+    jdbcTemplate.execute("create table store_inventory_movement(id bigint auto_increment primary key, tenant_id bigint not null, store_id varchar(64) not null, item_id bigint not null, quantity_delta decimal(18,4) not null, movement_type varchar(40) not null, source_type varchar(60), source_id varchar(120), note text, created_by bigint, created_at timestamp default current_timestamp)");
     jdbcTemplate.execute("""
         create table warehouse_return_order (
           id varchar(120) primary key,
@@ -1846,7 +2023,7 @@ class WarehouseServiceTest {
         """);
     jdbcTemplate.update("""
         insert into warehouse_stock_batch(tenant_id, item_id, batch_no, received_date, expiry_date, quantity, unit_cost, note)
-        values (1, 1, 'B001', '2026-07-08', '2026-08-01', 30.00, 80.00, '初始库存')
+        values (1, 1, 'B001', '2026-07-08', '2027-08-01', 30.00, 80.00, '初始库存')
         """);
   }
 }

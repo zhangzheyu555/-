@@ -21,6 +21,8 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class WarehouseRepository {
   private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+  private static final BigDecimal STORE_INVENTORY_ZERO =
+      BigDecimal.ZERO.setScale(4, RoundingMode.HALF_UP);
   private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
   private final JdbcTemplate jdbcTemplate;
   private volatile Boolean requisitionPolicyTablesAvailable;
@@ -37,7 +39,7 @@ public class WarehouseRepository {
                i.cups_per_unit, i.daily_usage_estimate, i.min_stock_days, i.max_stock_days,
                i.min_stock_quantity, i.alert_enabled, i.expiry_alert_days, i.active,
                i.item_description, i.sort_order, i.item_attributes,
-               coalesce(sum(case when b.quantity > 0 then b.quantity else 0 end), 0) as stock_quantity,
+               coalesce(sum(b.quantity), 0) as stock_quantity,
                min(case when b.quantity > 0 then b.expiry_date else null end) as nearest_expiry_date
         from warehouse_item i
         left join warehouse_item_category c on c.tenant_id = i.tenant_id and c.id = i.category_id
@@ -68,7 +70,7 @@ public class WarehouseRepository {
         from store_inventory
         where tenant_id = ? and store_id = ?
         """, rs -> {
-          quantities.put(rs.getLong("item_id"), amount(rs.getBigDecimal("quantity")));
+          quantities.put(rs.getLong("item_id"), storeInventoryAmount(rs.getBigDecimal("quantity")));
         },
         tenantId,
         storeId.trim()
@@ -78,7 +80,7 @@ public class WarehouseRepository {
 
   public BigDecimal storeInventoryQuantity(long tenantId, String storeId, long itemId) {
     if (storeId == null || storeId.isBlank()) {
-      return ZERO;
+      return STORE_INVENTORY_ZERO;
     }
     BigDecimal value = jdbcTemplate.query("""
         select quantity
@@ -88,8 +90,8 @@ public class WarehouseRepository {
         """, (rs, rowNum) -> rs.getBigDecimal("quantity"), tenantId, storeId.trim(), itemId)
         .stream()
         .findFirst()
-        .orElse(ZERO);
-    return amount(value);
+        .orElse(STORE_INVENTORY_ZERO);
+    return storeInventoryAmount(value);
   }
 
   public void addStoreInventory(
@@ -103,7 +105,7 @@ public class WarehouseRepository {
       String note,
       Long createdBy
   ) {
-    BigDecimal delta = amount(quantityDelta);
+    BigDecimal delta = storeInventoryAmount(quantityDelta);
     jdbcTemplate.update("""
         insert into store_inventory(tenant_id, store_id, item_id, quantity, unit, updated_at)
         select ?, ?, ?, ?, coalesce(i.stock_unit, i.unit, '件'), current_timestamp
@@ -624,7 +626,7 @@ public class WarehouseRepository {
       String note,
       Long createdBy
   ) {
-    BigDecimal required = amount(quantity);
+    BigDecimal required = storeInventoryAmount(quantity);
     String normalizedMovementType = blankToNull(movementType);
     if (normalizedMovementType == null) {
       normalizedMovementType = "OUT";
@@ -1322,6 +1324,32 @@ public class WarehouseRepository {
     );
   }
 
+  public void updateApprovedQuantityAndUnitPrice(
+      long tenantId,
+      String requisitionId,
+      long itemId,
+      BigDecimal quantity,
+      BigDecimal unitPrice
+  ) {
+    BigDecimal approved = amount(quantity);
+    BigDecimal price = amount(unitPrice);
+    jdbcTemplate.update("""
+        update store_requisition_line
+        set approved_quantity = ?,
+            unit_price = ?,
+            amount = ? * ?
+        where tenant_id = ? and requisition_id = ? and item_id = ?
+        """,
+        approved,
+        price,
+        approved,
+        price,
+        tenantId,
+        requisitionId,
+        itemId
+    );
+  }
+
   public void markShipped(long tenantId, String requisitionId, Long shippedBy) {
     markShipped(tenantId, requisitionId, "SHIPPED", shippedBy);
   }
@@ -1510,6 +1538,68 @@ public class WarehouseRepository {
         set quantity = ?, updated_at = current_timestamp
         where tenant_id = ? and id = ?
         """, amount(quantity), tenantId, batchId);
+  }
+
+  public long addStockDeficit(
+      long tenantId,
+      Long warehouseId,
+      long itemId,
+      BigDecimal shortageQuantity,
+      BigDecimal unitCost,
+      String note
+  ) {
+    BigDecimal deficit = amount(shortageQuantity).abs().negate();
+    if (deficit.signum() == 0) {
+      throw new IllegalArgumentException("负库存数量必须大于 0");
+    }
+    String batchNo = "NEGATIVE-STOCK";
+    if (hasWarehouseColumn("warehouse_stock_batch")) {
+      long resolvedWarehouseId = warehouseId == null
+          ? centralWarehouseId(tenantId)
+          : warehouseId;
+      jdbcTemplate.update("""
+          insert into warehouse_stock_batch(
+            tenant_id, warehouse_id, item_id, batch_no, received_date, expiry_date,
+            quantity, reserved_quantity, version, unit_cost, note, created_at
+          ) values (?, ?, ?, ?, current_date, null, ?, 0, 0, ?, ?, current_timestamp)
+          on duplicate key update
+            quantity = quantity + values(quantity),
+            unit_cost = case when unit_cost = 0 then values(unit_cost) else unit_cost end,
+            note = values(note),
+            version = version + 1,
+            updated_at = current_timestamp
+          """,
+          tenantId,
+          resolvedWarehouseId,
+          itemId,
+          batchNo,
+          deficit,
+          amount(unitCost),
+          blankToNull(note)
+      );
+      return batchId(tenantId, resolvedWarehouseId, itemId, batchNo)
+          .orElseThrow(() -> new IllegalStateException("负库存批次写入失败"));
+    }
+    jdbcTemplate.update("""
+        insert into warehouse_stock_batch(
+          tenant_id, item_id, batch_no, received_date, expiry_date,
+          quantity, unit_cost, note, created_at
+        ) values (?, ?, ?, current_date, null, ?, ?, ?, current_timestamp)
+        on duplicate key update
+          quantity = quantity + values(quantity),
+          unit_cost = case when unit_cost = 0 then values(unit_cost) else unit_cost end,
+          note = values(note),
+          updated_at = current_timestamp
+        """,
+        tenantId,
+        itemId,
+        batchNo,
+        deficit,
+        amount(unitCost),
+        blankToNull(note)
+    );
+    return batchId(tenantId, itemId, batchNo)
+        .orElseThrow(() -> new IllegalStateException("负库存批次写入失败"));
   }
 
   public int pendingRequisitionCount(long tenantId) {
@@ -3047,7 +3137,7 @@ public class WarehouseRepository {
       case "WAITING_REPLENISHMENT" -> "待补货";
       case "PARTIALLY_SHIPPED" -> "部分发货 / 待补货";
       case "SHIPPED" -> "待门店收货";
-      case "RECEIVED" -> "门店已收货";
+      case "RECEIVED" -> "已完成";
       case "REJECTED" -> "已驳回";
       case "TODO_DONE" -> "已处理";
       default -> status;
@@ -3104,6 +3194,12 @@ public class WarehouseRepository {
 
   private BigDecimal amount(BigDecimal value) {
     return value == null ? ZERO : value.setScale(2, RoundingMode.HALF_UP);
+  }
+
+  private BigDecimal storeInventoryAmount(BigDecimal value) {
+    return value == null
+        ? STORE_INVENTORY_ZERO
+        : value.setScale(4, RoundingMode.HALF_UP);
   }
 
   public Optional<Long> batchWarehouseId(long tenantId, long batchId) {

@@ -3,7 +3,7 @@ import {
   approveSalaryRecord, deleteSalaryRecord, exportSalaryCsv,
   generateSalaryWithReport, lockSalaryRecord,
   markSalaryPaid, previewSalaryGeneration, rejectSalaryRecord,
-  saveSalaryRecord, submitSalaryRecord, type SalaryGenerateReport,
+  saveSalaryRecord, submitSalaryRecord, type SalaryGenerateReport, type SalaryGenerateRequest,
   type SalaryRecord, type SalaryRecordPayload,
 } from '../api/finance'
 import { currentMonth, userError, isEditable } from './useSalaryPage'
@@ -129,30 +129,56 @@ export function useSalaryWorkflow(opts: {
     }
   }
 
-  async function doPreview() {
-    if (!opts.canGenerate.value || opts.selectedStoreId.value === 'all') return
+  function normalizedEmployeeIds(employeeIds: string[]) {
+    return Array.from(new Set(employeeIds.map((id) => String(id || '').trim()).filter(Boolean)))
+  }
+
+  function generationPayload(employeeIds?: string[]): SalaryGenerateRequest {
+    const payload: SalaryGenerateRequest = {
+      month: opts.selectedMonth.value,
+    }
+    if (opts.selectedStoreId.value !== 'all') payload.storeId = opts.selectedStoreId.value
+    if (employeeIds !== undefined) payload.employeeIds = normalizedEmployeeIds(employeeIds)
+    return payload
+  }
+
+  async function doPreview(employeeIds?: string[]) {
+    if (!opts.canGenerate.value) return null
     previewLoading.value = true
     opts.pageError.value = ''
     try {
-      previewData.value = await previewSalaryGeneration(opts.selectedStoreId.value, opts.selectedMonth.value)
+      previewData.value = await previewSalaryGeneration(generationPayload(employeeIds))
       showPreview.value = true
+      return previewData.value
     } catch (e) {
       opts.pageError.value = userError(e, '预览生成失败。')
+      return null
     } finally {
       previewLoading.value = false
     }
   }
 
-  async function doGenerate() {
-    if (!opts.canGenerate.value || opts.selectedStoreId.value === 'all') return
+  async function doGenerate(employeeIds: string[]) {
+    if (!opts.canGenerate.value) return false
+    const selectedIds = normalizedEmployeeIds(employeeIds)
+    if (!selectedIds.length) {
+      opts.pageError.value = '请至少选择一名可生成工资的员工。'
+      return false
+    }
     generating.value = true
     opts.pageError.value = ''
     opts.successMessage.value = ''
     try {
-      const report = await generateSalaryWithReport({
-        storeId: opts.selectedStoreId.value,
-        month: opts.selectedMonth.value,
-      })
+      const payload = generationPayload(selectedIds)
+      // Selection can change after the dialog opens. Re-run the preview with
+      // the exact same employee IDs that will be sent to generation.
+      const confirmedPreview = await previewSalaryGeneration(payload)
+      previewData.value = confirmedPreview
+      if (confirmedPreview.generated <= 0) {
+        opts.pageError.value = '所选员工当前没有可生成的工资，请刷新名单后重试。'
+        return false
+      }
+      const report = await generateSalaryWithReport(payload)
       const parts = [`已生成 ${report.generated} 条工资记录`]
       if (report.skipped > 0) parts.push(`跳过 ${report.skipped} 条`)
       if (report.errors > 0) parts.push(`${report.errors} 条异常`)
@@ -161,8 +187,10 @@ export function useSalaryWorkflow(opts: {
       previewData.value = null
       showPreview.value = false
       await opts.loadPage()
+      return true
     } catch (e) {
       opts.pageError.value = userError(e, '工资记录生成失败。')
+      return false
     } finally {
       generating.value = false
     }

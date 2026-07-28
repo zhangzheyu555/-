@@ -135,6 +135,52 @@ class StoreControllerHttpAuthorizationTest {
   }
 
   @Test
+  void inventoryReductionEndpointPassesAuthenticatedStoreAndMonthToTheService() throws Exception {
+    AuthUser boss = user("BOSS", null);
+    OrganizationService organizationService = mock(OrganizationService.class);
+    MockMvc scopedMockMvc = MockMvcBuilders.standaloneSetup(
+            new StoreController(authService, organizationService))
+        .setControllerAdvice(new GlobalExceptionHandler())
+        .addFilters(new RequestIdFilter())
+        .build();
+    when(authService.requireUser("Bearer boss-token")).thenReturn(boss);
+    when(organizationService.inventoryReductions(boss, "rg1", "2026-07", 80))
+        .thenReturn(new StoreInventoryReductionResponse(
+            "rg1", "一店", "2026-07", 0, 0, false, java.util.List.of()));
+
+    scopedMockMvc.perform(get("/api/stores/rg1/inventory-reductions")
+            .param("month", "2026-07")
+            .param("limit", "80")
+            .header("Authorization", "Bearer boss-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.success").value(true))
+        .andExpect(jsonPath("$.data.storeId").value("rg1"))
+        .andExpect(jsonPath("$.data.month").value("2026-07"));
+
+    verify(organizationService).inventoryReductions(boss, "rg1", "2026-07", 80);
+  }
+
+  @Test
+  void anonymousInventoryReductionReadReturns401BeforeServiceAccess() throws Exception {
+    OrganizationService organizationService = mock(OrganizationService.class);
+    MockMvc scopedMockMvc = MockMvcBuilders.standaloneSetup(
+            new StoreController(authService, organizationService))
+        .setControllerAdvice(new GlobalExceptionHandler())
+        .addFilters(new RequestIdFilter())
+        .build();
+    when(authService.requireUser(null))
+        .thenThrow(new BusinessException("UNAUTHORIZED", "请先登录", HttpStatus.UNAUTHORIZED));
+
+    scopedMockMvc.perform(get("/api/stores/rg1/inventory-reductions")
+            .param("month", "2026-07"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(header().exists("X-Request-Id"))
+        .andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
+
+    verifyNoInteractions(organizationService);
+  }
+
+  @Test
   void bossCannotPhysicallyDeleteStoreThroughTheController() throws Exception {
     AuthUser boss = user("BOSS", null);
     when(authService.requireUser("Bearer boss-token")).thenReturn(boss);

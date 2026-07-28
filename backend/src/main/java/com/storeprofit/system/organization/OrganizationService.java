@@ -15,6 +15,8 @@ import com.storeprofit.system.platform.authorization.DataScopeModes;
 import com.storeprofit.system.platform.authorization.DataScopeService;
 import com.storeprofit.system.warehouse.WarehouseTopologyRepository.FacilityRow;
 import com.storeprofit.system.warehouse.WarehouseTopologyService;
+import java.time.YearMonth;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -89,6 +91,46 @@ public class OrganizationService {
           new DataScope(DataScopeModes.OWN_STORE, List.of(user.storeId())));
     }
     return organizationRepository.stores(user.tenantId());
+  }
+
+  public StoreInventoryReductionResponse inventoryReductions(
+      AuthUser user,
+      String storeId,
+      String monthValue,
+      Integer requestedLimit
+  ) {
+    requireStoreRead(user);
+    String normalizedStoreId = normalizeStoreId(storeId);
+    StoreResponse store = organizationRepository.store(user.tenantId(), normalizedStoreId)
+        .orElseThrow(() -> new BusinessException(
+            "STORE_NOT_FOUND", "门店不存在或不属于当前企业", HttpStatus.NOT_FOUND));
+    requireRelatedStoreAccess(user, normalizedStoreId, "查看门店库存减少记录");
+    YearMonth month = normalizeInventoryMonth(monthValue);
+    int limit = requestedLimit == null ? 100 : Math.max(1, Math.min(requestedLimit, 200));
+    OrganizationRepository.InventoryReductionSummary summary =
+        organizationRepository.inventoryReductionSummary(
+            user.tenantId(),
+            normalizedStoreId,
+            month.atDay(1).atStartOfDay(),
+            month.plusMonths(1).atDay(1).atStartOfDay()
+        );
+    List<StoreInventoryReductionResponse.ReductionRow> rows =
+        organizationRepository.inventoryReductions(
+            user.tenantId(),
+            normalizedStoreId,
+            month.atDay(1).atStartOfDay(),
+            month.plusMonths(1).atDay(1).atStartOfDay(),
+            limit
+        );
+    return new StoreInventoryReductionResponse(
+        normalizedStoreId,
+        store.name(),
+        month.toString(),
+        summary.movementCount(),
+        summary.itemCount(),
+        summary.movementCount() > rows.size(),
+        rows
+    );
   }
 
   public List<StoreResponse> knowledgeBaseStores(AuthUser user) {
@@ -544,6 +586,21 @@ public class OrganizationService {
       throw new BusinessException("STORE_ID_REQUIRED", "请选择门店", HttpStatus.BAD_REQUEST);
     }
     return storeId.trim();
+  }
+
+  private YearMonth normalizeInventoryMonth(String value) {
+    if (value == null || value.isBlank()) {
+      return YearMonth.now();
+    }
+    try {
+      return YearMonth.parse(value.trim());
+    } catch (DateTimeParseException exception) {
+      throw new BusinessException(
+          "STORE_INVENTORY_MONTH_INVALID",
+          "库存减少记录月份格式不正确，请使用 YYYY-MM",
+          HttpStatus.BAD_REQUEST
+      );
+    }
   }
 
   private void auditStore(

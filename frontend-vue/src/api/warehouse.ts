@@ -193,6 +193,16 @@ export interface WarehouseRequisition {
   lines: WarehouseRequisitionLine[]
 }
 
+export interface WarehouseRequisitionReviewPriceLine {
+  itemId: number
+  unitPrice: number
+}
+
+export interface WarehouseRequisitionReviewAction {
+  id: string
+  lines: WarehouseRequisitionReviewPriceLine[]
+}
+
 export type WarehouseRequisitionHandlingMode =
   | 'FULL'
   | 'AVAILABLE_ONLY'
@@ -658,9 +668,10 @@ export function reviewWarehouseRequisition(
   requisitionId: string,
   payload: {
     approved: boolean
-    lines: Array<{ itemId: number; approvedQuantity: number }>
+    lines: Array<{ itemId: number; approvedQuantity: number; unitPrice?: number }>
     note?: string
     handlingMode?: WarehouseRequisitionHandlingMode
+    completeOnReview?: boolean
   },
 ) {
   return apiPost<void, typeof payload>(`/api/warehouse/requisitions/${encodeURIComponent(requisitionId)}/review`, payload)

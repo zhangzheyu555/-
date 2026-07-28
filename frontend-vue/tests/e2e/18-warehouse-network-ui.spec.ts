@@ -846,39 +846,42 @@ test('store manager sees a read-only supply warehouse and requisition does not s
   expect(log.consoleErrors).toEqual([])
 })
 
-test('warehouse handles insufficient stock with explicit available, shortage and partial shipment actions', async ({ page }) => {
+test('warehouse handles insufficient stock with editable review price and immediate negative inventory transfer', async ({ page }) => {
   const log = await prepare(page, requisitionProcessorSession)
   await page.goto('/warehouse/requests?warehouseId=1')
 
   const requisitionRow = page.locator('tbody tr').filter({ hasText: shortageRequisition.id }).first()
   await expect(requisitionRow).toBeVisible()
-  await expect(requisitionRow).toContainText('鲜牛奶 申请 5 箱 / 已发 0 箱')
+  await expect(requisitionRow).toContainText('鲜牛奶 申请 5 箱 / 已完成 0 箱')
   await expect(requisitionRow).toContainText('鲜牛奶缺货 2 箱')
-  for (const action of ['按可用库存发货', '标记缺货', '等补货后再发', '驳回']) {
+  for (const action of ['审核并完成', '驳回']) {
     await expect(requisitionRow.getByRole('button', { name: action, exact: true })).toBeVisible()
   }
-  await expect(requisitionRow.getByRole('button', { name: '审核通过', exact: true })).toHaveCount(0)
+  for (const action of ['按可用库存审核', '标记缺货', '等补货后再发']) {
+    await expect(requisitionRow.getByRole('button', { name: action, exact: true })).toHaveCount(0)
+  }
 
   await requisitionRow.getByRole('button', { name: '查看明细', exact: true }).click()
   const detail = page.locator('.detail-line').filter({ hasText: '鲜牛奶' })
   await expect(detail).toContainText('申请：5 箱')
-  await expect(detail).toContainText('待发：5 箱')
-  await expect(detail).toContainText('当前可发：3 箱')
-  await expect(detail).toContainText('已发：0 箱')
-  await expect(detail).toContainText('缺货：2 箱')
+  await expect(detail).toContainText('本次审核：5 箱')
+  await expect(detail).toContainText('当前仓库库存：3 箱')
+  await expect(detail).toContainText('审核后仓库库存：-2 箱')
+  await expect(detail).toContainText('已完成：0 箱')
+  await expect(detail).toContainText('不转待补货')
 
-  await requisitionRow.getByRole('button', { name: '按可用库存发货', exact: true }).click()
-  const dialog = page.getByRole('alertdialog', { name: '按可用库存发货' })
-  await expect(dialog).toContainText('只扣减实际发出数量，未发数量转为缺货待处理')
-  await dialog.getByRole('button', { name: '确认部分发货', exact: true }).click()
+  await requisitionRow.getByRole('button', { name: '审核并完成', exact: true }).click()
+  await page.getByRole('spinbutton', { name: '鲜牛奶审核单价' }).fill('52.30')
+  await page.getByRole('button', { name: '确认审核并完成', exact: true }).click()
 
   await expect.poll(() => log.requisitionReviewBodies.length).toBe(1)
   expect(log.requisitionReviewBodies[0]).toMatchObject({
     approved: true,
-    handlingMode: 'AVAILABLE_ONLY',
-    lines: [{ itemId: 11, approvedQuantity: 5 }],
+    handlingMode: 'FULL',
+    completeOnReview: true,
+    lines: [{ itemId: 11, approvedQuantity: 5, unitPrice: 52.3 }],
   })
-  await expect.poll(() => log.requisitionShipCount).toBe(1)
+  expect(log.requisitionShipCount).toBe(0)
   await page.screenshot({ path: '../output/playwright/warehouse-requisition-shortage-desktop.png', fullPage: true })
   expect(log.consoleErrors).toEqual([])
 })
@@ -924,11 +927,11 @@ test('warehouse shortage controls remain usable without whole-page overflow on m
 
   const requisitionRow = page.locator('tbody tr').filter({ hasText: shortageRequisition.id }).first()
   await expect(requisitionRow).toBeVisible()
-  const availableButton = requisitionRow.getByRole('button', { name: '按可用库存发货', exact: true })
-  await expect(availableButton).toBeVisible()
-  await expect(requisitionRow.getByRole('button', { name: '等补货后再发', exact: true })).toBeVisible()
-  await availableButton.scrollIntoViewIfNeeded()
-  for (const action of ['按可用库存发货', '标记缺货', '等补货后再发', '驳回']) {
+  const reviewButton = requisitionRow.getByRole('button', { name: '审核并完成', exact: true })
+  await expect(reviewButton).toBeVisible()
+  await expect(requisitionRow.getByRole('button', { name: '等补货后再发', exact: true })).toHaveCount(0)
+  await reviewButton.scrollIntoViewIfNeeded()
+  for (const action of ['审核并完成', '驳回']) {
     const box = await requisitionRow.getByRole('button', { name: action, exact: true }).boundingBox()
     expect(box?.x).toBeGreaterThanOrEqual(0)
     expect((box?.x || 0) + (box?.width || 0)).toBeLessThanOrEqual(390)

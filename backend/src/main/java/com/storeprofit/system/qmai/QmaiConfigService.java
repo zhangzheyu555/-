@@ -1,13 +1,19 @@
 package com.storeprofit.system.qmai;
 
+import com.storeprofit.system.common.BusinessException;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 企迈凭证配置服务：数据库配置（网页表单保存）优先，回退 application.yml 环境变量默认值。
@@ -24,15 +30,18 @@ public class QmaiConfigService {
   private final QmaiProperties properties;
   private final QmaiConfigRepository repository;
   private final QmaiCredentialCipher credentialCipher;
+  private final QmaiOutboundPolicy outboundPolicy;
 
   public QmaiConfigService(
       QmaiProperties properties,
       QmaiConfigRepository repository,
-      QmaiCredentialCipher credentialCipher
+      QmaiCredentialCipher credentialCipher,
+      QmaiOutboundPolicy outboundPolicy
   ) {
     this.properties = properties;
     this.repository = repository;
     this.credentialCipher = credentialCipher;
+    this.outboundPolicy = outboundPolicy;
   }
 
   /** 品牌参数归一化：空值回退默认品牌。 */
@@ -72,9 +81,9 @@ public class QmaiConfigService {
       if (notBlank(r.version())) {
         version = r.version();
       }
-      if (r.shops() != null && !r.shops().isBlank()) {
-        shops = splitCsv(r.shops());
-      }
+      // A database row is canonical even when its shop list is explicitly empty. Falling back
+      // to QMAI_SHOPS here would silently resurrect mappings that an administrator just cleared.
+      shops = splitCsv(r.shops() == null ? "" : r.shops());
       if (notBlank(r.consoleAccount())) {
         consoleAccount = credentialCipher.decrypt(r.consoleAccount());
       }
@@ -92,8 +101,13 @@ public class QmaiConfigService {
   }
 
   /** 保存网页表单提交的配置（upsert）。空字段保留原值，openKey/后台密码为空时不覆盖已存值。 */
+  @Transactional
   public void save(long tenantId, String brand, QmaiConfigForm form, Long actorId,
       String actorName) {
+    if (form == null) {
+      throw new BusinessException(
+          "QMAI_CONFIG_INVALID", "企迈配置不能为空", HttpStatus.BAD_REQUEST);
+    }
     String b = normBrand(brand);
     Optional<QmaiConfigRepository.QmaiConfigRow> existing = repository.find(tenantId, b);
     String openId = pick(form.openId(), existing.map(r -> credentialCipher.decrypt(r.openId())));
@@ -109,13 +123,70 @@ public class QmaiConfigService {
         existing.map(r -> credentialCipher.decrypt(r.consoleToken())));
     String baseUrl = form.baseUrl() != null && !form.baseUrl().isBlank()
         ? form.baseUrl().trim() : properties.getBaseUrl();
+    outboundPolicy.requireValidBaseUrl(baseUrl);
     String version = form.version() != null && !form.version().isBlank()
         ? form.version().trim() : properties.getVersion();
-    String shops = form.shops() != null ? form.shops().trim() : "";
+    String rawShops = form.shops() != null
+        ? form.shops()
+        : existing.map(QmaiConfigRepository.QmaiConfigRow::shops)
+            .orElseGet(() -> DEFAULT_BRAND.equals(b)
+                ? String.join(",", properties.getShops()) : "");
+    List<QmaiProperties.ShopMapping> mappings =
+        parseAndValidateMappings(tenantId, rawShops);
+    String shops = mappings.stream()
+        .map(mapping -> mapping.shopCode() + ":" + mapping.shopName() + ":" + mapping.storeId())
+        .collect(java.util.stream.Collectors.joining(","));
     repository.upsert(tenantId, b, credentialCipher.encrypt(openId), credentialCipher.encrypt(grantCode),
         credentialCipher.encrypt(openKey), baseUrl, version, shops,
         credentialCipher.encrypt(consoleAccount), credentialCipher.encrypt(consolePassword),
         credentialCipher.encrypt(consoleToken), actorId, actorName);
+    repository.replaceStoreMappings(tenantId, b, mappings);
+  }
+
+  /**
+   * Platform configuration is the single source of truth for shop mappings.
+   * The normalized V60 mapping table is only a transactionally refreshed mirror.
+   */
+  private List<QmaiProperties.ShopMapping> parseAndValidateMappings(
+      long tenantId, String rawShops) {
+    if (rawShops == null || rawShops.isBlank()) {
+      return List.of();
+    }
+    List<QmaiProperties.ShopMapping> mappings = new ArrayList<>();
+    Set<String> shopIds = new LinkedHashSet<>();
+    Set<String> storeIds = new LinkedHashSet<>();
+    for (String rawEntry : rawShops.split(",")) {
+      String entry = rawEntry == null ? "" : rawEntry.trim();
+      if (entry.isEmpty()) {
+        continue;
+      }
+      String[] parts = entry.split(":", -1);
+      if (parts.length != 3) {
+        throw mappingError("每个企迈门店都必须填写对应的系统门店");
+      }
+      String shopId = parts[0].trim();
+      String shopName = parts[1].trim();
+      String storeId = parts[2].trim();
+      if (!shopId.matches("\\d+") || shopName.isEmpty() || storeId.isEmpty()) {
+        throw mappingError("企迈门店映射格式不正确");
+      }
+      if (shopId.length() > 80 || shopName.length() > 160 || storeId.length() > 64) {
+        throw mappingError("企迈门店映射内容过长");
+      }
+      if (!shopIds.add(shopId) || !storeIds.add(storeId)) {
+        throw mappingError("企迈门店与系统门店必须一一对应");
+      }
+      if (!repository.storeExists(tenantId, storeId)) {
+        throw mappingError("企迈门店对应的系统门店不存在");
+      }
+      mappings.add(new QmaiProperties.ShopMapping(shopId, shopName, storeId));
+    }
+    return List.copyOf(mappings);
+  }
+
+  private BusinessException mappingError(String message) {
+    return new BusinessException(
+        "QMAI_SHOP_MAPPING_INVALID", message, HttpStatus.BAD_REQUEST);
   }
 
   /** 给前端的安全视图：不含任何明文密钥，只给是否已配置、掩码与门店。 */

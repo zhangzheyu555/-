@@ -16,6 +16,11 @@ public record DailyLossReportDetailResponse(
     BigDecimal unitPriceSnapshot,
     BigDecimal amountSnapshot,
     String lossReason,
+    String peelState,
+    String priceBasis,
+    BigDecimal yieldRate,
+    BigDecimal inventoryQuantity,
+    String inventoryUnit,
     boolean inventoryDeducted
 ) {
 }

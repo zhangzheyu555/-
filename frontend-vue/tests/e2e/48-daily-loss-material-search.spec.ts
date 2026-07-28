@@ -52,6 +52,27 @@ const items = [
     unitPrice: 8,
     active: true,
   },
+  {
+    id: 303,
+    itemCode: 'FRUIT_CHECK_003',
+    itemName: '芒果',
+    categoryCode: 'FRUIT',
+    categoryName: '水果',
+    unit: '克',
+    pricingUnit: '斤',
+    quantityPerPricingUnit: 500,
+    unitPrice: 4.5,
+    active: true,
+    peelSelectionEnabled: true,
+    defaultPeelState: 'UNPEELED',
+    peeledUnit: '克',
+    unpeeledUnit: '克',
+    unpeeledPricingUnit: '斤',
+    unpeeledQuantityPerPricingUnit: 500,
+    unpeeledUnitPrice: 4.5,
+    yieldRate: 0.53030303,
+    inventoryUnit: '斤',
+  },
 ]
 
 function localDate() {
@@ -62,24 +83,26 @@ function localDate() {
   return `${year}-${month}-${day}`
 }
 
-test('每日报损可按分类和单位搜索品类，提交仍使用数值型 itemConfigId', async ({ page }) => {
+test('每日报损支持品类搜索和去皮换算，提交数值型 itemConfigId 与形态', async ({ page }) => {
   const saveBodies: Array<Record<string, unknown>> = []
+  let uploadCount = 0
   const today = localDate()
   const existingReport = {
-    id: 'report-today',
+    id: 'report-existing-1',
     storeId: 'rg1',
     storeCode: 'RG1',
     storeName: '茹菓测试店',
     lossDate: today,
     month: today.slice(0, 7),
-    status: 'DRAFT',
-    statusLabel: '已保存',
+    status: 'SUBMITTED',
+    statusLabel: '待复核',
     reported: true,
     totalAmount: 0,
     supplierCompensationAmount: 0,
     storeBorneAmount: 0,
     detailCount: 0,
     attachmentCount: 1,
+    submittedAt: `${today}T09:30:00`,
     details: [],
     attachments: [{
       id: 'existing-photo',
@@ -87,6 +110,19 @@ test('每日报损可按分类和单位搜索品类，提交仍使用数值型 i
       contentType: 'image/png',
     }],
   }
+  const secondExistingReport = {
+    ...existingReport,
+    id: 'report-existing-2',
+    status: 'REVIEWED',
+    statusLabel: '已复核',
+    submittedAt: `${today}T08:15:00`,
+    attachments: [],
+    attachmentCount: 0,
+  }
+  const imageBuffer = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+    'base64',
+  )
 
   await page.addInitScript((session) => {
     localStorage.setItem('ai_profit_vue_token', 'DAILY-LOSS-MATERIAL-E2E')
@@ -109,14 +145,18 @@ test('每日报损可按分类和单位搜索品类，提交仍使用数值型 i
     }
     if (url.pathname === '/api/daily-loss/items') return route.fulfill(ok(items))
     if (url.pathname === '/api/daily-loss/reports' && request.method() === 'GET') {
-      return route.fulfill(ok([existingReport]))
+      return route.fulfill(ok([existingReport, secondExistingReport]))
     }
     if (url.pathname === '/api/daily-loss/reports' && request.method() === 'POST') {
       saveBodies.push(request.postDataJSON())
-      return route.fulfill(ok({ ...existingReport, id: 'report-saved' }))
+      return route.fulfill(ok({ ...existingReport, id: `report-saved-${saveBodies.length}`, status: 'DRAFT' }))
     }
-    if (url.pathname === '/api/daily-loss/reports/report-saved/submit') {
-      return route.fulfill(ok({ ...existingReport, id: 'report-saved', status: 'SUBMITTED' }))
+    if (/^\/api\/daily-loss\/reports\/report-saved-\d+\/attachments$/.test(url.pathname)) {
+      uploadCount += 1
+      return route.fulfill(ok({ ...existingReport, id: url.pathname.split('/')[4] }))
+    }
+    if (/^\/api\/daily-loss\/reports\/report-saved-\d+\/submit$/.test(url.pathname)) {
+      return route.fulfill(ok({ ...existingReport, id: url.pathname.split('/')[4], status: 'SUBMITTED' }))
     }
     if (url.pathname === '/api/storage/attachments/existing-photo') {
       return route.fulfill({
@@ -130,6 +170,7 @@ test('每日报损可按分类和单位搜索品类，提交仍使用数值型 i
 
   await page.goto('/daily-loss')
   await expect(page.getByRole('heading', { name: '今日报损' })).toBeVisible()
+  await expect(page.getByText('已报 2 次', { exact: true })).toBeVisible()
   await page.locator('.item-picker-trigger').first().click()
 
   const material = page.getByRole('combobox', { name: '搜索报损品类', exact: true })
@@ -140,7 +181,12 @@ test('每日报损可按分类和单位搜索品类，提交仍使用数值型 i
 
   await page.locator('.quantity-control input').first().fill('2')
   await page.getByRole('button', { name: '变质', exact: true }).click()
-  await page.getByRole('button', { name: '提交今日报损', exact: true }).click()
+  await page.locator('.attachment-field input[type="file"]').setInputFiles({
+    name: 'milk-loss.png',
+    mimeType: 'image/png',
+    buffer: imageBuffer,
+  })
+  await page.getByRole('button', { name: '提交本次报损', exact: true }).click()
 
   await expect.poll(() => saveBodies.length).toBe(1)
   expect(saveBodies[0]).toMatchObject({
@@ -152,4 +198,38 @@ test('每日报损可按分类和单位搜索品类，提交仍使用数值型 i
     }],
   })
   expect(typeof (saveBodies[0].details as Array<{ itemConfigId: unknown }>)[0].itemConfigId).toBe('number')
+
+  await page.locator('.item-picker-trigger').first().click()
+  await material.fill('芒果')
+  await page.getByRole('option', { name: /芒果.*FRUIT_CHECK_003/ }).click()
+  await expect(page.getByRole('button', { name: '不去皮', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await page.getByRole('button', { name: '去皮', exact: true }).click()
+  await page.locator('.quantity-control input').first().fill('100')
+  await expect(page.locator('.pricing-hint').first()).toContainText('去皮重量 ÷ 出肉率 53.03%')
+  await expect(page.locator('.settlement-block strong')).toHaveText('¥1.70')
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(page.getByRole('button', { name: '去皮', exact: true })).toBeVisible()
+  await expect.poll(() => page.evaluate(() => ({
+    viewport: document.documentElement.clientWidth,
+    content: document.documentElement.scrollWidth,
+  }))).toEqual({ viewport: 390, content: 390 })
+  await page.getByRole('button', { name: '切配损耗', exact: true }).click()
+  await page.locator('.attachment-field input[type="file"]').setInputFiles({
+    name: 'mango-loss.png',
+    mimeType: 'image/png',
+    buffer: imageBuffer,
+  })
+  await page.getByRole('button', { name: '提交本次报损', exact: true }).click()
+
+  await expect.poll(() => saveBodies.length).toBe(2)
+  expect(uploadCount).toBe(2)
+  expect(saveBodies[1]).toMatchObject({
+    storeId: 'rg1',
+    details: [{
+      itemConfigId: 303,
+      lossQuantity: 100,
+      lossReason: '切配损耗',
+      peelState: 'PEELED',
+    }],
+  })
 })

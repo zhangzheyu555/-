@@ -8,9 +8,8 @@ import { getSalaryEmployeePage, type SalaryPageResponse, type SalaryRecord } fro
 import { useBusinessScope } from './useBusinessScope'
 
 const PAGE_SIZE = 20
-const SALARY_STATUSES = new Set([
-  'PENDING_GENERATION', 'DRAFT', 'SUBMITTED', 'PENDING_REVIEW',
-  'APPROVED', 'REJECTED', 'PAID', 'LOCKED',
+const SALARY_FILTERS = new Set([
+  'ACTIVE', 'PENDING_GENERATION', 'PENDING_REVIEW', 'PENDING_PAYMENT',
 ])
 
 /* ---- helpers (pure, no side-effects) ---- */
@@ -44,18 +43,30 @@ export function isHourlySalaryRecord(record?: SalaryRecord | null) {
 
 export function statusLabel(s?: string) {
   const labels: Record<string, string> = {
-    PENDING_GENERATION: '待生成', DRAFT: '草稿', SUBMITTED: '待审核', PENDING_REVIEW: '待审核', APPROVED: '已审核',
-    REJECTED: '已驳回', PAID: '已发放', LOCKED: '已锁定',
+    PENDING_GENERATION: '待生成',
+    DRAFT: '待审核',
+    SUBMITTED: '待审核',
+    PENDING_REVIEW: '待审核',
+    REJECTED: '待审核',
+    APPROVED: '待发放',
+    PAID: '已归档',
+    LOCKED: '已归档',
   }
-  return labels[s || 'DRAFT'] || '草稿'
+  return labels[s || 'DRAFT'] || '待审核'
 }
 
 export function statusClass(s?: string) {
   const map: Record<string, string> = {
-    PENDING_GENERATION: 'muted', DRAFT: 'pending', SUBMITTED: 'warn', PENDING_REVIEW: 'warn', APPROVED: 'done',
-    REJECTED: 'rejected', PAID: 'done', LOCKED: 'muted',
+    PENDING_GENERATION: 'muted',
+    DRAFT: 'warn',
+    SUBMITTED: 'warn',
+    PENDING_REVIEW: 'warn',
+    REJECTED: 'warn',
+    APPROVED: 'pending',
+    PAID: 'muted',
+    LOCKED: 'muted',
   }
-  return map[s || 'DRAFT'] || 'pending'
+  return map[s || 'DRAFT'] || 'warn'
 }
 
 export function isEditable(s?: string) {
@@ -99,7 +110,7 @@ export function useSalaryPage() {
   const selectedBrandId = ref<number | undefined>(businessScope.isStoreManager.value
     ? businessScope.brandId.value ?? undefined
     : undefined)
-  const statusFilter = ref('')
+  const statusFilter = ref('ACTIVE')
   const keyword = ref('')
   const page = ref(1)
   const loading = ref(false)
@@ -179,10 +190,9 @@ export function useSalaryPage() {
   const canGenerate = computed(() =>
     canEdit.value
       && Boolean(effectiveStoreId.value)
-      && effectiveStoreId.value !== 'all'
       && isEffectiveStoreActive.value
+      && (effectiveStoreId.value !== 'all' || accessibleStores.value.length > 0)
       && hasValidMonth.value
-      && employeeCount.value > 0
       && !loading.value,
   )
 
@@ -258,7 +268,7 @@ export function useSalaryPage() {
         month: selectedMonth.value || undefined,
         storeId: effectiveStoreId.value === 'all' ? undefined : effectiveStoreId.value,
         brandId: effectiveBrandId.value,
-        status: statusFilter.value || undefined,
+        status: statusFilter.value,
         keyword: keyword.value.trim() || undefined,
         page: p,
         size: PAGE_SIZE,
@@ -312,7 +322,7 @@ export function useSalaryPage() {
         selectedStoreId.value = accessibleStores.value[0].id
     }
     if (/^\d{4}-(0[1-9]|1[0-2])$/.test(qMonth)) selectedMonth.value = qMonth
-    if (SALARY_STATUSES.has(qStatus)) statusFilter.value = qStatus
+    if (SALARY_FILTERS.has(qStatus)) statusFilter.value = qStatus
   }
 
   /* ---- watchers ---- */

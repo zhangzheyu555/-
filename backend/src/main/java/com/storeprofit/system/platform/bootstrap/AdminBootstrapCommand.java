@@ -24,7 +24,7 @@ public final class AdminBootstrapCommand {
   public static final String ENABLED_ENVIRONMENT = "APP_BOOTSTRAP_ADMIN_ENABLED";
   static final String QA_DOCKER_IDENTITY_ENVIRONMENT = "APP_BOOTSTRAP_ADMIN_QA_DOCKER";
   static final int LEGACY_FLYWAY_MAXIMUM_MAJOR_VERSION = 105;
-  static final String EXPECTED_FLYWAY_VERSION = "109.20260727120000004";
+  static final String EXPECTED_FLYWAY_VERSION = "117.20260728143000001";
   static final Set<String> EXPECTED_FLYWAY_VERSIONS = java.util.stream.Stream.concat(
       java.util.stream.IntStream
           .rangeClosed(1, LEGACY_FLYWAY_MAXIMUM_MAJOR_VERSION)
@@ -33,6 +33,14 @@ public final class AdminBootstrapCommand {
           "106.20260727120000001",
           "107.20260727120000002",
           "108.20260727120000003",
+          "109.20260727120000004",
+          "110.20260727154006001",
+          "111.20260727170000001",
+          "112.20260727190000001",
+          "113.20260728104000001",
+          "114.20260728123000001",
+          "115.20260728132000001",
+          "116.20260728134500001",
           EXPECTED_FLYWAY_VERSION))
       .collect(java.util.stream.Collectors.toUnmodifiableSet());
 

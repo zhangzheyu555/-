@@ -1,8 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ClipboardCheck, Download, Home, ReceiptText, X } from 'lucide-vue-next'
+import { ClipboardCheck, Download, Home, PackageMinus, ReceiptText, X } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
-import { getStores, type StoreInfo } from '../api/operations'
+import {
+  getStoreInventoryReductions,
+  getStores,
+  type StoreInfo,
+  type StoreInventoryReductionResponse,
+} from '../api/operations'
 import { getProfitDashboard, type ProfitDashboard, type ProfitEntry } from '../api/profit'
 import { downloadCsvRows } from '../api/reports'
 import BrandBadge from '../components/common/BrandBadge.vue'
@@ -36,8 +41,12 @@ const error = ref('')
 const salaryOpen = ref(false)
 const salaryDirty = ref(false)
 const salaryCloseConfirmOpen = ref(false)
+const inventoryReductions = ref<StoreInventoryReductionResponse | null>(null)
+const inventoryReductionLoading = ref(false)
+const inventoryReductionError = ref('')
 const loadedDashboardScopeKey = ref('')
 let storeDetailRequestId = 0
+let inventoryReductionRequestId = 0
 
 function dashboardScopeKey(month: string, storeId: string, brandId: number | string | undefined) {
   return JSON.stringify([month, storeId, brandId === undefined ? '' : String(brandId)])
@@ -105,6 +114,7 @@ const cumulativeIncome = computed(() => storeProfitRows.value.reduce((total, ent
 const cumulativeNet = computed(() => storeProfitRows.value.reduce((total, entry) => total + amount(entry.net), 0))
 const averageMargin = computed(() => (cumulativeIncome.value === 0 ? 0 : cumulativeNet.value / cumulativeIncome.value))
 const latestProfit = computed(() => storeProfitRows.value[0] || null)
+const inventoryReductionRows = computed(() => inventoryReductions.value?.rows || [])
 
 function gross(entry: ProfitEntry | null) {
   if (!entry) return 0
@@ -169,6 +179,7 @@ async function loadStoreDetail() {
     selectedMonth.value = resolvedMonth
     loadedDashboardScopeKey.value = dashboardScopeKey(resolvedMonth, storeId, brandId)
     applyDefaultStore()
+    await loadInventoryReductions()
     markFresh()
     return true
   } catch (loadError) {
@@ -178,6 +189,32 @@ async function loadStoreDetail() {
     return false
   } finally {
     if (requestId === storeDetailRequestId) loading.value = false
+  }
+}
+
+async function loadInventoryReductions() {
+  const storeId = selectedStore.value?.id
+  const requestId = ++inventoryReductionRequestId
+  if (!storeId) {
+    inventoryReductions.value = null
+    inventoryReductionError.value = ''
+    inventoryReductionLoading.value = false
+    return
+  }
+  inventoryReductionLoading.value = true
+  inventoryReductionError.value = ''
+  try {
+    const response = await getStoreInventoryReductions(storeId)
+    if (requestId !== inventoryReductionRequestId) return
+    inventoryReductions.value = response
+  } catch (loadError) {
+    if (requestId !== inventoryReductionRequestId) return
+    inventoryReductions.value = null
+    inventoryReductionError.value = loadError instanceof Error
+      ? loadError.message
+      : '库存减少记录加载失败'
+  } finally {
+    if (requestId === inventoryReductionRequestId) inventoryReductionLoading.value = false
   }
 }
 
@@ -252,6 +289,18 @@ function exportStoreCsv() {
   )
 }
 
+function inventoryQuantity(value: unknown) {
+  return new Intl.NumberFormat('zh-CN', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 4,
+  }).format(amount(value))
+}
+
+function inventoryMovementTime(value?: string) {
+  if (!value) return '-'
+  return value.replace('T', ' ').slice(0, 16)
+}
+
 watch(
   () => route.query.storeId,
   () => {
@@ -261,6 +310,12 @@ watch(
 
 watch(selectedBrandName, () => {
   applyDefaultStore()
+})
+
+watch(selectedStoreId, (storeId, previousStoreId) => {
+  if (storeId && storeId !== previousStoreId && !loading.value) {
+    void loadInventoryReductions()
+  }
 })
 
 function handleEscape(event: KeyboardEvent) {
@@ -391,6 +446,66 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
           <div><dt>开业日期</dt><dd :class="{ 'is-placeholder': !selectedStore.openDate }">{{ selectedStore.openDate || '待补充' }}</dd></div>
           <div><dt>门店状态</dt><dd><span class="status-badge" :class="statusTone(selectedStore.status)">{{ statusText(selectedStore.status) }}</span></dd></div>
         </dl>
+      </section>
+
+      <section class="content-card inventory-reduction-card" aria-label="库存减少记录">
+        <div class="inventory-reduction-heading">
+          <div class="detail-title">
+            <PackageMinus :size="19" />
+            <div>
+              <h3>库存减少记录</h3>
+              <p>{{ selectedStore.name }} · {{ inventoryReductions?.month || '本月' }}，按审核后的实际库存流水显示</p>
+            </div>
+          </div>
+          <div v-if="inventoryReductions" class="inventory-reduction-summary" aria-label="库存减少汇总">
+            <span><b>{{ inventoryReductions.movementCount }}</b> 笔减少</span>
+            <span><b>{{ inventoryReductions.itemCount }}</b> 种物料</span>
+          </div>
+        </div>
+
+        <div v-if="inventoryReductionLoading" class="empty-state compact">正在读取库存减少记录...</div>
+        <div v-else-if="inventoryReductionError" class="inventory-reduction-error" role="alert">
+          <span>{{ inventoryReductionError }}</span>
+          <button class="ghost-button" type="button" @click="loadInventoryReductions">重试</button>
+        </div>
+        <div v-else-if="!inventoryReductionRows.length" class="empty-state compact">
+          当前门店在本月没有库存减少记录。
+        </div>
+        <template v-else>
+          <div class="inventory-reduction-table-wrap">
+            <table class="inventory-reduction-table">
+              <thead>
+                <tr>
+                  <th>发生时间</th>
+                  <th>物料</th>
+                  <th class="r">减少数量</th>
+                  <th class="r">当前库存</th>
+                  <th>来源</th>
+                  <th>说明</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in inventoryReductionRows" :key="row.id">
+                  <td class="movement-time">{{ inventoryMovementTime(row.createdAt) }}</td>
+                  <td class="inventory-item-cell">
+                    <b>{{ row.itemName }}</b>
+                    <small>{{ row.itemCode }}</small>
+                  </td>
+                  <td class="r inventory-reduction-quantity">-{{ inventoryQuantity(row.quantityReduced) }} {{ row.unit }}</td>
+                  <td class="r">{{ inventoryQuantity(row.currentQuantity) }} {{ row.unit }}</td>
+                  <td><span class="inventory-source-badge">{{ row.sourceLabel }}</span></td>
+                  <td class="inventory-note-cell">
+                    <span>{{ row.note || '库存减少' }}</span>
+                    <small v-if="row.operatorName">操作人：{{ row.operatorName }}</small>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p v-if="inventoryReductions?.truncated" class="inventory-reduction-limit">
+            当前显示所选月份最近 100 笔库存减少记录。
+          </p>
+        </template>
       </section>
 
       <StoreLatestInspection :store-id="selectedStore.id" />
@@ -750,6 +865,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
 }
 
 .compact-profile-card,
+.inventory-reduction-card,
 .monthly-card {
   width: 100%;
   max-width: 100%;
@@ -805,6 +921,153 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
 .profile-grid dd.is-placeholder {
   color: var(--muted);
   font-weight: 500;
+}
+
+.inventory-reduction-heading {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.inventory-reduction-heading .detail-title {
+  min-width: 0;
+}
+
+.inventory-reduction-heading p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.inventory-reduction-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.inventory-reduction-summary span {
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f8fafc;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.inventory-reduction-summary b {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.inventory-reduction-error {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid #f2c7c7;
+  border-radius: 8px;
+  background: #fff7f7;
+  color: var(--bad);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.inventory-reduction-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  margin-top: 14px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+}
+
+.inventory-reduction-table {
+  width: 100%;
+  min-width: 850px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.inventory-reduction-table th,
+.inventory-reduction-table td {
+  padding: 11px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.inventory-reduction-table th {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.inventory-reduction-table .r {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.movement-time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.inventory-item-cell b,
+.inventory-item-cell small,
+.inventory-note-cell span,
+.inventory-note-cell small {
+  display: block;
+}
+
+.inventory-item-cell small,
+.inventory-note-cell small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.inventory-reduction-quantity {
+  color: var(--bad);
+  font-weight: 900;
+}
+
+.inventory-source-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #fff3e8;
+  color: #9a4c12;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.inventory-note-cell {
+  min-width: 180px;
+  overflow-wrap: anywhere;
+}
+
+.inventory-reduction-limit {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
 }
 
 .monthly-card .table-wrap {
@@ -870,6 +1133,15 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
 
   .store-filter-field--store {
     grid-column: 1 / -1;
+  }
+
+  .inventory-reduction-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .inventory-reduction-summary {
+    justify-content: flex-start;
   }
 }
 

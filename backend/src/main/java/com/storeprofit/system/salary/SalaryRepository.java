@@ -239,8 +239,19 @@ public class SalaryRepository {
       params.addValue("storeId", storeId.trim());
     }
     if (status != null && !status.isBlank()) {
-      sql.append(" and coalesce(sr.status, 'PENDING_GENERATION') = :status");
-      params.addValue("status", status.trim());
+      String normalizedStatus = status.trim().toUpperCase(java.util.Locale.ROOT);
+      switch (normalizedStatus) {
+        case "ACTIVE" ->
+            sql.append(" and coalesce(sr.status, 'PENDING_GENERATION') not in ('PAID', 'LOCKED')");
+        case "PENDING_REVIEW" ->
+            sql.append(" and sr.status in ('DRAFT', 'REJECTED', 'SUBMITTED', 'PENDING_REVIEW')");
+        case "PENDING_PAYMENT" ->
+            sql.append(" and sr.status = 'APPROVED'");
+        default -> {
+          sql.append(" and coalesce(sr.status, 'PENDING_GENERATION') = :status");
+          params.addValue("status", status.trim());
+        }
+      }
     }
     if (keyword != null && !keyword.isBlank()) {
       sql.append(" and (lower(e.name) like :keyword")
@@ -573,6 +584,73 @@ public class SalaryRepository {
     );
     return count != null && count > 0;
   }
+
+  /**
+   * Returns active stores inside the already-resolved salary data scope.
+   *
+   * <p>The generation service deliberately resolves the concrete store list before loading any
+   * employees. This keeps an "all stores" request tenant- and data-scope-bound, and also gives the
+   * service one stable list to use for preview, generation and operation logs.
+   */
+  public List<SalaryGenerationStoreRow> activeGenerationStores(
+      long tenantId,
+      DataScope dataScope
+  ) {
+    StringBuilder sql = new StringBuilder("""
+        select s.id as store_id, s.name as store_name
+          from store_branch s
+         where s.tenant_id = :tenantId
+           and upper(trim(coalesce(s.status, ''))) in ('', '营业中', '正常', 'ACTIVE')
+        """);
+    MapSqlParameterSource params = new MapSqlParameterSource("tenantId", tenantId);
+    appendStoreScope(sql, params, "s.id", dataScope);
+    sql.append(" order by s.code, s.id");
+    return namedJdbcTemplate.query(
+        sql.toString(),
+        params,
+        (rs, rowNum) -> new SalaryGenerationStoreRow(
+            rs.getString("store_id"),
+            rs.getString("store_name")
+        )
+    );
+  }
+
+  /**
+   * Loads month-specific manual payroll assignments for the tenant.
+   *
+   * <p>A {@code SALADD} draft/rejected row moves the employee's payroll ownership from their
+   * employee-file store to the assigned store for that month. The service still intersects the
+   * destination with its resolved active store scope before exposing or processing the employee.
+   * The database unique key on tenant/employee/month guarantees at most one such assignment per
+   * employee.
+   */
+  public List<SalaryEmployeeStoreAssignment> assignedEmployeeStores(
+      long tenantId,
+      String month
+  ) {
+    return namedJdbcTemplate.query("""
+        select sr.employee_id, sr.store_id
+          from salary_record sr
+         where sr.tenant_id = :tenantId
+           and sr.month = :month
+           and sr.id like 'SALADD-%'
+           and sr.employee_id is not null
+           and sr.status in ('DRAFT', 'REJECTED')
+         order by sr.employee_id, sr.id
+        """,
+        new MapSqlParameterSource()
+            .addValue("tenantId", tenantId)
+            .addValue("month", month),
+        (rs, rowNum) -> new SalaryEmployeeStoreAssignment(
+            rs.getString("employee_id"),
+            rs.getString("store_id")
+        )
+    );
+  }
+
+  public record SalaryGenerationStoreRow(String storeId, String storeName) {}
+
+  public record SalaryEmployeeStoreAssignment(String employeeId, String storeId) {}
 
   /**
    * 按工资数据范围返回每家门店的原始营业额和当前实发提成。

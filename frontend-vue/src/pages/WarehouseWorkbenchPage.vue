@@ -28,15 +28,13 @@ import type {
   WarehouseItemRequisitionScopeContext,
   WarehousePurchaseOrderCreatePayload,
   WarehousePurchaseOrderReceivePayload,
+  WarehouseRequisitionReviewAction,
   WarehouseTransferCreatePayload,
 } from '../api/warehouse'
 
 type WarehouseConfirmation =
   | { kind: 'reject-requisition'; id: string }
   | { kind: 'ship-requisition'; id: string }
-  | { kind: 'fulfill-available-requisition'; id: string }
-  | { kind: 'mark-backorder-requisition'; id: string }
-  | { kind: 'wait-replenishment-requisition'; id: string }
   | { kind: 'reject-return'; id: string }
   | { kind: 'receive-return'; id: string }
   | { kind: 'approve-transfer'; id: string }
@@ -155,30 +153,6 @@ const confirmationCopy = computed(() => {
         confirmLabel: '确认发货',
         confirmVariant: 'primary' as const,
         noteLabel: '',
-      }
-    case 'fulfill-available-requisition':
-      return {
-        title: '按可用库存发货',
-        message: '系统将重新校验并预占当前可用库存，只扣减实际发出数量，未发数量转为缺货待处理。',
-        confirmLabel: '确认部分发货',
-        confirmVariant: 'primary' as const,
-        noteLabel: '',
-      }
-    case 'mark-backorder-requisition':
-      return {
-        title: '标记缺货',
-        message: '本次不生成出库单，未发数量保留为缺货明细。',
-        confirmLabel: '确认标记缺货',
-        confirmVariant: 'primary' as const,
-        noteLabel: '缺货说明（选填）',
-      }
-    case 'wait-replenishment-requisition':
-      return {
-        title: '等待补货后再发',
-        message: '叫货单将保持待补货状态，库存补充后可继续按可用数量发货。',
-        confirmLabel: '转为待补货',
-        confirmVariant: 'primary' as const,
-        noteLabel: '补发说明（选填）',
       }
     case 'reject-return':
       return {
@@ -565,9 +539,9 @@ async function deleteCategory(id: number) {
   }
 }
 
-async function approveRequisition(id: string) {
+async function approveRequisition(action: WarehouseRequisitionReviewAction) {
   try {
-    await warehouse.approveRequisition(id)
+    await warehouse.approveRequisition(action.id, action.lines)
   } catch {
     // store 已保留业务错误提示。
   }
@@ -583,24 +557,6 @@ function shipRequisition(id: string) {
   if (confirmationBusy.value) return
   confirmationNote.value = ''
   pendingConfirmation.value = { kind: 'ship-requisition', id }
-}
-
-function fulfillAvailableRequisition(id: string) {
-  if (confirmationBusy.value) return
-  confirmationNote.value = ''
-  pendingConfirmation.value = { kind: 'fulfill-available-requisition', id }
-}
-
-function markBackorderRequisition(id: string) {
-  if (confirmationBusy.value) return
-  confirmationNote.value = '已标记缺货，待安排补货'
-  pendingConfirmation.value = { kind: 'mark-backorder-requisition', id }
-}
-
-function waitReplenishmentRequisition(id: string) {
-  if (confirmationBusy.value) return
-  confirmationNote.value = '等待补货后继续发货'
-  pendingConfirmation.value = { kind: 'wait-replenishment-requisition', id }
 }
 
 async function createPurchaseOrder(payload: Omit<WarehousePurchaseOrderCreatePayload, 'warehouseId'>) {
@@ -673,15 +629,6 @@ async function confirmWarehouseAction() {
         break
       case 'ship-requisition':
         await warehouse.shipRequisition(action.id)
-        break
-      case 'fulfill-available-requisition':
-        await warehouse.fulfillAvailableRequisition(action.id)
-        break
-      case 'mark-backorder-requisition':
-        await warehouse.markRequisitionBackordered(action.id, 'MARK_BACKORDER', confirmationNote.value)
-        break
-      case 'wait-replenishment-requisition':
-        await warehouse.markRequisitionBackordered(action.id, 'WAIT_REPLENISHMENT', confirmationNote.value)
         break
       case 'reject-return':
         await warehouse.reviewReturn(action.id, false, confirmationNote.value)
@@ -949,9 +896,6 @@ watch(
         :downloading-id="warehouse.downloadingId"
         :can-manage="canProcessRequisition"
         @approve="approveRequisition"
-        @fulfill-available="fulfillAvailableRequisition"
-        @mark-backorder="markBackorderRequisition"
-        @wait-replenishment="waitReplenishmentRequisition"
         @reject="rejectRequisition"
         @ship="shipRequisition"
         @download-delivery="downloadDelivery"

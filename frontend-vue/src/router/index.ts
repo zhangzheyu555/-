@@ -96,7 +96,17 @@ const appChildren: RouteRecordRaw[] = [
   { path: 'stores', name: 'stores', component: StoreManagementPage, meta: permissionMeta(PERMISSIONS.STORE_MANAGE, { menuKey: 'store-management', title: '门店管理', bossOnly: true }) },
   { path: 'staff', name: 'staff-profiles', component: StaffProfilePage, meta: permissionMeta(PERMISSIONS.EMPLOYEE_READ, { menuKey: 'staff-profiles', title: '员工档案' }) },
   { path: 'logs', name: 'logs', component: OperationLogPage, meta: permissionMeta(PERMISSIONS.SYSTEM_AUDIT_READ, { menuKey: 'operation-logs', title: '操作日志' }) },
-  { path: 'platform-login', name: 'platform-login', component: PlatformLoginPage, meta: permissionMeta(PERMISSIONS.PLATFORM_READ, { menuKey: 'platform-settings', title: '平台配置', allowedRoles: ['SUPERVISOR'] }) },
+  {
+    path: 'platform-login',
+    name: 'platform-login',
+    component: PlatformLoginPage,
+    meta: permissionMeta(PERMISSIONS.PLATFORM_READ, {
+      alternativePermissions: [PERMISSIONS.FINANCE_PROFIT_READ],
+      menuKey: 'platform-settings',
+      title: '平台配置',
+      allowedRoles: ['FINANCE', 'SUPERVISOR'],
+    }),
+  },
   { path: 'users', name: 'users', component: UserPermissionPage, meta: permissionMeta(PERMISSIONS.SYSTEM_USER_MANAGE, { menuKey: 'user-permissions', title: '账号权限' }) },
 
   { path: 'finance/salary', name: 'finance-salary', component: FinanceSalaryWorkspace, meta: permissionMeta(PERMISSIONS.SALARY_READ, { menuKey: 'finance-salary', title: '员工工资' }) },
@@ -343,15 +353,23 @@ router.beforeEach(async (to) => {
     }
   }
 
-  const requiredPermission = [...to.matched]
+  const permissionRecord = [...to.matched]
     .reverse()
-    .map((record) => record.meta.permission)
-    .find((permission): permission is string => typeof permission === 'string' && Boolean(permission))
+    .find((record) => typeof record.meta.permission === 'string' && Boolean(record.meta.permission))
+  const requiredPermission = typeof permissionRecord?.meta.permission === 'string'
+    ? permissionRecord.meta.permission
+    : undefined
+  const alternativePermissions = Array.isArray(permissionRecord?.meta.alternativePermissions)
+    ? permissionRecord.meta.alternativePermissions.filter(
+      (permission): permission is string => typeof permission === 'string' && Boolean(permission),
+    )
+    : []
   const roleOwnsDailyLoss = to.name === 'daily-loss'
     && ['STORE_MANAGER', 'SUPERVISOR'].includes(normalizeRoleCode(auth.role))
   const hasRequiredPermission = !requiredPermission
     || roleOwnsDailyLoss
     || auth.hasPermission(requiredPermission)
+    || alternativePermissions.some((permission) => auth.hasPermission(permission))
     || (
       requiredPermission === PERMISSIONS.WAREHOUSE_READ
       && auth.hasPermission(PERMISSIONS.WAREHOUSE_CENTRAL_READ)

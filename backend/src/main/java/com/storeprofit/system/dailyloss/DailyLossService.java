@@ -115,20 +115,37 @@ public class DailyLossService {
     DataScope scope = dailyLossScope(user);
     List<DailyLossRepository.ReportStoreRow> stores = repository.reportStores(
         user.tenantId(), targetStoreId, scope);
-    Map<String, DailyLossRepository.DailyLossReportRow> existing = new LinkedHashMap<>();
+    Map<String, List<DailyLossRepository.DailyLossReportRow>> existing = new LinkedHashMap<>();
     for (DailyLossRepository.DailyLossReportRow row : repository.reports(
         user.tenantId(), targetMonth, targetStoreId, scope)) {
-      existing.put(row.storeId() + "|" + row.lossDate(), row);
+      existing.computeIfAbsent(
+          row.storeId() + "|" + row.lossDate(),
+          ignored -> new java.util.ArrayList<>()).add(row);
     }
     return stores.stream()
         .flatMap(store -> visibleReportDays(targetMonth)
-            .map(day -> {
-              DailyLossRepository.DailyLossReportRow row = existing.get(store.id() + "|" + day);
-              return row == null ? missingReport(store, day) : reportResponse(user.tenantId(), row);
+            .flatMap(day -> {
+              List<DailyLossRepository.DailyLossReportRow> rows =
+                  existing.getOrDefault(store.id() + "|" + day, List.of());
+              if (rows.isEmpty()) {
+                return java.util.stream.Stream.of(missingReport(store, day));
+              }
+              return rows.stream().map(row -> reportResponse(user.tenantId(), row));
             }))
         .sorted((left, right) -> {
           int date = right.lossDate().compareTo(left.lossDate());
-          return date != 0 ? date : String.valueOf(left.storeCode()).compareTo(String.valueOf(right.storeCode()));
+          if (date != 0) return date;
+          int store = String.valueOf(left.storeCode()).compareTo(String.valueOf(right.storeCode()));
+          if (store != 0) return store;
+          if (left.submittedAt() != null && right.submittedAt() != null) {
+            int submitted = right.submittedAt().compareTo(left.submittedAt());
+            if (submitted != 0) return submitted;
+          } else if (left.submittedAt() == null && right.submittedAt() != null) {
+            return 1;
+          } else if (left.submittedAt() != null) {
+            return -1;
+          }
+          return String.valueOf(left.id()).compareTo(String.valueOf(right.id()));
         })
         .toList();
   }
@@ -210,18 +227,8 @@ public class DailyLossService {
     if (details.size() > 120) {
       throw badRequest("DAILY_LOSS_DETAILS_LIMIT", "单日报损明细不能超过120项");
     }
-    DailyLossRepository.DailyLossReportRow report = repository.findReportByStoreAndDate(
-        user.tenantId(), storeId, lossDate).orElse(null);
-    if (report != null && List.of("SUBMITTED", "REVIEWED").contains(normalizeStatus(report.status()))) {
-      throw new BusinessException("DAILY_LOSS_REPORT_LOCKED", "该日报损已提交或已复核，不能直接修改", HttpStatus.CONFLICT);
-    }
-    String reportId = report == null ? "DLR-" + UUID.randomUUID() : report.id();
-    if (report == null) {
-      repository.insertReport(user.tenantId(), reportId, storeId, lossDate, user.id());
-    } else {
-      repository.touchReportDraft(user.tenantId(), reportId);
-      repository.resetReportDetails(user.tenantId(), reportId);
-    }
+    String reportId = "DLR-" + UUID.randomUUID();
+    repository.insertReport(user.tenantId(), reportId, storeId, lossDate, user.id());
     BigDecimal totalAmount = ZERO;
     for (DailyLossReportLineRequest detail : details) {
       long configId = detail == null || detail.itemConfigId() == null ? 0L : detail.itemConfigId();
@@ -229,14 +236,8 @@ public class DailyLossService {
           .orElseThrow(() -> new BusinessException(
               "DAILY_LOSS_ITEM_NOT_FOUND", "报损品类不存在或已停用", HttpStatus.NOT_FOUND));
       BigDecimal quantity = positiveAmount(detail.lossQuantity(), "报损数量必须大于零");
-      BigDecimal quantityPerPricingUnit = item.quantityPerPricingUnit();
-      if (quantityPerPricingUnit == null || quantityPerPricingUnit.compareTo(BigDecimal.ZERO) <= 0) {
-        throw badRequest("DAILY_LOSS_PRICING_UNIT_INVALID", "该物料的计价折算配置不正确");
-      }
-      BigDecimal pricedQuantity = quantity.divide(quantityPerPricingUnit, 4, RoundingMode.HALF_UP);
-      BigDecimal unitPrice = item.unitPrice().setScale(4, RoundingMode.HALF_UP);
-      BigDecimal amount = pricedQuantity.multiply(unitPrice).setScale(2, RoundingMode.HALF_UP);
-      totalAmount = totalAmount.add(amount);
+      LossCalculation calculation = calculateLoss(item, detail.peelState(), quantity);
+      totalAmount = totalAmount.add(calculation.amount());
       String reason = normalizeOptionalText(detail.lossReason(), 500, "报损原因不能超过500个字符");
       repository.insertReportDetail(
           user.tenantId(),
@@ -246,9 +247,17 @@ public class DailyLossService {
           lossDate,
           item,
           quantity,
-          pricedQuantity,
-          unitPrice,
-          amount,
+          calculation.inputUnit(),
+          calculation.pricingUnit(),
+          calculation.quantityPerPricingUnit(),
+          calculation.pricedQuantity(),
+          calculation.unitPrice(),
+          calculation.amount(),
+          calculation.peelState(),
+          calculation.priceBasis(),
+          calculation.yieldRate(),
+          calculation.inventoryQuantity(),
+          calculation.inventoryUnit(),
           reason == null ? "日常报损" : reason,
           user.id());
     }
@@ -357,9 +366,11 @@ public class DailyLossService {
     List<DailyLossRepository.MonthlyExportDetailRow> details = repository.monthlyExportDetails(
         user.tenantId(), month, targetStoreId, scope);
     List<DailyLossItemResponse> configuredItems = repository.activeItems(user.tenantId());
-    Map<String, DailyLossRepository.DailyLossReportRow> reportsByStoreDay = new LinkedHashMap<>();
+    Map<String, List<DailyLossRepository.DailyLossReportRow>> reportsByStoreDay = new LinkedHashMap<>();
     for (DailyLossRepository.DailyLossReportRow report : reports) {
-      reportsByStoreDay.put(report.storeId() + "|" + report.lossDate(), report);
+      reportsByStoreDay.computeIfAbsent(
+          report.storeId() + "|" + report.lossDate(),
+          ignored -> new java.util.ArrayList<>()).add(report);
     }
     Map<String, List<DailyLossRepository.MonthlyExportDetailRow>> detailsByReport = new LinkedHashMap<>();
     for (DailyLossRepository.MonthlyExportDetailRow detail : details) {
@@ -619,13 +630,32 @@ public class DailyLossService {
 
   private String reportStatusLabel(String status) {
     return switch (status) {
-      case "DRAFT" -> "已报";
+      case "DRAFT" -> "未提交草稿";
       case "SUBMITTED" -> "待复核";
       case "REVIEWED", "APPROVED" -> "已复核";
       case "REJECTED" -> "已驳回";
       case "NOT_REPORTED" -> "未报";
       default -> "处理中";
     };
+  }
+
+  private String dailyReportStatusLabel(List<DailyLossRepository.DailyLossReportRow> reports) {
+    if (reports == null || reports.isEmpty()) return "未报";
+    long pending = reports.stream()
+        .filter(report -> "SUBMITTED".equals(normalizeStatus(report.status())))
+        .count();
+    long reviewed = reports.stream()
+        .filter(report -> List.of("REVIEWED", "APPROVED").contains(normalizeStatus(report.status())))
+        .count();
+    long rejected = reports.stream()
+        .filter(report -> "REJECTED".equals(normalizeStatus(report.status())))
+        .count();
+    List<String> statusParts = new java.util.ArrayList<>();
+    if (pending > 0) statusParts.add("待复核" + pending);
+    if (reviewed > 0) statusParts.add("已复核" + reviewed);
+    if (rejected > 0) statusParts.add("已驳回" + rejected);
+    String detail = statusParts.isEmpty() ? "" : "（" + String.join("，", statusParts) + "）";
+    return "已报" + reports.size() + "次" + detail;
   }
 
   private void uploadReportFiles(AuthUser user, String reportId, String storeId, List<MultipartFile> files) {
@@ -656,7 +686,7 @@ public class DailyLossService {
   private byte[] buildMonthlyExcel(
       YearMonth month,
       List<DailyLossRepository.ReportStoreRow> stores,
-      Map<String, DailyLossRepository.DailyLossReportRow> reportsByStoreDay,
+      Map<String, List<DailyLossRepository.DailyLossReportRow>> reportsByStoreDay,
       List<DailyLossRepository.MonthlyExportDetailRow> details,
       Map<String, List<DailyLossRepository.MonthlyExportDetailRow>> detailsByReport,
       List<DailyLossItemResponse> configuredItems
@@ -665,13 +695,14 @@ public class DailyLossService {
       ByteArrayOutputStream output = new ByteArrayOutputStream();
       try (Workbook workbook = new XSSFWorkbook()) {
         ExcelStyles styles = new ExcelStyles(workbook);
-        buildMonthlyMatrixSheet(workbook, month, stores, reportsByStoreDay, details, configuredItems, styles);
+        buildMonthlyMatrixSheet(workbook, month, stores, details, configuredItems, styles);
         Sheet summary = workbook.createSheet("每日汇总");
         Sheet detail = workbook.createSheet("报损明细");
         String[] summaryHeaders = {"日期", "门店编码", "门店名称", "报损品类数", "报损总数量", "报损总金额",
             "上报状态", "提交人", "提交时间", "复核人", "复核时间", "复核意见"};
         String[] detailHeaders = {"日期", "门店编码", "门店名称", "物料编码", "物料名称", "品类",
-            "报损数量", "录入单位", "折算量", "计价单位", "计价数量", "计价单价", "报损金额",
+            "形态", "计价口径", "报损数量", "录入单位", "折算量", "计价单位", "计价数量",
+            "计价单价", "报损金额", "出肉率", "库存扣减量", "库存单位",
             "报损原因", "上报状态", "提交人", "提交时间", "复核人", "复核时间", "复核意见"};
         writeHeader(summary, summaryHeaders, styles.header());
         writeHeader(detail, detailHeaders, styles.header());
@@ -679,10 +710,13 @@ public class DailyLossService {
         int summaryRowIndex = 1;
         for (DailyLossRepository.ReportStoreRow store : stores) {
           for (LocalDate day = month.atDay(1); !day.isAfter(month.atEndOfMonth()); day = day.plusDays(1)) {
-            DailyLossRepository.DailyLossReportRow report = reportsByStoreDay.get(store.id() + "|" + day);
-            List<DailyLossRepository.MonthlyExportDetailRow> reportDetails = report == null
-                ? List.of()
-                : detailsByReport.getOrDefault(report.id(), List.of());
+            List<DailyLossRepository.DailyLossReportRow> dayReports =
+                reportsByStoreDay.getOrDefault(store.id() + "|" + day, List.of());
+            DailyLossRepository.DailyLossReportRow latestReport =
+                dayReports.isEmpty() ? null : dayReports.get(0);
+            List<DailyLossRepository.MonthlyExportDetailRow> reportDetails = dayReports.stream()
+                .flatMap(report -> detailsByReport.getOrDefault(report.id(), List.of()).stream())
+                .toList();
             BigDecimal quantity = reportDetails.stream().map(DailyLossRepository.MonthlyExportDetailRow::lossQuantity)
                 .filter(java.util.Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
             BigDecimal amount = reportDetails.stream().map(DailyLossRepository.MonthlyExportDetailRow::amount)
@@ -694,12 +728,12 @@ public class DailyLossService {
             writeNumber(row, 3, BigDecimal.valueOf(reportDetails.size()), styles.integer());
             writeNumber(row, 4, quantity, styles.quantity());
             writeNumber(row, 5, amount, styles.amount());
-            writeText(row, 6, report == null ? "未报" : reportStatusLabel(normalizeStatus(report.status())), styles.text());
-            writeText(row, 7, report == null ? null : report.submittedByName(), styles.text());
-            writeDateTime(row, 8, report == null ? null : report.submittedAt(), styles.dateTime());
-            writeText(row, 9, report == null ? null : report.reviewedByName(), styles.text());
-            writeDateTime(row, 10, report == null ? null : report.reviewedAt(), styles.dateTime());
-            writeText(row, 11, report == null ? null : report.reviewNote(), styles.text());
+            writeText(row, 6, dailyReportStatusLabel(dayReports), styles.text());
+            writeText(row, 7, latestReport == null ? null : latestReport.submittedByName(), styles.text());
+            writeDateTime(row, 8, latestReport == null ? null : latestReport.submittedAt(), styles.dateTime());
+            writeText(row, 9, latestReport == null ? null : latestReport.reviewedByName(), styles.text());
+            writeDateTime(row, 10, latestReport == null ? null : latestReport.reviewedAt(), styles.dateTime());
+            writeText(row, 11, latestReport == null ? null : latestReport.reviewNote(), styles.text());
           }
         }
 
@@ -712,25 +746,31 @@ public class DailyLossService {
           writeText(row, 3, item.itemCode(), styles.text());
           writeText(row, 4, item.itemName(), styles.text());
           writeText(row, 5, item.category(), styles.text());
-          writeNumber(row, 6, item.lossQuantity(), styles.quantity());
-          writeText(row, 7, item.unit(), styles.text());
-          writeNumber(row, 8, item.quantityPerPricingUnit(), styles.quantity());
-          writeText(row, 9, item.pricingUnit(), styles.text());
-          writeNumber(row, 10, item.pricedQuantity(), styles.quantity());
-          writeNumber(row, 11, item.unitPrice(), styles.unitPrice());
-          writeNumber(row, 12, item.amount(), styles.amount());
-          writeText(row, 13, item.lossReason(), styles.text());
-          writeText(row, 14, reportStatusLabel(normalizeStatus(item.status())), styles.text());
-          writeText(row, 15, item.submittedByName(), styles.text());
-          writeDateTime(row, 16, item.submittedAt(), styles.dateTime());
-          writeText(row, 17, item.reviewedByName(), styles.text());
-          writeDateTime(row, 18, item.reviewedAt(), styles.dateTime());
-          writeText(row, 19, item.reviewNote(), styles.text());
+          writeText(row, 6, peelStateLabel(item.peelState()), styles.text());
+          writeText(row, 7, priceBasisLabel(item.priceBasis()), styles.text());
+          writeNumber(row, 8, item.lossQuantity(), styles.quantity());
+          writeText(row, 9, item.unit(), styles.text());
+          writeNumber(row, 10, item.quantityPerPricingUnit(), styles.quantity());
+          writeText(row, 11, item.pricingUnit(), styles.text());
+          writeNumber(row, 12, item.pricedQuantity(), styles.quantity());
+          writeNumber(row, 13, item.unitPrice(), styles.unitPrice());
+          writeNumber(row, 14, item.amount(), styles.amount());
+          writeNumber(row, 15, item.yieldRate(), styles.quantity());
+          writeNumber(row, 16, item.inventoryQuantity(), styles.quantity());
+          writeText(row, 17, item.inventoryUnit(), styles.text());
+          writeText(row, 18, item.lossReason(), styles.text());
+          writeText(row, 19, reportStatusLabel(normalizeStatus(item.status())), styles.text());
+          writeText(row, 20, item.submittedByName(), styles.text());
+          writeDateTime(row, 21, item.submittedAt(), styles.dateTime());
+          writeText(row, 22, item.reviewedByName(), styles.text());
+          writeDateTime(row, 23, item.reviewedAt(), styles.dateTime());
+          writeText(row, 24, item.reviewNote(), styles.text());
         }
         configureSheet(summary, summaryRowIndex - 1,
             new int[]{13, 14, 22, 13, 15, 15, 15, 15, 13, 16, 20, 16, 20, 32});
         configureSheet(detail, detailRowIndex - 1,
-            new int[]{13, 14, 22, 18, 24, 18, 15, 10, 12, 10, 14, 14, 15, 30, 13, 16, 20, 16, 20, 32});
+            new int[]{13, 14, 22, 18, 24, 18, 10, 12, 15, 10, 12, 10, 14, 14, 15, 12, 15, 10,
+                30, 13, 16, 20, 16, 20, 32});
         workbook.write(output);
       }
       return output.toByteArray();
@@ -744,7 +784,6 @@ public class DailyLossService {
       Workbook workbook,
       YearMonth month,
       List<DailyLossRepository.ReportStoreRow> stores,
-      Map<String, DailyLossRepository.DailyLossReportRow> reportsByStoreDay,
       List<DailyLossRepository.MonthlyExportDetailRow> details,
       List<DailyLossItemResponse> configuredItems,
       ExcelStyles styles
@@ -752,13 +791,19 @@ public class DailyLossService {
     Sheet sheet = workbook.createSheet(month.getMonthValue() + "月份");
     LinkedHashMap<String, MatrixItem> items = new LinkedHashMap<>();
     for (DailyLossItemResponse item : configuredItems) {
-      items.put(item.itemCode(), new MatrixItem(
-          item.itemCode(), item.itemName(), item.unit(), item.pricingUnit(),
-          item.quantityPerPricingUnit(), item.unitPrice()));
+      if (item.peelSelectionEnabled()) {
+        addConfiguredMatrixItem(items, item, "PEELED");
+        addConfiguredMatrixItem(items, item, "UNPEELED");
+      } else {
+        items.put(item.itemCode(), new MatrixItem(
+            item.itemCode(), item.itemName(), item.unit(), item.pricingUnit(),
+            item.quantityPerPricingUnit(), item.unitPrice()));
+      }
     }
     for (DailyLossRepository.MonthlyExportDetailRow item : details) {
-      items.putIfAbsent(item.itemCode(), new MatrixItem(
-          item.itemCode(), item.itemName(), item.unit(), item.pricingUnit(),
+      String key = matrixItemKey(item.itemCode(), item.peelState());
+      items.putIfAbsent(key, new MatrixItem(
+          key, matrixItemName(item.itemName(), item.peelState()), item.unit(), item.pricingUnit(),
           item.quantityPerPricingUnit(), item.unitPrice()));
     }
     List<MatrixItem> columns = List.copyOf(items.values());
@@ -785,12 +830,13 @@ public class DailyLossService {
     Map<String, BigDecimal> pricedByItem = new LinkedHashMap<>();
     Map<String, BigDecimal> amountByItem = new LinkedHashMap<>();
     for (DailyLossRepository.MonthlyExportDetailRow detail : details) {
+      String itemKey = matrixItemKey(detail.itemCode(), detail.peelState());
       rawByStore.computeIfAbsent(detail.storeId(), ignored -> new LinkedHashMap<>())
-          .merge(detail.itemCode(), nullSafe(detail.lossQuantity()), BigDecimal::add);
+          .merge(itemKey, nullSafe(detail.lossQuantity()), BigDecimal::add);
       amountByStore.merge(detail.storeId(), nullSafe(detail.amount()), BigDecimal::add);
-      rawByItem.merge(detail.itemCode(), nullSafe(detail.lossQuantity()), BigDecimal::add);
-      pricedByItem.merge(detail.itemCode(), nullSafe(detail.pricedQuantity()), BigDecimal::add);
-      amountByItem.merge(detail.itemCode(), nullSafe(detail.amount()), BigDecimal::add);
+      rawByItem.merge(itemKey, nullSafe(detail.lossQuantity()), BigDecimal::add);
+      pricedByItem.merge(itemKey, nullSafe(detail.pricedQuantity()), BigDecimal::add);
+      amountByItem.merge(itemKey, nullSafe(detail.amount()), BigDecimal::add);
     }
 
     int rowIndex = 2;
@@ -836,6 +882,59 @@ public class DailyLossService {
 
   private BigDecimal nullSafe(BigDecimal value) {
     return value == null ? BigDecimal.ZERO : value;
+  }
+
+  private void addConfiguredMatrixItem(
+      Map<String, MatrixItem> items,
+      DailyLossItemResponse item,
+      String peelState
+  ) {
+    boolean peeled = "PEELED".equals(peelState);
+    String inputUnit = peeled
+        ? (item.peeledUnit() == null ? "克" : item.peeledUnit())
+        : (item.unpeeledUnit() == null ? "克" : item.unpeeledUnit());
+    String pricingUnit = peeled ? item.peeledPricingUnit() : item.unpeeledPricingUnit();
+    BigDecimal factor = peeled ? item.peeledQuantityPerPricingUnit() : item.unpeeledQuantityPerPricingUnit();
+    BigDecimal price = peeled ? item.peeledUnitPrice() : item.unpeeledUnitPrice();
+    if (price == null) {
+      pricingUnit = peeled ? item.unpeeledPricingUnit() : item.peeledPricingUnit();
+      factor = peeled ? item.unpeeledQuantityPerPricingUnit() : item.peeledQuantityPerPricingUnit();
+      price = peeled ? item.unpeeledUnitPrice() : item.peeledUnitPrice();
+    }
+    String key = matrixItemKey(item.itemCode(), peelState);
+    items.put(key, new MatrixItem(
+        key,
+        matrixItemName(item.itemName(), peelState),
+        inputUnit,
+        pricingUnit == null ? inputUnit : pricingUnit,
+        factor == null ? BigDecimal.ONE : factor,
+        price == null ? BigDecimal.ZERO : price));
+  }
+
+  private String matrixItemKey(String itemCode, String peelState) {
+    return peelState == null || peelState.isBlank() ? itemCode : itemCode + "|" + peelState;
+  }
+
+  private String matrixItemName(String itemName, String peelState) {
+    String label = peelStateLabel(peelState);
+    return label.isBlank() ? itemName : itemName + "（" + label + "）";
+  }
+
+  private String peelStateLabel(String peelState) {
+    return switch (peelState == null ? "" : peelState) {
+      case "PEELED" -> "去皮";
+      case "UNPEELED" -> "不去皮";
+      default -> "";
+    };
+  }
+
+  private String priceBasisLabel(String priceBasis) {
+    return switch (priceBasis == null ? "" : priceBasis) {
+      case "PEELED" -> "去皮单价";
+      case "UNPEELED" -> "不去皮单价";
+      case "STANDARD" -> "标准单价";
+      default -> "";
+    };
   }
 
   private void writeHeader(Sheet sheet, String[] headers, CellStyle headerStyle) {
@@ -998,6 +1097,207 @@ public class DailyLossService {
 
   private record MatrixItem(String code, String name, String inputUnit, String pricingUnit,
                             BigDecimal quantityPerPricingUnit, BigDecimal unitPrice) {}
+
+  private record PricingSource(
+      String unit,
+      String pricingUnit,
+      BigDecimal quantityPerPricingUnit,
+      BigDecimal unitPrice
+  ) {}
+
+  private record LossCalculation(
+      String inputUnit,
+      String pricingUnit,
+      BigDecimal quantityPerPricingUnit,
+      BigDecimal pricedQuantity,
+      BigDecimal unitPrice,
+      BigDecimal amount,
+      String peelState,
+      String priceBasis,
+      BigDecimal yieldRate,
+      BigDecimal inventoryQuantity,
+      String inventoryUnit
+  ) {}
+
+  private LossCalculation calculateLoss(
+      DailyLossRepository.LossItemConfigRow item,
+      String requestedPeelState,
+      BigDecimal quantity
+  ) {
+    if (!item.peelSelectionEnabled()) {
+      PricingSource source = pricingSource(
+          item.unit(), item.pricingUnit(), item.quantityPerPricingUnit(), item.unitPrice());
+      return finishLossCalculation(
+          item.unit(), source, quantity, null, "STANDARD", null, quantity, item.unit());
+    }
+
+    String peelState = normalizePeelState(requestedPeelState, item.defaultPeelState());
+    BigDecimal yieldRate = item.yieldRate();
+    BigDecimal grossGramsPerUnit = item.grossGramsPerUnit();
+    PricingSource peeledSource = item.peeledItemConfigId() == null ? null : pricingSource(
+        item.peeledUnit(), item.peeledPricingUnit(),
+        item.peeledQuantityPerPricingUnit(), item.peeledUnitPrice());
+    PricingSource unpeeledSource = item.unpeeledItemConfigId() == null ? null : pricingSource(
+        item.unpeeledUnit(), item.unpeeledPricingUnit(),
+        item.unpeeledQuantityPerPricingUnit(), item.unpeeledUnitPrice());
+
+    String inputUnit;
+    PricingSource priceSource;
+    BigDecimal sourceQuantity;
+    String priceBasis;
+    BigDecimal rawGrams;
+    if ("PEELED".equals(peelState)) {
+      inputUnit = peeledSource == null ? "克" : peeledSource.unit();
+      BigDecimal peeledGrams = toGrams(quantity, inputUnit, grossGramsPerUnit);
+      rawGrams = yieldRate == null
+          ? peeledGrams
+          : peeledGrams.divide(yieldRate, 8, RoundingMode.HALF_UP);
+      if (peeledSource != null) {
+        priceSource = peeledSource;
+        sourceQuantity = quantity;
+        priceBasis = "PEELED";
+      } else {
+        requireYieldRate(item.itemName(), yieldRate);
+        if (unpeeledSource == null) {
+          throw badRequest("DAILY_LOSS_PRICE_NOT_CONFIGURED", "该品类未配置不去皮损耗单价");
+        }
+        priceSource = unpeeledSource;
+        sourceQuantity = fromGrams(rawGrams, unpeeledSource.unit(), grossGramsPerUnit);
+        priceBasis = "UNPEELED";
+      }
+    } else {
+      inputUnit = unpeeledSource == null ? "克" : unpeeledSource.unit();
+      rawGrams = toGrams(quantity, inputUnit, grossGramsPerUnit);
+      if (unpeeledSource != null) {
+        priceSource = unpeeledSource;
+        sourceQuantity = quantity;
+        priceBasis = "UNPEELED";
+      } else {
+        requireYieldRate(item.itemName(), yieldRate);
+        if (peeledSource == null) {
+          throw badRequest("DAILY_LOSS_PRICE_NOT_CONFIGURED", "该品类未配置去皮损耗单价");
+        }
+        priceSource = peeledSource;
+        BigDecimal peeledGrams = rawGrams.multiply(yieldRate).setScale(8, RoundingMode.HALF_UP);
+        sourceQuantity = fromGrams(peeledGrams, peeledSource.unit(), grossGramsPerUnit);
+        priceBasis = "PEELED";
+      }
+    }
+
+    String inventoryUnit = requiredCalculationUnit(item.inventoryUnit(), "库存单位");
+    BigDecimal inventoryQuantity = fromGrams(rawGrams, inventoryUnit, grossGramsPerUnit)
+        .setScale(4, RoundingMode.HALF_UP);
+    return finishLossCalculation(
+        inputUnit, priceSource, sourceQuantity, peelState, priceBasis,
+        yieldRate, inventoryQuantity, inventoryUnit);
+  }
+
+  private LossCalculation finishLossCalculation(
+      String inputUnit,
+      PricingSource source,
+      BigDecimal sourceQuantity,
+      String peelState,
+      String priceBasis,
+      BigDecimal yieldRate,
+      BigDecimal inventoryQuantity,
+      String inventoryUnit
+  ) {
+    BigDecimal pricedQuantity = sourceQuantity.divide(
+        source.quantityPerPricingUnit(), 4, RoundingMode.HALF_UP);
+    BigDecimal unitPrice = source.unitPrice().setScale(4, RoundingMode.HALF_UP);
+    BigDecimal amount = pricedQuantity.multiply(unitPrice).setScale(2, RoundingMode.HALF_UP);
+    return new LossCalculation(
+        requiredCalculationUnit(inputUnit, "录入单位"),
+        requiredCalculationUnit(source.pricingUnit(), "计价单位"),
+        source.quantityPerPricingUnit().setScale(4, RoundingMode.HALF_UP),
+        pricedQuantity,
+        unitPrice,
+        amount,
+        peelState,
+        priceBasis,
+        yieldRate,
+        inventoryQuantity.setScale(4, RoundingMode.HALF_UP),
+        requiredCalculationUnit(inventoryUnit, "库存单位"));
+  }
+
+  private PricingSource pricingSource(
+      String unit,
+      String pricingUnit,
+      BigDecimal quantityPerPricingUnit,
+      BigDecimal unitPrice
+  ) {
+    if (quantityPerPricingUnit == null || quantityPerPricingUnit.compareTo(BigDecimal.ZERO) <= 0) {
+      throw badRequest("DAILY_LOSS_PRICING_UNIT_INVALID", "该物料的计价折算配置不正确");
+    }
+    if (unitPrice == null || unitPrice.compareTo(BigDecimal.ZERO) < 0) {
+      throw badRequest("DAILY_LOSS_PRICE_INVALID", "该物料的损耗单价配置不正确");
+    }
+    return new PricingSource(
+        requiredCalculationUnit(unit, "录入单位"),
+        requiredCalculationUnit(pricingUnit, "计价单位"),
+        quantityPerPricingUnit,
+        unitPrice);
+  }
+
+  private String normalizePeelState(String value, String defaultValue) {
+    String normalized = blankToNull(value);
+    if (normalized == null) normalized = blankToNull(defaultValue);
+    normalized = normalized == null ? null : normalized.toUpperCase(Locale.ROOT);
+    if (!List.of("PEELED", "UNPEELED").contains(normalized)) {
+      throw badRequest("DAILY_LOSS_PEEL_STATE_INVALID", "请选择去皮或不去皮");
+    }
+    return normalized;
+  }
+
+  private void requireYieldRate(String itemName, BigDecimal yieldRate) {
+    if (yieldRate == null || yieldRate.compareTo(BigDecimal.ZERO) <= 0
+        || yieldRate.compareTo(BigDecimal.ONE) > 0) {
+      throw badRequest(
+          "DAILY_LOSS_YIELD_RATE_REQUIRED",
+          "“" + itemName + "”缺少出肉率，不能跨去皮状态换算");
+    }
+  }
+
+  private BigDecimal toGrams(BigDecimal quantity, String unit, BigDecimal grossGramsPerUnit) {
+    String normalizedUnit = requiredCalculationUnit(unit, "录入单位");
+    return switch (normalizedUnit) {
+      case "克", "g", "G" -> quantity;
+      case "斤" -> quantity.multiply(new BigDecimal("500"));
+      case "个" -> quantity.multiply(requiredGrossGrams(grossGramsPerUnit));
+      default -> throw badRequest(
+          "DAILY_LOSS_WEIGHT_UNIT_UNSUPPORTED",
+          "暂不支持按“" + normalizedUnit + "”进行去皮换算");
+    };
+  }
+
+  private BigDecimal fromGrams(BigDecimal grams, String unit, BigDecimal grossGramsPerUnit) {
+    String normalizedUnit = requiredCalculationUnit(unit, "换算单位");
+    return switch (normalizedUnit) {
+      case "克", "g", "G" -> grams;
+      case "斤" -> grams.divide(new BigDecimal("500"), 8, RoundingMode.HALF_UP);
+      case "个" -> grams.divide(requiredGrossGrams(grossGramsPerUnit), 8, RoundingMode.HALF_UP);
+      default -> throw badRequest(
+          "DAILY_LOSS_WEIGHT_UNIT_UNSUPPORTED",
+          "暂不支持换算为“" + normalizedUnit + "”");
+    };
+  }
+
+  private BigDecimal requiredGrossGrams(BigDecimal value) {
+    if (value == null || value.compareTo(BigDecimal.ZERO) <= 0) {
+      throw badRequest(
+          "DAILY_LOSS_GROSS_WEIGHT_REQUIRED",
+          "按个计价的水果缺少单个毛重，不能完成去皮换算");
+    }
+    return value;
+  }
+
+  private String requiredCalculationUnit(String value, String label) {
+    String normalized = blankToNull(value);
+    if (normalized == null) {
+      throw badRequest("DAILY_LOSS_UNIT_REQUIRED", label + "未配置");
+    }
+    return normalized;
+  }
 
   private DailyLossRepository.DailyLossRow requiredRecord(long tenantId, String id) {
     String normalizedId = requiredText(id, "报损单编号不正确");

@@ -112,7 +112,8 @@ async function prepareReadonlyPage(page: Page) {
   await page.route(/^https?:\/\/[^/]+\/api\//, async (route) => {
     const request = route.request()
     const url = new URL(request.url())
-    if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method())) {
+    const isReadonlySalaryPreview = request.method() === 'POST' && url.pathname === '/api/salaries/preview'
+    if (!isReadonlySalaryPreview && !['GET', 'HEAD', 'OPTIONS'].includes(request.method())) {
       blockedWrites.push(`${request.method()} ${url.pathname}`)
       await route.abort('blockedbyclient')
       return
@@ -143,7 +144,17 @@ async function fulfillReadonlyApi(route: Route, path: string) {
   }
   if (path === '/api/salaries') return route.fulfill(ok([salaryRecord]))
   if (path === '/api/salaries/preview') {
-    return route.fulfill(ok({ generated: 1, skipped: 0, errors: 0, skipDetails: [] }))
+    return route.fulfill(ok({
+      generated: 1,
+      skipped: 0,
+      errors: 0,
+      skipDetails: [],
+      candidates: [{
+        employeeId: salaryRecord.employeeId,
+        employeeName: salaryRecord.employeeName,
+        position: salaryRecord.position,
+      }],
+    }))
   }
   if (path === '/api/warehouse/overview') {
     return route.fulfill(ok({
@@ -277,7 +288,7 @@ test('工资生成预览使用统一关闭按钮且不会执行工资生成', as
   const blockedWrites = await prepareReadonlyPage(page)
   await page.goto('/finance/salary?storeId=rg1&month=2026-07')
 
-  await page.getByRole('button', { name: '生成本月工资' }).click()
+  await page.getByRole('button', { name: '全选并生成' }).click()
   const dialog = page.getByRole('dialog', { name: '工资生成预览' })
   await expect(dialog).toBeVisible()
   await expect(dialog).toContainText('可生成 1 人')
@@ -295,7 +306,7 @@ test('工资批量审核使用正式确认框，取消按钮保持单行且不�
   const blockedWrites = await prepareReadonlyPage(page)
   await page.goto('/finance/salary?storeId=rg1&month=2026-07')
 
-  await page.getByRole('checkbox', { name: '选择测试员工' }).check()
+  await page.getByRole('checkbox', { name: '选择测试员工审核工资' }).check()
   await page.getByRole('button', { name: '批量审核' }).click()
 
   const confirmation = page.getByRole('alertdialog', { name: '批量审核工资' })

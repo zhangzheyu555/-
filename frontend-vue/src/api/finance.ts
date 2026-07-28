@@ -211,12 +211,29 @@ export interface SalaryGenerateReport {
   skipped: number
   errors: number
   skipDetails: SalarySkipDetail[]
+  candidates: SalaryGenerationCandidate[]
 }
 
 export interface SalarySkipDetail {
   employeeId: string
   employeeName: string
   reason: string
+  storeId?: string
+  storeName?: string
+}
+
+export interface SalaryGenerationCandidate {
+  employeeId: string
+  employeeName: string
+  position?: string
+  storeId?: string
+  storeName?: string
+}
+
+export interface SalaryGenerateRequest {
+  storeId?: string
+  month: string
+  employeeIds?: string[]
 }
 
 export interface SalaryPageResponse {
@@ -496,8 +513,8 @@ export function rejectSalaryRecord(id: string, note?: string) {
   return apiPost<SalaryRecord, { note?: string }>(`/api/salaries/${encodeURIComponent(id)}/reject`, { note })
 }
 
-export function generateSalaryRecords(payload: { storeId: string; month: string }) {
-  return apiPost<SalaryRecord[], { storeId: string; month: string }>('/api/salaries/generate', payload)
+export function generateSalaryRecords(payload: SalaryGenerateRequest) {
+  return apiPost<SalaryRecord[], SalaryGenerateRequest>('/api/salaries/generate', payload)
 }
 
 export function deleteSalaryRecord(id: string) {
@@ -550,12 +567,12 @@ export function assignSalaryEmployee(payload: { storeId: string; month: string; 
   )
 }
 
-export function previewSalaryGeneration(storeId: string, month: string) {
-  return apiGet<SalaryGenerateReport>(`/api/salaries/preview?storeId=${encodeURIComponent(storeId)}&month=${encodeURIComponent(month)}`)
+export function previewSalaryGeneration(payload: SalaryGenerateRequest) {
+  return apiPost<SalaryGenerateReport, SalaryGenerateRequest>('/api/salaries/preview', payload)
 }
 
-export function generateSalaryWithReport(payload: { storeId: string; month: string }) {
-  return apiPost<SalaryGenerateReport, { storeId: string; month: string }>('/api/salaries/generate-report', payload)
+export function generateSalaryWithReport(payload: SalaryGenerateRequest) {
+  return apiPost<SalaryGenerateReport, SalaryGenerateRequest>('/api/salaries/generate-report', payload)
 }
 
 export interface SalaryAttendancePayload {

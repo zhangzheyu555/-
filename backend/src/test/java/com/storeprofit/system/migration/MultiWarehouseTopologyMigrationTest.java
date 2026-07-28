@@ -16,6 +16,64 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 class MultiWarehouseTopologyMigrationTest {
   @Test
+  void negativeWarehouseStockIsAllowedOnlyAfterDedicatedConstraintMigration() {
+    DataSource dataSource = dataSource("negative-stock");
+    migrateTo(dataSource, "116.20260728134500001");
+    JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+    long warehouseId = jdbc.queryForObject("""
+        select id from warehouse_facility
+        where tenant_id = 1 and code = 'JZ-CENTRAL'
+        """, Long.class);
+    jdbc.update("""
+        insert into warehouse_item(
+          tenant_id, code, name, unit, unit_price, active, created_at
+        ) values (1, 'NEGATIVE-STOCK-TEST', '负库存测试物料', '件', 1, 1, current_timestamp)
+        """);
+    long itemId = jdbc.queryForObject("""
+        select id from warehouse_item
+        where tenant_id = 1 and code = 'NEGATIVE-STOCK-TEST'
+        """, Long.class);
+
+    assertThatThrownBy(() -> jdbc.update("""
+        insert into warehouse_stock_batch(
+          tenant_id, warehouse_id, item_id, batch_no, received_date,
+          quantity, reserved_quantity, version, unit_cost, created_at
+        ) values (1, ?, ?, 'NEGATIVE-STOCK', current_date, -2, 0, 0, 1, current_timestamp)
+        """, warehouseId, itemId)).isInstanceOf(DataAccessException.class);
+
+    var migrated = migrateTo(dataSource, "117.20260728143000001");
+    assertThat(migrated.success).isTrue();
+    assertThat(migrated.targetSchemaVersion).isEqualTo("117.20260728143000001");
+
+    jdbc.update("""
+        insert into warehouse_stock_batch(
+          tenant_id, warehouse_id, item_id, batch_no, received_date,
+          quantity, reserved_quantity, version, unit_cost, created_at
+        ) values (1, ?, ?, 'NEGATIVE-STOCK', current_date, -2, 0, 0, 1, current_timestamp)
+        """, warehouseId, itemId);
+    jdbc.update("""
+        insert into warehouse_inventory(
+          tenant_id, warehouse_id, item_id, on_hand_quantity, reserved_quantity,
+          in_transit_quantity, unit_cost, min_stock_quantity, alert_enabled,
+          expiry_alert_days, version, created_at
+        ) values (1, ?, ?, -2, 0, 0, 1, 0, true, 3, 0, current_timestamp)
+        """, warehouseId, itemId);
+
+    assertThat(jdbc.queryForObject("""
+        select quantity from warehouse_stock_batch
+        where tenant_id = 1 and warehouse_id = ? and item_id = ?
+        """, BigDecimal.class, warehouseId, itemId)).isEqualByComparingTo("-2.00");
+    assertThat(jdbc.queryForObject("""
+        select on_hand_quantity from warehouse_inventory
+        where tenant_id = 1 and warehouse_id = ? and item_id = ?
+        """, BigDecimal.class, warehouseId, itemId)).isEqualByComparingTo("-2.00");
+    assertThatThrownBy(() -> jdbc.update("""
+        update warehouse_stock_batch set reserved_quantity = 1
+        where tenant_id = 1 and warehouse_id = ? and item_id = ?
+        """, warehouseId, itemId)).isInstanceOf(DataAccessException.class);
+  }
+
+  @Test
   void migratesExactlyThirtyEightStoresAndPreservesLegacyWarehouseHistory() {
     DataSource dataSource = dataSource("thirty-eight");
     migrateTo(dataSource, "42");

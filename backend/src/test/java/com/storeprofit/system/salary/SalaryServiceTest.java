@@ -163,6 +163,37 @@ class SalaryServiceTest {
   }
 
   @Test
+  void generationStoreDiscoveryAppliesDataScopeAndAssignmentsStayTenantBound() {
+    DataScope storeTwoOnly =
+        new DataScope(DataScopeModes.STORE_LIST, List.of("s2"));
+
+    assertThat(repository.activeGenerationStores(1L, storeTwoOnly))
+        .extracting(
+            SalaryRepository.SalaryGenerationStoreRow::storeId,
+            SalaryRepository.SalaryGenerationStoreRow::storeName
+        )
+        .containsExactly(org.assertj.core.groups.Tuple.tuple("s2", "Two"));
+    assertThat(repository.activeGenerationStores(1L, DataScope.none())).isEmpty();
+
+    jdbcTemplate.update("""
+        insert into salary_record(
+          id, tenant_id, store_id, month, employee_id, employee_name, status
+        )
+        values
+          ('SALADD-202605-assigned', 1, 's2', '2026-05', 'emp-a', 'Alice', 'DRAFT'),
+          ('SALADD-202605-other', 2, 'other', '2026-05', 'emp-z', 'Mallory', 'DRAFT'),
+          ('SALGEN-202605-existing', 1, 's1', '2026-05', 'emp-b', 'Bob', 'DRAFT')
+        """);
+
+    assertThat(repository.assignedEmployeeStores(1L, "2026-05"))
+        .extracting(
+            SalaryRepository.SalaryEmployeeStoreAssignment::employeeId,
+            SalaryRepository.SalaryEmployeeStoreAssignment::storeId
+        )
+        .containsExactly(org.assertj.core.groups.Tuple.tuple("emp-a", "s2"));
+  }
+
+  @Test
   void employeePageKeepsEmployeesWithoutSalaryRecords() {
     jdbcTemplate.update("""
         insert into employee(id, tenant_id, store_id, name, role, position, employment_type, base_salary, status)
@@ -192,9 +223,72 @@ class SalaryServiceTest {
       assertThat(row.status()).isEqualTo("PENDING_GENERATION");
       assertThat(row.employmentType()).isEqualTo("全职");
     });
-    assertThat(result.statusCounts()).containsEntry("DRAFT", 1).containsEntry("PENDING_GENERATION", 1);
+    assertThat(result.statusCounts())
+        .containsEntry("PENDING_GENERATION", 1)
+        .containsEntry("PENDING_REVIEW", 1)
+        .containsEntry("PENDING_PAYMENT", 0)
+        .doesNotContainKey("DRAFT");
     assertThat(queryService.employeePage(boss(), "2026-05", null, null, "PENDING_GENERATION", "Bob", 1, 20).total())
         .isEqualTo(1);
+  }
+
+  @Test
+  void employeePageSupportsActiveBusinessStageFiltersAndKeepsArchivedExactFilters() {
+    jdbcTemplate.update("""
+        insert into employee(id, tenant_id, store_id, name, role, position, employment_type, base_salary, status)
+        values
+          ('emp-pending', 1, 's1', 'Pending', 'EMPLOYEE', '营业员', '全职', 3000, '在职'),
+          ('emp-draft', 1, 's1', 'Draft', 'EMPLOYEE', '营业员', '全职', 3000, '在职'),
+          ('emp-rejected', 1, 's1', 'Rejected', 'EMPLOYEE', '营业员', '全职', 3000, '在职'),
+          ('emp-submitted', 1, 's1', 'Submitted', 'EMPLOYEE', '营业员', '全职', 3000, '在职'),
+          ('emp-legacy-review', 1, 's1', 'Legacy Review', 'EMPLOYEE', '营业员', '全职', 3000, '在职'),
+          ('emp-approved', 1, 's1', 'Approved', 'EMPLOYEE', '营业员', '全职', 3000, '在职'),
+          ('emp-paid', 1, 's1', 'Paid', 'EMPLOYEE', '营业员', '全职', 3000, '在职'),
+          ('emp-locked', 1, 's1', 'Locked', 'EMPLOYEE', '营业员', '全职', 3000, '在职')
+        """);
+    jdbcTemplate.update("""
+        insert into salary_record(
+          id, tenant_id, store_id, month, employee_id, employee_name, status
+        )
+        values
+          ('salary-draft', 1, 's1', '2026-05', 'emp-draft', 'Draft', 'DRAFT'),
+          ('salary-rejected', 1, 's1', '2026-05', 'emp-rejected', 'Rejected', 'REJECTED'),
+          ('salary-submitted', 1, 's1', '2026-05', 'emp-submitted', 'Submitted', 'SUBMITTED'),
+          ('salary-legacy-review', 1, 's1', '2026-05', 'emp-legacy-review', 'Legacy Review', 'PENDING_REVIEW'),
+          ('salary-approved', 1, 's1', '2026-05', 'emp-approved', 'Approved', 'APPROVED'),
+          ('salary-paid', 1, 's1', '2026-05', 'emp-paid', 'Paid', 'PAID'),
+          ('salary-locked', 1, 's1', '2026-05', 'emp-locked', 'Locked', 'LOCKED')
+        """);
+
+    SalaryEmployeePageResponse all =
+        queryService.employeePage(boss(), "2026-05", null, "s1", null, null, 1, 20);
+    SalaryEmployeePageResponse active =
+        queryService.employeePage(boss(), "2026-05", null, "s1", "ACTIVE", null, 1, 20);
+    SalaryEmployeePageResponse pendingReview =
+        queryService.employeePage(boss(), "2026-05", null, "s1", "PENDING_REVIEW", null, 1, 20);
+    SalaryEmployeePageResponse pendingPayment =
+        queryService.employeePage(boss(), "2026-05", null, "s1", "PENDING_PAYMENT", null, 1, 20);
+    SalaryEmployeePageResponse paid =
+        queryService.employeePage(boss(), "2026-05", null, "s1", "PAID", null, 1, 20);
+
+    assertThat(all.total()).isEqualTo(8);
+    assertThat(all.statusCounts()).containsExactly(
+        org.assertj.core.api.Assertions.entry("PENDING_GENERATION", 1),
+        org.assertj.core.api.Assertions.entry("PENDING_REVIEW", 4),
+        org.assertj.core.api.Assertions.entry("PENDING_PAYMENT", 1)
+    );
+    assertThat(active.total()).isEqualTo(6);
+    assertThat(active.rows()).extracting(SalaryRecordResponse::status)
+        .doesNotContain("PAID", "LOCKED");
+    assertThat(pendingReview.total()).isEqualTo(4);
+    assertThat(pendingReview.rows()).extracting(SalaryRecordResponse::status)
+        .containsExactlyInAnyOrder("DRAFT", "REJECTED", "SUBMITTED", "PENDING_REVIEW");
+    assertThat(pendingPayment.total()).isEqualTo(1);
+    assertThat(pendingPayment.rows()).extracting(SalaryRecordResponse::status)
+        .containsExactly("APPROVED");
+    assertThat(paid.total()).isEqualTo(1);
+    assertThat(paid.rows()).extracting(SalaryRecordResponse::status)
+        .containsExactly("PAID");
   }
 
   @Test
@@ -319,7 +413,11 @@ class SalaryServiceTest {
     assertThat(result.total()).isEqualTo(1);
     assertThat(result.rows()).extracting(SalaryRecordResponse::id).containsExactly("LEGACY-left");
     assertThat(result.rows()).extracting(SalaryRecordResponse::employeeName).containsExactly("Former Alice");
-    assertThat(result.statusCounts()).isEqualTo(java.util.Map.of("DRAFT", 1));
+    assertThat(result.statusCounts()).containsExactly(
+        org.assertj.core.api.Assertions.entry("PENDING_GENERATION", 0),
+        org.assertj.core.api.Assertions.entry("PENDING_REVIEW", 1),
+        org.assertj.core.api.Assertions.entry("PENDING_PAYMENT", 0)
+    );
   }
 
   @Test

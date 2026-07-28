@@ -52,6 +52,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class WarehouseService {
   private static final DateTimeFormatter RETURN_NO_TIME = DateTimeFormatter.ofPattern("yyMMddHHmmss");
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper().findAndRegisterModules();
+  private static final BigDecimal MAX_REQUISITION_UNIT_PRICE = new BigDecimal("999999999999.99");
   private static final Set<String> REQUISITION_PENDING_STATUSES = Set.of(
       "SUBMITTED",
       "APPROVED",
@@ -1492,10 +1493,23 @@ public class WarehouseService {
     if (request == null) {
       throw new BusinessException("REVIEW_REQUIRED", "请选择叫货处理方式", HttpStatus.BAD_REQUEST);
     }
-    Map<Long, BigDecimal> approvedMap = new HashMap<>();
+    Map<Long, WarehouseRequisitionReviewLineRequest> reviewedLines = new HashMap<>();
     if (request.lines() != null) {
       for (WarehouseRequisitionReviewLineRequest line : request.lines()) {
-        approvedMap.put(line.itemId(), line.approvedQuantity());
+        if (line == null || line.itemId() == null || line.approvedQuantity() == null) {
+          throw new BusinessException(
+              "REQUISITION_REVIEW_LINE_INVALID",
+              "叫货审核明细不完整",
+              HttpStatus.BAD_REQUEST
+          );
+        }
+        if (reviewedLines.put(line.itemId(), line) != null) {
+          throw new BusinessException(
+              "REQUISITION_REVIEW_LINE_DUPLICATED",
+              "叫货审核明细不能重复",
+              HttpStatus.BAD_REQUEST
+          );
+        }
       }
     }
     WarehouseRequisitionHandlingMode mode = request.handlingMode() == null
@@ -1509,15 +1523,37 @@ public class WarehouseService {
         WarehouseRequisitionHandlingMode.MARK_BACKORDER,
         WarehouseRequisitionHandlingMode.WAIT_REPLENISHMENT
     ).contains(mode)) {
-      markRequisitionBackordered(user, requisition, mode, request.note());
-      return;
+      throw new BusinessException(
+          "REQUISITION_REPLENISHMENT_DISABLED",
+          "叫货单不再转入待补货，请直接审核完成；库存不足部分将扣成负库存",
+          HttpStatus.CONFLICT
+      );
+    }
+    if (request.completeOnReview()
+        && mode == WarehouseRequisitionHandlingMode.AVAILABLE_ONLY) {
+      mode = WarehouseRequisitionHandlingMode.FULL;
+    }
+    Set<Long> requisitionItemIds = requisition.lines().stream()
+        .map(WarehouseRequisitionLineResponse::itemId)
+        .collect(Collectors.toSet());
+    if (!requisitionItemIds.containsAll(reviewedLines.keySet())) {
+      throw new BusinessException(
+          "REQUISITION_REVIEW_LINE_INVALID",
+          "叫货审核明细与原叫货单不一致",
+          HttpStatus.BAD_REQUEST
+      );
     }
 
     BigDecimal total = BigDecimal.ZERO;
     BigDecimal newlyApprovedTotal = BigDecimal.ZERO;
+    Map<Long, BigDecimal> completionQuantities = new LinkedHashMap<>();
     for (WarehouseRequisitionLineResponse line : requisition.lines()) {
       BigDecimal shipped = amount(line.shippedQuantity());
-      BigDecimal requestedTarget = amount(approvedMap.getOrDefault(line.itemId(), line.requestedQuantity()));
+      WarehouseRequisitionReviewLineRequest reviewedLine = reviewedLines.get(line.itemId());
+      BigDecimal requestedTarget = request.completeOnReview()
+          ? amount(line.requestedQuantity())
+          : amount(reviewedLine == null ? line.requestedQuantity() : reviewedLine.approvedQuantity());
+      BigDecimal reviewedUnitPrice = reviewedUnitPrice(line, reviewedLine);
       if (requestedTarget.compareTo(line.requestedQuantity()) > 0) {
         throw new BusinessException("APPROVED_QUANTITY_TOO_LARGE", "批准数量不能超过申请数量", HttpStatus.BAD_REQUEST);
       }
@@ -1525,7 +1561,26 @@ public class WarehouseService {
         throw new BusinessException("APPROVED_QUANTITY_TOO_SMALL", "批准数量不能小于已发数量", HttpStatus.BAD_REQUEST);
       }
       BigDecimal quantityToApprove = requestedTarget.subtract(shipped).setScale(2, RoundingMode.HALF_UP);
-      if (mode == WarehouseRequisitionHandlingMode.AVAILABLE_ONLY) {
+      if (request.completeOnReview()) {
+        if (supplyWarehouse == null) {
+          if (mode == WarehouseRequisitionHandlingMode.AVAILABLE_ONLY) {
+            quantityToApprove = quantityToApprove.min(
+                legacyAvailableStock(user.tenantId(), line.itemId()));
+          }
+          if (quantityToApprove.signum() > 0) {
+            deductStock(user, requisition, line.itemId(), quantityToApprove);
+          }
+        } else if (quantityToApprove.signum() > 0) {
+          quantityToApprove = fulfillRequisitionStock(
+              user,
+              supplyWarehouse,
+              requisition,
+              line,
+              quantityToApprove,
+              mode == WarehouseRequisitionHandlingMode.AVAILABLE_ONLY
+          );
+        }
+      } else if (mode == WarehouseRequisitionHandlingMode.AVAILABLE_ONLY) {
         quantityToApprove = supplyWarehouse == null
             ? quantityToApprove.min(legacyAvailableStock(user.tenantId(), line.itemId()))
             : reserveRequisitionStock(user, supplyWarehouse, requisitionId, line, quantityToApprove, true);
@@ -1534,8 +1589,19 @@ public class WarehouseService {
             user, supplyWarehouse, requisitionId, line, quantityToApprove, false);
       }
       BigDecimal approved = shipped.add(quantityToApprove).setScale(2, RoundingMode.HALF_UP);
-      warehouseRepository.updateApprovedQuantity(user.tenantId(), requisitionId, line.itemId(), approved);
-      total = total.add(approved.multiply(line.unitPrice()));
+      warehouseRepository.updateApprovedQuantityAndUnitPrice(
+          user.tenantId(),
+          requisitionId,
+          line.itemId(),
+          approved,
+          reviewedUnitPrice
+      );
+      if (request.completeOnReview() && quantityToApprove.signum() > 0) {
+        warehouseRepository.updateShippedQuantity(
+            user.tenantId(), requisitionId, line.itemId(), approved);
+        completionQuantities.put(line.itemId(), quantityToApprove);
+      }
+      total = total.add(approved.multiply(reviewedUnitPrice));
       newlyApprovedTotal = newlyApprovedTotal.add(quantityToApprove);
     }
     if (mode == WarehouseRequisitionHandlingMode.AVAILABLE_ONLY
@@ -1545,6 +1611,27 @@ public class WarehouseService {
           "当前没有可发库存，请标记缺货或等待补货",
           HttpStatus.CONFLICT
       );
+    }
+    if (request.completeOnReview()) {
+      if (completionQuantities.isEmpty()) {
+        warehouseRepository.reviewRequisition(
+            user.tenantId(), requisitionId, "RECEIVED", total, user.id(), request.note());
+        warehouseRepository.markRequisitionReceived(
+            user.tenantId(), requisitionId, user.id(), request.note());
+        warehouseRepository.logAction(
+            user.tenantId(), user.id(), user.displayName(), "完成已全部发货的叫货单",
+            requisitionId, requisition.storeId(), request.note());
+        return;
+      }
+      completeRequisitionOnReview(
+          user,
+          requisition,
+          supplyWarehouse,
+          completionQuantities,
+          total,
+          request.note()
+      );
+      return;
     }
     String nextStatus = newlyApprovedTotal.signum() > 0 ? "APPROVED" : "BACKORDERED";
     String action = newlyApprovedTotal.signum() > 0
@@ -1587,40 +1674,134 @@ public class WarehouseService {
         requisition.id(), requisition.storeId(), reason);
   }
 
-  private void markRequisitionBackordered(
-      AuthUser user,
-      WarehouseRequisitionResponse requisition,
-      WarehouseRequisitionHandlingMode mode,
-      String note
-  ) {
-    BigDecimal total = BigDecimal.ZERO;
-    for (WarehouseRequisitionLineResponse line : requisition.lines()) {
-      BigDecimal shipped = amount(line.shippedQuantity());
-      warehouseRepository.updateApprovedQuantity(
-          user.tenantId(), requisition.id(), line.itemId(), shipped);
-      total = total.add(shipped.multiply(line.unitPrice()));
-    }
-    String status = mode == WarehouseRequisitionHandlingMode.WAIT_REPLENISHMENT
-        ? "WAITING_REPLENISHMENT"
-        : "BACKORDERED";
-    String resolvedNote = note == null || note.isBlank()
-        ? (mode == WarehouseRequisitionHandlingMode.WAIT_REPLENISHMENT
-            ? "等待补货后继续发货"
-            : "已标记缺货，待安排补货")
-        : note.trim();
-    warehouseRepository.reviewRequisition(
-        user.tenantId(), requisition.id(), status, total, user.id(), resolvedNote);
-    warehouseRepository.logAction(
-        user.tenantId(), user.id(), user.displayName(),
-        mode == WarehouseRequisitionHandlingMode.WAIT_REPLENISHMENT ? "叫货等待补货" : "标记叫货缺货",
-        requisition.id(), requisition.storeId(), resolvedNote);
-  }
-
   private BigDecimal legacyAvailableStock(long tenantId, long itemId) {
     return warehouseRepository.positiveBatchesForUpdate(tenantId, itemId).stream()
         .map(WarehouseStockBatchRow::quantity)
         .reduce(BigDecimal.ZERO, BigDecimal::add)
         .setScale(2, RoundingMode.HALF_UP);
+  }
+
+  private BigDecimal reviewedUnitPrice(
+      WarehouseRequisitionLineResponse line,
+      WarehouseRequisitionReviewLineRequest reviewedLine
+  ) {
+    BigDecimal rawPrice = reviewedLine == null || reviewedLine.unitPrice() == null
+        ? line.unitPrice()
+        : reviewedLine.unitPrice();
+    if (rawPrice == null
+        || rawPrice.signum() < 0
+        || rawPrice.compareTo(MAX_REQUISITION_UNIT_PRICE) > 0) {
+      throw new BusinessException(
+          "REQUISITION_UNIT_PRICE_INVALID",
+          line.itemName() + "的审核单价必须在 0 至 999999999999.99 元之间",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+    return amount(rawPrice);
+  }
+
+  private void completeRequisitionOnReview(
+      AuthUser user,
+      WarehouseRequisitionResponse requisition,
+      FacilityRow supplyWarehouse,
+      Map<Long, BigDecimal> completionQuantities,
+      BigDecimal total,
+      String note
+  ) {
+    String resolvedNote = note == null || note.isBlank()
+        ? "仓库审核完成，库存已自动划入门店"
+        : note.trim();
+    warehouseRepository.reviewRequisition(
+        user.tenantId(),
+        requisition.id(),
+        "APPROVED",
+        total,
+        user.id(),
+        resolvedNote
+    );
+    warehouseRepository.markShipped(
+        user.tenantId(),
+        requisition.id(),
+        "SHIPPED",
+        user.id()
+    );
+    WarehouseRequisitionResponse reviewed = requireRequisitionForUpdate(
+        user.tenantId(), requisition.id());
+    WarehouseDeliveryResponse delivery = createDeliveryForShipment(
+        user,
+        reviewed,
+        supplyWarehouse == null ? null : supplyWarehouse.id(),
+        completionQuantities,
+        false
+    );
+    String receiptId = "RCV" + System.currentTimeMillis() + "-"
+        + UUID.randomUUID().toString().substring(0, 6);
+    if (supplyWarehouse == null) {
+      warehouseRepository.insertReceipt(
+          user.tenantId(),
+          receiptId,
+          delivery.id(),
+          requisition.id(),
+          requisition.storeId(),
+          user.id(),
+          resolvedNote
+      );
+    } else {
+      warehouseRepository.insertReceipt(
+          user.tenantId(),
+          supplyWarehouse.id(),
+          receiptId,
+          delivery.id(),
+          requisition.id(),
+          requisition.storeId(),
+          user.id(),
+          resolvedNote
+      );
+    }
+    for (WarehouseDeliveryLineResponse line : delivery.lines()) {
+      warehouseRepository.insertReceiptLine(
+          user.tenantId(), receiptId, line.itemId(), line.shippedQuantity(), resolvedNote);
+      warehouseRepository.updateDeliveryLineReceived(
+          user.tenantId(), delivery.id(), line.itemId(), line.shippedQuantity());
+      warehouseRepository.addStoreInventory(
+          user.tenantId(),
+          requisition.storeId(),
+          line.itemId(),
+          line.shippedQuantity(),
+          "IN",
+          "STORE_RECEIPT",
+          receiptId,
+          resolvedNote,
+          user.id()
+      );
+    }
+    warehouseRepository.markReceived(user.tenantId(), delivery.id(), user.id());
+    warehouseRepository.markRequisitionReceived(
+        user.tenantId(),
+        requisition.id(),
+        "RECEIVED",
+        user.id(),
+        resolvedNote
+    );
+    warehouseRepository.logAction(
+        user.tenantId(),
+        user.id(),
+        user.displayName(),
+        "审核并完成叫货",
+        requisition.id(),
+        requisition.storeId(),
+        resolvedNote
+    );
+    warehouseRepository.insertTodoAction(
+        "todo-act-" + UUID.randomUUID(),
+        user.tenantId(),
+        "warehouse-" + requisition.id(),
+        "WAREHOUSE_SHIP",
+        "仓库审核完成，仓库库存已扣减并计入门店库存",
+        user.id(),
+        user.displayName(),
+        user.role()
+    );
   }
 
   @Transactional
@@ -1992,6 +2173,102 @@ public class WarehouseService {
     return quantity;
   }
 
+  private BigDecimal fulfillRequisitionStock(
+      AuthUser user,
+      FacilityRow facility,
+      WarehouseRequisitionResponse requisition,
+      WarehouseRequisitionLineResponse line,
+      BigDecimal requestedQuantity,
+      boolean capToAvailable
+  ) {
+    InventoryRow inventory = topologyRepository.lockInventory(
+        user.tenantId(), facility.id(), line.itemId());
+    BigDecimal quantity = amount(requestedQuantity);
+    if (capToAvailable) {
+      quantity = quantity.min(inventory.available()).setScale(2, RoundingMode.HALF_UP);
+    }
+    if (quantity.signum() <= 0) {
+      return amount(BigDecimal.ZERO);
+    }
+    BigDecimal remaining = amount(quantity);
+    for (BatchRow batch : topologyRepository.positiveBatchesForUpdate(
+        user.tenantId(), facility.id(), line.itemId())) {
+      BigDecimal available = batch.quantity().subtract(batch.reservedQuantity());
+      BigDecimal used = available.min(remaining);
+      if (used.signum() > 0) {
+        if (!topologyRepository.updateBatchQuantity(
+            user.tenantId(),
+            batch,
+            batch.quantity().subtract(used),
+            batch.reservedQuantity()
+        )) {
+          throw warehouseConcurrentUpdate();
+        }
+        topologyRepository.insertMovement(
+            user.tenantId(),
+            facility.id(),
+            line.itemId(),
+            batch.id(),
+            "OUT",
+            used.negate(),
+            BigDecimal.ZERO,
+            BigDecimal.ZERO,
+            batch.unitCost(),
+            "REQUISITION",
+            requisition.id(),
+            requisition.storeId(),
+            "门店叫货审核完成自动出库",
+            user.id()
+        );
+        remaining = remaining.subtract(used);
+      }
+      if (remaining.signum() == 0) {
+        break;
+      }
+    }
+    if (remaining.signum() > 0) {
+      long deficitBatchId = warehouseRepository.addStockDeficit(
+          user.tenantId(),
+          facility.id(),
+          line.itemId(),
+          remaining,
+          inventory.unitCost(),
+          "叫货审核允许负库存"
+      );
+      topologyRepository.insertMovement(
+          user.tenantId(),
+          facility.id(),
+          line.itemId(),
+          deficitBatchId,
+          "OUT",
+          remaining.negate(),
+          BigDecimal.ZERO,
+          BigDecimal.ZERO,
+          inventory.unitCost(),
+          "REQUISITION",
+          requisition.id(),
+          requisition.storeId(),
+          "门店叫货审核完成，库存不足部分记为负库存",
+          user.id()
+      );
+    }
+    BigDecimal nextOnHand = inventory.onHand().subtract(quantity);
+    BigDecimal remainingCost = nextOnHand.signum() <= 0
+        ? inventory.unitCost()
+        : remainingBatchCost(user.tenantId(), facility.id(), line.itemId());
+    if (!topologyRepository.updateInventory(
+        user.tenantId(),
+        inventory,
+        nextOnHand,
+        inventory.reserved(),
+        inventory.inTransit(),
+        remainingCost
+    )) {
+      throw warehouseConcurrentUpdate();
+    }
+    return quantity;
+  }
+
   private void shipReservedRequisitionStock(
       AuthUser user,
       FacilityRow facility,
@@ -2049,10 +2326,6 @@ public class WarehouseService {
   private void deductStock(AuthUser user, WarehouseRequisitionResponse requisition, long itemId, BigDecimal quantity) {
     BigDecimal remaining = amount(quantity);
     List<WarehouseStockBatchRow> batches = warehouseRepository.positiveBatchesForUpdate(user.tenantId(), itemId);
-    BigDecimal available = batches.stream().map(WarehouseStockBatchRow::quantity).reduce(BigDecimal.ZERO, BigDecimal::add);
-    if (available.compareTo(remaining) < 0) {
-      throw new BusinessException("INSUFFICIENT_STOCK", "仓库库存不足，无法配货", HttpStatus.CONFLICT);
-    }
     for (WarehouseStockBatchRow batch : batches) {
       if (remaining.compareTo(BigDecimal.ZERO) <= 0) {
         break;
@@ -2073,6 +2346,28 @@ public class WarehouseService {
           user.id()
       );
       remaining = remaining.subtract(used);
+    }
+    if (remaining.signum() > 0) {
+      long deficitBatchId = warehouseRepository.addStockDeficit(
+          user.tenantId(),
+          null,
+          itemId,
+          remaining,
+          BigDecimal.ZERO,
+          "叫货审核允许负库存"
+      );
+      warehouseRepository.insertMovement(
+          user.tenantId(),
+          itemId,
+          deficitBatchId,
+          "OUT",
+          remaining.negate(),
+          "REQUISITION",
+          requisition.id(),
+          requisition.storeId(),
+          "门店叫货审核完成，库存不足部分记为负库存",
+          user.id()
+      );
     }
   }
 
@@ -3020,12 +3315,18 @@ public class WarehouseService {
   private BigDecimal weightedCost(
       BigDecimal oldQuantity, BigDecimal oldCost, BigDecimal addedQuantity, BigDecimal addedCost
   ) {
-    BigDecimal total = amount(oldQuantity).add(amount(addedQuantity));
+    BigDecimal normalizedOldQuantity = amount(oldQuantity);
+    BigDecimal normalizedAddedQuantity = amount(addedQuantity);
+    if (normalizedOldQuantity.signum() <= 0) {
+      return (addedCost == null ? BigDecimal.ZERO : addedCost)
+          .setScale(4, RoundingMode.HALF_UP);
+    }
+    BigDecimal total = normalizedOldQuantity.add(normalizedAddedQuantity);
     if (total.signum() == 0) {
       return BigDecimal.ZERO.setScale(4, RoundingMode.HALF_UP);
     }
-    return amount(oldQuantity).multiply(oldCost == null ? BigDecimal.ZERO : oldCost)
-        .add(amount(addedQuantity).multiply(addedCost == null ? BigDecimal.ZERO : addedCost))
+    return normalizedOldQuantity.multiply(oldCost == null ? BigDecimal.ZERO : oldCost)
+        .add(normalizedAddedQuantity.multiply(addedCost == null ? BigDecimal.ZERO : addedCost))
         .divide(total, 4, RoundingMode.HALF_UP);
   }
 
