@@ -27,7 +27,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   supplement: []
   export: []
-  close: []
 }>()
 </script>
 
@@ -40,7 +39,6 @@ const emit = defineEmits<{
     <div class="inspection-detail-actions">
       <button v-if="props.canSupplement" class="secondary-button" type="button" @click="emit('supplement')"><ImagePlus :size="16" />补传并关联证据</button>
       <button class="primary-button" type="button" :disabled="props.exporting" @click="emit('export')"><Download :size="16" />{{ props.exporting ? '正在生成...' : '导出Excel' }}</button>
-      <button class="secondary-button" type="button" @click="emit('close')">返回巡检记录</button>
     </div>
   </header>
 

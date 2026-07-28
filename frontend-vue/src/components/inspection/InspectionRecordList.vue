@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ArrowLeft } from 'lucide-vue-next'
 import type { InspectionRecord } from '../../api/inspection'
 import type { InspectionBrandOption } from '../../composables/useInspectionDraft'
 
@@ -27,6 +28,7 @@ const emit = defineEmits<{
   'update:brand': [brand: string]
   'update:month': [month: string]
   select: [recordId: string]
+  back: []
 }>()
 
 function updateMonth(event: Event) {
@@ -36,7 +38,14 @@ function updateMonth(event: Event) {
 
 <template>
   <section class="inspection-record-list">
-    <div class="inspection-filter-row">
+    <div v-if="selectedRecordId" class="inspection-record-detail-toolbar">
+      <button class="secondary-button inspection-record-back-button" type="button" @click="emit('back')">
+        <ArrowLeft :size="17" aria-hidden="true" />
+        返回巡检列表
+      </button>
+    </div>
+
+    <div v-else class="inspection-filter-row">
       <div class="inspection-brand-filter" aria-label="品牌筛选">
         <button type="button" class="inspection-filter-chip" :class="{ on: !filterBrand }" @click="emit('update:brand', '')">
           全部品牌
@@ -99,10 +108,19 @@ function updateMonth(event: Event) {
 <style>
 .inspection-record-list { display: grid; gap: 14px; }
 .inspection-filter-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.inspection-record-detail-toolbar { display: flex; align-items: center; justify-content: flex-start; }
+.inspection-record-back-button { display: inline-flex; width: auto; min-height: 40px; align-items: center; justify-content: center; gap: 7px; padding: 0 14px; font-weight: 800; white-space: nowrap; }
 .inspection-brand-filter { display: flex; min-width: 0; gap: 6px; flex-wrap: wrap; }
 .inspection-filter-chip { min-height: 34px; padding: 6px 11px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: var(--muted); font-size: 13px; font-weight: 800; cursor: pointer; }
 .inspection-filter-chip.on { border-color: var(--brand-color, var(--primary)); background: var(--brand-soft, var(--primary-soft)); color: var(--brand-color, var(--primary-dark)); }
 .inspection-month-select { width: 150px; flex: 0 0 auto; }
+
+@media (max-width: 720px) {
+  .inspection-record-back-button {
+    width: 100%;
+    min-height: 44px;
+  }
+}
 .inspection-table-head { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .inspection-section-title { display: block; margin: 0 0 6px; color: var(--muted); font-size: 13px; font-weight: 700; }
 .brand-pill { display: inline-flex; align-items: center; gap: 5px; min-height: 22px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }

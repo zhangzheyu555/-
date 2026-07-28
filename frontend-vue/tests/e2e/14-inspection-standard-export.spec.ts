@@ -423,6 +423,57 @@ test('save stays clickable and reports incomplete inspection fields in an error 
   await expect(saveButtons.first()).toBeEnabled()
 })
 
+test('inspection detail exposes a back button while detail data is still loading', async ({ page }) => {
+  const recordId = 'INS-DETAIL-LOADING'
+  let releaseDetailRequest!: () => void
+  const detailRequestGate = new Promise<void>((resolve) => {
+    releaseDetailRequest = resolve
+  })
+  const record = {
+    id: recordId,
+    storeId: 'STORE-1',
+    storeName: '测试门店',
+    brand: '茹菓',
+    inspectionDate: '2026-07-28',
+    inspector: '测试督导',
+    fullScore: 200,
+    score: 200,
+    maxScore: 200,
+    passScore: 180,
+    passed: true,
+    resultCode: 'PASSED',
+    standardVersionId: canonicalExportStandard.id,
+    standardVersion: canonicalExportStandard.version,
+    photosJson: '[]',
+    deductionsJson: '[]',
+    redlinesJson: '[]',
+    itemResults: [],
+  }
+  await mockInspectionApi(
+    page,
+    [record],
+    undefined,
+    canonicalExportStandard,
+    undefined,
+    { [recordId]: record },
+  )
+  await page.route(`**/api/inspections/${recordId}`, async (route) => {
+    await detailRequestGate
+    await json(route, record)
+  })
+  await seedSession(page)
+  await page.goto(`/operations/inspection/records?recordId=${recordId}`)
+
+  await expect(page.getByText('正在读取巡检详情...', { exact: true })).toBeVisible()
+  const backButton = page.getByRole('button', { name: '返回巡检列表', exact: true })
+  await expect(backButton).toBeVisible()
+  await backButton.click()
+  await expect(page).toHaveURL('/operations/inspection/records')
+  await expect(page.getByRole('table')).toBeVisible()
+
+  releaseDetailRequest()
+})
+
 test('inspection detail prioritizes the issue with evidence and keeps the 105-clause audit snapshot collapsed', async ({ page }) => {
   const recordId = 'INS-DETAIL-PRIORITY-ISSUE'
   const attachmentId = 777
@@ -511,10 +562,17 @@ test('inspection detail prioritizes the issue with evidence and keeps the 105-cl
   expect(issueBox!.y + issueBox!.height).toBeLessThanOrEqual(720)
 
   await page.setViewportSize({ width: 1464, height: 1000 })
+  const backButton = page.getByRole('button', { name: '返回巡检列表', exact: true })
+  await expect(backButton).toBeVisible()
+  const backButtonBox = await backButton.boundingBox()
+  const detailCardBox = await page.locator('.inspection-detail-card').boundingBox()
+  expect(backButtonBox).not.toBeNull()
+  expect(detailCardBox).not.toBeNull()
+  expect(backButtonBox!.y + backButtonBox!.height).toBeLessThanOrEqual(detailCardBox!.y)
+
   const actionButtons = [
     page.getByRole('button', { name: '补传并关联证据' }),
     page.getByRole('button', { name: '导出Excel' }),
-    page.getByRole('button', { name: '返回巡检记录' }),
   ]
   const actionGeometry = await Promise.all(actionButtons.map(async (button) => {
     await expect(button).toBeVisible()

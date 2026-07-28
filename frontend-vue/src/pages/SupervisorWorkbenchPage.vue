@@ -2060,6 +2060,7 @@ onUnmounted(() => {
         @update:brand="setBrandFilter"
         @update:month="setMonthFilter"
         @select="openRecordDetail"
+        @back="closeRecordDetail"
       >
       <section v-if="selectedRecordId && detailLoading && !detailRecord" class="content-card inspection-detail-card">
         <div class="empty-state">正在读取巡检详情...</div>
@@ -2068,7 +2069,6 @@ onUnmounted(() => {
       <section v-else-if="selectedRecordId && detailError" class="content-card inspection-detail-card">
         <div class="error-state">{{ detailError }}</div>
         <div class="inspection-detail-actions">
-          <button class="secondary-button" type="button" @click="closeRecordDetail">返回巡检记录</button>
           <button class="primary-button" type="button" @click="loadSelectedRecord(selectedRecordId)">重试</button>
         </div>
       </section>
@@ -2095,7 +2095,6 @@ onUnmounted(() => {
           :requires-manual-review="requiresManualReview"
           @supplement="openHistoricalEvidenceDialog()"
           @export="exportRecord(selectedRecord)"
-          @close="closeRecordDetail"
         >
           <template #priority>
             <InspectionRecordIssueSummary
