@@ -1,14 +1,12 @@
 package com.storeprofit.system.warehouse;
 
 import com.storeprofit.system.common.ApiResponse;
-import com.storeprofit.system.common.BusinessException;
 import com.storeprofit.system.platform.auth.AuthService;
 import jakarta.validation.Valid;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -262,17 +260,11 @@ public class WarehouseController {
   }
 
   @PostMapping("/returns")
-  @Deprecated(since = "0.2.0", forRemoval = true)
   public ApiResponse<WarehouseReturnResponse> createReturn(
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @Valid @RequestBody WarehouseReturnRequest request
   ) {
-    authService.requireUser(authorization);
-    throw new BusinessException(
-        "WAREHOUSE_RETURN_CREATE_DISABLED",
-        "创建配送退货单接口已停用",
-        HttpStatus.GONE
-    );
+    return ApiResponse.ok(warehouseService.createReturn(authService.requireUser(authorization), request));
   }
 
   @GetMapping("/returns")
