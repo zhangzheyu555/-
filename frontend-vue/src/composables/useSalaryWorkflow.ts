@@ -3,7 +3,7 @@ import {
   approveSalaryRecord, deleteSalaryRecord, exportSalaryCsv,
   generateSalaryWithReport, lockSalaryRecord,
   markSalaryPaid, previewSalaryGeneration, rejectSalaryRecord,
-  saveSalaryRecord, submitSalaryRecord, type SalaryGenerateReport,
+  saveSalaryRecord, submitSalaryRecord, type SalaryGenerateReport, type SalaryGenerateRequest,
   type SalaryRecord, type SalaryRecordPayload,
 } from '../api/finance'
 import { currentMonth, userError, isEditable } from './useSalaryPage'
@@ -98,7 +98,6 @@ export function useSalaryWorkflow(opts: {
     if (
       !context
       || !context.storeId
-      || context.storeId === 'all'
       || context.month !== opts.selectedMonth.value
       || !opts.hasValidMonth.value
     ) return false
@@ -173,14 +172,43 @@ export function useSalaryWorkflow(opts: {
     }
   }
 
-  async function doPreview(requestedContext?: SalaryPreviewContext) {
-    const context = requestedContext || previewContext.value || {
+  function normalizedEmployeeIds(employeeIds: string[]) {
+    return Array.from(new Set(employeeIds.map((id) => String(id || '').trim()).filter(Boolean)))
+  }
+
+  function generationPayload(
+    employeeIds?: string[],
+    context: SalaryPreviewContext = previewContext.value || {
+      storeId: opts.selectedStoreId.value,
+      month: opts.selectedMonth.value,
+    },
+  ): SalaryGenerateRequest {
+    const payload: SalaryGenerateRequest = {
+      month: context.month,
+    }
+    if (context.storeId !== 'all') payload.storeId = context.storeId
+    if (employeeIds !== undefined) payload.employeeIds = normalizedEmployeeIds(employeeIds)
+    return payload
+  }
+
+  async function doPreview(
+    employeeIdsOrContext?: string[] | SalaryPreviewContext,
+    requestedContext?: SalaryPreviewContext,
+  ) {
+    const employeeIds = Array.isArray(employeeIdsOrContext)
+      ? normalizedEmployeeIds(employeeIdsOrContext)
+      : undefined
+    const context = (
+      !Array.isArray(employeeIdsOrContext) && employeeIdsOrContext
+        ? employeeIdsOrContext
+        : requestedContext
+    ) || previewContext.value || {
       storeId: opts.selectedStoreId.value,
       month: opts.selectedMonth.value,
     }
     if (!isPreviewContextValid(context)) {
-      opts.pageError.value = '请先选择有效月份和具体门店，再预览本月工资。'
-      return
+      opts.pageError.value = '请先选择有效月份和授权门店，再预览本月工资。'
+      return null
     }
     previewRequestController?.abort()
     const controller = new AbortController()
@@ -192,16 +220,20 @@ export function useSalaryWorkflow(opts: {
     previewLoading.value = true
     opts.pageError.value = ''
     try {
-      const report = await previewSalaryGeneration(context.storeId, context.month, controller.signal)
+      const report = employeeIds === undefined && context.storeId !== 'all'
+        ? await previewSalaryGeneration(context.storeId, context.month, controller.signal)
+        : await previewSalaryGeneration(generationPayload(employeeIds, context))
       if (
         controller.signal.aborted
         || previewContext.value?.storeId !== context.storeId
         || previewContext.value?.month !== context.month
-      ) return
+      ) return null
       previewData.value = report
+      return report
     } catch (e) {
-      if (controller.signal.aborted) return
+      if (controller.signal.aborted) return null
       previewError.value = userError(e, '工资生成预览失败，请稍后重试。')
+      return null
     } finally {
       if (previewRequestController === controller) {
         previewRequestController = null
@@ -221,13 +253,18 @@ export function useSalaryWorkflow(opts: {
     previewContext.value = null
   }
 
-  async function doGenerate() {
+  async function doGenerate(employeeIds: string[] = []) {
     const context = previewContext.value
     if (!context || !canConfirmGeneration.value) {
       previewError.value = context && !isPreviewContextValid(context)
         ? '工资范围已经变化，请关闭后重新预览。'
         : '当前没有可生成的员工，请先补齐考勤或检查跳过原因。'
-      return
+      return false
+    }
+    const selectedIds = normalizedEmployeeIds(employeeIds)
+    if (!selectedIds.length) {
+      previewError.value = '请至少选择一名可生成工资的员工。'
+      return false
     }
     generating.value = true
     previewError.value = ''
@@ -235,10 +272,20 @@ export function useSalaryWorkflow(opts: {
     opts.successMessage.value = ''
     let generated = false
     try {
-      const report = await generateSalaryWithReport({
-        storeId: context.storeId,
-        month: context.month,
-      })
+      const payload = generationPayload(selectedIds, context)
+      // Selection can change after the dialog opens. Re-run the preview with
+      // the exact same employee IDs that will be sent to generation.
+      const confirmedPreview = await previewSalaryGeneration(payload)
+      if (!isPreviewContextValid(context)) {
+        previewError.value = '工资范围已经变化，请关闭后重新预览。'
+        return false
+      }
+      previewData.value = confirmedPreview
+      if (confirmedPreview.generated <= 0) {
+        previewError.value = '所选员工当前没有可生成的工资，请刷新名单后重试。'
+        return false
+      }
+      const report = await generateSalaryWithReport(payload)
       const parts = [`已生成 ${report.generated} 条工资记录`]
       if (report.skipped > 0) parts.push(`跳过 ${report.skipped} 条`)
       if (report.errors > 0) parts.push(`${report.errors} 条异常`)
@@ -252,7 +299,9 @@ export function useSalaryWorkflow(opts: {
     } finally {
       generating.value = false
     }
-    if (generated) await refreshAfterMutation('工资生成')
+    if (!generated) return false
+    await refreshAfterMutation('工资生成')
+    return true
   }
 
   async function doExport() {

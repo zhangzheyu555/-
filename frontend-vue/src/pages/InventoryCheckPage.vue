@@ -494,7 +494,7 @@ function reducedMotion() {
       </template>
     </PageHeader>
 
-    <div v-if="!canReadPage" class="message message--error" role="alert">
+    <div v-if="!canReadPage" class="message message--error" role="alert" data-persistent-error-state>
       当前账号没有访问店铺盘存的权限。
     </div>
     <template v-else>

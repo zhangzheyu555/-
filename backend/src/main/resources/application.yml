@@ -90,6 +90,9 @@ app:
     credential-encryption-key: ${QMAI_CREDENTIAL_ENCRYPTION_KEY:}
     # 已授权门店（shopCode:门店名:本系统storeId），逗号分隔
     shops: ${QMAI_SHOPS:}
+    # 每天上海时间 05:00 只补取昨天的数据；月报由已落库的每日数据汇总。
+    daily-sync-enabled: ${QMAI_DAILY_SYNC_ENABLED:true}
+    daily-sync-cron: ${QMAI_DAILY_SYNC_CRON:0 0 5 * * *}
   auth:
     token-ttl-hours: 12
     login-protection:

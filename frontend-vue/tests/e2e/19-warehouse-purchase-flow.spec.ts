@@ -260,7 +260,8 @@ test('荆州总仓外部采购按草稿、审批、按单入库顺序完成', as
 
   const form = page.locator('.receive-form')
   await expect(form.getByText('采购仓：荆州总仓')).toBeVisible()
-  await form.getByLabel('供应商').selectOption('31')
+  await expect(form.getByLabel('供应商')).toHaveText('默认供应商')
+  await expect(form.getByRole('combobox', { name: '供应商' })).toHaveCount(0)
   const product = form.getByRole('combobox', { name: '采购商品', exact: true })
   await product.fill('MILK-01')
   await form.getByRole('option', { name: /鲜牛奶.*MILK-01.*箱/ }).click()

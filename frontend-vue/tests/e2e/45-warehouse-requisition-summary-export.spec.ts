@@ -283,6 +283,13 @@ async function selectMultiOption(page: Page, label: string, query: string, optio
   await selector.getByRole('button', { name: '完成选择' }).click()
 }
 
+async function acknowledgeValidationError(page: Page, message: string) {
+  const dialog = page.getByRole('alertdialog', { name: '操作未完成' })
+  await expect(dialog).toContainText(message)
+  await dialog.getByRole('button', { name: '我知道了' }).click()
+  await expect(dialog).toHaveCount(0)
+}
+
 test('指定门店或物料时必须完成选择，不能把空范围静默当成全部', async ({ page }) => {
   const log = await prepare(page)
   await fillDateRange(page)
@@ -295,7 +302,7 @@ test('指定门店或物料时必须完成选择，不能把空范围静默当�
   await page.getByRole('radio', { name: '指定门店' }).check()
   await page.getByRole('button', { name: '导出聚合报表' }).click()
 
-  await expect(page.getByRole('alert')).toContainText('请至少选择一家门店')
+  await acknowledgeValidationError(page, '请至少选择一家门店')
   expect(log.summaryBodies).toHaveLength(0)
 })
 
@@ -390,7 +397,7 @@ test('物料全选仅作用于当前搜索结果，清空后必须明确切回�
   await selector.getByRole('button', { name: '完成选择' }).click()
 
   await page.getByRole('button', { name: '导出聚合报表' }).click()
-  await expect(page.getByRole('alert')).toContainText('请至少选择一项物料')
+  await acknowledgeValidationError(page, '请至少选择一项物料')
   expect(log.summaryBodies).toHaveLength(0)
 
   await page.getByRole('radio', { name: '全部物料' }).check()
@@ -425,7 +432,7 @@ test('日期区间反选时显示中文提示且不发送导出请求', async ({
 
   await page.getByRole('button', { name: '导出聚合报表' }).click()
 
-  await expect(page.getByRole('alert')).toContainText('开始日期不能晚于结束日期')
+  await acknowledgeValidationError(page, '开始日期不能晚于结束日期')
   expect(log.summaryBodies).toHaveLength(0)
 })
 
@@ -467,7 +474,7 @@ test('切换仓库会清理越界选择，但保留指定意图以防静默扩�
   await productSelector.getByRole('button', { name: '完成选择' }).click()
 
   await page.getByRole('button', { name: '导出聚合报表' }).click()
-  await expect(page.getByRole('alert')).toContainText('请至少选择一家门店')
+  await acknowledgeValidationError(page, '请至少选择一家门店')
   expect(log.summaryBodies).toHaveLength(0)
 
   await page.getByRole('radio', { name: '全部门店' }).check()

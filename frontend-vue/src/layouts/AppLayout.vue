@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { CalendarDays, Menu, X } from 'lucide-vue-next'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { Menu, X } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import AppSidebar from '../components/sidebar/AppSidebar.vue'
 import { useAuthStore } from '../stores/auth'
@@ -14,11 +14,6 @@ const mobileNavOpen = ref(false)
 const mobileMenuButton = ref<HTMLButtonElement | null>(null)
 const mobileNavDrawer = ref<HTMLElement | null>(null)
 const mobileDrawerCloseButton = ref<HTMLButtonElement | null>(null)
-
-const updatedAt = computed(() => {
-  const now = new Date()
-  return `${now.getFullYear()}年${String(now.getMonth() + 1).padStart(2, '0')}月${String(now.getDate()).padStart(2, '0')}日`
-})
 
 async function logout() {
   if (auth.loggingOut) return
@@ -156,7 +151,7 @@ onMounted(() => {
       :inert="mobileNavOpen || undefined"
       :aria-hidden="mobileNavOpen || undefined"
     >
-      <header class="topbar app-topbar" :class="{ 'daily-loss-topbar': route.path === '/daily-loss' }">
+      <header class="topbar app-topbar">
         <div class="topbar-primary-row">
           <button
             ref="mobileMenuButton"
@@ -169,9 +164,6 @@ onMounted(() => {
           >
             <Menu :size="20" />
           </button>
-          <div v-if="route.path !== '/daily-loss'" class="topbar-context">
-            <span class="date-display"><CalendarDays :size="16" />{{ updatedAt }}</span>
-          </div>
         </div>
       </header>
       <RouterView :key="route.path" />
@@ -189,12 +181,12 @@ onMounted(() => {
   isolation: isolate;
 }
 
-.daily-loss-topbar {
+.app-topbar {
   display: none;
 }
 
 @media (max-width: 1024px) {
-  .daily-loss-topbar {
+  .app-topbar {
     display: grid;
     min-height: 0;
   }
@@ -214,53 +206,17 @@ onMounted(() => {
   flex: 1 1 auto;
 }
 
-.app-topbar {
-  min-height: 60px;
-  padding-top: 10px;
-  padding-bottom: 8px;
-}
-
-.topbar-primary-row,
-.topbar-context,
-.date-display {
+.topbar-primary-row {
   display: flex;
   align-items: center;
-}
-
-.topbar-primary-row {
   justify-content: flex-start;
   gap: 20px;
-}
-
-.topbar-context {
-  flex: none;
-  gap: 10px;
-}
-
-.date-display {
-  min-height: 34px;
-  gap: 7px;
-  color: var(--ds-secondary);
-  font-size: 14px;
-  font-weight: 500;
 }
 
 @media (max-width: 768px) {
   .topbar-primary-row {
     width: 100%;
     min-width: 0;
-  }
-
-  .topbar-context {
-    flex: 1 1 auto;
-    min-width: 0;
-    gap: 8px;
-  }
-}
-
-@media (max-width: 520px) {
-  .date-display {
-    display: none;
   }
 }
 </style>

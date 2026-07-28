@@ -2,6 +2,7 @@ package com.storeprofit.system.organization;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -15,6 +16,7 @@ import com.storeprofit.system.platform.authorization.DataScope;
 import com.storeprofit.system.platform.authorization.DataScopeDomains;
 import com.storeprofit.system.platform.authorization.DataScopeModes;
 import com.storeprofit.system.platform.authorization.DataScopeService;
+import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -49,6 +51,50 @@ class OrganizationServicePermissionTest {
     verify(accessControl).requireKnowledgeBaseManage(user);
     verify(accessControl).knowledgeBaseManagementStoreScope(user);
     verify(repository).stores(1L, scope);
+  }
+
+  @Test
+  void inventoryReductionsRequireStoreReadAndExplicitStoreScope() {
+    StoreResponse store = new StoreResponse(
+        "rg1", "RG1", "一店", 1L, "如果", "荆州", "店长", "2026-01-01", "营业中", "");
+    LocalDateTime start = LocalDateTime.of(2026, 7, 1, 0, 0);
+    LocalDateTime end = LocalDateTime.of(2026, 8, 1, 0, 0);
+    when(repository.store(1L, "rg1")).thenReturn(java.util.Optional.of(store));
+    when(repository.inventoryReductionSummary(1L, "rg1", start, end))
+        .thenReturn(new OrganizationRepository.InventoryReductionSummary(2, 2));
+    when(repository.inventoryReductions(1L, "rg1", start, end, 100)).thenReturn(List.of());
+
+    StoreInventoryReductionResponse response =
+        service.inventoryReductions(user, "rg1", "2026-07", 100);
+
+    assertThat(response.storeId()).isEqualTo("rg1");
+    assertThat(response.movementCount()).isEqualTo(2);
+    assertThat(response.truncated()).isTrue();
+    verify(accessControl).requireStoreRead(user);
+    verify(accessControl).requireStoreAccess(
+        user, DataScopeDomains.STORE, "rg1", "查看门店库存减少记录");
+    verify(repository).inventoryReductions(1L, "rg1", start, end, 100);
+  }
+
+  @Test
+  void inventoryReductionsRejectCrossStoreAccessBeforeReadingMovements() {
+    StoreResponse store = new StoreResponse(
+        "rg2", "RG2", "二店", 1L, "如果", "荆州", "店长", "2026-01-01", "营业中", "");
+    when(repository.store(1L, "rg2")).thenReturn(java.util.Optional.of(store));
+    doThrow(new BusinessException("FORBIDDEN", "无权访问该门店", org.springframework.http.HttpStatus.FORBIDDEN))
+        .when(accessControl)
+        .requireStoreAccess(user, DataScopeDomains.STORE, "rg2", "查看门店库存减少记录");
+
+    assertThatThrownBy(() -> service.inventoryReductions(user, "rg2", "2026-07", 100))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("FORBIDDEN"));
+
+    verify(repository, never()).inventoryReductionSummary(
+        1L,
+        "rg2",
+        LocalDateTime.of(2026, 7, 1, 0, 0),
+        LocalDateTime.of(2026, 8, 1, 0, 0)
+    );
   }
 
   @Test

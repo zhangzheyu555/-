@@ -31,13 +31,14 @@ const emit = defineEmits<{
 }>()
 
 const form = reactive({
-  supplierId: 0,
   itemId: 0,
   quantity: '',
   unitCost: '',
   note: '',
 })
 
+const defaultSupplier = computed(() =>
+  (props.suppliers || []).find((supplier) => supplier.active !== false))
 const enabledItems = computed(() => props.items.filter((item) => item.active !== false))
 const itemOptions = computed(() => enabledItems.value.map((item) => ({
   value: item.id,
@@ -90,7 +91,7 @@ function submit() {
   }
   submittedActionId.value = `purchase:create:${clientRequestId.value}`
   emit('createOrder', {
-    supplierId: Number(form.supplierId) || undefined,
+    supplierId: defaultSupplier.value?.id,
     note: form.note.trim() || undefined,
     clientRequestId: clientRequestId.value,
     lines: [{
@@ -159,15 +160,10 @@ function qty(value: number | undefined, unit?: string) {
         </div>
       </div>
       <div class="form-grid">
-        <label>
-          供应商
-          <select v-model.number="form.supplierId">
-            <option :value="0">未指定供应商</option>
-            <option v-for="supplier in props.suppliers || []" :key="supplier.id" :value="supplier.id">
-              {{ supplier.name }}
-            </option>
-          </select>
-        </label>
+        <div class="fixed-field">
+          <span>供应商</span>
+          <div class="fixed-supplier-value" aria-label="供应商">默认供应商</div>
+        </div>
         <label class="item-select-field">
           <span>商品</span>
           <SearchableSingleSelect
@@ -192,7 +188,7 @@ function qty(value: number | undefined, unit?: string) {
         </label>
         <label class="wide">
           备注
-          <input v-model="form.note" placeholder="供应商 / 采购单号 / 说明" />
+          <input v-model="form.note" placeholder="采购单号 / 说明" />
         </label>
       </div>
       <button class="primary-button submit-inline" type="submit" :disabled="!selectedItem || Number(form.quantity) <= 0 || Boolean(actioningId)">
@@ -212,7 +208,7 @@ function qty(value: number | undefined, unit?: string) {
           <header>
             <div>
               <strong>{{ order.id }}</strong>
-              <span>{{ order.supplierName || '未指定供应商' }} · {{ money(order.totalAmount) }}</span>
+              <span>{{ order.supplierName || '默认供应商' }} · {{ money(order.totalAmount) }}</span>
             </div>
             <span class="status-pill">{{ order.statusLabel || order.status }}</span>
           </header>
@@ -354,6 +350,27 @@ function qty(value: number | undefined, unit?: string) {
 
 .item-select-field {
   align-content: start;
+}
+
+.fixed-field {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.fixed-supplier-value {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f7faf9;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
 }
 
 @media (max-width: 1000px) {

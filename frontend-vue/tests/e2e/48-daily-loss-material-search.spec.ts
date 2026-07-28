@@ -52,6 +52,27 @@ const items = [
     unitPrice: 8,
     active: true,
   },
+  {
+    id: 303,
+    itemCode: 'FRUIT_CHECK_003',
+    itemName: '芒果',
+    categoryCode: 'FRUIT',
+    categoryName: '水果',
+    unit: '克',
+    pricingUnit: '斤',
+    quantityPerPricingUnit: 500,
+    unitPrice: 4.5,
+    active: true,
+    peelSelectionEnabled: true,
+    defaultPeelState: 'UNPEELED',
+    peeledUnit: '克',
+    unpeeledUnit: '克',
+    unpeeledPricingUnit: '斤',
+    unpeeledQuantityPerPricingUnit: 500,
+    unpeeledUnitPrice: 4.5,
+    yieldRate: 0.53030303,
+    inventoryUnit: '斤',
+  },
 ]
 
 function localDate() {
@@ -62,25 +83,27 @@ function localDate() {
   return `${year}-${month}-${day}`
 }
 
-test('每日报损在 390px 下完整展示并可按分类和单位搜索、提交', async ({ page }) => {
+test('每日报损支持品类搜索和去皮换算，提交数值型 itemConfigId 与形态', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   const saveBodies: Array<Record<string, unknown>> = []
+  let uploadCount = 0
   const today = localDate()
   const existingReport = {
-    id: 'report-today',
+    id: 'report-existing-1',
     storeId: 'rg1',
     storeCode: 'RG1',
     storeName: '茹菓测试店',
     lossDate: today,
     month: today.slice(0, 7),
-    status: 'DRAFT',
-    statusLabel: '已保存',
+    status: 'SUBMITTED',
+    statusLabel: '待复核',
     reported: true,
     totalAmount: 0,
     supplierCompensationAmount: 0,
     storeBorneAmount: 0,
     detailCount: 0,
     attachmentCount: 1,
+    submittedAt: `${today}T09:30:00`,
     details: [],
     attachments: [{
       id: 'existing-photo',
@@ -88,6 +111,19 @@ test('每日报损在 390px 下完整展示并可按分类和单位搜索、提�
       contentType: 'image/png',
     }],
   }
+  const secondExistingReport = {
+    ...existingReport,
+    id: 'report-existing-2',
+    status: 'REVIEWED',
+    statusLabel: '已复核',
+    submittedAt: `${today}T08:15:00`,
+    attachments: [],
+    attachmentCount: 0,
+  }
+  const imageBuffer = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+    'base64',
+  )
 
   await page.addInitScript((session) => {
     localStorage.setItem('ai_profit_vue_token', 'DAILY-LOSS-MATERIAL-E2E')
@@ -110,14 +146,18 @@ test('每日报损在 390px 下完整展示并可按分类和单位搜索、提�
     }
     if (url.pathname === '/api/daily-loss/items') return route.fulfill(ok(items))
     if (url.pathname === '/api/daily-loss/reports' && request.method() === 'GET') {
-      return route.fulfill(ok([existingReport]))
+      return route.fulfill(ok([existingReport, secondExistingReport]))
     }
     if (url.pathname === '/api/daily-loss/reports' && request.method() === 'POST') {
       saveBodies.push(request.postDataJSON())
-      return route.fulfill(ok({ ...existingReport, id: 'report-saved' }))
+      return route.fulfill(ok({ ...existingReport, id: `report-saved-${saveBodies.length}`, status: 'DRAFT' }))
     }
-    if (url.pathname === '/api/daily-loss/reports/report-saved/submit') {
-      return route.fulfill(ok({ ...existingReport, id: 'report-saved', status: 'SUBMITTED' }))
+    if (/^\/api\/daily-loss\/reports\/report-saved-\d+\/attachments$/.test(url.pathname)) {
+      uploadCount += 1
+      return route.fulfill(ok({ ...existingReport, id: url.pathname.split('/')[4] }))
+    }
+    if (/^\/api\/daily-loss\/reports\/report-saved-\d+\/submit$/.test(url.pathname)) {
+      return route.fulfill(ok({ ...existingReport, id: url.pathname.split('/')[4], status: 'SUBMITTED' }))
     }
     if (url.pathname === '/api/storage/attachments/existing-photo') {
       return route.fulfill({
@@ -131,10 +171,11 @@ test('每日报损在 390px 下完整展示并可按分类和单位搜索、提�
 
   await page.goto('/daily-loss')
   await expect(page.getByRole('heading', { name: '今日报损' })).toBeVisible()
+  await expect(page.getByText('已报 2 次', { exact: true })).toBeVisible()
   await expect(page.getByText(/厂商赔付/)).toHaveCount(0)
-  await expect(page.getByText('总计损耗金额', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('总计损耗金额', { exact: true })).toBeVisible()
   await expect(page.getByText(/店铺承担/)).toHaveCount(0)
-  await expect(page.getByLabel('报损结算')).toHaveCount(0)
+  await expect(page.getByLabel('报损结算')).toBeVisible()
   await expect(page.getByText('茹菓测试店 · 茹菓', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '增加品类' })).toBeVisible()
   await expect(page.getByText('选择照片', { exact: true })).toBeVisible()
@@ -146,8 +187,8 @@ test('每日报损在 390px 下完整展示并可按分类和单位搜索、提�
   await page.locator('.record-row').first().click()
   const detailDialog = page.getByRole('dialog', { name: '报损详情' })
   await expect(detailDialog).toBeVisible()
-  await expect(detailDialog.locator('.detail-settlement')).toHaveCount(0)
-  await expect(detailDialog.getByText('总计损耗金额', { exact: true })).toHaveCount(0)
+  await expect(detailDialog.locator('.detail-settlement')).toBeVisible()
+  await expect(detailDialog.getByText('总计损耗金额', { exact: true })).toBeVisible()
   await expect(detailDialog.getByText(/店铺承担/)).toHaveCount(0)
   await expect(detailDialog.getByText(/厂商赔付/)).toHaveCount(0)
   await expect(detailDialog.getByRole('button', { name: '关闭报损详情' })).toBeInViewport()
@@ -172,12 +213,14 @@ test('每日报损在 390px 下完整展示并可按分类和单位搜索、提�
   await page.getByRole('option', { name: /鲜牛奶.*MILK-202.*奶制品.*瓶/ }).click()
 
   await page.locator('.quantity-control input').first().fill('2')
-  await expect(page.getByLabel('报损结算')).toHaveCount(0)
+  await expect(page.getByLabel('报损结算')).toBeVisible()
   await page.getByRole('button', { name: '变质', exact: true }).click()
-  const submit = page.getByRole('button', { name: '提交今日报损', exact: true })
-  await submit.scrollIntoViewIfNeeded()
-  await expect(submit).toBeInViewport()
-  await submit.click()
+  await page.locator('.attachment-field input[type="file"]').setInputFiles({
+    name: 'milk-loss.png',
+    mimeType: 'image/png',
+    buffer: imageBuffer,
+  })
+  await page.getByRole('button', { name: '提交本次报损', exact: true }).click()
 
   await expect.poll(() => saveBodies.length).toBe(1)
   expect(saveBodies[0]).toMatchObject({
@@ -191,6 +234,40 @@ test('每日报损在 390px 下完整展示并可按分类和单位搜索、提�
   expect(saveBodies[0]).not.toHaveProperty('supplierCompensationAmount')
   expect(saveBodies[0]).not.toHaveProperty('storeBorneAmount')
   expect(typeof (saveBodies[0].details as Array<{ itemConfigId: unknown }>)[0].itemConfigId).toBe('number')
+
+  await page.locator('.item-picker-trigger').first().click()
+  await material.fill('芒果')
+  await page.getByRole('option', { name: /芒果.*FRUIT_CHECK_003/ }).click()
+  await expect(page.getByRole('button', { name: '不去皮', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await page.getByRole('button', { name: '去皮', exact: true }).click()
+  await page.locator('.quantity-control input').first().fill('100')
+  await expect(page.locator('.pricing-hint').first()).toContainText('去皮重量 ÷ 出肉率 53.03%')
+  await expect(page.locator('.settlement-block strong')).toHaveText('¥1.70')
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(page.getByRole('button', { name: '去皮', exact: true })).toBeVisible()
+  await expect.poll(() => page.evaluate(() => ({
+    viewport: document.documentElement.clientWidth,
+    content: document.documentElement.scrollWidth,
+  }))).toEqual({ viewport: 390, content: 390 })
+  await page.getByRole('button', { name: '切配损耗', exact: true }).click()
+  await page.locator('.attachment-field input[type="file"]').setInputFiles({
+    name: 'mango-loss.png',
+    mimeType: 'image/png',
+    buffer: imageBuffer,
+  })
+  await page.getByRole('button', { name: '提交本次报损', exact: true }).click()
+
+  await expect.poll(() => saveBodies.length).toBe(2)
+  await expect.poll(() => uploadCount).toBe(2)
+  expect(saveBodies[1]).toMatchObject({
+    storeId: 'rg1',
+    details: [{
+      itemConfigId: 303,
+      lossQuantity: 100,
+      lossReason: '切配损耗',
+      peelState: 'PEELED',
+    }],
+  })
   expect(await page.evaluate(() => Math.max(
     document.documentElement.scrollWidth,
     document.body.scrollWidth,

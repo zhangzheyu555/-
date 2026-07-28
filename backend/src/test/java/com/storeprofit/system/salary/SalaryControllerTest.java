@@ -62,6 +62,45 @@ class SalaryControllerTest {
   }
 
   @Test
+  void postPreviewUsesTheSameEmployeeSelectionRequestAsGeneration() {
+    SalaryGenerateRequest request = new SalaryGenerateRequest(
+        "s1",
+        "2026-05",
+        List.of("emp-1", "emp-2")
+    );
+    SalaryGenerateReport report = new SalaryGenerateReport(
+        2,
+        0,
+        0,
+        List.of(),
+        List.of(
+            new SalaryGenerateReport.SalaryCandidate("emp-1", "Alice", "Barista"),
+            new SalaryGenerateReport.SalaryCandidate("emp-2", "Bob", "Cashier")
+        )
+    );
+    when(authService.requireUser("Bearer token")).thenReturn(boss);
+    when(salaryGenerationService.previewGeneration(boss, request)).thenReturn(report);
+
+    ApiResponse<SalaryGenerateReport> result = controller.previewGeneration("Bearer token", request);
+
+    assertThat(result.data()).isSameAs(report);
+    verify(salaryGenerationService).previewGeneration(boss, request);
+  }
+
+  @Test
+  void getPreviewKeepsTheWholeStoreCompatibilityEndpoint() {
+    SalaryGenerateReport report = new SalaryGenerateReport(2, 0, 0, List.of());
+    when(authService.requireUser("Bearer token")).thenReturn(boss);
+    when(salaryGenerationService.previewGeneration(boss, "s1", "2026-05")).thenReturn(report);
+
+    ApiResponse<SalaryGenerateReport> result =
+        controller.previewGeneration("Bearer token", "s1", "2026-05");
+
+    assertThat(result.data()).isSameAs(report);
+    verify(salaryGenerationService).previewGeneration(boss, "s1", "2026-05");
+  }
+
+  @Test
   void createUsesAuthenticatedUserAndReturnsSavedRecord() {
     SalaryRecordRequest request = request();
     SalaryRecordResponse row = response("pay-created");

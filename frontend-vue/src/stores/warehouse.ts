@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import {
   cancelWarehouseTransfer,
   approveWarehousePurchaseOrder,
+  createWarehouseReturn,
   createWarehousePurchaseOrder,
   createWarehouseTransfer,
   createWarehouseRequisition,
@@ -35,7 +36,9 @@ import {
   type WarehouseOverview,
   type WarehousePurchaseOrderCreatePayload,
   type WarehousePurchaseOrderReceivePayload,
+  type WarehouseRequisitionReviewPriceLine,
   type WarehouseReturnOrder,
+  type WarehouseReturnCreatePayload,
   type WarehouseTransfer,
   type WarehouseTransferContext,
   type WarehouseTransferCreatePayload,
@@ -228,57 +231,46 @@ export const useWarehouseStore = defineStore('warehouse', {
         this.receivingId = ''
       }
     },
-    async approveRequisition(requisitionId: string) {
-      const requisition = this.overview?.requisitions.find((row) => row.id === requisitionId)
-      if (!requisition) throw new Error('叫货单不存在')
-      await this.runAction(requisitionId, async () => {
-        await reviewWarehouseRequisition(requisitionId, {
-          approved: true,
-          lines: requisition.lines.map((line) => ({
-            itemId: line.itemId,
-            approvedQuantity: Number(line.approvedQuantity || line.requestedQuantity || 0),
-          })),
-          note: '仓库管理员审核通过',
-          handlingMode: 'FULL',
-        })
-        this.actionMessage = '叫货单已审核通过'
-      })
+    async submitReturn(payload: WarehouseReturnCreatePayload) {
+      const actionId = `return-create:${payload.sourceRequisitionId}`
+      this.actioningId = actionId
+      this.error = ''
+      this.actionMessage = ''
+      try {
+        const saved = await createWarehouseReturn(payload)
+        this.actionMessage = '配送退货单已提交，等待仓库审核'
+        await Promise.all([
+          this.loadOverview(),
+          this.loadReturns(),
+        ])
+        return saved
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : '配送退货单提交失败'
+        throw error
+      } finally {
+        this.actioningId = ''
+      }
     },
-    async fulfillAvailableRequisition(requisitionId: string) {
+    async approveRequisition(
+      requisitionId: string,
+      reviewedPrices: WarehouseRequisitionReviewPriceLine[] = [],
+    ) {
       const requisition = this.overview?.requisitions.find((row) => row.id === requisitionId)
       if (!requisition) throw new Error('叫货单不存在')
+      const priceByItem = new Map(reviewedPrices.map((line) => [line.itemId, line.unitPrice]))
       await this.runAction(requisitionId, async () => {
         await reviewWarehouseRequisition(requisitionId, {
           approved: true,
           lines: requisition.lines.map((line) => ({
             itemId: line.itemId,
             approvedQuantity: Number(line.requestedQuantity || 0),
+            unitPrice: Number(priceByItem.get(line.itemId) ?? line.unitPrice ?? 0),
           })),
-          note: '按当前可用库存发货，缺货数量转待补货',
-          handlingMode: 'AVAILABLE_ONLY',
+          note: '仓库审核完成，库存自动划入门店',
+          handlingMode: 'FULL',
+          completeOnReview: true,
         })
-        await shipWarehouseRequisition(requisitionId)
-        this.actionMessage = '已按可用库存发货，缺货数量转待补货'
-      })
-    },
-    async markRequisitionBackordered(
-      requisitionId: string,
-      mode: 'MARK_BACKORDER' | 'WAIT_REPLENISHMENT',
-      note?: string,
-    ) {
-      const requisition = this.overview?.requisitions.find((row) => row.id === requisitionId)
-      if (!requisition) throw new Error('叫货单不存在')
-      await this.runAction(requisitionId, async () => {
-        await reviewWarehouseRequisition(requisitionId, {
-          approved: true,
-          lines: requisition.lines.map((line) => ({
-            itemId: line.itemId,
-            approvedQuantity: Number(line.shippedQuantity || 0),
-          })),
-          note: note || (mode === 'WAIT_REPLENISHMENT' ? '等待补货后继续发货' : '已标记缺货，待安排补货'),
-          handlingMode: mode,
-        })
-        this.actionMessage = mode === 'WAIT_REPLENISHMENT' ? '叫货单已转为待补货' : '缺货明细已记录'
+        this.actionMessage = '叫货单已完成：仓库库存已扣减，门店库存已增加'
       })
     },
     async rejectRequisition(requisitionId: string, note?: string) {

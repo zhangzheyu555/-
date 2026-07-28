@@ -7,13 +7,23 @@ public record WarehouseRequisitionReviewRequest(
     boolean approved,
     List<@Valid WarehouseRequisitionReviewLineRequest> lines,
     String note,
-    WarehouseRequisitionHandlingMode handlingMode
+    WarehouseRequisitionHandlingMode handlingMode,
+    boolean completeOnReview
 ) {
   public WarehouseRequisitionReviewRequest(
       boolean approved,
       List<WarehouseRequisitionReviewLineRequest> lines,
       String note
   ) {
-    this(approved, lines, note, null);
+    this(approved, lines, note, null, false);
+  }
+
+  public WarehouseRequisitionReviewRequest(
+      boolean approved,
+      List<WarehouseRequisitionReviewLineRequest> lines,
+      String note,
+      WarehouseRequisitionHandlingMode handlingMode
+  ) {
+    this(approved, lines, note, handlingMode, false);
   }
 }

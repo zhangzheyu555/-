@@ -19,6 +19,7 @@ const props = withDefaults(defineProps<{
   noteRequired?: boolean
   error?: string
   acknowledgeOnly?: boolean
+  confirmAutofocus?: boolean
 }>(), {
   message: '',
   confirmLabel: '确认',
@@ -32,6 +33,7 @@ const props = withDefaults(defineProps<{
   noteRequired: false,
   error: '',
   acknowledgeOnly: false,
+  confirmAutofocus: false,
 })
 
 const emit = defineEmits<{
@@ -190,6 +192,7 @@ onBeforeUnmount(() => {
           <UiButton
             :variant="confirmVariant"
             type="button"
+            :data-autofocus="confirmAutofocus ? '' : undefined"
             :loading="busy"
             :disabled="confirmDisabled"
             @click="emit('confirm')"

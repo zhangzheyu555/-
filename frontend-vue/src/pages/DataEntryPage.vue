@@ -975,7 +975,7 @@ watch(
             <button class="text-action" type="button" :disabled="!historyRows.length" @click="historyDrawerOpen = true">查看全部</button>
           </div>
           <div v-if="loadingHistory" class="history-placeholder">正在读取历史记录…</div>
-          <div v-else-if="historyError" class="history-placeholder">{{ historyError }}</div>
+          <div v-else-if="historyError" class="history-placeholder" role="alert">{{ historyError }}</div>
           <div v-else-if="!selectedStoreId" class="history-placeholder">请选择门店</div>
           <div v-else-if="!historyPreview.length" class="history-placeholder">暂无历史记录</div>
           <template v-else>

@@ -29,17 +29,46 @@ public class DailyLossRepository {
 
   public List<DailyLossItemResponse> activeItems(long tenantId) {
     return jdbcTemplate.query("""
-        select config.id, config.item_code, config.item_name, config.category,
+        select config.id, config.item_code,
+               coalesce(profile.canonical_name, config.item_name) as item_name,
+               config.category,
                category.id as warehouse_category_id,
                category.name as warehouse_category_name,
                config.unit, config.pricing_unit, config.quantity_per_pricing_unit,
-               config.unit_price, config.active
+               config.unit_price, config.active,
+               profile.id as peel_profile_id, profile.default_peel_state,
+               profile.yield_rate, profile.gross_grams_per_unit, profile.inventory_unit,
+               peeled.unit as peeled_unit, peeled.pricing_unit as peeled_pricing_unit,
+               peeled.quantity_per_pricing_unit as peeled_quantity_per_pricing_unit,
+               peeled.unit_price as peeled_unit_price,
+               unpeeled.unit as unpeeled_unit, unpeeled.pricing_unit as unpeeled_pricing_unit,
+               unpeeled.quantity_per_pricing_unit as unpeeled_quantity_per_pricing_unit,
+               unpeeled.unit_price as unpeeled_unit_price
         from loss_item_config config
+        left join daily_loss_peel_profile profile
+          on profile.tenant_id = config.tenant_id
+         and profile.primary_item_config_id = config.id
+        left join loss_item_config peeled
+          on peeled.tenant_id = profile.tenant_id
+         and peeled.id = profile.peeled_item_config_id
+         and peeled.active = 1
+        left join loss_item_config unpeeled
+          on unpeeled.tenant_id = profile.tenant_id
+         and unpeeled.id = profile.unpeeled_item_config_id
+         and unpeeled.active = 1
         left join warehouse_item_category category
           on category.tenant_id = config.tenant_id
          and category.id = config.warehouse_category_id
          and category.enabled = 1
         where config.tenant_id = ? and config.active = 1
+          and not exists (
+            select 1
+            from daily_loss_peel_profile hidden
+            where hidden.tenant_id = config.tenant_id
+              and hidden.primary_item_config_id <> config.id
+              and (hidden.peeled_item_config_id = config.id
+                   or hidden.unpeeled_item_config_id = config.id)
+          )
         order by coalesce(category.sort_order, 999), coalesce(category.name, config.category),
                  config.source_sheet, config.item_code, config.id
         """, (rs, rowNum) -> {
@@ -57,7 +86,20 @@ public class DailyLossRepository {
               rs.getString("pricing_unit"),
               rs.getBigDecimal("quantity_per_pricing_unit"),
               rs.getBigDecimal("unit_price"),
-              rs.getBoolean("active"));
+              rs.getBoolean("active"),
+              rs.getObject("peel_profile_id") != null,
+              rs.getString("default_peel_state"),
+              rs.getString("peeled_unit"),
+              rs.getString("peeled_pricing_unit"),
+              rs.getBigDecimal("peeled_quantity_per_pricing_unit"),
+              rs.getBigDecimal("peeled_unit_price"),
+              rs.getString("unpeeled_unit"),
+              rs.getString("unpeeled_pricing_unit"),
+              rs.getBigDecimal("unpeeled_quantity_per_pricing_unit"),
+              rs.getBigDecimal("unpeeled_unit_price"),
+              rs.getBigDecimal("yield_rate"),
+              rs.getBigDecimal("gross_grams_per_unit"),
+              rs.getString("inventory_unit"));
         }, tenantId);
   }
 
@@ -72,10 +114,41 @@ public class DailyLossRepository {
 
   public Optional<LossItemConfigRow> activeItemConfig(long tenantId, long itemConfigId) {
     return jdbcTemplate.query("""
-        select id, item_code, item_name, category, unit, pricing_unit,
-               quantity_per_pricing_unit, unit_price
-        from loss_item_config
-        where tenant_id = ? and id = ? and active = 1
+        select config.id, config.item_code,
+               coalesce(profile.canonical_name, config.item_name) as item_name,
+               config.category, config.unit, config.pricing_unit,
+               config.quantity_per_pricing_unit, config.unit_price,
+               profile.id as peel_profile_id, profile.default_peel_state,
+               profile.yield_rate, profile.gross_grams_per_unit, profile.inventory_unit,
+               peeled.id as peeled_item_config_id, peeled.unit as peeled_unit,
+               peeled.pricing_unit as peeled_pricing_unit,
+               peeled.quantity_per_pricing_unit as peeled_quantity_per_pricing_unit,
+               peeled.unit_price as peeled_unit_price,
+               unpeeled.id as unpeeled_item_config_id, unpeeled.unit as unpeeled_unit,
+               unpeeled.pricing_unit as unpeeled_pricing_unit,
+               unpeeled.quantity_per_pricing_unit as unpeeled_quantity_per_pricing_unit,
+               unpeeled.unit_price as unpeeled_unit_price
+        from loss_item_config config
+        left join daily_loss_peel_profile profile
+          on profile.tenant_id = config.tenant_id
+         and profile.primary_item_config_id = config.id
+        left join loss_item_config peeled
+          on peeled.tenant_id = profile.tenant_id
+         and peeled.id = profile.peeled_item_config_id
+         and peeled.active = 1
+        left join loss_item_config unpeeled
+          on unpeeled.tenant_id = profile.tenant_id
+         and unpeeled.id = profile.unpeeled_item_config_id
+         and unpeeled.active = 1
+        where config.tenant_id = ? and config.id = ? and config.active = 1
+          and not exists (
+            select 1
+            from daily_loss_peel_profile hidden
+            where hidden.tenant_id = config.tenant_id
+              and hidden.primary_item_config_id <> config.id
+              and (hidden.peeled_item_config_id = config.id
+                   or hidden.unpeeled_item_config_id = config.id)
+          )
         """, (rs, rowNum) -> new LossItemConfigRow(
             rs.getLong("id"),
             rs.getString("item_code"),
@@ -84,7 +157,22 @@ public class DailyLossRepository {
             rs.getString("unit"),
             rs.getString("pricing_unit"),
             rs.getBigDecimal("quantity_per_pricing_unit"),
-            rs.getBigDecimal("unit_price")),
+            rs.getBigDecimal("unit_price"),
+            rs.getObject("peel_profile_id", Long.class),
+            rs.getString("default_peel_state"),
+            rs.getBigDecimal("yield_rate"),
+            rs.getBigDecimal("gross_grams_per_unit"),
+            rs.getString("inventory_unit"),
+            rs.getObject("peeled_item_config_id", Long.class),
+            rs.getString("peeled_unit"),
+            rs.getString("peeled_pricing_unit"),
+            rs.getBigDecimal("peeled_quantity_per_pricing_unit"),
+            rs.getBigDecimal("peeled_unit_price"),
+            rs.getObject("unpeeled_item_config_id", Long.class),
+            rs.getString("unpeeled_unit"),
+            rs.getString("unpeeled_pricing_unit"),
+            rs.getBigDecimal("unpeeled_quantity_per_pricing_unit"),
+            rs.getBigDecimal("unpeeled_unit_price")),
         tenantId, itemConfigId).stream().findFirst();
   }
 
@@ -142,6 +230,9 @@ public class DailyLossRepository {
   public Optional<DailyLossReportRow> findReportByStoreAndDate(long tenantId, String storeId, LocalDate lossDate) {
     return jdbcTemplate.query(reportSelect() + """
         where r.tenant_id = ? and r.store_id = ? and r.loss_date = ?
+          and r.status <> 'DRAFT'
+        order by r.submitted_at desc, r.created_at desc, r.id desc
+        limit 1
         """, reportMapper(), tenantId, storeId, lossDate).stream().findFirst();
   }
 
@@ -172,6 +263,7 @@ public class DailyLossRepository {
         where r.tenant_id = :tenantId
           and r.loss_date >= :start
           and r.loss_date < :end
+          and r.status <> 'DRAFT'
         """);
     MapSqlParameterSource params = new MapSqlParameterSource()
         .addValue("tenantId", tenantId)
@@ -183,7 +275,7 @@ public class DailyLossRepository {
     }
     appendDailyLossBrandScope(sql, "r.store_id");
     appendStoreScope(sql, params, scope, "r.store_id");
-    sql.append(" order by r.loss_date desc, s.code, r.id");
+    sql.append(" order by r.loss_date desc, s.code, r.submitted_at desc, r.id");
     return namedJdbc.query(sql.toString(), params, reportMapper());
   }
 
@@ -231,9 +323,17 @@ public class DailyLossRepository {
       LocalDate lossDate,
       LossItemConfigRow item,
       BigDecimal quantity,
+      String inputUnit,
+      String pricingUnit,
+      BigDecimal quantityPerPricingUnit,
       BigDecimal pricedQuantity,
       BigDecimal unitPrice,
       BigDecimal amount,
+      String peelState,
+      String priceBasis,
+      BigDecimal yieldRate,
+      BigDecimal inventoryQuantity,
+      String inventoryUnit,
       String reason,
       long actorId
   ) {
@@ -241,12 +341,19 @@ public class DailyLossRepository {
         insert into daily_loss_record(
           id, report_id, tenant_id, store_id, loss_date, item_id, item_config_id,
           item_code, item_name, stock_unit, pricing_unit_snapshot,
-          quantity_per_pricing_unit_snapshot, loss_quantity, priced_quantity_snapshot,
+          quantity_per_pricing_unit_snapshot, loss_quantity, peel_state_snapshot,
+          price_basis_snapshot, yield_rate_snapshot, inventory_quantity_snapshot,
+          inventory_unit_snapshot, priced_quantity_snapshot,
           unit_price_snapshot, amount_snapshot, loss_reason, status, submitted_by, submitted_at
-        ) values (?, ?, ?, ?, ?, null, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', ?, current_timestamp)
+        ) values (
+          ?, ?, ?, ?, ?, null, ?,
+          ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, 'SUBMITTED', ?, current_timestamp
+        )
         """, id, reportId, tenantId, storeId, lossDate, item.id(), item.itemCode(), item.itemName(),
-        item.unit(), item.pricingUnit(), item.quantityPerPricingUnit(), quantity, pricedQuantity,
-        unitPrice, amount, reason, actorId);
+        inputUnit, pricingUnit, quantityPerPricingUnit, quantity, peelState, priceBasis, yieldRate,
+        inventoryQuantity, inventoryUnit, pricedQuantity, unitPrice, amount, reason, actorId);
   }
 
   public void updateSupplierCompensation(long tenantId, String reportId, BigDecimal amount) {
@@ -304,7 +411,9 @@ public class DailyLossRepository {
                coalesce(wc.name, c.category, '每日报损') as category,
                r.stock_unit, r.pricing_unit_snapshot, r.quantity_per_pricing_unit_snapshot,
                r.loss_quantity, r.priced_quantity_snapshot, r.unit_price_snapshot,
-               r.amount_snapshot, r.loss_reason,
+               r.amount_snapshot, r.loss_reason, r.peel_state_snapshot,
+               r.price_basis_snapshot, r.yield_rate_snapshot,
+               r.inventory_quantity_snapshot, r.inventory_unit_snapshot,
                case when application.daily_loss_id is null then 0 else 1 end as inventory_deducted
         from daily_loss_record r
         left join loss_item_config c on c.tenant_id = r.tenant_id and c.id = r.item_config_id
@@ -327,6 +436,11 @@ public class DailyLossRepository {
             rs.getBigDecimal("unit_price_snapshot"),
             rs.getBigDecimal("amount_snapshot"),
             rs.getString("loss_reason"),
+            rs.getString("peel_state_snapshot"),
+            rs.getString("price_basis_snapshot"),
+            rs.getBigDecimal("yield_rate_snapshot"),
+            rs.getBigDecimal("inventory_quantity_snapshot"),
+            rs.getString("inventory_unit_snapshot"),
             rs.getBoolean("inventory_deducted")),
         tenantId, reportId);
   }
@@ -343,7 +457,7 @@ public class DailyLossRepository {
                  order by case when item.code = detail.item_code then 0 else 1 end, item.id
                  limit 1
                ) as item_id,
-               detail.loss_quantity,
+               coalesce(detail.inventory_quantity_snapshot, detail.loss_quantity) as loss_quantity,
                detail.loss_reason, detail.status
         from daily_loss_record detail
         where detail.tenant_id = ? and detail.report_id = ?
@@ -385,7 +499,9 @@ public class DailyLossRepository {
                detail.loss_quantity, detail.stock_unit, detail.pricing_unit_snapshot,
                detail.quantity_per_pricing_unit_snapshot, detail.priced_quantity_snapshot,
                detail.unit_price_snapshot,
-               detail.amount_snapshot, detail.loss_reason
+               detail.amount_snapshot, detail.loss_reason, detail.peel_state_snapshot,
+               detail.price_basis_snapshot, detail.yield_rate_snapshot,
+               detail.inventory_quantity_snapshot, detail.inventory_unit_snapshot
         from daily_loss_record detail
         join daily_loss_report report on report.tenant_id = detail.tenant_id and report.id = detail.report_id
         join store_branch s on s.tenant_id = report.tenant_id and s.id = report.store_id
@@ -397,6 +513,7 @@ public class DailyLossRepository {
         where detail.tenant_id = :tenantId
           and report.loss_date >= :start
           and report.loss_date < :end
+          and report.status <> 'DRAFT'
         """);
     MapSqlParameterSource params = new MapSqlParameterSource()
         .addValue("tenantId", tenantId)
@@ -428,6 +545,11 @@ public class DailyLossRepository {
         rs.getBigDecimal("amount_snapshot"),
         rs.getBigDecimal("supplier_compensation_amount"),
         rs.getString("loss_reason"),
+        rs.getString("peel_state_snapshot"),
+        rs.getString("price_basis_snapshot"),
+        rs.getBigDecimal("yield_rate_snapshot"),
+        rs.getBigDecimal("inventory_quantity_snapshot"),
+        rs.getString("inventory_unit_snapshot"),
         rs.getString("submitted_by_name"),
         rs.getObject("submitted_at", LocalDateTime.class),
         rs.getString("reviewed_by_name"),
@@ -458,7 +580,9 @@ public class DailyLossRepository {
 
   public Optional<LockedLossRow> findForUpdate(long tenantId, String id) {
     return jdbcTemplate.query("""
-        select id, store_id, item_id, loss_quantity, loss_reason, status
+        select id, store_id, item_id,
+               coalesce(inventory_quantity_snapshot, loss_quantity) as loss_quantity,
+               loss_reason, status
         from daily_loss_record where tenant_id = ? and id = ? for update
         """, (rs, rowNum) -> new LockedLossRow(rs.getString("id"), rs.getString("store_id"),
             rs.getLong("item_id"), rs.getBigDecimal("loss_quantity"), rs.getString("loss_reason"),
@@ -644,9 +768,20 @@ public class DailyLossRepository {
       BigDecimal detailLossDifference, int storeCount, int itemCount,
       String reconciliationStatus, String sourceNote
   ) {}
-  public record LossItemConfigRow(long id, String itemCode, String itemName, String category, String unit,
-                                  String pricingUnit, BigDecimal quantityPerPricingUnit,
-                                  BigDecimal unitPrice) {}
+  public record LossItemConfigRow(
+      long id, String itemCode, String itemName, String category, String unit,
+      String pricingUnit, BigDecimal quantityPerPricingUnit, BigDecimal unitPrice,
+      Long peelProfileId, String defaultPeelState, BigDecimal yieldRate,
+      BigDecimal grossGramsPerUnit, String inventoryUnit,
+      Long peeledItemConfigId, String peeledUnit, String peeledPricingUnit,
+      BigDecimal peeledQuantityPerPricingUnit, BigDecimal peeledUnitPrice,
+      Long unpeeledItemConfigId, String unpeeledUnit, String unpeeledPricingUnit,
+      BigDecimal unpeeledQuantityPerPricingUnit, BigDecimal unpeeledUnitPrice
+  ) {
+    public boolean peelSelectionEnabled() {
+      return peelProfileId != null;
+    }
+  }
   public record ReportStoreRow(String id, String code, String name) {}
   public record DailyLossReportRow(String id, String storeId, String storeCode, String storeName, LocalDate lossDate,
                                    String status, Long submittedBy, String submittedByName,
@@ -658,7 +793,8 @@ public class DailyLossRepository {
       String itemCode, String itemName, String category, BigDecimal lossQuantity, String unit,
       String pricingUnit, BigDecimal quantityPerPricingUnit, BigDecimal pricedQuantity,
       BigDecimal unitPrice, BigDecimal amount, BigDecimal supplierCompensationAmount,
-      String lossReason, String submittedByName,
+      String lossReason, String peelState, String priceBasis, BigDecimal yieldRate,
+      BigDecimal inventoryQuantity, String inventoryUnit, String submittedByName,
       LocalDateTime submittedAt, String reviewedByName, LocalDateTime reviewedAt, String reviewNote
   ) {}
   public record LockedLossRow(String id, String storeId, Long itemId, BigDecimal lossQuantity, String lossReason,

@@ -17,6 +17,7 @@ import com.storeprofit.system.platform.authorization.DataScope;
 import com.storeprofit.system.platform.authorization.DataScopeModes;
 import com.storeprofit.system.warehouse.WarehouseTopologyRepository.FacilityRow;
 import com.storeprofit.system.warehouse.WarehouseTopologyService;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -104,6 +105,78 @@ public class OrganizationDataScopeRepositoryTest {
     assertThat(repository.brands(1L, scope)).extracting(BrandResponse::id).containsExactly(2L);
     assertThat(repository.stores(1L, DataScope.none())).isEmpty();
     assertThat(repository.brands(1L, DataScope.none())).isEmpty();
+  }
+
+  @Test
+  void inventoryReductionsAreScopedToTenantStoreAndMonthWithFourDecimalQuantities() {
+    jdbc.execute("""
+        create table warehouse_item (
+          id bigint not null primary key, tenant_id bigint not null, code varchar(80) not null,
+          name varchar(160) not null, unit varchar(40), stock_unit varchar(40)
+        )
+        """);
+    jdbc.execute("""
+        create table store_inventory (
+          id bigint auto_increment primary key, tenant_id bigint not null, store_id varchar(64) not null,
+          item_id bigint not null, quantity decimal(18,4) not null, unit varchar(40)
+        )
+        """);
+    jdbc.execute("""
+        create table auth_user (
+          id bigint not null primary key, tenant_id bigint not null, display_name varchar(120)
+        )
+        """);
+    jdbc.execute("""
+        create table store_inventory_movement (
+          id bigint not null primary key, tenant_id bigint not null, store_id varchar(64) not null,
+          item_id bigint not null, quantity_delta decimal(18,4) not null,
+          movement_type varchar(40) not null, source_type varchar(60), source_id varchar(120),
+          note varchar(500), created_by bigint, created_at timestamp not null
+        )
+        """);
+    jdbc.update("""
+        insert into warehouse_item(id, tenant_id, code, name, unit, stock_unit)
+        values (10, 1, 'DAILY_LOSS_023', '葡萄', '斤', '斤'),
+               (11, 1, 'RETURN_001', '牛奶', '箱', '箱'),
+               (20, 2, 'OTHER_001', '其他租户物料', '件', '件')
+        """);
+    jdbc.update("""
+        insert into store_inventory(tenant_id, store_id, item_id, quantity, unit)
+        values (1, 's1', 10, 9.7969, '斤'),
+               (1, 's1', 11, 3.0000, '箱'),
+               (1, 's2', 10, 8.0000, '斤'),
+               (2, 'other', 20, 7.0000, '件')
+        """);
+    jdbc.update("insert into auth_user(id, tenant_id, display_name) values (7, 1, '老板')");
+    jdbc.update("""
+        insert into store_inventory_movement(
+          id, tenant_id, store_id, item_id, quantity_delta, movement_type,
+          source_type, source_id, note, created_by, created_at
+        ) values
+          (1, 1, 's1', 10, -0.2031, 'LOSS_OUT', 'DAILY_LOSS', 'loss-1', '葡萄去皮报损', 7, timestamp '2026-07-28 13:52:10'),
+          (2, 1, 's1', 10,  1.0000, 'IN', 'STORE_RECEIPT', 'receipt-1', '正常入库', 7, timestamp '2026-07-28 13:53:00'),
+          (3, 1, 's1', 11, -2.0000, 'OUT', 'STORE_RETURN', 'return-1', '配送退货', 7, timestamp '2026-07-27 09:10:00'),
+          (4, 1, 's2', 10, -1.0000, 'LOSS_OUT', 'DAILY_LOSS', 'loss-2', '其他门店', 7, timestamp '2026-07-28 14:00:00'),
+          (5, 1, 's1', 10, -0.5000, 'LOSS_OUT', 'DAILY_LOSS', 'loss-old', '上月报损', 7, timestamp '2026-06-30 23:59:59'),
+          (6, 2, 'other', 20, -1.0000, 'OUT', 'MANUAL_ADJUSTMENT', 'other-1', '其他租户', null, timestamp '2026-07-28 14:00:00')
+        """);
+
+    LocalDateTime start = LocalDateTime.of(2026, 7, 1, 0, 0);
+    LocalDateTime end = LocalDateTime.of(2026, 8, 1, 0, 0);
+    OrganizationRepository.InventoryReductionSummary summary =
+        repository.inventoryReductionSummary(1L, "s1", start, end);
+    List<StoreInventoryReductionResponse.ReductionRow> rows =
+        repository.inventoryReductions(1L, "s1", start, end, 100);
+
+    assertThat(summary.movementCount()).isEqualTo(2);
+    assertThat(summary.itemCount()).isEqualTo(2);
+    assertThat(rows).extracting(StoreInventoryReductionResponse.ReductionRow::itemName)
+        .containsExactly("葡萄", "牛奶");
+    assertThat(rows.get(0).quantityReduced()).isEqualByComparingTo("0.2031");
+    assertThat(rows.get(0).currentQuantity()).isEqualByComparingTo("9.7969");
+    assertThat(rows.get(0).sourceLabel()).isEqualTo("每日报损");
+    assertThat(rows.get(0).operatorName()).isEqualTo("老板");
+    assertThat(rows.get(1).sourceLabel()).isEqualTo("配送退货");
   }
 
   @Test

@@ -168,7 +168,15 @@ export const MENU_GROUP_CONFIG: PermissionMenuGroup[] = [
         allowedRoles: ['SUPERVISOR', 'STORE_MANAGER'],
         requiredDataScope: { domain: 'EXAM', modes: ['ALL', 'STORE_LIST', 'OWN_STORE'] },
       },
-      { key: 'platform-settings', label: '平台配置', to: '/platform-login', icon: 'platform', requiredPermission: PERMISSIONS.PLATFORM_READ, allowedRoles: ['SUPERVISOR'] },
+      {
+        key: 'platform-settings',
+        label: '平台配置',
+        to: '/platform-login',
+        icon: 'platform',
+        requiredPermission: PERMISSIONS.PLATFORM_READ,
+        alternativePermissions: [PERMISSIONS.FINANCE_PROFIT_READ],
+        allowedRoles: ['FINANCE', 'SUPERVISOR'],
+      },
     ],
   },
   {

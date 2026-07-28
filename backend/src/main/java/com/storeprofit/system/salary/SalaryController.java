@@ -118,6 +118,15 @@ public class SalaryController {
     return ApiResponse.ok(salaryGenerationService.previewGeneration(authService.requireUser(authorization), storeId, month));
   }
 
+  @PostMapping("/preview")
+  public ApiResponse<SalaryGenerateReport> previewGeneration(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @Valid @RequestBody SalaryGenerateRequest request
+  ) {
+    return ApiResponse.ok(salaryGenerationService.previewGeneration(
+        authService.requireUser(authorization), request));
+  }
+
   @GetMapping("/export")
   public ResponseEntity<byte[]> exportCsv(
       @RequestHeader(value = "Authorization", required = false) String authorization,

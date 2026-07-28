@@ -93,6 +93,9 @@ interface CapturedRequests {
   businessMetricsQuery?: URLSearchParams
   businessMetricsRequests?: number
   employeePageRequests?: number
+  employeePageQueries?: URLSearchParams[]
+  previewPayloads?: Record<string, unknown>[]
+  generationPayload?: Record<string, unknown>
   assignment?: Record<string, unknown>
   employeeCreate?: Record<string, unknown>
   attendance?: Record<string, unknown>
@@ -130,6 +133,13 @@ async function prepare(
   metrics = salaryBusinessMetrics,
   workHoursTotal?: number,
   additionalRecords: typeof salaryRecord[] = [],
+  generationCandidates?: Array<{
+    employeeId: string
+    employeeName: string
+    position?: string
+    storeId?: string
+    storeName?: string
+  }>,
 ) {
   let assignedRecord: typeof salaryRecord | undefined
   let newlyCreatedEmployeeRecord: typeof salaryRecord | undefined
@@ -148,6 +158,7 @@ async function prepare(
     if (path === '/api/stores') return route.fulfill(ok(stores))
     if (path === '/api/salaries/employee-page') {
       captured.employeePageRequests = (captured.employeePageRequests || 0) + 1
+      captured.employeePageQueries = [...(captured.employeePageQueries || []), new URLSearchParams(url.search)]
       const records = [
         initialRecord,
         ...additionalRecords,
@@ -159,6 +170,40 @@ async function prepare(
         records,
         workHoursTotal,
       )))
+    }
+    if (path === '/api/salaries/preview' && request.method() === 'POST') {
+      const payload = request.postDataJSON() as Record<string, unknown>
+      captured.previewPayloads = [...(captured.previewPayloads || []), payload]
+      const candidates = generationCandidates || [initialRecord, ...additionalRecords]
+        .filter((record) => record.status === 'PENDING_GENERATION' && Boolean(record.employeeId))
+        .map((record) => ({
+          employeeId: record.employeeId,
+          employeeName: record.employeeName,
+          position: record.position,
+        }))
+      const requestedIds = Array.isArray(payload.employeeIds)
+        ? payload.employeeIds.map(String)
+        : candidates.map((candidate) => candidate.employeeId)
+      return route.fulfill(ok({
+        generated: requestedIds.length,
+        skipped: 0,
+        errors: 0,
+        skipDetails: [],
+        candidates,
+      }))
+    }
+    if (path === '/api/salaries/generate-report' && request.method() === 'POST') {
+      captured.generationPayload = request.postDataJSON() as Record<string, unknown>
+      const employeeIds = Array.isArray(captured.generationPayload.employeeIds)
+        ? captured.generationPayload.employeeIds
+        : []
+      return route.fulfill(ok({
+        generated: employeeIds.length,
+        skipped: 0,
+        errors: 0,
+        skipDetails: [],
+        candidates: generationCandidates || [],
+      }))
     }
     if (path === '/api/salaries/business-metrics') {
       captured.businessMetricsQuery = new URLSearchParams(url.search)
@@ -226,6 +271,59 @@ async function prepare(
     return route.fulfill(ok([]))
   })
 }
+
+test('全门店视图的操作按钮保持可点击，支持跨店生成并用弹窗解释其他前置条件', async ({ page }) => {
+  const captured: CapturedRequests = {}
+  await prepare(page, captured)
+  await page.goto('/finance/salary?month=2026-07')
+
+  const generateAllButton = page.getByRole('button', { name: '全部授权门店全选并生成', exact: true })
+  await expect(generateAllButton).toBeEnabled()
+  await expect(generateAllButton).toHaveCSS('opacity', '1')
+  await generateAllButton.click()
+  const previewDialog = page.getByRole('dialog', { name: '工资生成预览' })
+  await expect(previewDialog).toBeVisible()
+  await expect(previewDialog).toContainText('名单包含全部授权门店')
+  await previewDialog.getByRole('button', { name: '关闭', exact: true }).click()
+
+  const expectations = [
+    { button: '添加人员', message: '请先选择具体门店' },
+    { button: '批量审核', message: '请先选择待审核工资' },
+    { button: '清除筛选', message: '当前没有可清除的筛选条件' },
+  ]
+
+  for (const item of expectations) {
+    const button = page.getByRole('button', { name: item.button, exact: true })
+    await expect(button).toBeEnabled()
+    await expect(button).toHaveCSS('opacity', '1')
+    await button.click()
+    const errorDialog = page.getByRole('alertdialog')
+    await expect(errorDialog).toContainText(item.message)
+    await errorDialog.getByRole('button', { name: '我知道了' }).click()
+  }
+})
+
+test('桌面选择具体门店后头部范围和操作按钮保持同一行', async ({ page }) => {
+  const captured: CapturedRequests = {}
+  await page.setViewportSize({ width: 1464, height: 900 })
+  await prepare(page, captured)
+  await page.goto('/finance/salary?storeId=xls12&month=2026-07')
+
+  const controls = [
+    page.getByLabel('月份'),
+    page.getByRole('combobox', { name: '门店', exact: true }),
+    page.getByRole('button', { name: '添加人员', exact: true }),
+    page.getByRole('button', { name: '全选并生成', exact: true }),
+    page.getByRole('button', { name: '导出工资表', exact: true }),
+  ]
+  const controlTops = await Promise.all(controls.map(async (control) => {
+    const box = await control.boundingBox()
+    expect(box).not.toBeNull()
+    return Math.round(box!.y)
+  }))
+  expect(controlTops.length).toBe(5)
+  expect(Math.max(...controlTops) - Math.min(...controlTops)).toBeLessThanOrEqual(2)
+})
 
 test('跨店添加人员不改岗位，草稿工资可调整工龄、生日福利、深夜加班和假期', async ({ page }) => {
   const captured: CapturedRequests = {}
@@ -604,13 +702,13 @@ test('全职员工只改假期时保留原始小数工时，不重新按天数�
   })
 })
 
-test('停用门店不能通过工资页面路由继续查询或编辑', async ({ page }) => {
+test('停用门店不能通过工资页面路由继续查询，操作入口仍可点击查看原因', async ({ page }) => {
   const captured: CapturedRequests = {}
   await prepare(page, captured)
   await page.goto('/finance/salary?storeId=rg1&month=2026-07')
 
-  await expect(page.getByText('该门店已停用，不能继续查看、添加人员或生成工资。')).toBeVisible()
-  await expect(page.getByRole('button', { name: '添加人员', exact: true })).toBeDisabled()
+  await expect(page.getByRole('alertdialog')).toContainText('该门店已停用，不能继续查看、添加人员或生成工资。')
+  await expect(page.getByRole('button', { name: '添加人员', exact: true })).toBeEnabled()
   expect(captured.employeePageRequests || 0).toBe(0)
 })
 
@@ -684,6 +782,178 @@ test('待生成合成行和已提交工资不显示删除入口', async ({ page 
   await expect(page.getByRole('button', { name: /移出本月工资表|删除.*本月工资记录/ })).toHaveCount(0)
 })
 
+test('工资只显示三档业务状态，筛选按钮可展开下拉框，并可按同一名单批量生成', async ({ page }) => {
+  const captured: CapturedRequests = {}
+  const firstPendingRecord = {
+    ...salaryRecord,
+    id: '',
+    employeeId: 'EMP-GEN-1',
+    employeeName: '待生成甲',
+    status: 'PENDING_GENERATION',
+  }
+  const secondPendingRecord = {
+    ...salaryRecord,
+    id: '',
+    employeeId: 'EMP-GEN-2',
+    employeeName: '待生成乙',
+    status: 'PENDING_GENERATION',
+  }
+  await prepare(
+    page,
+    captured,
+    firstPendingRecord,
+    salaryBusinessMetrics,
+    undefined,
+    [secondPendingRecord],
+  )
+  await page.goto('/finance/salary?storeId=xls12&month=2026-07')
+
+  await expect(page.getByRole('combobox', { name: '工资状态' })).toHaveCount(0)
+  await expect.poll(() => captured.employeePageQueries?.[0]?.get('status')).toBe('ACTIVE')
+
+  const filterButton = page.getByRole('button', { name: '筛选', exact: true })
+  await expect(filterButton).toHaveAttribute('aria-expanded', 'false')
+  await filterButton.click()
+  const filterMenu = page.getByRole('menu', { name: '工资状态筛选' })
+  await expect(filterMenu).toBeVisible()
+  await expect(filterButton).toHaveAttribute('aria-expanded', 'true')
+  await expect(filterMenu.getByRole('menuitemradio')).toHaveText(['全部', '待生成', '待审核', '待发放'])
+  await filterMenu.getByRole('menuitemradio', { name: '待生成' }).click()
+  await expect(filterMenu).toBeHidden()
+  await expect(filterButton).toHaveAttribute('aria-expanded', 'false')
+  await expect(filterButton).toContainText('待生成')
+  await expect.poll(() => captured.employeePageQueries?.at(-1)?.get('status')).toBe('PENDING_GENERATION')
+  expect(captured.employeePageQueries?.at(-1)?.get('page')).toBe('1')
+  await filterButton.click()
+  await expect(filterMenu.getByRole('menuitemradio', { name: '待生成' })).toHaveAttribute('aria-checked', 'true')
+  await page.getByRole('heading', { name: '员工工资表' }).click()
+  await expect(filterMenu).toBeHidden()
+  await filterButton.focus()
+  await page.keyboard.press('ArrowDown')
+  await expect(filterMenu).toBeVisible()
+  await expect(filterMenu.getByRole('menuitemradio', { name: '待生成' })).toBeFocused()
+  await page.keyboard.press('ArrowDown')
+  await expect(filterMenu.getByRole('menuitemradio', { name: '待审核' })).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(filterMenu).toBeHidden()
+  await expect(filterButton).toBeFocused()
+
+  await page.getByRole('checkbox', { name: '选择当前页可操作员工' }).check()
+  await expect(page.getByRole('checkbox', { name: '选择待生成甲生成工资' })).toBeChecked()
+  await expect(page.getByRole('checkbox', { name: '选择待生成乙生成工资' })).toBeChecked()
+
+  await page.getByRole('checkbox', { name: '选择待生成乙生成工资' }).uncheck()
+  await page.getByRole('button', { name: '生成所选工资' }).click()
+
+  const dialog = page.getByRole('dialog', { name: '工资生成预览' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByText('已选择 1 人').first()).toBeVisible()
+  await expect(dialog.getByRole('checkbox', { name: '待生成甲' })).toBeChecked()
+  await expect(dialog.getByRole('checkbox', { name: '待生成乙' })).not.toBeChecked()
+  await expect.poll(() => captured.previewPayloads?.[0]).toMatchObject({
+    storeId: 'xls12',
+    month: '2026-07',
+    employeeIds: ['EMP-GEN-1'],
+  })
+
+  await dialog.getByRole('button', { name: '确认生成所选工资' }).click()
+  await expect.poll(() => captured.generationPayload).toEqual({
+    storeId: 'xls12',
+    month: '2026-07',
+    employeeIds: ['EMP-GEN-1'],
+  })
+  expect(captured.previewPayloads?.at(-1)).toEqual(captured.generationPayload)
+})
+
+test('不选具体门店时可预览全部授权门店，候选显示门店且确认名单保持一致', async ({ page }) => {
+  const captured: CapturedRequests = {}
+  const firstPendingRecord = {
+    ...salaryRecord,
+    id: '',
+    employeeId: 'EMP-ALL-1',
+    employeeName: '同名员工',
+    status: 'PENDING_GENERATION',
+  }
+  const secondPendingRecord = {
+    ...salaryRecord,
+    id: '',
+    storeId: 'bw1',
+    storeName: '霸王中心店',
+    brandId: 2,
+    brandName: '霸王茶姬',
+    employeeId: 'EMP-ALL-2',
+    employeeName: '同名员工',
+    position: '咖啡师',
+    status: 'PENDING_GENERATION',
+  }
+  const candidates = [
+    {
+      employeeId: firstPendingRecord.employeeId,
+      employeeName: firstPendingRecord.employeeName,
+      position: firstPendingRecord.position,
+      storeId: firstPendingRecord.storeId,
+      storeName: firstPendingRecord.storeName,
+    },
+    {
+      employeeId: secondPendingRecord.employeeId,
+      employeeName: secondPendingRecord.employeeName,
+      position: secondPendingRecord.position,
+      storeId: secondPendingRecord.storeId,
+      storeName: secondPendingRecord.storeName,
+    },
+  ]
+  await prepare(
+    page,
+    captured,
+    firstPendingRecord,
+    salaryBusinessMetrics,
+    undefined,
+    [secondPendingRecord],
+    candidates,
+  )
+  await page.goto('/finance/salary?month=2026-07')
+
+  const generateAllButton = page.getByRole('button', { name: '全部授权门店全选并生成' })
+  await expect(generateAllButton).toBeEnabled()
+  await generateAllButton.click()
+
+  const dialog = page.getByRole('dialog', { name: '工资生成预览' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText('名单包含全部授权门店')
+  await expect(dialog).toContainText('荆江之星')
+  await expect(dialog).toContainText('霸王中心店')
+  await expect(dialog.getByText('已选择 2 人').first()).toBeVisible()
+  await expect.poll(() => captured.previewPayloads?.[0]).toEqual({
+    month: '2026-07',
+  })
+
+  const candidateCheckboxes = dialog.getByRole('checkbox', { name: '同名员工' })
+  await expect(candidateCheckboxes).toHaveCount(2)
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+
+  const tableCheckboxes = page.getByRole('checkbox', { name: '选择同名员工生成工资' })
+  await expect(tableCheckboxes).toHaveCount(2)
+  await expect(tableCheckboxes.nth(0)).toBeChecked()
+  await expect(tableCheckboxes.nth(1)).toBeChecked()
+  await tableCheckboxes.nth(1).uncheck()
+  await page.getByRole('button', { name: '生成所选工资' }).click()
+
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByText('已选择 1 人').first()).toBeVisible()
+  await expect.poll(() => captured.previewPayloads?.[1]).toEqual({
+    month: '2026-07',
+    employeeIds: ['EMP-ALL-1'],
+  })
+  await dialog.getByRole('button', { name: '确认生成所选工资' }).click()
+
+  await expect.poll(() => captured.generationPayload).toEqual({
+    month: '2026-07',
+    employeeIds: ['EMP-ALL-1'],
+  })
+  expect(captured.generationPayload).not.toHaveProperty('storeId')
+  expect(captured.previewPayloads?.at(-1)).toEqual(captured.generationPayload)
+})
+
 test('未保存工资与假期修改会阻止焦点恢复同步覆盖明细', async ({ page }) => {
   const captured: CapturedRequests = {}
   await prepare(page, captured)
@@ -725,7 +995,7 @@ test('工资筛选、汇总、表格和明细在 390px 下保持可达且不撑�
   for (const control of [
     page.getByLabel('月份'),
     page.getByRole('combobox', { name: '门店', exact: true }),
-    page.getByLabel('工资状态'),
+    page.getByRole('button', { name: '筛选', exact: true }),
     page.locator('.salary-search'),
   ]) {
     await control.scrollIntoViewIfNeeded()
@@ -795,7 +1065,7 @@ test('草稿工资即使没有新增修改也允许主动保存并反馈结果',
   await expect(page.getByText(/已保存 李店员 的工资与假期信息/)).toBeVisible()
 })
 
-test('工资修改必须先保存再提交，保存失败在当前明细内提示并可直接重试', async ({ page }) => {
+test('工资修改必须先保存再提交，保存失败以弹窗提示且关闭后可直接重试', async ({ page }) => {
   const captured: CapturedRequests = {}
   await prepare(page, captured)
   let saveAttempts = 0
@@ -829,7 +1099,10 @@ test('工资修改必须先保存再提交，保存失败在当前明细内提�
   await expect(page.getByText('工资明细有未保存修改，请先保存后再提交审核。')).toBeVisible()
 
   await saveButton.click()
-  await expect(page.locator('.salary-detail-panel').getByRole('alert')).toContainText('工资记录已被其他用户修改')
+  const errorDialog = page.getByRole('alertdialog')
+  await expect(errorDialog).toContainText('工资记录已被其他用户修改')
+  await expect(page.locator('.salary-detail-panel').getByRole('alert')).toBeHidden()
+  await errorDialog.getByRole('button', { name: '我知道了' }).click()
   await expect(saveButton).toBeEnabled()
   await expect(submitButton).toBeDisabled()
 
@@ -846,7 +1119,8 @@ test('状态和关键词筛选可清除，员工总数与当前筛选结果不�
   await page.route(/\/api\/salaries\/employee-page/, async (route) => {
     const url = new URL(route.request().url())
     salaryQueries.push(new URLSearchParams(url.search))
-    const filtered = Boolean(url.searchParams.get('status') || url.searchParams.get('keyword'))
+    const status = url.searchParams.get('status')
+    const filtered = Boolean((status && status !== 'ACTIVE') || url.searchParams.get('keyword'))
     return route.fulfill(ok({
       ...salaryPage(filtered ? [] : [salaryRecord]),
       content: filtered ? [] : [salaryRecord],
@@ -861,18 +1135,22 @@ test('状态和关键词筛选可清除，员工总数与当前筛选结果不�
   })
   await page.goto('/finance/salary?storeId=xls12&month=2026-07')
 
-  await page.getByLabel('工资状态').selectOption('SUBMITTED')
+  const statusFilterButton = page.getByRole('button', { name: '筛选', exact: true })
+  await statusFilterButton.click()
+  await page.getByRole('menu', { name: '工资状态筛选' })
+    .getByRole('menuitemradio', { name: '待审核' })
+    .click()
   await expect(page.getByText('当前筛选范围暂无员工')).toBeVisible()
   await expect(page.locator('.title-block')).toContainText('共 1 名员工 · 当前显示 0 名')
 
   const clearButton = page.getByRole('button', { name: '清除筛选' })
   await expect(clearButton).toBeEnabled()
   await clearButton.click()
-  await expect(page.getByLabel('工资状态')).toHaveValue('')
+  await expect(statusFilterButton).not.toContainText('待审核')
   await expect(page.getByText('李店员', { exact: true }).first()).toBeVisible()
-  await expect(clearButton).toBeDisabled()
-  await expect.poll(() => salaryQueries.some((query) => query.get('status') === 'SUBMITTED')).toBe(true)
-  await expect.poll(() => salaryQueries.at(-1)?.has('status')).toBe(false)
+  await expect(clearButton).toBeEnabled()
+  await expect.poll(() => salaryQueries.some((query) => query.get('status') === 'PENDING_REVIEW')).toBe(true)
+  await expect.poll(() => salaryQueries.at(-1)?.get('status')).toBe('ACTIVE')
 })
 
 test('批量审核只允许选择待审核工资，部分失败时保留失败记录供重试', async ({ page }) => {
@@ -908,7 +1186,7 @@ test('批量审核只允许选择待审核工资，部分失败时保留失败�
   await expect(page.getByLabel('选择李店员')).toBeDisabled()
   await expect(page.getByLabel('选择待审甲')).toBeEnabled()
   await expect(page.getByLabel('选择待审乙')).toBeEnabled()
-  await page.getByLabel('选择当前页待审核工资').check()
+  await page.getByLabel('选择当前页可操作员工').check()
   const batchButton = page.getByRole('button', { name: /批量审核\s*（2）/ })
   await expect(batchButton).toBeEnabled()
   await batchButton.click()
@@ -916,7 +1194,7 @@ test('批量审核只允许选择待审核工资，部分失败时保留失败�
 
   await expect.poll(() => approvalAttempts).toEqual([submittedOne.id, submittedTwo.id])
   await expect(page.getByText('已审核 1 条工资记录')).toBeVisible()
-  await expect(page.getByText(/1 条工资审核失败/)).toBeVisible()
+  await expect(page.getByRole('alertdialog')).toContainText('1 条工资审核失败')
   await expect(page.getByLabel('选择待审甲')).not.toBeChecked()
   await expect(page.getByLabel('选择待审乙')).toBeChecked()
 })
@@ -971,7 +1249,7 @@ test('工资生成先展示加载和失败重试，没有可生成员工时禁�
     }))
   })
   await page.goto('/finance/salary?storeId=xls12&month=2026-07')
-  await page.getByRole('button', { name: '生成本月工资' }).click()
+  await page.getByRole('button', { name: '全选并生成' }).click()
 
   const dialog = page.getByRole('dialog', { name: '工资生成预览' })
   await expect(dialog.getByRole('alert')).toBeVisible()
@@ -979,7 +1257,7 @@ test('工资生成先展示加载和失败重试，没有可生成员工时禁�
   await expect(dialog).toContainText('可生成 0 人')
   await expect(dialog).toContainText('李店员')
   await expect(dialog).toContainText('缺少已确认考勤')
-  await expect(dialog.getByRole('button', { name: '确认生成本月工资' })).toBeDisabled()
+  await expect(dialog.getByRole('button', { name: '确认生成所选工资' })).toBeDisabled()
   expect(previewAttempts).toBe(2)
 })
 
@@ -1009,7 +1287,7 @@ test('全部门店下从员工明细进入预览会使用员工所属门店', as
   const dialog = page.getByRole('dialog', { name: '工资生成预览' })
   await expect(dialog).toBeVisible()
   await expect(dialog).toContainText('荆江之星')
-  await expect(dialog.getByRole('button', { name: '确认生成本月工资' })).toBeEnabled()
+  await expect(dialog.getByRole('button', { name: '确认生成所选工资' })).toBeEnabled()
   await expect.poll(() => previewQuery?.get('storeId')).toBe('xls12')
   await expect(page.getByRole('alert').filter({ hasText: '请先选择具体门店' })).toHaveCount(0)
 })

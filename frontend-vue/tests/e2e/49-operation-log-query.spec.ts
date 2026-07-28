@@ -165,9 +165,16 @@ test('分页只复用已应用条件，失败时保留上一批结果并提供�
 
   await page.getByLabel('日志关键词').fill('不会覆盖已应用条件')
   await page.getByRole('button', { name: '下一页' }).click()
-  await expect(page.getByRole('alert')).toContainText('日志服务暂时不可用')
+  let errorDialog = page.getByRole('alertdialog', { name: '操作未完成' })
+  await expect(errorDialog).toContainText('日志服务暂时不可用')
+  await expect(page.locator('.logs-error')).toBeHidden()
   await expect(page.getByText('门店日常叫货')).toBeVisible()
   expect(requests[2]!.searchParams.get('keyword')).toBe('')
+
+  await errorDialog.getByRole('button', { name: '重新查询' }).click()
+  await expect.poll(() => requests.length).toBe(4)
+  errorDialog = page.getByRole('alertdialog', { name: '操作未完成' })
+  await expect(errorDialog).toContainText('日志服务暂时不可用')
 })
 
 test('带门店参数进入日志页时，首次查询和重置都保留该范围', async ({ page }) => {

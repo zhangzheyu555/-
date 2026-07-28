@@ -196,7 +196,7 @@ test('dashboard failure is localized and technical details are hidden', async ({
 
   await expect(page.getByRole('heading', { name: '利润概览', level: 1 })).toBeVisible()
   await expect(page.getByLabel('利润筛选条件')).toBeVisible()
-  await expect(page.getByText('利润数据加载失败，请稍后重试。')).toBeVisible()
+  await expect(page.getByRole('alertdialog', { name: '数据加载失败' })).toContainText('利润数据加载失败，请稍后重试。')
   await expect(page.getByText('品牌数据暂时无法读取。')).toBeVisible()
   await expect(page.getByText('门店排行暂时无法读取。')).toBeVisible()
   await expect(page.getByText('趋势数据暂时无法读取。')).toBeVisible()
@@ -320,7 +320,8 @@ test('primary metric card is opaque and the compact topbar has no redundant cont
   await expect(page.getByRole('button', { name: '打开全局搜索' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '消息提醒' })).toHaveCount(0)
   await expect(page.getByRole('search')).toHaveCount(0)
-  await expect(page.locator('.date-display')).toBeVisible()
+  await expect(page.locator('.date-display')).toHaveCount(0)
+  await expect(page.locator('.app-topbar')).toBeHidden()
   expect(consoleErrors).toEqual([])
 })
 

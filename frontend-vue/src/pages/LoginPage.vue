@@ -4,6 +4,7 @@ import { AlertCircle, Eye, EyeOff, Headphones, LockKeyhole, ShieldCheck, UserRou
 import { useRoute, useRouter } from 'vue-router'
 import { ApiError } from '../api/http'
 import { changeInitialPasswordApi } from '../api/auth'
+import { reportAppError } from '../errors/appErrorDialog'
 import { getHealth } from '../api/health'
 import { useAuthStore } from '../stores/auth'
 
@@ -58,6 +59,7 @@ async function submit() {
     await router.push(redirect)
   } catch (err) {
     applyLoginError(err)
+    reportAppError(submitError.value || passwordError.value || err, { title: '登录未完成' })
   }
 }
 
@@ -84,6 +86,7 @@ async function submitInitialPasswordChange() {
     passwordChangeSuccess.value = '密码修改成功，请使用新密码重新登录'
   } catch (err) {
     newPasswordError.value = err instanceof Error ? err.message : '密码修改失败，请重新登录后重试'
+    reportAppError(newPasswordError.value, { title: '密码修改未完成' })
     if (err instanceof ApiError && err.status === 401) clearPasswordChangeState()
   } finally {
     changingPassword.value = false
@@ -102,11 +105,22 @@ function resolveRedirect(redirect: unknown) {
   if (!target.startsWith('/') || target.startsWith('//') || target.startsWith('/login')) return '/'
   const matched = router.resolve(target).matched
   if (!matched.length) return '/'
-  const requiredPermission = [...matched]
+  const permissionRecord = [...matched]
     .reverse()
-    .map((record) => record.meta.permission)
-    .find((permission): permission is string => typeof permission === 'string' && Boolean(permission))
-  if (requiredPermission && !auth.hasPermission(requiredPermission)) return '/'
+    .find((record) => typeof record.meta.permission === 'string' && Boolean(record.meta.permission))
+  const requiredPermission = typeof permissionRecord?.meta.permission === 'string'
+    ? permissionRecord.meta.permission
+    : undefined
+  const alternativePermissions = Array.isArray(permissionRecord?.meta.alternativePermissions)
+    ? permissionRecord.meta.alternativePermissions.filter(
+      (permission): permission is string => typeof permission === 'string' && Boolean(permission),
+    )
+    : []
+  if (requiredPermission
+      && !auth.hasPermission(requiredPermission)
+      && !alternativePermissions.some((permission) => auth.hasPermission(permission))) {
+    return '/'
+  }
   return target
 }
 

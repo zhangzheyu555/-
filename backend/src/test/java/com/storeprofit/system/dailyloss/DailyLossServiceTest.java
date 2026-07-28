@@ -33,6 +33,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.apache.poi.ss.usermodel.CellType;
+import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -291,10 +292,10 @@ class DailyLossServiceTest {
       var details = workbook.getSheet("报损明细");
       assertThat(matrix.getRow(0).getCell(0).getStringCellValue()).isEqualTo("7月份店铺损耗表");
       assertThat(matrix.getRow(1).getCell(2).getStringCellValue()).isEqualTo("苹果汁\n单位：克");
+      assertThat(matrix.getRow(3).getCell(2).getNumericCellValue()).isEqualTo(10D);
       assertThat(matrix.getRow(4).getCell(2).getNumericCellValue()).isEqualTo(0.02D);
       assertThat(matrix.getRow(5).getCell(2).getNumericCellValue()).isEqualTo(7D);
-      assertThat(matrix.getRow(7).getCell(1).getNumericCellValue()).isEqualTo(10D);
-      assertThat(matrix.getRow(8).getCell(1).getNumericCellValue()).isEqualTo(40.14D);
+      assertThat(matrix.getRow(6).getCell(1).getNumericCellValue()).isEqualTo(50.14D);
       assertThat(summary.getLastRowNum()).isEqualTo(31);
       assertThat(summary.getPaneInformation().isFreezePane()).isTrue();
       assertThat(summary.getCTWorksheet().isSetAutoFilter()).isTrue();
@@ -304,15 +305,15 @@ class DailyLossServiceTest {
       assertThat(summary.getRow(14).getCell(5).getNumericCellValue()).isEqualTo(50.14D);
       assertThat(summary.getRow(14).getCell(5).getCellStyle().getDataFormatString()).contains("#,##0.00");
       assertThat(details.getLastRowNum()).isEqualTo(2);
-      assertThat(details.getRow(1).getCell(6).getCellType()).isEqualTo(CellType.NUMERIC);
-      assertThat(details.getRow(1).getCell(12).getCellType()).isEqualTo(CellType.NUMERIC);
+      assertThat(details.getRow(1).getCell(8).getCellType()).isEqualTo(CellType.NUMERIC);
+      assertThat(details.getRow(1).getCell(14).getCellType()).isEqualTo(CellType.NUMERIC);
       var formulaRow = java.util.stream.IntStream.rangeClosed(1, details.getLastRowNum())
           .mapToObj(details::getRow)
           .filter(row -> "苹果汁".equals(row.getCell(4).getStringCellValue()))
           .findFirst()
           .orElseThrow();
-      assertThat(formulaRow.getCell(13).getStringCellValue()).isEqualTo("'=恶意公式");
-      assertThat(formulaRow.getCell(13).getStringCellValue()).doesNotContain("photo.jpg", "/api/storage", ".zip");
+      assertThat(formulaRow.getCell(18).getStringCellValue()).isEqualTo("'=恶意公式");
+      assertThat(formulaRow.getCell(18).getStringCellValue()).doesNotContain("photo.jpg", "/api/storage", ".zip");
     }
     assertThat(jdbcTemplate.queryForList(
         "select action from operation_log order by id", String.class))
@@ -372,6 +373,119 @@ class DailyLossServiceTest {
       assertThat(detail.unitPriceSnapshot()).isEqualByComparingTo(BigDecimal.ZERO);
       assertThat(detail.amountSnapshot()).isEqualByComparingTo(BigDecimal.ZERO);
     });
+  }
+
+  @Test
+  void peeledAndUnpeeledLossesFollowWorkbookFormulasAndSnapshotRawInventoryQuantity() {
+    DriverManagerDataSource dataSource = reportDataSource();
+    JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
+    createReportSchema(jdbcTemplate);
+    jdbcTemplate.update("""
+        insert into warehouse_item(id, tenant_id, code, name, active) values
+          (103, 1, 'mango', '芒果', 1),
+          (104, 1, 'dragon-fruit', '火龙果', 1),
+          (105, 1, 'watermelon', '西瓜', 1)
+        """);
+    jdbcTemplate.update("""
+        insert into loss_item_config(
+          id, tenant_id, item_code, item_name, category, unit, pricing_unit,
+          quantity_per_pricing_unit, unit_price, source_sheet, active
+        ) values
+          (3, 1, 'mango', '芒果', '水果检查表', '克', '斤', 500, 4.5000, '水果检查表', 1),
+          (4, 1, 'dragon-fruit', '火龙果', '每日报损表', '克', '斤', 500, 4.5000, '每日报损表', 1),
+          (5, 1, 'dragon-fruit-raw', '火龙果', '水果检查表', '克', '斤', 500, 4.0000, '水果检查表', 1),
+          (6, 1, 'watermelon', '西瓜', '每日报损表', '克', '斤', 500, 5.0000, '每日报损表', 1)
+        """);
+    jdbcTemplate.update("""
+        insert into daily_loss_peel_profile(
+          tenant_id, primary_item_config_id, peeled_item_config_id, unpeeled_item_config_id,
+          canonical_name, default_peel_state, yield_rate, gross_grams_per_unit, inventory_unit,
+          source_price_file, source_formula_file
+        ) values
+          (1, 2, null, 2, '凤梨', 'UNPEELED', 0.598263615, 1267, '斤', 'price.numbers', 'formula.numbers'),
+          (1, 3, null, 3, '芒果', 'UNPEELED', 0.530303030, null, '斤', 'price.numbers', 'formula.numbers'),
+          (1, 4, 4, 5, '火龙果', 'PEELED', 0.700000000, null, '斤', 'price.numbers', 'formula.numbers'),
+          (1, 6, 6, null, '西瓜', 'PEELED', 0.800000000, null, '斤', 'price.numbers', 'formula.numbers')
+        """);
+    DailyLossRepository repository = new DailyLossRepository(
+        jdbcTemplate, new NamedParameterJdbcTemplate(dataSource));
+    AccessControlService access = mock(AccessControlService.class);
+    AuthUser manager = user("STORE_MANAGER", "s1");
+    AuthUser supervisor = user("SUPERVISOR", null);
+    when(access.dataScope(manager, DataScopeDomains.STORE))
+        .thenReturn(new DataScope(DataScopeModes.OWN_STORE, List.of("s1")));
+    when(access.dataScope(supervisor, DataScopeDomains.STORE)).thenReturn(DataScope.all());
+    WarehouseRepository warehouse = mock(WarehouseRepository.class);
+    when(warehouse.subtractStoreInventoryIfEnough(
+        org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyString(),
+        org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.any(),
+        org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
+        org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
+        org.mockito.ArgumentMatchers.anyLong())).thenReturn(true);
+    DailyLossService dailyLossService = service(
+        repository, warehouse, access, new AuditRepository(jdbcTemplate));
+
+    DailyLossReportResponse draft = dailyLossService.saveReport(manager, new DailyLossReportSaveRequest(
+        "s1",
+        LocalDate.of(2026, 7, 18),
+        List.of(
+            new DailyLossReportLineRequest(3L, new BigDecimal("100"), "芒果去皮", "PEELED"),
+            new DailyLossReportLineRequest(3L, new BigDecimal("500"), "芒果不去皮", "UNPEELED"),
+            new DailyLossReportLineRequest(4L, new BigDecimal("100"), "火龙果去皮", "PEELED"),
+            new DailyLossReportLineRequest(4L, new BigDecimal("500"), "火龙果不去皮", "UNPEELED"),
+            new DailyLossReportLineRequest(6L, new BigDecimal("500"), "西瓜不去皮", "UNPEELED"),
+            new DailyLossReportLineRequest(2L, new BigDecimal("100"), "凤梨去皮", "PEELED")
+        )
+    ));
+
+    assertThat(draft.totalAmount()).isEqualByComparingTo("18.40");
+    assertThat(draft.details()).extracting(
+        DailyLossReportDetailResponse::lossReason,
+        DailyLossReportDetailResponse::peelState,
+        DailyLossReportDetailResponse::priceBasis,
+        DailyLossReportDetailResponse::amountSnapshot,
+        DailyLossReportDetailResponse::inventoryQuantity,
+        DailyLossReportDetailResponse::inventoryUnit
+    ).containsExactlyInAnyOrder(
+        org.assertj.core.groups.Tuple.tuple("芒果去皮", "PEELED", "UNPEELED",
+            new BigDecimal("1.70"), new BigDecimal("0.3771"), "斤"),
+        org.assertj.core.groups.Tuple.tuple("芒果不去皮", "UNPEELED", "UNPEELED",
+            new BigDecimal("4.50"), new BigDecimal("1.0000"), "斤"),
+        org.assertj.core.groups.Tuple.tuple("火龙果去皮", "PEELED", "PEELED",
+            new BigDecimal("0.90"), new BigDecimal("0.2857"), "斤"),
+        org.assertj.core.groups.Tuple.tuple("火龙果不去皮", "UNPEELED", "UNPEELED",
+            new BigDecimal("4.00"), new BigDecimal("1.0000"), "斤"),
+        org.assertj.core.groups.Tuple.tuple("西瓜不去皮", "UNPEELED", "PEELED",
+            new BigDecimal("4.00"), new BigDecimal("1.0000"), "斤"),
+        org.assertj.core.groups.Tuple.tuple("凤梨去皮", "PEELED", "UNPEELED",
+            new BigDecimal("3.30"), new BigDecimal("0.3343"), "斤")
+    );
+    assertThat(repository.activeItems(1L)).noneMatch(item -> item.id() == 5L);
+
+    jdbcTemplate.update("""
+        insert into warehouse_attachment(
+          tenant_id, store_id, business_type, business_id, file_name, content_type, file_size, content, uploaded_at
+        ) values (1, 's1', 'DAILY_LOSS', ?, 'loss.jpg', 'image/jpeg', 1, ?, current_timestamp)
+        """, draft.id(), new byte[]{1});
+    dailyLossService.submitReport(manager, draft.id());
+    dailyLossService.reviewReport(supervisor, draft.id(), new DailyLossReviewRequest("库存已核对"));
+
+    assertThat(jdbcTemplate.queryForList("""
+        select detail.loss_reason, application.quantity
+        from daily_loss_inventory_application application
+        join daily_loss_record detail on detail.id = application.daily_loss_id
+        order by detail.loss_reason
+        """)).extracting(
+            row -> row.get("LOSS_REASON"),
+            row -> row.get("QUANTITY")
+        ).containsExactlyInAnyOrder(
+            org.assertj.core.groups.Tuple.tuple("芒果去皮", new BigDecimal("0.3771")),
+            org.assertj.core.groups.Tuple.tuple("芒果不去皮", new BigDecimal("1.0000")),
+            org.assertj.core.groups.Tuple.tuple("火龙果去皮", new BigDecimal("0.2857")),
+            org.assertj.core.groups.Tuple.tuple("火龙果不去皮", new BigDecimal("1.0000")),
+            org.assertj.core.groups.Tuple.tuple("西瓜不去皮", new BigDecimal("1.0000")),
+            org.assertj.core.groups.Tuple.tuple("凤梨去皮", new BigDecimal("0.3343"))
+        );
   }
 
   @Test
@@ -546,6 +660,90 @@ class DailyLossServiceTest {
     assertThat(jdbcTemplate.queryForList("select action from operation_log", String.class)).isEmpty();
   }
 
+  @Test
+  void sameStoreCanSubmitMultipleReportsOnOneDayAndOneSubmissionCompletesDailyRequirement() throws Exception {
+    DriverManagerDataSource dataSource = reportDataSource();
+    JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
+    createReportSchema(jdbcTemplate);
+    DailyLossRepository repository = new DailyLossRepository(
+        jdbcTemplate, new NamedParameterJdbcTemplate(dataSource));
+    AccessControlService access = mock(AccessControlService.class);
+    AuthUser manager = user("STORE_MANAGER", "s1");
+    AuthUser finance = user("FINANCE", null);
+    when(access.dataScope(manager, DataScopeDomains.STORE))
+        .thenReturn(new DataScope(DataScopeModes.OWN_STORE, List.of("s1")));
+    when(access.dataScope(finance, DataScopeDomains.FINANCE)).thenReturn(DataScope.all());
+    DailyLossService dailyLossService = service(
+        repository, mock(WarehouseRepository.class), access, new AuditRepository(jdbcTemplate));
+    LocalDate today = LocalDate.now(java.time.ZoneId.of("Asia/Shanghai"));
+
+    DailyLossReportResponse first = dailyLossService.saveReport(
+        manager,
+        new DailyLossReportSaveRequest(
+            "s1",
+            today,
+            List.of(new DailyLossReportLineRequest(
+                1L, new BigDecimal("10"), "第一次报损"))));
+    jdbcTemplate.update("""
+        insert into warehouse_attachment(
+          tenant_id, store_id, business_type, business_id, file_name, content_type,
+          file_size, content, uploaded_at
+        ) values (1, 's1', 'DAILY_LOSS', ?, 'first.png', 'image/png', 1, ?, current_timestamp)
+        """, first.id(), new byte[]{1});
+    dailyLossService.submitReport(manager, first.id());
+
+    DailyLossReportResponse second = dailyLossService.saveReport(
+        manager,
+        new DailyLossReportSaveRequest(
+            "s1",
+            today,
+            List.of(new DailyLossReportLineRequest(
+                2L, new BigDecimal("1"), "第二次报损"))));
+
+    assertThat(second.id()).isNotEqualTo(first.id());
+    assertThat(jdbcTemplate.queryForObject(
+        "select count(*) from daily_loss_report where store_id = 's1' and loss_date = ?",
+        Integer.class,
+        today)).isEqualTo(2);
+    assertThat(dailyLossService.reports(manager, "s1", today.toString().substring(0, 7)).stream()
+        .filter(report -> today.equals(report.lossDate()))
+        .toList())
+        .singleElement()
+        .satisfies(report -> {
+          assertThat(report.id()).isEqualTo(first.id());
+          assertThat(report.reported()).isTrue();
+          assertThat(report.status()).isEqualTo("SUBMITTED");
+        });
+
+    jdbcTemplate.update("""
+        insert into warehouse_attachment(
+          tenant_id, store_id, business_type, business_id, file_name, content_type,
+          file_size, content, uploaded_at
+        ) values (1, 's1', 'DAILY_LOSS', ?, 'second.png', 'image/png', 1, ?, current_timestamp)
+        """, second.id(), new byte[]{2});
+    dailyLossService.submitReport(manager, second.id());
+
+    List<DailyLossReportResponse> todayReports = dailyLossService.reports(
+            manager, "s1", today.toString().substring(0, 7)).stream()
+        .filter(report -> today.equals(report.lossDate()))
+        .toList();
+    assertThat(todayReports).hasSize(2);
+    assertThat(todayReports).allMatch(DailyLossReportResponse::reported);
+    assertThat(todayReports).extracting(DailyLossReportResponse::id)
+        .containsExactlyInAnyOrder(first.id(), second.id());
+
+    DailyLossMonthlyExcelExport export = dailyLossService.exportMonthlyExcel(
+        finance, "s1", today.toString().substring(0, 7));
+    try (XSSFWorkbook workbook = new XSSFWorkbook(
+        new java.io.ByteArrayInputStream(export.content()))) {
+      Row dailySummary = workbook.getSheet("每日汇总").getRow(today.getDayOfMonth());
+      assertThat(dailySummary.getCell(3).getNumericCellValue()).isEqualTo(2D);
+      assertThat(dailySummary.getCell(5).getNumericCellValue()).isEqualTo(25.14D);
+      assertThat(dailySummary.getCell(6).getStringCellValue())
+          .isEqualTo("已报2次（待复核2）");
+    }
+  }
+
   private DailyLossService service(
       DailyLossRepository repository,
       WarehouseRepository warehouse,
@@ -635,6 +833,23 @@ class DailyLossServiceTest {
         )
         """);
     jdbcTemplate.execute("""
+        create table daily_loss_peel_profile (
+          id bigint auto_increment primary key,
+          tenant_id bigint not null,
+          primary_item_config_id bigint not null,
+          peeled_item_config_id bigint,
+          unpeeled_item_config_id bigint,
+          canonical_name varchar(160) not null,
+          default_peel_state varchar(20) not null,
+          yield_rate decimal(12,9),
+          gross_grams_per_unit decimal(18,4),
+          inventory_unit varchar(20) not null,
+          source_price_file varchar(255) not null,
+          source_formula_file varchar(255) not null,
+          unique (tenant_id, primary_item_config_id)
+        )
+        """);
+    jdbcTemplate.execute("""
         create table daily_loss_inventory_application (
           tenant_id bigint not null,
           daily_loss_id varchar(120) not null,
@@ -679,6 +894,11 @@ class DailyLossServiceTest {
           pricing_unit_snapshot varchar(20),
           quantity_per_pricing_unit_snapshot decimal(14,4),
           loss_quantity decimal(14,4),
+          peel_state_snapshot varchar(20),
+          price_basis_snapshot varchar(20),
+          yield_rate_snapshot decimal(12,9),
+          inventory_quantity_snapshot decimal(18,4),
+          inventory_unit_snapshot varchar(20),
           priced_quantity_snapshot decimal(14,4),
           unit_price_snapshot decimal(14,4),
           amount_snapshot decimal(14,2),
