@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onShow } from '@dcloudio/uni-app'
 import { ref } from 'vue'
+import BrandLockup from '@/components/BrandLockup.vue'
 import { useContextStore, useMenuStore, useSessionStore } from '@/stores'
 import { weChatAuthEnabled } from '@/platform'
 
@@ -67,10 +68,7 @@ function requestWeChatCode(): Promise<string> {
 <template>
   <view class="login-page">
     <view class="login-intro">
-      <view class="brand-lockup">
-        <view class="brand-mark" aria-hidden="true"><text>茹</text></view>
-        <text class="brand-name">茹菓*</text>
-      </view>
+      <BrandLockup />
       <text class="login-intro__eyebrow">ifnot* · 移动工作台</text>
       <text class="login-intro__title">茹菓* 多门店经营管理</text>
       <text class="login-intro__copy">库存、叫货、巡检、整改与学习任务，统一在这里处理。</text>
@@ -124,9 +122,6 @@ function requestWeChatCode(): Promise<string> {
   background: $mobile-canvas;
 }
 .login-intro { display: flex; max-width: 680rpx; margin: 34rpx auto 44rpx; flex-direction: column; align-items: flex-start; text-align: left; }
-.brand-lockup { display: flex; align-items: center; gap: 16rpx; }
-.brand-mark { display: flex; width: 48rpx; height: 48rpx; align-items: center; justify-content: center; color: #ffffff; background: #71bcb4; border-radius: 12rpx; font-size: 26rpx; font-weight: 800; }
-.brand-name { color: $mobile-ink; font-size: 38rpx; font-weight: 900; }
 .login-intro__eyebrow { margin-top: 48rpx; color: $mobile-orange; font-size: 21rpx; font-weight: 700; letter-spacing: 1rpx; }
 .login-intro__title { margin-top: 12rpx; color: $mobile-ink; font-family: $mobile-font-display; font-size: 42rpx; font-weight: 800; line-height: 1.3; }
 .login-intro__copy { max-width: 560rpx; margin-top: 14rpx; color: $mobile-muted; font-size: 25rpx; line-height: 1.65; }

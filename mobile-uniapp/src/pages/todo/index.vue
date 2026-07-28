@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { onPullDownRefresh, onShow } from '@dcloudio/uni-app'
+import BrandLockup from '@/components/BrandLockup.vue'
 import StatusChip from '@/components/StatusChip.vue'
 import { closeMobileBossTodo, escalateMobileRoleTodo, getMobileBossTodoDashboard, getMobileRequisitions, getMobileRoleTodos, resolveMobileRoleTodo } from '@/api/business'
 import type { MobileTodoAttachment } from '@/api/business'
@@ -131,8 +132,10 @@ function askNote(title: string) {
 
 <template>
   <view class="mobile-page todo-page" @touchstart="onTouchStart" @touchend="onTouchEnd">
-    <view class="todo-topbar"><text>待办中心</text><button class="refresh-button" :loading="loading" :disabled="loading" @click="refresh">刷新</button></view>
-    <view class="todo-heading"><view><text class="todo-heading__eyebrow">我的任务</text><text class="todo-heading__title">今日待办</text><text class="todo-heading__description">{{ isBoss ? '只显示必须由老板确认、拍板或关闭的事项' : '按优先级处理，复杂事项将跳转至对应业务中心' }}</text></view></view>
+    <view class="todo-heading">
+      <view class="todo-heading__copy"><text class="todo-heading__eyebrow">我的任务</text><text class="todo-heading__title">今日待办</text><text class="todo-heading__description">{{ isBoss ? '只显示必须由老板确认、拍板或关闭的事项' : '按优先级处理，复杂事项将跳转至对应业务中心' }}</text></view>
+      <BrandLockup compact />
+    </view>
     <view class="todo-summary"><view class="todo-summary__item todo-summary__item--main"><text>{{ isBoss ? '需我处理' : '待处理' }}</text><text>{{ pendingCount }}<text> 项</text></text></view><view class="todo-summary__item"><text>{{ isBoss ? '老板待办' : '全部待办' }}</text><text>{{ todos.length }}<text> 项</text></text></view><view class="todo-summary__item"><text>{{ isBoss ? '高优先级' : '已完成' }}</text><text>{{ isBoss ? bossHighPriorityCount : completedCount }}<text> 项</text></text></view></view>
     <scroll-view scroll-x class="status-scroll" :show-scrollbar="false">
       <view class="status-tabs">
@@ -160,10 +163,8 @@ function askNote(title: string) {
 
 <style scoped lang="scss">
 .todo-page { display: flex; flex-direction: column; gap: 20rpx; color: #1f2b2a; }
-.todo-topbar { display: flex; min-height: 68rpx; align-items: center; justify-content: space-between; color: #5f7672; font-size: 23rpx; font-weight: 750; }
-.refresh-button { min-width: 88rpx; min-height: 68rpx; margin: 0; padding: 0 20rpx; color: #315b57; background: #fff; border: 1rpx solid #cfe0dc; border-radius: 12rpx; font-size: 23rpx; font-weight: 700; line-height: 66rpx; }
-.refresh-button::after { border: 0; }
-.todo-heading > view { display: flex; flex-direction: column; gap: 7rpx; }
+.todo-heading { display: flex; align-items: center; justify-content: space-between; gap: 20rpx; }
+.todo-heading__copy { display: flex; min-width: 0; flex-direction: column; gap: 7rpx; }
 .todo-heading__eyebrow { color: #6e8682; font-size: 22rpx; font-weight: 700; }
 .todo-heading__title { color: #1f2b2a; font-family: $mobile-font-display; font-size: 42rpx; font-weight: 850; line-height: 1.18; }
 .todo-heading__description { color: #788b87; font-size: 23rpx; line-height: 1.55; }

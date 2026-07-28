@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { onPullDownRefresh, onShow } from '@dcloudio/uni-app'
+import BrandLockup from '@/components/BrandLockup.vue'
 import BossHomeDashboard from '@/components/BossHomeDashboard.vue'
 import StatePanel from '@/components/StatePanel.vue'
 import {
@@ -212,10 +213,6 @@ async function chooseStore(event: { detail: { value: string | number } }): Promi
   await loadWorkspace()
 }
 
-function openProfile(): void {
-  uni.switchTab({ url: '/pages/profile/index' })
-}
-
 function openTodos(): void {
   uni.switchTab({ url: '/pages/todo/index' })
 }
@@ -232,18 +229,16 @@ function storeStatusLabel(status: string | undefined): string {
   <view class="mobile-page home-page">
     <BossHomeDashboard v-if="isBoss" ref="bossDashboardRef" />
     <template v-else>
-    <view class="topbar">
-      <view class="topbar__date"><text class="topbar__calendar">▦</text><text>{{ todayLabel }}</text></view>
-      <button class="profile-link" aria-label="打开我的账号" @click="openProfile">我的</button>
-    </view>
-
     <view class="workspace-head">
       <view>
         <text class="workspace-head__eyebrow">{{ session.user?.roleLabel || workspaceTitle }}</text>
         <text class="workspace-head__title">{{ workspaceTitle }}</text>
         <text class="workspace-head__meta">{{ currentStoreLabel }} · {{ session.scopeLabel }}</text>
       </view>
-      <button class="refresh-button" :loading="workspaceLoading" :disabled="workspaceLoading" @click="loadWorkspace">刷新</button>
+      <view class="workspace-head__actions">
+        <BrandLockup compact />
+        <view class="workspace-head__date"><text class="workspace-head__calendar">▦</text><text>{{ todayLabel }}</text></view>
+      </view>
     </view>
 
     <picker v-if="context.stores.length > 1" :range="storeNames" @change="chooseStore">
@@ -315,13 +310,12 @@ function storeStatusLabel(status: string | undefined): string {
 <style scoped lang="scss">
 .home-page { display: flex; flex-direction: column; gap: 22rpx; color: #1f2b2a; }
 .home-page :deep(.state-panel) { border-color: #dbe7e4; box-shadow: none; }
-.topbar { display: flex; min-height: 68rpx; align-items: center; justify-content: space-between; }
-.topbar__date { display: flex; align-items: center; gap: 12rpx; color: #58706d; font-size: 23rpx; font-weight: 700; }
-.topbar__calendar { color: #27655f; font-size: 27rpx; }
-.profile-link,.refresh-button { min-width: 88rpx; min-height: 68rpx; margin: 0; padding: 0 20rpx; color: #315b57; background: #ffffff; border: 1rpx solid #cfe0dc; border-radius: 12rpx; font-size: 23rpx; font-weight: 700; line-height: 66rpx; }
-.profile-link::after,.refresh-button::after,.menu-card::after,.todo-row::after,.all-todos::after,.text-button::after { border: 0; }
+.menu-card::after,.todo-row::after,.all-todos::after,.text-button::after { border: 0; }
 .workspace-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 20rpx; }
 .workspace-head > view { display: flex; min-width: 0; flex-direction: column; gap: 7rpx; }
+.workspace-head__actions { flex: 0 0 auto; align-items: flex-end; }
+.workspace-head__date { display: flex; align-items: center; flex-direction: row; gap: 8rpx; color: #58706d; font-size: 21rpx; font-weight: 700; white-space: nowrap; }
+.workspace-head__calendar { color: #27655f; font-size: 24rpx; }
 .workspace-head__eyebrow,.section-card__eyebrow { color: #6b8581; font-size: 22rpx; font-weight: 700; }
 .workspace-head__title { color: #1f2b2a; font-family: $mobile-font-display; font-size: 42rpx; font-weight: 850; line-height: 1.2; }
 .workspace-head__meta { overflow: hidden; color: #738783; font-size: 23rpx; text-overflow: ellipsis; white-space: nowrap; }

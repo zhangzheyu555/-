@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import AppCard from '@/components/AppCard.vue'
+import BrandLockup from '@/components/BrandLockup.vue'
 import StatusChip from '@/components/StatusChip.vue'
 import { getMobileEmployeeProfile } from '@/api/business'
 import { bindWeChat as bindWeChatApi, weChatBindingStatus } from '@/api/auth'
@@ -116,11 +117,14 @@ async function logout(): Promise<void> {
 <template>
   <view class="mobile-page profile-page mobile-stack" @touchstart="onTouchStart" @touchend="onTouchEnd">
     <view class="profile-hero">
-      <view class="profile-avatar">{{ session.user?.displayName?.charAt(0) || '?' }}</view>
-      <view class="profile-copy">
-        <text class="profile-name">{{ session.user?.displayName || '我的账号' }}</text>
-        <view class="profile-tags"><StatusChip :label="session.user?.roleLabel || '未登录'" tone="info" /><text>{{ session.scopeLabel }}</text></view>
+      <view class="profile-identity">
+        <view class="profile-avatar">{{ session.user?.displayName?.charAt(0) || '?' }}</view>
+        <view class="profile-copy">
+          <text class="profile-name">{{ session.user?.displayName || '我的账号' }}</text>
+          <view class="profile-tags"><StatusChip :label="session.user?.roleLabel || '未登录'" tone="info" /><text>{{ session.scopeLabel }}</text></view>
+        </view>
       </view>
+      <BrandLockup compact />
     </view>
 
     <AppCard title="账号信息">
@@ -210,12 +214,14 @@ async function logout(): Promise<void> {
 .employee-grid > view { display: flex; min-height: 104rpx; padding: 16rpx; flex-direction: column; justify-content: center; gap: 8rpx; background: #f4f8f7; border-radius: 12rpx; }
 .employee-grid text { color: $mobile-muted; font-size: 22rpx; }.employee-grid strong { overflow: hidden; color: $mobile-ink; font-size: 25rpx; text-overflow: ellipsis; white-space: nowrap; }
 .salary-card { padding: 20rpx; flex-direction: column; gap: 16rpx; background: $mobile-green-soft; border-radius: 14rpx; }.salary-card__total { color: $mobile-green; font-size: 46rpx; font-weight: 850; }.employee-grid--salary > view { background: rgba(255,255,255,.7); }.employee-tip { display: block; }.employee-refresh { margin: 0; color: $mobile-green; background: #e6f3f1; font-size: 25rpx; }.employee-error { padding: 16rpx; color: #9d3c35; background: #fff0ed; border-radius: 12rpx; font-size: 24rpx; }.employee-error button { margin: 0; color: #9d3c35; background: transparent; font-size: 22rpx; }.employee-state { padding: 24rpx 0; color: $mobile-muted; font-size: 25rpx; text-align: center; }
-.profile-hero { display: flex; min-height: 176rpx; padding: 30rpx; align-items: center; gap: 24rpx; color: #fff; background: #27655f; border-radius: 14rpx; box-shadow: 0 12rpx 30rpx rgba(30,77,71,.12); }
-.profile-avatar { display: flex; width: 104rpx; height: 104rpx; flex: 0 0 104rpx; align-items: center; justify-content: center; background: rgba(255,255,255,.2); border: 2rpx solid rgba(255,255,255,.3); border-radius: 50%; font-size: 42rpx; font-weight: 800; }
-.profile-copy { display: flex; min-width: 0; flex-direction: column; gap: 12rpx; }
-.profile-name { overflow: hidden; color: #fff; font-size: 36rpx; font-weight: 850; text-overflow: ellipsis; white-space: nowrap; }
-.profile-tags { display: flex; align-items: center; gap: 14rpx; }
-.profile-tags > text { color: rgba(255,255,255,.8); font-size: 22rpx; }
+.profile-hero { display: flex; min-height: 104rpx; align-items: center; justify-content: space-between; gap: 20rpx; }
+.profile-hero :deep(.brand-lockup) { flex: 0 0 auto; }
+.profile-identity { display: flex; min-width: 0; flex: 1; align-items: center; gap: 18rpx; }
+.profile-avatar { display: flex; width: 80rpx; height: 80rpx; flex: 0 0 80rpx; align-items: center; justify-content: center; color: #fff; background: #71bcb4; border-radius: 50%; font-size: 32rpx; font-weight: 800; }
+.profile-copy { display: flex; min-width: 0; flex-direction: column; gap: 8rpx; }
+.profile-name { overflow: hidden; color: $mobile-ink; font-size: 32rpx; font-weight: 850; text-overflow: ellipsis; white-space: nowrap; }
+.profile-tags { display: flex; min-width: 0; align-items: center; gap: 10rpx; }
+.profile-tags > text { overflow: hidden; color: $mobile-muted; font-size: 22rpx; text-overflow: ellipsis; white-space: nowrap; }
 .identity-row { display: flex; min-height: 76rpx; padding: 14rpx 0; align-items: center; justify-content: space-between; gap: 24rpx; border-bottom: 1rpx solid $mobile-line; }
 .identity-row:last-child { border-bottom: 0; }
 .identity-row > text { color: $mobile-muted; font-size: 25rpx; }

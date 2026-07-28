@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import BrandLockup from '@/components/BrandLockup.vue'
 import {
   getMobileBossExamSummary,
   getMobileBossTodoDashboard,
@@ -203,7 +204,7 @@ defineExpose({ refresh })
         <text class="boss-topbar__title">老板工作台</text>
         <text class="boss-topbar__copy">经营结果、风险提醒和岗位进度集中查看</text>
       </view>
-      <button class="refresh-button" :loading="loading" :disabled="loading" @click="refresh">刷新</button>
+      <BrandLockup compact />
     </view>
 
     <view class="scope-filters">
@@ -358,8 +359,7 @@ defineExpose({ refresh })
 .boss-topbar__eyebrow,.section-eyebrow { color: #6b8581; font-size: 21rpx; font-weight: 700; }
 .boss-topbar__title { color: #1f2b2a; font-family: $mobile-font-display; font-size: 42rpx; font-weight: 850; line-height: 1.18; }
 .boss-topbar__copy { color: #788b87; font-size: 22rpx; line-height: 1.5; }
-.refresh-button { min-width: 88rpx; min-height: 66rpx; margin: 0; padding: 0 18rpx; color: #315b57; background: #fff; border: 1rpx solid #cfe0dc; border-radius: 12rpx; font-size: 23rpx; font-weight: 700; line-height: 64rpx; }
-.refresh-button::after,.kpi-card::after,.action-row::after,.text-button::after,.section-tabs button::after,.detail-row::after,.risk-row::after,.progress-row::after,.wide-button::after,.quick-grid button::after { border: 0; }
+.kpi-card::after,.action-row::after,.text-button::after,.section-tabs button::after,.detail-row::after,.risk-row::after,.progress-row::after,.wide-button::after,.quick-grid button::after { border: 0; }
 .scope-filters { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12rpx; }
 .filter-control { display: flex; min-height: 112rpx; padding: 16rpx 18rpx; flex-direction: column; justify-content: center; background: #fff; border: 1rpx solid #d9e6e3; border-radius: 14rpx; }
 .filter-control > text:first-child { color: #7b908c; font-size: 20rpx; }
