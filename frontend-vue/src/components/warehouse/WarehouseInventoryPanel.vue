@@ -114,7 +114,7 @@ async function showRiskInventory() {
 
 async function focusInventoryItem(itemId: number, alertType = '') {
   searchText.value = ''
-  lowStockOnly.value = alertType !== 'EXPIRING'
+  lowStockOnly.value = alertType === 'LOW'
   expiringOnly.value = alertType === 'EXPIRING'
   focusedItemId.value = itemId
   await nextTick()

@@ -71,6 +71,7 @@ const movementPanelRef = ref<InstanceType<typeof WarehouseMovementPanel> | null>
 const inventoryPanelRef = ref<InstanceType<typeof WarehouseInventoryPanel> | null>(null)
 const materialSubmitError = ref<MaterialSubmitError | null>(null)
 const returnRefreshing = ref(false)
+const focusedRouteItemKey = ref('')
 
 function mapErrorCodeToTarget(code?: string, status?: number): MaterialSubmitError['target'] {
   if (status === 403) return 'form'
@@ -504,7 +505,42 @@ function currentWarehouseQueryRoutePath() {
   if (route.name === 'warehouse-transfers') return '/warehouse/transfers'
   if (route.name === 'warehouse-requests') return '/warehouse/requests'
   if (route.name === 'warehouse-returns') return '/warehouse/returns'
+  if (route.name === 'warehouse-alerts') return '/warehouse/alerts'
+  if (route.name === 'warehouse-inventory') return '/warehouse/inventory'
+  if (route.name === 'warehouse-purchase') return '/warehouse/purchase'
+  if (route.name === 'warehouse-movements') return '/warehouse/movements'
   return ''
+}
+
+function routeQueryValue(key: string) {
+  const value = route.query[key]
+  return Array.isArray(value) ? String(value[0] || '') : String(value || '')
+}
+
+async function focusRouteInventoryItem() {
+  if (route.name !== 'warehouse-alerts') {
+    focusedRouteItemKey.value = ''
+    return
+  }
+  const itemId = Number(routeQueryValue('itemId'))
+  if (!Number.isInteger(itemId) || itemId <= 0) return
+  const item = items.value.find((row) => Number(row.id) === itemId)
+  if (!item || currentTab() !== 'warehouse' || warehouseDetailSection.value !== 'inventory') return
+  const focusKey = [
+    warehouse.selectedWarehouseId,
+    itemId,
+    routeQueryValue('adjustmentId'),
+  ].join(':')
+  if (focusKey === focusedRouteItemKey.value) return
+
+  warehouse.setCategory('all')
+  await nextTick()
+  if (!inventoryPanelRef.value) return
+  const alertType = item.alertLevel === 'EXPIRING' || item.stockStatus === '临期'
+    ? 'EXPIRING'
+    : (['LOW', 'OUT'].includes(item.alertLevel) || ['低库存', '缺货'].includes(item.stockStatus) ? 'LOW' : '')
+  await inventoryPanelRef.value.focusInventoryItem(itemId, alertType)
+  focusedRouteItemKey.value = focusKey
 }
 
 async function syncWarehouseFromRoute() {
@@ -865,6 +901,15 @@ watch(
   [() => route.fullPath, () => accessibleWarehouses.value.map((row) => `${row.id}:${row.code}`).join('|')],
   () => { void syncWarehouseFromRoute() },
   { immediate: true },
+)
+watch(
+  [
+    () => route.fullPath,
+    () => warehouse.selectedWarehouseId,
+    () => items.value.map((item) => `${item.id}:${item.alertLevel}:${item.stockStatus}`).join('|'),
+  ],
+  () => { void focusRouteInventoryItem() },
+  { immediate: true, flush: 'post' },
 )
 </script>
 

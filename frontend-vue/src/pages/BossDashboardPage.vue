@@ -67,20 +67,33 @@ const workflowTodosInScope = computed(() => workflowTodos.value.filter((item) =>
   return storeMatches && monthMatches
 }))
 const pendingReviewTodos = computed(() => workflowTodosInScope.value.filter((item) => item.status === 'PENDING_REVIEW'))
-const riskStores = computed(() => {
-  const names = new Set<string>()
-  profitEntries.value
-    .filter((item) => Number(item.net || 0) < 0 || Boolean(item.risk && item.risk !== '正常'))
-    .forEach((item) => names.add(item.storeName || item.storeId))
-  workflowTodosInScope.value
-    .filter((item) => item.priority >= 2 && !['COMPLETED', 'REJECTED'].includes(item.status))
-    .forEach((item) => {
-      if (item.storeName || item.storeId) names.add(item.storeName || item.storeId || '')
-    })
-  return Array.from(names).filter(Boolean)
+const riskReminderCount = computed(() => {
+  const visibleReminderCount = boss.highRiskReminders.reduce(
+    (sum, item) => sum + Math.max(0, Number(item.count || 0)),
+    0,
+  )
+  return Math.max(visibleReminderCount, Math.max(0, Number(boss.focus.highRiskCount || 0)))
 })
-const riskMetricLoading = computed(() => profitLoading.value || workflowLoading.value)
-const riskMetricError = computed(() => Boolean(profitError.value || workflowError.value))
+const riskStoreNames = computed(() => {
+  const names = new Set<string>()
+  for (const reminder of boss.highRiskReminders) {
+    addRiskStoreName(names, reminder.storeName)
+    reminder.topStores.forEach((name) => addRiskStoreName(names, name))
+  }
+  return Array.from(names)
+})
+const riskStoreCount = computed(() => riskStoreNames.value.length)
+const riskMetricDescription = computed(() => {
+  if (!riskReminderCount.value) return '经营状态正常'
+  if (!riskStoreCount.value) return '查看风险提醒明细'
+  return `涉及 ${riskStoreCount.value} 家风险门店 · 点击查看`
+})
+const riskMetricAriaLabel = computed(() => {
+  const storeSummary = riskStoreCount.value
+    ? `涉及 ${riskStoreCount.value} 家风险门店`
+    : '查看风险提醒明细'
+  return `查看 ${riskReminderCount.value} 条风险提醒，${storeSummary}`
+})
 const urgentActions = computed(() => boss.needsBossAction.slice(0, 4))
 const urgentSummary = computed(() => boss.needsBossAction.length
   ? `${boss.needsBossAction.length} 项需要老板立即处理`
@@ -89,10 +102,16 @@ const supportTabs = computed(() => [
   { key: 'action' as const, label: '需要我处理', count: boss.needsBossAction.length },
   { key: 'review' as const, label: '待复核', count: pendingReviewTodos.value.length },
   { key: 'exam' as const, label: '培训考试', count: activeExamCount.value },
-  { key: 'risk' as const, label: '风险门店', count: boss.highRiskReminders.length },
+  { key: 'risk' as const, label: '风险门店', count: riskStoreCount.value },
   { key: 'progress' as const, label: '岗位进度', count: boss.roleProgress.length },
   { key: 'done' as const, label: '已完成', count: boss.doneReview.length },
 ])
+
+function addRiskStoreName(names: Set<string>, rawName?: string) {
+  const name = String(rawName || '').trim()
+  if (!name || ['全部门店', '所有门店', '相关门店'].includes(name)) return
+  names.add(name)
+}
 
 function isAuthError(err: unknown) {
   return err instanceof Error && (err.message.includes('登录已失效') || err.message.includes('请先登录') || err.message.includes('UNAUTHORIZED'))
@@ -250,6 +269,14 @@ function openActionSource(item: RoleTodoItem) {
 
 function openRiskSource(risk: BossRiskGroup) {
   void router.push(risk.targetRoute)
+}
+
+async function openRiskOverview() {
+  activeSection.value = 'risk'
+  await nextTick()
+  const target = document.getElementById('risks')
+  target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  target?.focus({ preventScroll: true })
 }
 
 function openProgressSource(item: BossRoleProgressItem) {
@@ -441,14 +468,19 @@ onMounted(() => {
           <b v-else class="kpi-value">{{ pendingReviewTodos.length }}</b>
           <small>{{ workflowError ? '请稍后重试' : '等待老板确认' }}</small>
         </div>
-        <div class="kpi-item">
+        <button
+          type="button"
+          class="kpi-item kpi-action"
+          :aria-label="riskMetricAriaLabel"
+          @click="openRiskOverview"
+        >
           <span class="kpi-icon risk"><AlertTriangle :size="19" /></span>
           <span class="kpi-label">风险提醒</span>
-          <span v-if="riskMetricLoading && (!profitLoaded || !workflowLoaded)" class="metric-skeleton" aria-label="风险提醒加载中" />
-          <span v-else-if="!profitLoaded || !workflowLoaded" class="kpi-unavailable">暂时无法获取</span>
-          <b v-else class="kpi-value risk-value">{{ riskStores.length }}</b>
-          <small>{{ riskMetricError ? '请稍后重试' : (riskStores.length ? riskStores.slice(0, 2).join('、') : '经营状态正常') }}</small>
-        </div>
+          <span v-if="boss.loading && !boss.highRiskReminders.length" class="metric-skeleton" aria-label="风险提醒加载中" />
+          <span v-else-if="boss.error" class="kpi-unavailable">暂时无法获取</span>
+          <b v-else class="kpi-value risk-value">{{ riskReminderCount }}</b>
+          <small>{{ boss.error ? '请稍后重试' : riskMetricDescription }}</small>
+        </button>
       </section>
 
         <section class="boss-primary-grid">
@@ -540,7 +572,7 @@ onMounted(() => {
           <div v-else-if="activeSection === 'exam'" class="tab-panel">
             <BossExamOverview ref="examOverview" @summary-count="activeExamCount = $event" />
           </div>
-          <div v-else-if="activeSection === 'risk'" id="risks" class="tab-panel">
+          <div v-else-if="activeSection === 'risk'" id="risks" class="tab-panel" tabindex="-1">
             <BossRiskSummary :risks="boss.highRiskReminders" @open="openRiskSource" />
           </div>
           <div v-else-if="activeSection === 'progress'" class="progress-tab-content">
@@ -821,6 +853,28 @@ onMounted(() => {
 
 .boss-kpi-strip > .kpi-item:last-child {
   border-right: 0;
+}
+
+.boss-kpi-strip > button.kpi-item {
+  appearance: none;
+  border-top: 0;
+  border-bottom: 0;
+  border-left: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 160ms ease, box-shadow 160ms ease;
+}
+
+.boss-kpi-strip > button.kpi-item:hover {
+  background-color: #f7fbfa;
+}
+
+.boss-kpi-strip > button.kpi-item:focus-visible {
+  z-index: 1;
+  outline: 2px solid var(--ds-primary-hover);
+  outline-offset: -3px;
 }
 
 .boss-kpi-strip .kpi-label {
@@ -1118,6 +1172,10 @@ onMounted(() => {
   min-height: 270px;
   align-content: start;
   padding: 16px;
+}
+
+.tab-panel:focus {
+  outline: none;
 }
 
 .support-empty {

@@ -41,7 +41,7 @@ defineEmits<{
           <span v-if="risk.topStores.length">Top 门店：{{ risk.topStores.join('、') }}</span>
         </div>
         <button class="mini-button" type="button" @click="$emit('open', risk)">
-          查看来源页面
+          {{ risk.actionLabel }}
           <ArrowRight :size="14" />
         </button>
       </article>

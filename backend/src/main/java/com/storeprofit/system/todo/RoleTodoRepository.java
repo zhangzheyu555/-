@@ -310,6 +310,8 @@ public class RoleTodoRepository {
     }
     return namedJdbcTemplate.query("""
         select a.id,
+               a.warehouse_id,
+               a.item_id,
                i.name as item_name,
                a.adjustment_type,
                a.quantity_delta,
@@ -596,6 +598,8 @@ public class RoleTodoRepository {
     Timestamp createdAt = rs.getTimestamp("created_at");
     return new WarehouseAdjustmentTodoRow(
         rs.getLong("id"),
+        rs.getLong("warehouse_id"),
+        rs.getLong("item_id"),
         rs.getString("item_name"),
         rs.getString("adjustment_type"),
         rs.getBigDecimal("quantity_delta"),
@@ -718,6 +722,8 @@ public class RoleTodoRepository {
 
   public record WarehouseAdjustmentTodoRow(
       long id,
+      long warehouseId,
+      long itemId,
       String itemName,
       String adjustmentType,
       BigDecimal quantityDelta,

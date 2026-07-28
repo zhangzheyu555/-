@@ -78,21 +78,12 @@ function warehouseForCurrentRoute() {
   const queryWarehouseId = Array.isArray(route.query.warehouseId)
     ? route.query.warehouseId[0]
     : route.query.warehouseId
-  if (
-    queryWarehouseId
-    && ['warehouse-transfers', 'warehouse-requests', 'warehouse-returns'].includes(String(route.name || ''))
-  ) {
+  if (queryWarehouseId) {
     return rows.find((row) => String(row.id) === String(queryWarehouseId)) || null
   }
   const warehouseCode = String(route.meta.warehouseCode || '')
   if (warehouseCode) {
     return rows.find((row) => row.code === warehouseCode) || null
-  }
-  if (route.name === 'warehouse-transfers' || route.name === 'warehouse-requests') {
-    const warehouseId = Array.isArray(route.query.warehouseId)
-      ? route.query.warehouseId[0]
-      : route.query.warehouseId
-    if (warehouseId) return rows.find((row) => String(row.id) === String(warehouseId)) || null
   }
   return rows.find((row) => row.type === 'CENTRAL') || rows[0] || null
 }

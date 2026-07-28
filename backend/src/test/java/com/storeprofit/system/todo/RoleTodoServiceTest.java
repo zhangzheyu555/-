@@ -1078,6 +1078,48 @@ class RoleTodoServiceTest {
   }
 
   @Test
+  void warehouseAdjustmentActionCarriesTheExactWarehouseAndItemContext() {
+    jdbcTemplate.execute("""
+        create table warehouse_stock_adjustment (
+          id bigint not null primary key,
+          tenant_id bigint not null,
+          warehouse_id bigint not null,
+          item_id bigint not null,
+          adjustment_type varchar(40) not null,
+          quantity_delta decimal(14,2) not null,
+          reason varchar(500) null,
+          operator_id bigint null,
+          created_at timestamp not null default current_timestamp
+        )
+        """);
+    jdbcTemplate.update("""
+        insert into warehouse_item(
+          id, tenant_id, name, unit, min_stock_quantity, alert_enabled, active
+        ) values (901, 1, '盘亏测试物料', '件', 0, 0, 1)
+        """);
+    jdbcTemplate.update("""
+        insert into warehouse_stock_adjustment(
+          id, tenant_id, warehouse_id, item_id, adjustment_type, quantity_delta, reason, created_at
+        ) values (701, 1, 77, 901, 'LOSS', -3, '盘点差异', '2026-07-18 09:30:00')
+        """);
+
+    RoleTodoItemResponse adjustment = service
+        .todos(warehouse(), RoleTodoAudience.WAREHOUSE, new RoleTodoQuery(false, null, 50, null, null))
+        .items()
+        .stream()
+        .filter(item -> "warehouse-adjustment-701".equals(item.id()))
+        .findFirst()
+        .orElseThrow();
+
+    assertThat(adjustment.action().target()).isEqualTo("warehouse");
+    assertThat(adjustment.action().params())
+        .containsEntry("adjustmentId", "701")
+        .containsEntry("warehouseId", "77")
+        .containsEntry("itemId", "901")
+        .containsEntry("month", "2026-07");
+  }
+
+  @Test
   void overduePendingTodosAreClearlyMarkedAsOverdue() {
     jdbcTemplate.update("""
         insert into expense_claim(id, tenant_id, store_id, month, amount, category, reason, status, created_at)
