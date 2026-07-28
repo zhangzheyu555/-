@@ -7,32 +7,32 @@
 - 支持月份、门店、营业额/商品销售视图切换和商品关键字筛选。
 - 低于 40% 毛利率的门店由后端标记，前端仅负责提示，不在浏览器中重新计算财务口径。
 - 支持按当前视图导出 CSV，导出、启动同步、读取授权门店和保存配置均写操作日志。
-- 平台配置只保存启用状态、显示名称和门店映射；企迈凭证不进入数据库和浏览器。
+- 企迈配置界面提交的凭证只在后端处理：写入 MySQL 前使用 AES/GCM 加密，数据库只保存
+  `enc:v1:` 密文；接口只返回掩码和是否已配置，绝不返回明文。
 
 ## 部署变量
 
-后端启动前配置：
+企迈配置界面保存凭证前，后端必须配置下列**系统主密钥**：
 
-```powershell
-$env:QMAI_OPEN_ID='<企迈 openId>'
-$env:QMAI_GRANT_CODE='<企迈 grantCode>'
-$env:QMAI_OPEN_KEY='<企迈 openKey>'
-```
+`QMAI_CREDENTIAL_ENCRYPTION_KEY`
 
-可选变量：
+它必须是 Base64 编码的 16、24 或 32 字节随机数据；生产环境使用 32 字节 AES-256。
+它不是企迈的 `openKey`，只用于本系统加密和解密数据库内的凭证。服务器配置、备份、
+重启验证和密文检查见 [企迈凭证加密密钥运维](qmai-credential-encryption-key-operations.md)。
 
-```powershell
-$env:QMAI_BASE_URL='https://openapi.qmai.cn'
-$env:QMAI_TIMEOUT='20s'
-$env:QMAI_MAX_RETRIES='4'
-$env:QMAI_CONCURRENCY='4'
-```
+可选的环境回退凭证（只适用于默认品牌；网页保存的数据库密文优先）：
+
+- `QMAI_OPEN_ID`
+- `QMAI_GRANT_CODE`
+- `QMAI_OPEN_KEY`
+- `QMAI_BASE_URL`
+- `QMAI_TIMEOUT`
 
 `QMAI_BASE_URL` 会在后端强制校验为 `https://openapi.qmai.cn`，不能改为任意代理或探测地址。
 
 ## 配置和使用顺序
 
-1. 部署人员配置三个凭证环境变量并重启后端。
+1. 部署人员在服务器为后端注入 `QMAI_CREDENTIAL_ENCRYPTION_KEY` 并重启后端。
 2. 老板进入“平台配置 → 企迈 → 配置连接”。
 3. 读取企迈授权门店，并将每家企迈门店映射到系统内唯一门店。
 4. 启用企迈同步并保存。
@@ -50,7 +50,8 @@ $env:QMAI_CONCURRENCY='4'
 
 ## 数据表
 
-- `qmai_platform_config`：启用状态和展示名称，不含密钥。
+- `qmai_platform_config`：企迈配置与 AES/GCM 密文凭证；敏感字段以 `enc:v1:` 开头，
+  不保存可用明文。
 - `qmai_store_mapping`：企迈门店与系统门店的一对一映射。
 - `qmai_sync_batch`：异步批次、任务数、失败数和错误摘要。
 - `qmai_daily_sales`：门店日营业额、成本和退款。
