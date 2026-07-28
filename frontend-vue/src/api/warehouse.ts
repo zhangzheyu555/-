@@ -406,6 +406,25 @@ export interface WarehouseReturnOrder {
   lines: WarehouseReturnLine[]
 }
 
+export interface WarehouseReturnCreatePayload {
+  returnStoreId?: string
+  sourceRequisitionId: string
+  reason?: string
+  note?: string
+  returnDate: string
+  lines: Array<{
+    itemId: number
+    quantity: number
+    reason?: string
+    note?: string
+  }>
+  attachments?: Array<{
+    fileName: string
+    contentType: string
+    dataBase64: string
+  }>
+}
+
 export interface WarehouseItemCategory {
   id: number
   name: string
@@ -718,6 +737,10 @@ export function updateWarehouseAlertSettings(
 
 export function getWarehouseReturns() {
   return apiGet<WarehouseReturnOrder[]>('/api/warehouse/returns')
+}
+
+export function createWarehouseReturn(payload: WarehouseReturnCreatePayload) {
+  return apiPost<WarehouseReturnOrder, WarehouseReturnCreatePayload>('/api/warehouse/returns', payload)
 }
 
 export function reviewWarehouseReturn(returnId: string, payload: { approved: boolean; note?: string }) {

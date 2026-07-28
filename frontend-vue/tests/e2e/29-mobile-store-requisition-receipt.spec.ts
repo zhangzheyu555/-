@@ -231,6 +231,9 @@ test('mobile store manager completes requisition receipt with a visible touch-sa
   const log = await prepare(page)
   await page.goto('/store/inventory/records')
 
+  await expect(page.getByRole('region', { name: '配送与退货记录' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '待确认收货', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: '我的叫货单', exact: true })).toHaveCount(0)
   const receiptCard = page.locator('.pending-receipt-card').filter({ hasText: shippedRequisition.id })
   await expect(receiptCard).toBeVisible()
   await expect(receiptCard).toContainText('鲜牛奶 × 3箱')

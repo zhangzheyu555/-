@@ -5,13 +5,14 @@ import PageHeader from '../components/common/PageHeader.vue'
 import SecondaryNavigation from '../components/common/SecondaryNavigation.vue'
 import ActionConfirmDialog from '../components/ui/ActionConfirmDialog.vue'
 import CategoryFilter from '../components/warehouse/CategoryFilter.vue'
-import MyRequisitionList from '../components/warehouse/MyRequisitionList.vue'
-import PendingReceiptList from '../components/warehouse/PendingReceiptList.vue'
+import StoreDeliveryRecordsPanel from '../components/warehouse/StoreDeliveryRecordsPanel.vue'
 import StoreInventoryTable from '../components/warehouse/StoreInventoryTable.vue'
+import StoreReturnCreateDialog from '../components/warehouse/StoreReturnCreateDialog.vue'
 import WarehouseStoreRequisitionForm from '../components/warehouse/WarehouseStoreRequisitionForm.vue'
+import { reportAppError } from '../errors/appErrorDialog'
 import { useAuthStore } from '../stores/auth'
 import { useWarehouseStore } from '../stores/warehouse'
-import type { WarehouseItem } from '../api/warehouse'
+import type { WarehouseItem, WarehouseRequisition, WarehouseReturnCreatePayload } from '../api/warehouse'
 import { PERMISSIONS } from '../permissions/permissions'
 import { useBusinessScope } from '../composables/useBusinessScope'
 import { useForegroundReload } from '../composables/useForegroundReload'
@@ -25,6 +26,7 @@ const businessScope = useBusinessScope()
 const localError = ref('')
 const pendingReceiptId = ref<string | null>(null)
 const receiptConfirmBusy = ref(false)
+const returnTarget = ref<WarehouseRequisition | null>(null)
 
 const overview = computed(() => warehouse.overview)
 const canManage = computed(() => (
@@ -58,9 +60,6 @@ const activeItems = computed(() => (overview.value?.items || []).filter((item) =
 const supplyWarehouse = computed(() => warehouse.warehouses[0] || overview.value?.warehouse || null)
 const supplyWarehouseName = computed(() => supplyWarehouse.value?.name || '供货仓待配置')
 const requisitions = computed(() => overview.value?.requisitions || [])
-const shippedRequisitions = computed(() => requisitions.value.filter((row) => (
-  ['SHIPPED', 'PARTIALLY_SHIPPED'].includes(row.status)
-)))
 const filteredItems = computed(() => activeItems.value.filter(matchesSelectedCategory))
 const selectedCategoryLabel = computed(() => categoryLabel(warehouse.selectedCategory))
 
@@ -133,7 +132,11 @@ async function loadWarehouseData() {
   try {
     if (businessScope.isStoreManager.value) {
       await warehouse.loadWarehouses()
-      await Promise.all([warehouse.loadOverview(warehouse.selectedWarehouseId), warehouse.loadCategories()])
+      await Promise.all([
+        warehouse.loadOverview(warehouse.selectedWarehouseId),
+        warehouse.loadCategories(),
+        warehouse.loadReturns(),
+      ])
     } else {
       await warehouse.loadWarehouses()
       const target = warehouseForCurrentRoute()
@@ -201,10 +204,64 @@ async function confirmReceiveRequisition() {
     await warehouse.receiveRequisition(requisitionId, '店长确认收货')
     markFresh()
   } catch {
-    localError.value = warehouse.error || '确认收货失败'
+    const message = warehouse.error || '确认收货失败'
+    warehouse.error = ''
+    reportAppError(message, {
+      title: '确认收货未完成',
+      actionLabel: '重新确认',
+      action: async () => {
+        pendingReceiptId.value = requisitionId
+        await confirmReceiveRequisition()
+      },
+      sourceKey: `store-receive:${requisitionId}:${message}`,
+    })
   } finally {
     receiptConfirmBusy.value = false
     pendingReceiptId.value = null
+  }
+}
+
+function openReturnDialog(requisition: WarehouseRequisition) {
+  returnTarget.value = requisition
+}
+
+function closeReturnDialog() {
+  if (warehouse.actioningId.startsWith('return-create:')) return
+  returnTarget.value = null
+}
+
+async function submitReturn(payload: WarehouseReturnCreatePayload) {
+  if (warehouse.actioningId.startsWith('return-create:')) return
+  try {
+    await warehouse.submitReturn(payload)
+    returnTarget.value = null
+    markFresh()
+  } catch {
+    const message = warehouse.error || '配送退货单提交失败'
+    warehouse.error = ''
+    reportAppError(message, {
+      title: '配送退货单提交失败',
+      sourceKey: `store-return-create:${payload.sourceRequisitionId}:${message}`,
+    })
+  }
+}
+
+async function downloadReturnPdf(returnId: string, returnNo: string) {
+  try {
+    await warehouse.downloadPdf(
+      'return',
+      `/api/warehouse/print/returns/${encodeURIComponent(returnId)}`,
+      `配送退货单-${returnNo}.pdf`,
+    )
+  } catch {
+    const message = warehouse.error || '配送退货单下载失败'
+    warehouse.error = ''
+    reportAppError(message, {
+      title: '配送退货单下载失败',
+      actionLabel: '重新下载',
+      action: () => downloadReturnPdf(returnId, returnNo),
+      sourceKey: `store-return-download:${returnId}:${message}`,
+    })
   }
 }
 
@@ -277,13 +334,19 @@ watch(
       />
 
       <div v-else-if="activeStoreNavigation === 'records'" class="section-stack warehouse-actions">
-        <PendingReceiptList
-          v-if="canReceiveRequisition"
-          :requisitions="shippedRequisitions"
+        <StoreDeliveryRecordsPanel
+          v-if="canCreateRequisition || canReceiveRequisition"
+          :requisitions="requisitions"
+          :returns="warehouse.returns"
           :receiving-id="warehouse.receivingId"
+          :actioning-id="warehouse.actioningId"
+          :downloading-id="warehouse.downloadingId"
+          :can-receive="canReceiveRequisition"
+          :can-create-return="canCreateRequisition"
           @receive="receiveRequisition"
+          @create-return="openReturnDialog"
+          @download-return="downloadReturnPdf"
         />
-        <MyRequisitionList v-if="canCreateRequisition || canReceiveRequisition" :requisitions="requisitions" />
       </div>
     </template>
 
@@ -298,6 +361,17 @@ watch(
       :busy="receiptConfirmBusy"
       @cancel="cancelReceiveRequisition"
       @confirm="confirmReceiveRequisition"
+    />
+
+    <StoreReturnCreateDialog
+      :open="Boolean(returnTarget)"
+      :requisition="returnTarget"
+      :returns="warehouse.returns"
+      :items="activeItems"
+      :warehouse-name="supplyWarehouseName"
+      :submitting="warehouse.actioningId === `return-create:${returnTarget?.id || ''}`"
+      @close="closeReturnDialog"
+      @submit="submitReturn"
     />
   </section>
 </template>
@@ -327,7 +401,7 @@ watch(
 }
 
 .warehouse-actions {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
 }
 

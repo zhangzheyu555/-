@@ -63,8 +63,10 @@ test.beforeEach(async ({ page }) => {
       ? { todayFocus: {}, needsBossAction: [], highRiskReminders: [], roleProgress: [], doneReview: [] }
       : path === '/api/boss/exam-summary'
         ? { activeExamCount: 0, assignedCount: 0, completedCount: 0, completionRate: 0, passedCount: 0, passRate: 0, overdueCount: 0, averageScore: 0, riskStores: [] }
-        : path === '/api/finance/dashboard'
+      : path === '/api/finance/dashboard'
           ? { months: ['2026-07'], brands: [], summary: { month: '2026-07' }, entries: [], trend: [] }
+          : path === '/api/audit/logs/search'
+            ? { rows: [], total: 0, page: 1, pageSize: 30, totalPages: 1, operatorOptions: [], actionOptions: [] }
           : []
     return route.fulfill({
       status: 200,
@@ -74,25 +76,36 @@ test.beforeEach(async ({ page }) => {
   })
 })
 
-test('all business routes use one content title and a compact date-only topbar', async ({ page }) => {
+test('all business routes use one content title without the decorative desktop date bar', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
 
   for (const [path, title] of routes) {
-    await page.goto(path)
-    const pageTitle = path === '/salary'
-      ? page.locator('.app-main h1')
-      : page.locator('.business-page-header h1')
-    await expect(pageTitle).toHaveText(title)
-    await expect(page.locator('.app-topbar h1')).toHaveCount(0)
-    await expect(page.locator('.app-main h1')).toHaveCount(1)
-    await expect(page.locator('.date-display')).toBeVisible()
-    await expect(page.getByLabel('全局门店')).toHaveCount(0)
-    await expect(page.getByRole('button', { name: '打开全局搜索' })).toHaveCount(0)
-    await expect(page.getByRole('button', { name: '消息提醒' })).toHaveCount(0)
-    const topbarHeight = await page.locator('.app-topbar').evaluate((element) => element.getBoundingClientRect().height)
-    expect(topbarHeight).toBeGreaterThanOrEqual(56)
-    expect(topbarHeight).toBeLessThanOrEqual(64)
+    await test.step(path, async () => {
+      await page.goto(path)
+      const pageTitle = path === '/salary'
+        ? page.locator('.app-main h1')
+        : page.locator('.business-page-header h1')
+      await expect(pageTitle).toHaveText(title)
+      await expect(page.locator('.app-topbar h1')).toHaveCount(0)
+      await expect(page.locator('.app-main h1')).toHaveCount(1)
+      await expect(page.locator('.date-display')).toHaveCount(0)
+      await expect(page.locator('.app-topbar')).toBeHidden()
+      await expect(page.getByLabel('全局门店')).toHaveCount(0)
+      await expect(page.getByRole('button', { name: '打开全局搜索' })).toHaveCount(0)
+      await expect(page.getByRole('button', { name: '消息提醒' })).toHaveCount(0)
+      const topbarHeight = await page.locator('.app-topbar').evaluate((element) => element.getBoundingClientRect().height)
+      expect(topbarHeight).toBe(0)
+    })
   }
+})
+
+test('small screens keep the navigation button without restoring the decorative date', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/inventory-checks')
+
+  await expect(page.locator('.date-display')).toHaveCount(0)
+  await expect(page.locator('.app-topbar')).toBeVisible()
+  await expect(page.getByRole('button', { name: '打开菜单' })).toBeVisible()
 })
 
 test('warehouse and exam routes keep one h1 and use specific content headings', async ({ page }) => {

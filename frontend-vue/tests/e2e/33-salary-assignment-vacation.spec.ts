@@ -227,6 +227,52 @@ async function prepare(
   })
 }
 
+test('全门店视图的工资操作按钮保持可点击并用弹窗解释前置条件', async ({ page }) => {
+  const captured: CapturedRequests = {}
+  await prepare(page, captured)
+  await page.goto('/finance/salary?month=2026-07')
+
+  const expectations = [
+    { button: '添加人员', message: '请先选择具体门店' },
+    { button: '生成本月工资', message: '请先选择具体门店' },
+    { button: '批量审核', message: '请先选择待审核工资' },
+    { button: '清除筛选', message: '当前没有可清除的筛选条件' },
+  ]
+
+  for (const item of expectations) {
+    const button = page.getByRole('button', { name: item.button, exact: true })
+    await expect(button).toBeEnabled()
+    await expect(button).toHaveCSS('opacity', '1')
+    await button.click()
+    const errorDialog = page.getByRole('alertdialog')
+    await expect(errorDialog).toContainText(item.message)
+    await errorDialog.getByRole('button', { name: '我知道了' }).click()
+  }
+})
+
+test('桌面选择具体门店后头部筛选和操作按钮保持同一行', async ({ page }) => {
+  const captured: CapturedRequests = {}
+  await page.setViewportSize({ width: 1464, height: 900 })
+  await prepare(page, captured)
+  await page.goto('/finance/salary?storeId=xls12&month=2026-07')
+
+  const controls = [
+    page.getByLabel('月份'),
+    page.getByRole('combobox', { name: '门店', exact: true }),
+    page.getByLabel('工资状态'),
+    page.getByRole('button', { name: '添加人员', exact: true }),
+    page.getByRole('button', { name: '生成本月工资', exact: true }),
+    page.getByRole('button', { name: '导出工资表', exact: true }),
+  ]
+  const controlTops = await Promise.all(controls.map(async (control) => {
+    const box = await control.boundingBox()
+    expect(box).not.toBeNull()
+    return Math.round(box!.y)
+  }))
+  expect(controlTops.length).toBe(6)
+  expect(Math.max(...controlTops) - Math.min(...controlTops)).toBeLessThanOrEqual(2)
+})
+
 test('跨店添加人员不改岗位，草稿工资可调整工龄、生日福利、深夜加班和假期', async ({ page }) => {
   const captured: CapturedRequests = {}
   await prepare(page, captured)
@@ -604,13 +650,13 @@ test('全职员工只改假期时保留原始小数工时，不重新按天数�
   })
 })
 
-test('停用门店不能通过工资页面路由继续查询或编辑', async ({ page }) => {
+test('停用门店不能通过工资页面路由继续查询，操作入口仍可点击查看原因', async ({ page }) => {
   const captured: CapturedRequests = {}
   await prepare(page, captured)
   await page.goto('/finance/salary?storeId=rg1&month=2026-07')
 
-  await expect(page.getByText('该门店已停用，不能继续查看、添加人员或生成工资。')).toBeVisible()
-  await expect(page.getByRole('button', { name: '添加人员', exact: true })).toBeDisabled()
+  await expect(page.getByRole('alertdialog')).toContainText('该门店已停用，不能继续查看、添加人员或生成工资。')
+  await expect(page.getByRole('button', { name: '添加人员', exact: true })).toBeEnabled()
   expect(captured.employeePageRequests || 0).toBe(0)
 })
 
@@ -873,7 +919,7 @@ test('状态和关键词筛选可清除，员工总数与当前筛选结果不�
   await clearButton.click()
   await expect(page.getByLabel('工资状态')).toHaveValue('')
   await expect(page.getByText('李店员', { exact: true }).first()).toBeVisible()
-  await expect(clearButton).toBeDisabled()
+  await expect(clearButton).toBeEnabled()
   await expect.poll(() => salaryQueries.some((query) => query.get('status') === 'SUBMITTED')).toBe(true)
   await expect.poll(() => salaryQueries.at(-1)?.has('status')).toBe(false)
 })
@@ -919,7 +965,7 @@ test('批量审核只允许选择待审核工资，部分失败时保留失败�
 
   await expect.poll(() => approvalAttempts).toEqual([submittedOne.id, submittedTwo.id])
   await expect(page.getByText('已审核 1 条工资记录')).toBeVisible()
-  await expect(page.getByText(/1 条工资审核失败/)).toBeVisible()
+  await expect(page.getByRole('alertdialog')).toContainText('1 条工资审核失败')
   await expect(page.getByLabel('选择待审甲')).not.toBeChecked()
   await expect(page.getByLabel('选择待审乙')).toBeChecked()
 })

@@ -12,6 +12,7 @@ import { ApiError } from '../../api/http'
 import { useForegroundReload } from '../../composables/useForegroundReload'
 import { isHourlySalaryRecord, useSalaryPage, money, userError, wholeNumber } from '../../composables/useSalaryPage'
 import { useSalaryWorkflow } from '../../composables/useSalaryWorkflow'
+import { reportAppError } from '../../errors/appErrorDialog'
 import { PERMISSIONS } from '../../permissions/permissions'
 import { useAuthStore } from '../../stores/auth'
 import SearchInput from '../common/SearchInput.vue'
@@ -253,7 +254,10 @@ function discardSalaryChanges() {
 }
 
 function clearSalaryFilters() {
-  if (!page.hasActiveListFilters.value) return
+  if (!page.hasActiveListFilters.value) {
+    reportAppError('当前没有可清除的筛选条件。', { title: '无需清除筛选' })
+    return
+  }
   requestSalaryDiscard(() => {
     clearInteractionFeedback()
     checkedIds.value = new Set()
@@ -370,15 +374,26 @@ function applyInitialScope() {
   actionError.value = '该门店已停用或不在当前工资权限范围内，不能继续查看或编辑工资。'
 }
 
+function salaryScopeActionError(actionLabel: '添加人员' | '生成本月工资') {
+  if (!page.canEdit.value) return `当前账号没有${actionLabel}权限。`
+  if (!page.hasValidMonth.value) return `请先选择有效月份，再${actionLabel}。`
+  if (initialScopeBlocked.value) {
+    return `当前门店已停用或不在工资权限范围内，不能${actionLabel}。`
+  }
+  if (!page.effectiveStoreId.value || page.effectiveStoreId.value === 'all') {
+    return `请先选择具体门店，再${actionLabel}。`
+  }
+  if (!page.isEffectiveStoreActive.value) return `当前门店已停用，不能${actionLabel}。`
+  if (page.loading.value) return '工资数据正在加载，请稍候再试。'
+  return ''
+}
+
 async function previewGeneration() {
   actionError.value = ''
   detailError.value = ''
-  if (!page.effectiveStoreId.value || page.effectiveStoreId.value === 'all') {
-    actionError.value = '请先选择具体门店，再生成本月工资。'
-    return
-  }
-  if (!page.isEffectiveStoreActive.value) {
-    actionError.value = '该门店已停用，不能生成工资。'
+  const scopeError = salaryScopeActionError('生成本月工资')
+  if (scopeError) {
+    reportAppError(scopeError, { title: '无法生成本月工资' })
     return
   }
   await workflow.doPreview()
@@ -413,8 +428,9 @@ async function confirmGeneration() {
 async function openAddEmployee() {
   actionError.value = ''
   addEmployeeError.value = ''
-  if (!canAddEmployee.value) {
-    actionError.value = '请先选择具体门店和月份，再添加人员。'
+  const scopeError = salaryScopeActionError('添加人员')
+  if (scopeError) {
+    reportAppError(scopeError, { title: '无法添加人员' })
     return
   }
   addEmployeeCandidates.value = []
@@ -539,13 +555,13 @@ async function batchApprove() {
   batchApprovalError.value = ''
   const selected = checkedIds.value
   if (!selected.size) {
-    actionError.value = '请先选择需要审核的员工。'
+    reportAppError('请先选择待审核工资，再进行批量审核。', { title: '无法批量审核' })
     return
   }
   const records = page.filteredRows.value.filter((row) => selected.has(row.id) && isReviewableRecord(row))
   if (!records.length) {
     checkedIds.value = new Set()
-    actionError.value = '所选工资已不处于待审核状态，请刷新后重新选择。'
+    reportAppError('所选工资已不处于待审核状态，请刷新后重新选择。', { title: '无法批量审核' })
     return
   }
   batchApprovalRecords.value = records
@@ -823,15 +839,15 @@ onBeforeUnmount(() => {
         <button
           v-if="page.canEdit.value"
           class="add-person-button"
-          :disabled="!canAddEmployee || salaryOperationBusy"
-          :title="!canAddEmployee ? '请先选择具体门店和月份' : '新建人员或选择已有员工加入本月工资名单'"
+          :disabled="salaryOperationBusy"
+          title="新建人员或选择已有员工加入本月工资名单"
           @click="openAddEmployee"
         ><UserPlus :size="16" />添加人员</button>
         <button
           v-if="page.canEdit.value"
           class="primary-button"
-          :disabled="workflow.previewLoading.value || salaryOperationBusy || !page.canGenerate.value"
-          :title="!page.effectiveStoreId.value || page.effectiveStoreId.value === 'all' ? '请先选择具体门店' : ''"
+          :disabled="workflow.previewLoading.value || salaryOperationBusy"
+          title="生成当前门店本月工资"
           @click="previewGeneration"
         ><Eye :size="16" />{{ workflow.previewLoading.value ? '正在准备预览…' : '生成本月工资' }}</button>
         <button v-if="page.canExport.value" class="export-button" :disabled="!page.hasValidMonth.value || page.loading.value || workflow.exporting.value" @click="workflow.doExport()"><Download :size="16" />{{ workflow.exporting.value ? '正在导出…' : '导出工资表' }}</button>
@@ -879,8 +895,8 @@ onBeforeUnmount(() => {
     <div class="table-tools">
       <SearchInput v-model="salaryKeywordModel" class="salary-search" placeholder="搜索姓名、工号或岗位" aria-label="搜索工资记录" />
       <div>
-        <button v-if="page.canReview.value" class="batch-button" :disabled="checkedIds.size === 0 || salaryOperationBusy" @click="batchApprove"><Check :size="16" />批量审核<span v-if="checkedIds.size">（{{ checkedIds.size }}）</span></button>
-        <button class="filter-button" :disabled="!page.hasActiveListFilters.value || salaryOperationBusy" title="清除工资状态和搜索关键词" @click="clearSalaryFilters"><RotateCcw :size="16" />清除筛选</button>
+        <button v-if="page.canReview.value" class="batch-button" :disabled="salaryOperationBusy" @click="batchApprove"><Check :size="16" />批量审核<span v-if="checkedIds.size">（{{ checkedIds.size }}）</span></button>
+        <button class="filter-button" :disabled="salaryOperationBusy" title="清除工资状态和搜索关键词" @click="clearSalaryFilters"><RotateCcw :size="16" />清除筛选</button>
       </div>
     </div>
 
@@ -973,13 +989,16 @@ onBeforeUnmount(() => {
 <style scoped>
 .salary-workbench { display: grid; gap: 12px; min-width: 0; width: 100%; color: #182424; font-size: 14px; }
 .salary-page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.title-block { flex: 1 1 auto; min-width: 180px; }
 .title-block h1 { margin: 0; color: #182424; font-size: 23px; line-height: 1.25; }.title-block span { display: block; margin-top: 5px; color: #6f817f; font-size: 13px; }
-.head-controls { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
-.head-controls input,.head-controls select { height: 36px; min-width: 132px; padding: 0 11px; border: 1px solid #d8e4e2; border-radius: 5px; background: #fff; color: #314543; font-size: 14px; }
-.head-controls :deep(.searchable-single-select) { min-width: 210px; }
+.head-controls { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; flex-wrap: nowrap; }
+.head-controls > input,.head-controls > select { box-sizing: border-box; height: 36px; padding: 0 11px; border: 1px solid #d8e4e2; border-radius: 5px; background: #fff; color: #314543; font-size: 14px; }
+.head-controls > input { width: 140px; min-width: 140px; }
+.head-controls > select { width: 120px; min-width: 120px; }
+.head-controls :deep(.searchable-single-select) { width: 200px; min-width: 180px; }
 .head-controls :deep(.searchable-single-select__control) { min-height: 36px; }
 .head-controls :deep(.searchable-single-select__control input) { height: 34px; min-width: 0; }
-.head-controls button,.table-tools button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 0 15px; border-radius: 5px; font-size: 14px; font-weight: 600; cursor: pointer; }
+.head-controls button,.table-tools button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 0 12px; border-radius: 5px; font-size: 14px; font-weight: 600; white-space: nowrap; cursor: pointer; }
 .primary-button { width: auto; min-height: 36px; margin: 0; padding: 0 15px; border: 1px solid #276b65; border-radius: 5px; background: #276b65; color: #fff; }.export-button,.batch-button,.add-person-button { border: 1px solid #4f948e; background: #fff; color: #276b65; }.head-controls button:disabled,.table-tools button:disabled { opacity: .5; cursor: default; }
 .business-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
 .business-metrics article { min-height: 92px; padding: 14px 18px; border: 1px solid #dfe8e6; border-radius: 6px; background: #fff; }.business-metrics > article > span { color: #526765; font-size: 14px; }.business-metrics b { display: block; margin-top: 8px; font-size: 25px; line-height: 1; font-variant-numeric: tabular-nums; }.business-metrics small { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 9px; color: #6f817f; font-size: 12px; }.business-metrics small span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.business-metrics small button,.aux-warning button,.page-error button { flex: none; padding: 0; border: 0; background: transparent; color: #27756e; font-size: 12px; font-weight: 600; cursor: pointer; }
@@ -989,6 +1008,26 @@ onBeforeUnmount(() => {
 .scope-guidance { padding: 9px 12px; border: 1px solid #d9e7e5; border-radius: 5px; background: #f7fbfa; color: #526765; font-size: 13px; line-height: 1.55; }
 .page-error,.aux-warning { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 12px; border-radius: 4px; font-size: 13px; }.page-error { border: 1px solid #efc9c2; background: #fff5f3; color: #a93f31; }.aux-warning { border: 1px solid #eadfbd; background: #fffaf0; color: #7b6533; }.inline-error,.success-box { padding: 9px 12px; border-radius: 4px; font-size: 13px; }.inline-error { border-left: 3px solid #d8583f; background: #fff2ef; color: #b94736; }.success-box { border-left: 3px solid #276b65; background: #eef7f5; color: #245f59; }
 @media (max-width: 1120px) { .salary-workspace { grid-template-columns: 1fr; }.business-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+
+@media (max-width: 1360px) {
+  .salary-page-head {
+    flex-direction: column;
+  }
+
+  .head-controls {
+    display: grid;
+    width: 100%;
+    grid-template-columns: 140px minmax(180px, 1.5fr) 120px repeat(3, minmax(0, 1fr));
+  }
+
+  .head-controls > input,
+  .head-controls > select,
+  .head-controls :deep(.searchable-single-select),
+  .head-controls button {
+    width: 100%;
+    min-width: 0;
+  }
+}
 
 @media (max-width: 680px) {
   .salary-page-head,

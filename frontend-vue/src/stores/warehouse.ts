@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import {
   cancelWarehouseTransfer,
   approveWarehousePurchaseOrder,
+  createWarehouseReturn,
   createWarehousePurchaseOrder,
   createWarehouseTransfer,
   createWarehouseRequisition,
@@ -36,6 +37,7 @@ import {
   type WarehousePurchaseOrderCreatePayload,
   type WarehousePurchaseOrderReceivePayload,
   type WarehouseReturnOrder,
+  type WarehouseReturnCreatePayload,
   type WarehouseTransfer,
   type WarehouseTransferContext,
   type WarehouseTransferCreatePayload,
@@ -226,6 +228,26 @@ export const useWarehouseStore = defineStore('warehouse', {
         throw error
       } finally {
         this.receivingId = ''
+      }
+    },
+    async submitReturn(payload: WarehouseReturnCreatePayload) {
+      const actionId = `return-create:${payload.sourceRequisitionId}`
+      this.actioningId = actionId
+      this.error = ''
+      this.actionMessage = ''
+      try {
+        const saved = await createWarehouseReturn(payload)
+        this.actionMessage = '配送退货单已提交，等待仓库审核'
+        await Promise.all([
+          this.loadOverview(),
+          this.loadReturns(),
+        ])
+        return saved
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : '配送退货单提交失败'
+        throw error
+      } finally {
+        this.actioningId = ''
       }
     },
     async approveRequisition(requisitionId: string) {
