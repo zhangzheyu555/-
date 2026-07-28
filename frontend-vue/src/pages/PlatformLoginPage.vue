@@ -1123,7 +1123,13 @@ onMounted(() => {
             <input v-model="form.shops" type="text" placeholder="S001:示范门店:1" />
           </label>
 
-          <p v-if="qmai && !qmai.configured && qmai.statusText" class="msg warn-text">当前状态：{{ qmai.statusText }}</p>
+          <p
+            v-if="qmai && !qmai.configured && qmai.statusText"
+            class="msg warn-text"
+            data-persistent-error-state
+          >
+            当前状态：{{ qmai.statusText }}
+          </p>
           <p v-if="error" class="msg error">{{ error }}</p>
           <p v-if="success" class="msg success">{{ success }}</p>
           <p v-if="qmai?.updatedAt" class="msg muted">上次更新：{{ qmai.updatedBy || '—' }} · {{ qmai.updatedAt }}</p>

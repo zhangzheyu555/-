@@ -292,7 +292,10 @@ test('门店目录加载失败不会把导出范围标记为最新，恢复前�
   })
 
   await page.goto('/export?storeId=rg1')
-  await expect(page.getByRole('alert')).toContainText('门店目录加载失败，请稍后重试。')
+  const errorDialog = page.getByRole('alertdialog', { name: '数据加载失败' })
+  await expect(errorDialog).toContainText('门店目录加载失败，请稍后重试。')
+  await expect(page.getByRole('alert')).toBeHidden()
+  await errorDialog.getByRole('button', { name: '我知道了' }).click()
   const requestsAfterFailure = storeCatalogRequests
   expect(requestsAfterFailure).toBeGreaterThan(0)
 
@@ -323,7 +326,8 @@ test('前台自动更新失败时保留当前范围并显示业务化失败提�
     document.dispatchEvent(new Event('visibilitychange'))
   })
 
-  await expect(page.getByRole('alert')).toContainText('利润数据加载失败，请稍后重试。')
+  await expect(page.getByRole('alertdialog', { name: '数据加载失败' }))
+    .toContainText('利润数据加载失败，请稍后重试。')
   await expect(toolbar).toContainText('荆州之星店 · 茹菓 · 2026-07')
 })
 

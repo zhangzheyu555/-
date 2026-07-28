@@ -216,6 +216,40 @@ test('store manager completes employee archive create, account, offboarding and 
   expect(state.consoleErrors.filter((message) => !message.includes('DUPLICATE') && !message.includes('409'))).toEqual([])
 })
 
+test('员工工作台的历史页内错误改为可重试弹窗', async ({ page }) => {
+  const state = newState()
+  const user = session('EMPLOYEE', ['exam.learn'], 42, '/employee')
+  await prepare(page, state, user)
+  let shouldFail = true
+  let workbenchRequests = 0
+
+  await page.route('**/api/employee/workbench', (route) => {
+    workbenchRequests += 1
+    if (shouldFail) {
+      return route.fulfill(businessError(500, 'EMPLOYEE_WORKBENCH_UNAVAILABLE', '员工工作台加载失败，请稍后重试'))
+    }
+    return route.fulfill(ok({
+      profile: { userId: 42, displayName: '本人员工', role: 'EMPLOYEE' },
+      store: { storeId: 'EMP_A', storeName: '合成员工门店', brandName: '合成品牌' },
+      workSummary: { total: 0, pending: 0, overdue: 0, completed: 0, retakePending: 0 },
+      workItems: [],
+      assistant: { enabled: false, state: 'UNCONFIGURED', message: '员工服务助手未配置', route: '' },
+    }))
+  })
+
+  await page.goto('/employee')
+  let dialog = page.getByRole('alertdialog', { name: '数据加载失败' })
+  await expect(dialog).toContainText('员工工作台加载失败，请稍后重试')
+  await expect(page.locator('.notice.warning')).toBeHidden()
+
+  shouldFail = false
+  await dialog.getByRole('button', { name: '重试', exact: true }).click()
+  await expect.poll(() => workbenchRequests).toBe(2)
+  await expect(page.getByRole('heading', { name: '本人员工' })).toBeVisible()
+  dialog = page.getByRole('alertdialog', { name: '数据加载失败' })
+  await expect(dialog).toHaveCount(0)
+})
+
 test('employee sees only own profile and completes assigned training exam at 1280px', async ({ page }) => {
   const state = newState()
   await prepare(page, state, session('EMPLOYEE', ['exam.learn'], 42, '/employee'))

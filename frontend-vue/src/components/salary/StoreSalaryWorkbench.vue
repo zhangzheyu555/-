@@ -844,9 +844,13 @@ onBeforeUnmount(() => {
       <button type="button" :disabled="page.loading.value" @click="retrySalaryData">重试</button>
     </div>
     <div v-if="actionError" class="inline-error" role="alert">{{ actionError }}</div>
-    <div v-if="page.storesError.value && !page.isStoreManager.value" class="aux-warning" role="status">
+    <div v-if="page.storesError.value && !page.isStoreManager.value" class="aux-warning" role="alert">
       <span>门店列表暂时无法获取</span>
       <button type="button" @click="page.loadStores()">重试</button>
+    </div>
+    <div v-if="businessMetricsError" class="inline-error business-metrics-error" role="alert">
+      <span>{{ businessMetricsError }}</span>
+      <button type="button" :disabled="businessMetricsLoading" @click="loadBusinessMetrics">重试</button>
     </div>
     <div v-if="page.successMessage.value" class="success-box" role="status">{{ page.successMessage.value }}</div>
 

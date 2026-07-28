@@ -7,6 +7,7 @@ import BusinessScopeBar from '../components/common/BusinessScopeBar.vue'
 import PageHeader from '../components/common/PageHeader.vue'
 import { useBusinessScope } from '../composables/useBusinessScope'
 import { useForegroundReload } from '../composables/useForegroundReload'
+import { reportAppError } from '../errors/appErrorDialog'
 import { amount, money, percent, useProfitStore } from '../stores/profit'
 import type { ProfitTrendPoint } from '../api/profit'
 import { getBrandTheme, normalizeBrandName, STANDARD_BRANDS } from '../utils/brand'
@@ -267,7 +268,7 @@ function brandPillStyle(name?: string) {
 
 function exportCsv() {
   if (!dashboardMatchesCurrentFilter.value || !profit.entries.length) {
-    window.alert('暂无可导出的数据')
+    reportAppError('当前筛选范围暂无可导出的数据。', { title: '导出未完成' })
     return
   }
   const headers = ['门店', '品牌', '月份', '营业额', '净利润', '净利率']

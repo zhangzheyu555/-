@@ -795,7 +795,7 @@ test('草稿工资即使没有新增修改也允许主动保存并反馈结果',
   await expect(page.getByText(/已保存 李店员 的工资与假期信息/)).toBeVisible()
 })
 
-test('工资修改必须先保存再提交，保存失败在当前明细内提示并可直接重试', async ({ page }) => {
+test('工资修改必须先保存再提交，保存失败以弹窗提示且关闭后可直接重试', async ({ page }) => {
   const captured: CapturedRequests = {}
   await prepare(page, captured)
   let saveAttempts = 0
@@ -829,7 +829,10 @@ test('工资修改必须先保存再提交，保存失败在当前明细内提�
   await expect(page.getByText('工资明细有未保存修改，请先保存后再提交审核。')).toBeVisible()
 
   await saveButton.click()
-  await expect(page.locator('.salary-detail-panel').getByRole('alert')).toContainText('工资记录已被其他用户修改')
+  const errorDialog = page.getByRole('alertdialog')
+  await expect(errorDialog).toContainText('工资记录已被其他用户修改')
+  await expect(page.locator('.salary-detail-panel').getByRole('alert')).toBeHidden()
+  await errorDialog.getByRole('button', { name: '我知道了' }).click()
   await expect(saveButton).toBeEnabled()
   await expect(submitButton).toBeDisabled()
 

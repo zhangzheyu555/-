@@ -847,6 +847,49 @@ test('clicking one inventory alert focuses its corresponding material row', asyn
   expect(log.consoleErrors).toEqual([])
 })
 
+test('material category action icons remain fully visible before hover', async ({ page }) => {
+  const log = await prepare(page, baseSession)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/warehouse/detail/1')
+
+  const tree = page.locator('.warehouse-category-tree')
+  const actionNames = ['为耗材新增下级分类', '编辑分类耗材', '删除分类耗材']
+
+  for (const name of actionNames) {
+    const button = tree.getByRole('button', { name })
+    await expect(button).toBeVisible()
+    const geometry = await button.evaluate((element) => {
+      const buttonBox = element.getBoundingClientRect()
+      const lineBox = element.closest('.category-line')?.getBoundingClientRect()
+      const iconBox = element.querySelector('svg')?.getBoundingClientRect()
+      const style = getComputedStyle(element)
+      return {
+        buttonWidth: buttonBox.width,
+        buttonHeight: buttonBox.height,
+        iconWidth: iconBox?.width || 0,
+        iconHeight: iconBox?.height || 0,
+        withinRow: Boolean(lineBox && buttonBox.left >= lineBox.left && buttonBox.right <= lineBox.right),
+        opacity: style.opacity,
+        color: style.color,
+      }
+    })
+
+    expect(geometry.buttonWidth).toBeGreaterThanOrEqual(28)
+    expect(geometry.buttonHeight).toBeGreaterThanOrEqual(28)
+    expect(geometry.iconWidth).toBeGreaterThanOrEqual(13)
+    expect(geometry.iconHeight).toBeGreaterThanOrEqual(13)
+    expect(geometry.withinRow).toBe(true)
+    expect(geometry.opacity).toBe('1')
+    expect(geometry.color).not.toBe('rgba(0, 0, 0, 0)')
+  }
+
+  await tree.getByRole('button', { name: '编辑分类耗材' }).click()
+  await expect(tree.getByText('编辑分类', { exact: true })).toBeVisible()
+  await tree.getByRole('button', { name: '取消', exact: true }).click()
+  await expect(tree.getByText('编辑分类', { exact: true })).not.toBeVisible()
+  expect(log.consoleErrors).toEqual([])
+})
+
 test('material editor keeps completion actions visible and validates an incomplete form', async ({ page }) => {
   const log = await prepare(page, baseSession)
   await page.goto('/warehouse/detail/1')

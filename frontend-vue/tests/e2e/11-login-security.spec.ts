@@ -45,6 +45,7 @@ test('login starts empty and validates each field beside its input', async ({ pa
   await page.getByLabel('账号', { exact: true }).fill('boss')
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await expect(page.getByText('请输入密码')).toBeVisible()
+  await expect(page.getByRole('alertdialog')).toHaveCount(0)
 
   await expect(page.getByLabel('密码', { exact: true })).toHaveAttribute('type', 'password')
   await page.getByRole('button', { name: '显示密码' }).click()
@@ -78,12 +79,15 @@ test('401 and 429 responses are classified correctly', async ({ page }) => {
   await page.getByLabel('账号', { exact: true }).fill('boss')
   await page.getByLabel('密码', { exact: true }).fill('incorrect-password')
   await page.getByLabel('密码', { exact: true }).press('Enter')
-  await expect(page.getByText('账号或密码错误')).toBeVisible()
+  let errorDialog = page.getByRole('alertdialog', { name: '登录未完成' })
+  await expect(errorDialog).toContainText('账号或密码错误')
+  await errorDialog.getByRole('button', { name: '我知道了' }).click()
 
   status = 429
   await page.getByLabel('密码', { exact: true }).fill('another-password')
   await page.getByLabel('密码', { exact: true }).press('Enter')
-  await expect(page.getByText('登录尝试过多，请稍后再试')).toBeVisible()
+  errorDialog = page.getByRole('alertdialog', { name: '登录未完成' })
+  await expect(errorDialog).toContainText('登录尝试过多，请稍后再试')
 })
 
 test('backend proxy failure is shown as a connection problem', async ({ page }) => {
@@ -102,7 +106,40 @@ test('backend proxy failure is shown as a connection problem', async ({ page }) 
   await page.getByLabel('密码', { exact: true }).fill('private-password')
   await page.getByRole('button', { name: '登录', exact: true }).click()
 
-  await expect(page.getByText('暂时无法连接服务器')).toBeVisible()
+  await expect(page.getByRole('alertdialog', { name: '登录未完成' }))
+    .toContainText('暂时无法连接服务器')
+})
+
+test('operation errors open one accessible dialog instead of a page error strip', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.route('**/api/auth/login', (route) => route.fulfill({
+    status: 429,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      success: false,
+      code: 'LOGIN_RATE_LIMITED',
+      message: '登录尝试过多，请稍后再试',
+      data: null,
+    }),
+  }))
+
+  await page.getByLabel('账号', { exact: true }).fill('boss')
+  await page.getByLabel('密码', { exact: true }).fill('incorrect-password')
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+
+  const dialog = page.getByRole('alertdialog', { name: '登录未完成' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText('登录尝试过多，请稍后再试')
+  await expect(dialog.getByRole('button', { name: '我知道了' })).toBeFocused()
+  await expect(page.locator('.submit-error')).toBeHidden()
+
+  const dialogBox = await dialog.boundingBox()
+  expect(dialogBox).not.toBeNull()
+  expect(dialogBox!.x).toBeGreaterThanOrEqual(0)
+  expect(dialogBox!.x + dialogBox!.width).toBeLessThanOrEqual(390)
+
+  await dialog.getByRole('button', { name: '我知道了' }).click()
+  await expect(dialog).toHaveCount(0)
 })
 
 test('remember account stores only the username and returns to the target page', async ({ page }) => {
@@ -366,7 +403,8 @@ test('submitting twice sends only one login request', async ({ page }) => {
     ;(button as HTMLButtonElement).click()
     ;(button as HTMLButtonElement).click()
   })
-  await expect(page.getByText('账号或密码错误')).toBeVisible()
+  await expect(page.getByRole('alertdialog', { name: '登录未完成' }))
+    .toContainText('账号或密码错误')
   expect(requests).toBe(1)
 })
 

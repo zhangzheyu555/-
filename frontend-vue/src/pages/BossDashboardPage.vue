@@ -404,7 +404,7 @@ onMounted(() => {
   <section class="page-panel boss-page">
     <PageHeader />
 
-    <div v-if="!canAccess" class="error-box">当前账号无权访问老板工作台。</div>
+    <div v-if="!canAccess" class="error-box" data-persistent-error-state>当前账号无权访问老板工作台。</div>
 
     <template v-else>
       <div v-if="boss.error" class="error-box dashboard-load-error">

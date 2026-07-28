@@ -388,6 +388,11 @@ tbody tr:hover {
   color: #a61f2c;
 }
 
+/* 历史页面错误提升到全局无障碍错误弹窗后，隐藏原来的页内提示。 */
+[data-error-dialog-promoted='true'] {
+  display: none !important;
+}
+
 .success-box {
   border: 1px solid #bfe3cf;
   background: var(--ds-success-soft);

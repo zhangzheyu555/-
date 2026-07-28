@@ -134,3 +134,34 @@ test('月份切换会隔离迟到的用量快照，且导出只使用当前月�
   await downloadPromise
   await expect.poll(() => exported).toEqual(['/api/qmai/recipe-usage.csv?month=2026-06&brand=ruguo'])
 })
+
+test('平台页的历史警告样式也统一进入错误弹窗', async ({ page }) => {
+  const requested: string[] = []
+  await prepare(page, requested)
+
+  await page.goto('/platform-login')
+  await page.getByRole('button', { name: 'POS', exact: true }).click()
+  await page.getByRole('button', { name: '提交核销', exact: true }).click()
+
+  await expect(page.getByRole('alertdialog', { name: '操作未完成' }))
+    .toContainText('请先确认这是一次真实核销操作')
+  await expect(page.locator('.msg.warn-text').filter({ hasText: '请先确认这是一次真实核销操作' })).toBeHidden()
+})
+
+test('持续配置状态保留在原位置且不会误弹错误窗口', async ({ page }) => {
+  const requested: string[] = []
+  await prepare(page, requested)
+  await page.route('**/api/qmai/config**', (route) => route.fulfill(ok({
+    configured: false,
+    brand: 'ruguo',
+    openKeySet: false,
+    consoleTokenSet: false,
+    statusText: '尚未配置连接凭据',
+  })))
+
+  await page.goto('/platform-login')
+  await page.locator('.qmai-card').click()
+
+  await expect(page.getByText('当前状态：尚未配置连接凭据')).toBeVisible()
+  await expect(page.getByRole('alertdialog')).toHaveCount(0)
+})
