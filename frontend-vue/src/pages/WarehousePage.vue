@@ -75,6 +75,15 @@ function warehouseForCurrentRoute() {
   if (routeWarehouseId) {
     return rows.find((row) => String(row.id) === String(routeWarehouseId)) || null
   }
+  const queryWarehouseId = Array.isArray(route.query.warehouseId)
+    ? route.query.warehouseId[0]
+    : route.query.warehouseId
+  if (
+    queryWarehouseId
+    && ['warehouse-transfers', 'warehouse-requests', 'warehouse-returns'].includes(String(route.name || ''))
+  ) {
+    return rows.find((row) => String(row.id) === String(queryWarehouseId)) || null
+  }
   const warehouseCode = String(route.meta.warehouseCode || '')
   if (warehouseCode) {
     return rows.find((row) => row.code === warehouseCode) || null
@@ -135,7 +144,7 @@ async function loadWarehouseData() {
       await Promise.all([
         warehouse.loadOverview(warehouse.selectedWarehouseId),
         warehouse.loadCategories(),
-        warehouse.loadReturns(),
+        warehouse.loadReturns(warehouse.selectedWarehouseId),
       ])
     } else {
       await warehouse.loadWarehouses()
@@ -147,7 +156,6 @@ async function loadWarehouseData() {
       await Promise.all([
         warehouse.selectWarehouse(target.id),
         warehouse.loadCategories(),
-        warehouse.loadReturns(),
       ])
       if (route.name === 'warehouse-overview') {
         await router.replace({

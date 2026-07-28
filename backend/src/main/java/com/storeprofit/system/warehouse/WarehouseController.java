@@ -269,9 +269,10 @@ public class WarehouseController {
 
   @GetMapping("/returns")
   public ApiResponse<List<WarehouseReturnResponse>> returns(
-      @RequestHeader(value = "Authorization", required = false) String authorization
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @RequestParam(value = "warehouseId", required = false) Long warehouseId
   ) {
-    return ApiResponse.ok(warehouseService.returns(authService.requireUser(authorization)));
+    return ApiResponse.ok(warehouseService.returns(authService.requireUser(authorization), warehouseId));
   }
 
   @GetMapping("/returns/{returnId}")

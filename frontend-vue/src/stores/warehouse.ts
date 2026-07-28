@@ -142,10 +142,15 @@ export const useWarehouseStore = defineStore('warehouse', {
         this.categoryLoading = false
       }
     },
-    async loadReturns() {
+    async loadReturns(warehouseId?: string | number) {
+      const selectedId = warehouseId || this.selectedWarehouseId || undefined
       try {
-        this.returns = await getWarehouseReturns()
+        const rows = await getWarehouseReturns(selectedId)
+        if (!selectedId || sameWarehouseId(selectedId, this.selectedWarehouseId)) {
+          this.returns = rows
+        }
       } catch (error) {
+        if (selectedId && !sameWarehouseId(selectedId, this.selectedWarehouseId)) return
         this.error = error instanceof Error ? error.message : '配送退货单加载失败'
         throw error
       }
@@ -155,7 +160,7 @@ export const useWarehouseStore = defineStore('warehouse', {
       await Promise.all([
         this.loadOverview(this.selectedWarehouseId),
         this.loadCategories(),
-        this.loadReturns(),
+        this.loadReturns(this.selectedWarehouseId),
         this.loadTransfers(this.selectedWarehouseId),
         this.loadTransferContext(this.selectedWarehouseId),
       ])
@@ -169,6 +174,7 @@ export const useWarehouseStore = defineStore('warehouse', {
       this.transferContext = null
       await Promise.all([
         this.loadOverview(selected.id),
+        this.loadReturns(selected.id),
         this.loadTransfers(selected.id),
         this.loadTransferContext(selected.id),
       ])

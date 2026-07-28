@@ -22,6 +22,7 @@ import { useAuthStore } from '../stores/auth'
 import { PERMISSIONS } from '../permissions/permissions'
 import { getStores, type StoreInfo } from '../api/operations'
 import { getWarehouseItemRequisitionScopeContext } from '../api/warehouse'
+import { reportAppError } from '../errors/appErrorDialog'
 import type {
   WarehouseAlert,
   WarehouseInfo,
@@ -69,6 +70,7 @@ const itemScopeContextAttempted = ref(false)
 const movementPanelRef = ref<InstanceType<typeof WarehouseMovementPanel> | null>(null)
 const inventoryPanelRef = ref<InstanceType<typeof WarehouseInventoryPanel> | null>(null)
 const materialSubmitError = ref<MaterialSubmitError | null>(null)
+const returnRefreshing = ref(false)
 
 function mapErrorCodeToTarget(code?: string, status?: number): MaterialSubmitError['target'] {
   if (status === 403) return 'form'
@@ -117,6 +119,9 @@ const suppliers = computed(() => overview.value?.suppliers || [])
 const purchaseOrders = computed(() => overview.value?.purchaseOrders || [])
 const movements = computed(() => overview.value?.movements || [])
 const returns = computed(() => warehouse.returns || [])
+const pendingReturns = computed(() => returns.value.filter((row) => (
+  ['SUBMITTED', 'APPROVED'].includes(row.status)
+)))
 const alerts = computed(() => overview.value?.alerts || [])
 const accessibleWarehouses = computed(() => warehouse.warehouses.filter((row) => row.enabled !== false))
 const itemScopeRegions = computed(() => {
@@ -269,7 +274,10 @@ const confirmationCopy = computed(() => {
       }
   }
 })
-const confirmationNoteRequired = computed(() => pendingConfirmation.value?.kind === 'reject-requisition')
+const confirmationNoteRequired = computed(() => (
+  pendingConfirmation.value?.kind === 'reject-requisition'
+  || pendingConfirmation.value?.kind === 'reject-return'
+))
 
 const transferRoute = computed<RouteLocationRaw>(() => ({
   path: '/warehouse/transfers',
@@ -278,6 +286,11 @@ const transferRoute = computed<RouteLocationRaw>(() => ({
 
 const requisitionRoute = computed<RouteLocationRaw>(() => ({
   path: '/warehouse/requests',
+  query: warehouse.selectedWarehouseId ? { warehouseId: String(warehouse.selectedWarehouseId) } : undefined,
+}))
+
+const returnRoute = computed<RouteLocationRaw>(() => ({
+  path: '/warehouse/returns',
   query: warehouse.selectedWarehouseId ? { warehouseId: String(warehouse.selectedWarehouseId) } : undefined,
 }))
 
@@ -353,6 +366,15 @@ const priorityItems = computed(() => {
       to: requisitionRoute.value,
     })
   }
+  if (pendingReturns.value.length > 0) {
+    rows.push({
+      key: 'returns',
+      title: '配送退货待处理',
+      detail: '请审核门店退货，收到退货商品后确认入库。',
+      count: pendingReturns.value.length,
+      to: returnRoute.value,
+    })
+  }
   return rows
 })
 
@@ -363,6 +385,7 @@ const tabs = computed<Array<{ key: string; label: string; badge?: number; to: Ro
     rows.push({ key: 'transfers', label: '调拨', badge: pendingTransfers.value, to: transferRoute.value })
   }
   rows.push({ key: 'requisitions', label: '门店叫货', badge: pendingRequisitions.value.length, to: requisitionRoute.value })
+  rows.push({ key: 'returns', label: '配送退货', badge: pendingReturns.value.length, to: returnRoute.value })
   if (canPurchase.value && selectedWarehouse.value?.type === 'CENTRAL') {
     rows.push({ key: 'purchase', label: '外部采购', to: '/warehouse/purchase' })
   }
@@ -430,6 +453,8 @@ async function setTab(tab: WarehouseTab) {
         ? transferRoute.value
         : tab === 'requisitions'
           ? requisitionRoute.value
+          : tab === 'returns'
+            ? returnRoute.value
           : (tab === 'warehouse' || tab === 'inventory' ? warehouseHomeRoute.value : tabRoutes[tab]),
     )
   } catch {
@@ -478,6 +503,7 @@ async function selectWarehouse(event: Event) {
 function currentWarehouseQueryRoutePath() {
   if (route.name === 'warehouse-transfers') return '/warehouse/transfers'
   if (route.name === 'warehouse-requests') return '/warehouse/requests'
+  if (route.name === 'warehouse-returns') return '/warehouse/returns'
   return ''
 }
 
@@ -686,9 +712,28 @@ async function saveAlert(itemId: number, payload: { minStockQuantity: number; al
 async function approveReturn(id: string) {
   try {
     await warehouse.reviewReturn(id, true, '仓库管理员审核通过')
-  } catch {
-    // store 已保留业务错误提示。
+  } catch (error) {
+    showWarehouseActionError(error, '退货单审核失败')
   }
+}
+
+async function refreshReturns() {
+  if (returnRefreshing.value) return
+  returnRefreshing.value = true
+  try {
+    await warehouse.loadReturns(warehouse.selectedWarehouseId)
+  } catch (error) {
+    showWarehouseActionError(error, '配送退货单刷新失败')
+  } finally {
+    returnRefreshing.value = false
+  }
+}
+
+function showWarehouseActionError(error: unknown, title: string) {
+  const message = warehouse.error
+    || (error instanceof Error ? error.message : '仓库操作失败，请稍后重试。')
+  warehouse.error = ''
+  reportAppError(message, { title })
 }
 
 function rejectReturn(id: string) {
@@ -753,7 +798,13 @@ async function confirmWarehouseAction() {
         break
     }
   } catch (error) {
-    if (action.kind === 'delete-item') {
+    if (action.kind === 'reject-return' || action.kind === 'receive-return') {
+      showWarehouseActionError(
+        error,
+        action.kind === 'reject-return' ? '退货单驳回失败' : '退货入库失败',
+      )
+      keepOpen = true
+    } else if (action.kind === 'delete-item') {
       confirmationError.value = error instanceof Error ? error.message : '物料删除失败，请稍后重试。'
       keepOpen = true
     }
@@ -1060,16 +1111,6 @@ watch(
         :downloading-id="warehouse.downloadingId"
         @download-movement="downloadMovement"
       />
-      <WarehouseReturnPanel
-        :returns="returns"
-        :actioning-id="warehouse.actioningId"
-        :downloading-id="warehouse.downloadingId"
-        :can-manage="canManage"
-        @approve="approveReturn"
-        @reject="rejectReturn"
-        @receive="receiveReturn"
-        @download="downloadReturn"
-      />
     </section>
 
     <WarehouseReturnPanel
@@ -1078,10 +1119,12 @@ watch(
       :actioning-id="warehouse.actioningId"
       :downloading-id="warehouse.downloadingId"
       :can-manage="canManage"
+      :refreshing="returnRefreshing"
       @approve="approveReturn"
       @reject="rejectReturn"
       @receive="receiveReturn"
       @download="downloadReturn"
+      @refresh="refreshReturns"
     />
 
     <WarehouseAlertPanel
