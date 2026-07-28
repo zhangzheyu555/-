@@ -105,11 +105,22 @@ function resolveRedirect(redirect: unknown) {
   if (!target.startsWith('/') || target.startsWith('//') || target.startsWith('/login')) return '/'
   const matched = router.resolve(target).matched
   if (!matched.length) return '/'
-  const requiredPermission = [...matched]
+  const permissionRecord = [...matched]
     .reverse()
-    .map((record) => record.meta.permission)
-    .find((permission): permission is string => typeof permission === 'string' && Boolean(permission))
-  if (requiredPermission && !auth.hasPermission(requiredPermission)) return '/'
+    .find((record) => typeof record.meta.permission === 'string' && Boolean(record.meta.permission))
+  const requiredPermission = typeof permissionRecord?.meta.permission === 'string'
+    ? permissionRecord.meta.permission
+    : undefined
+  const alternativePermissions = Array.isArray(permissionRecord?.meta.alternativePermissions)
+    ? permissionRecord.meta.alternativePermissions.filter(
+      (permission): permission is string => typeof permission === 'string' && Boolean(permission),
+    )
+    : []
+  if (requiredPermission
+      && !auth.hasPermission(requiredPermission)
+      && !alternativePermissions.some((permission) => auth.hasPermission(permission))) {
+    return '/'
+  }
   return target
 }
 

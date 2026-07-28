@@ -46,6 +46,7 @@ interface LossLineForm {
   itemConfigId: string
   quantity: string
   reason: string
+  peelState: '' | 'PEELED' | 'UNPEELED'
 }
 
 interface CategoryTab {
@@ -180,8 +181,21 @@ const reportDayGroups = computed(() => {
     notReportedCount: rows.filter((report) => statusKey(report) === 'NOT_REPORTED').length,
   }))
 })
-const todayReport = computed(() => scopedReports.value.find((report) => report.lossDate === localDate()))
+const todayReports = computed(() => scopedReports.value.filter(
+  (report) => report.lossDate === localDate() && report.reported,
+))
+const todayStatusText = computed(() => {
+  if (effectiveStoreId.value) {
+    return todayReports.value.length ? `已报 ${todayReports.value.length} 次` : '未报'
+  }
+  const reportedStoreCount = new Set(todayReports.value.map((report) => report.storeId)).size
+  const expectedStoreCount = selectableStores.value.length
+  return expectedStoreCount ? `${reportedStoreCount}/${expectedStoreCount} 家已报` : '未报'
+})
 const itemsById = computed(() => new Map(items.value.map((item) => [Number(item.id), item])))
+const expectedLossAmount = computed(() => lines.value.reduce((total, line) => {
+  return total + lineExpectedAmount(line)
+}, 0))
 const categoryTabs = computed<CategoryTab[]>(() => {
   const grouped = new Map<string, CategoryTab>()
   for (const item of items.value) {
@@ -250,7 +264,7 @@ watch(categoryTabs, (tabs) => {
 })
 
 function emptyLine(): LossLineForm {
-  return { itemConfigId: '', quantity: '', reason: '' }
+  return { itemConfigId: '', quantity: '', reason: '', peelState: '' }
 }
 
 async function initialize() {
@@ -373,7 +387,7 @@ function filteredRecordsDescription() {
   if (recordFilter.value === 'NOT_REPORTED') return '按天显示尚未提交报损的门店。'
   if (recordFilter.value === 'SUBMITTED') return '集中显示所有门店等待督导处理的报损。'
   if (recordFilter.value === 'REVIEWED') return '集中显示已经完成督导复核的报损。'
-  return '按天显示各门店未报、待复核、已复核；未来日期不显示。'
+  return '同一门店一天可提交多张报损单；当天至少提交一张即完成每日必报。'
 }
 
 function itemLabel(item: DailyLossItem) {
@@ -389,7 +403,19 @@ function itemCategoryName(item: DailyLossItem) {
 }
 
 function itemPriceLabel(item: DailyLossItem) {
+  if (item.peelSelectionEnabled) {
+    const prices = [
+      priceOptionLabel('去皮', item.peeledUnitPrice, item.peeledPricingUnit),
+      priceOptionLabel('不去皮', item.unpeeledUnitPrice, item.unpeeledPricingUnit),
+    ].filter(Boolean)
+    if (prices.length) return prices.join(' / ')
+  }
   return `每${itemUnit(item)} ¥${Number(item.unitPrice || 0).toFixed(4)}`
+}
+
+function priceOptionLabel(label: string, price?: number, pricingUnit?: string) {
+  if (price === undefined || price === null) return ''
+  return `${label} ¥${Number(price).toFixed(4)}/${pricingUnit || '单位'}`
 }
 
 function itemCategoryCode(item: DailyLossItem) {
@@ -401,17 +427,101 @@ function selectedItem(line: LossLineForm) {
 }
 
 function selectedLineUnit(line: LossLineForm) {
-  return itemUnit(selectedItem(line))
+  const item = selectedItem(line)
+  if (!item?.peelSelectionEnabled) return itemUnit(item)
+  return selectedPeelState(line, item) === 'PEELED'
+    ? (item.peeledUnit || '克')
+    : (item.unpeeledUnit || '克')
 }
 
 function pricingHint(line: LossLineForm) {
   const item = selectedItem(line)
   if (!item) return ''
+  if (item.peelSelectionEnabled) {
+    const peelState = selectedPeelState(line, item)
+    const yieldRate = Number(item.yieldRate || 0)
+    const yieldLabel = yieldRate > 0 ? `${(yieldRate * 100).toFixed(2)}%` : ''
+    const directPrice = peelState === 'PEELED' ? item.peeledUnitPrice : item.unpeeledUnitPrice
+    const directPricingUnit = peelState === 'PEELED' ? item.peeledPricingUnit : item.unpeeledPricingUnit
+    const directFactor = peelState === 'PEELED'
+      ? item.peeledQuantityPerPricingUnit
+      : item.unpeeledQuantityPerPricingUnit
+    if (directPrice !== undefined && directPrice !== null) {
+      const factor = Number(directFactor || 1)
+      return `${peelStateLabel(peelState)}直接计价：${formatQuantity(factor)}${selectedLineUnit(line)} = 1${directPricingUnit || selectedLineUnit(line)}，单价 ¥${Number(directPrice).toFixed(4)}`
+    }
+    if (peelState === 'PEELED') {
+      return `去皮重量 ÷ 出肉率 ${yieldLabel || '未配置'}，按不去皮单价 ¥${Number(item.unpeeledUnitPrice || 0).toFixed(4)}/${item.unpeeledPricingUnit || '单位'}计价`
+    }
+    return `不去皮重量 × 出肉率 ${yieldLabel || '未配置'}，按去皮单价 ¥${Number(item.peeledUnitPrice || 0).toFixed(4)}/${item.peeledPricingUnit || '单位'}计价`
+  }
   const factor = Number(item.quantityPerPricingUnit || 1)
   if (Number(item.unitPrice || 0) === 0) {
     return `仓库免费叫货（0元），按${itemUnit(item)}登记报损数量`
   }
   return `${formatQuantity(factor)}${itemUnit(item)} = 1${item.pricingUnit || itemUnit(item)}，单价 ¥${formatMoney(item.unitPrice || 0)}`
+}
+
+function selectedPeelState(line: LossLineForm, item = selectedItem(line)): 'PEELED' | 'UNPEELED' {
+  return line.peelState || item?.defaultPeelState || 'PEELED'
+}
+
+function peelStateLabel(state?: string) {
+  if (state === 'PEELED') return '去皮'
+  if (state === 'UNPEELED') return '不去皮'
+  return ''
+}
+
+function lineExpectedAmount(line: LossLineForm) {
+  const item = selectedItem(line)
+  const quantity = Number(line.quantity)
+  if (!item || !Number.isFinite(quantity) || quantity <= 0) return 0
+  if (!item.peelSelectionEnabled) {
+    const factor = Number(item.quantityPerPricingUnit || 1)
+    const price = Number(item.unitPrice || 0)
+    return factor > 0 ? roundMoney(quantity / factor * price) : 0
+  }
+  const state = selectedPeelState(line, item)
+  const gross = Number(item.grossGramsPerUnit || 0)
+  const yieldRate = Number(item.yieldRate || 0)
+  let sourceQuantity = quantity
+  let factor = 0
+  let price = 0
+  if (state === 'PEELED' && item.peeledUnitPrice !== undefined && item.peeledUnitPrice !== null) {
+    factor = Number(item.peeledQuantityPerPricingUnit || 1)
+    price = Number(item.peeledUnitPrice)
+  } else if (state === 'UNPEELED' && item.unpeeledUnitPrice !== undefined && item.unpeeledUnitPrice !== null) {
+    factor = Number(item.unpeeledQuantityPerPricingUnit || 1)
+    price = Number(item.unpeeledUnitPrice)
+  } else if (state === 'PEELED' && yieldRate > 0 && item.unpeeledUnitPrice !== undefined && item.unpeeledUnitPrice !== null) {
+    const rawGrams = quantityToGrams(quantity, item.peeledUnit || '克', gross) / yieldRate
+    sourceQuantity = gramsToQuantity(rawGrams, item.unpeeledUnit || '克', gross)
+    factor = Number(item.unpeeledQuantityPerPricingUnit || 1)
+    price = Number(item.unpeeledUnitPrice)
+  } else if (state === 'UNPEELED' && yieldRate > 0 && item.peeledUnitPrice !== undefined && item.peeledUnitPrice !== null) {
+    const rawGrams = quantityToGrams(quantity, item.unpeeledUnit || '克', gross)
+    sourceQuantity = gramsToQuantity(rawGrams * yieldRate, item.peeledUnit || '克', gross)
+    factor = Number(item.peeledQuantityPerPricingUnit || 1)
+    price = Number(item.peeledUnitPrice)
+  }
+  if (!Number.isFinite(sourceQuantity) || sourceQuantity <= 0 || factor <= 0) return 0
+  return roundMoney(sourceQuantity / factor * price)
+}
+
+function quantityToGrams(quantity: number, unit: string, grossGramsPerUnit: number) {
+  if (unit === '斤') return quantity * 500
+  if (unit === '个') return grossGramsPerUnit > 0 ? quantity * grossGramsPerUnit : Number.NaN
+  return quantity
+}
+
+function gramsToQuantity(grams: number, unit: string, grossGramsPerUnit: number) {
+  if (unit === '斤') return grams / 500
+  if (unit === '个') return grossGramsPerUnit > 0 ? grams / grossGramsPerUnit : Number.NaN
+  return grams
+}
+
+function roundMoney(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100
 }
 
 function formatQuantity(value: number) {
@@ -452,6 +562,7 @@ function selectPickerItem(item: DailyLossItem) {
   const line = lines.value[pickerLineIndex.value]
   if (!line) return
   line.itemConfigId = String(item.id)
+  line.peelState = item.peelSelectionEnabled ? (item.defaultPeelState || 'PEELED') : ''
   const id = Number(item.id)
   recentItemIds.value = [id, ...recentItemIds.value.filter((recentId) => recentId !== id)].slice(0, 8)
   closeItemPicker()
@@ -507,13 +618,14 @@ async function submitReport() {
     itemConfigId: Number(line.itemConfigId),
     lossQuantity: Number(line.quantity),
     lossReason: line.reason.trim() || undefined,
+    peelState: line.peelState || undefined,
   })).filter((line) => Number.isInteger(line.itemConfigId) && line.itemConfigId > 0 && Number.isFinite(line.lossQuantity) && line.lossQuantity > 0)
   if (!details.length) {
     pageError.value = '请至少选择一个报损品类，并填写大于零的数量。'
     return
   }
-  if (!selectedFiles.value.length && !(todayReport.value?.attachments?.length)) {
-    pageError.value = '请至少上传一张报损照片。'
+  if (!selectedFiles.value.length) {
+    pageError.value = '每张报损单都必须至少上传一张本次报损照片。'
     return
   }
   submitting.value = true
@@ -530,7 +642,7 @@ async function submitReport() {
       await uploadDailyLossReportAttachments(saved.id, selectedFiles.value, (percent) => { uploadProgress.value = percent })
     }
     if (saved.id) await submitDailyLossReport(saved.id)
-    actionMessage.value = '今日报损已提交，等待督导复核。'
+    actionMessage.value = '本次报损已提交，等待督导复核；今天仍可继续新增报损。'
     resetLossDraft()
     await loadDailyLossData()
   } catch (error) {
@@ -670,11 +782,16 @@ function statusLabel(report: DailyLossReport) {
   if (report.statusLabel) return report.statusLabel
   const status = statusKey(report)
   if (status === 'NOT_REPORTED') return '未报'
-  if (status === 'DRAFT') return '已保存'
+  if (status === 'DRAFT') return '未提交草稿'
   if (status === 'SUBMITTED') return '待复核'
   if (['REVIEWED', 'APPROVED'].includes(status)) return '已复核'
   if (status === 'REJECTED') return '已驳回'
   return '处理中'
+}
+
+function reportTime(value?: string) {
+  const match = String(value || '').match(/T(\d{2}:\d{2})/)
+  return match?.[1] || ''
 }
 
 function readableError(error: unknown, fallback: string) {
@@ -744,7 +861,7 @@ function currentMonth() {
           <span>已复核</span><strong>{{ reviewedCount }}</strong><small>点击查看全部已复核</small>
         </button>
       </article>
-      <article><span>今日状态</span><strong>{{ todayReport ? statusLabel(todayReport) : '未报' }}</strong><small>{{ localDate() }}</small></article>
+      <article><span>今日状态</span><strong>{{ todayStatusText }}</strong><small>{{ localDate() }}</small></article>
     </div>
 
     <section v-if="scopedMonthlyArchive" class="content-card archive-summary" aria-label="历史月度报损归档">
@@ -770,7 +887,7 @@ function currentMonth() {
         <PackageMinus :size="20" />
         <div>
           <h2>今日报损</h2>
-          <p>按实际单位录入数量，系统自动折算计价并核算报损金额。</p>
+          <p>一天可多次提交、每天至少一张；按实际单位录入，系统自动折算计价并核算报损金额。</p>
         </div>
       </div>
 
@@ -779,7 +896,12 @@ function currentMonth() {
       </div>
 
       <div class="line-list">
-        <article v-for="(line, index) in lines" :key="index" class="line-row">
+        <article
+          v-for="(line, index) in lines"
+          :key="index"
+          class="line-row"
+          :class="{ 'line-row--peel': selectedItem(line)?.peelSelectionEnabled }"
+        >
           <label class="item-field">
             <span>品类</span>
             <button
@@ -796,6 +918,27 @@ function currentMonth() {
               <ChevronDown :size="16" />
             </button>
           </label>
+          <div v-if="selectedItem(line)?.peelSelectionEnabled" class="peel-field">
+            <span>形态</span>
+            <div class="peel-toggle" role="group" :aria-label="`第 ${index + 1} 项报损形态`">
+              <button
+                type="button"
+                :class="{ active: selectedPeelState(line) === 'PEELED' }"
+                :aria-pressed="selectedPeelState(line) === 'PEELED'"
+                @click="line.peelState = 'PEELED'"
+              >
+                去皮
+              </button>
+              <button
+                type="button"
+                :class="{ active: selectedPeelState(line) === 'UNPEELED' }"
+                :aria-pressed="selectedPeelState(line) === 'UNPEELED'"
+                @click="line.peelState = 'UNPEELED'"
+              >
+                不去皮
+              </button>
+            </div>
+          </div>
           <label class="quantity-field">
             <span>数量</span>
             <span class="quantity-control">
@@ -827,6 +970,10 @@ function currentMonth() {
 
       <button class="text-button" type="button" @click="addLine"><Plus :size="15" />增加品类</button>
 
+      <section class="settlement-block" aria-label="报损结算">
+        <div><span>总计损耗金额</span><strong>¥{{ formatMoney(expectedLossAmount) }}</strong></div>
+      </section>
+
       <section class="photo-upload-block" aria-label="报损照片上传">
         <label class="attachment-field">
           <span><FileUp :size="15" />报损照片</span>
@@ -853,7 +1000,7 @@ function currentMonth() {
       <div class="form-footer">
         <UiButton variant="primary" type="submit" :loading="submitting" :disabled="!effectiveStoreId">
           <template #icon><Send :size="17" /></template>
-          提交今日报损
+          提交本次报损
         </UiButton>
       </div>
     </form>
@@ -877,7 +1024,7 @@ function currentMonth() {
           <ol class="record-list">
             <li
               v-for="report in group.rows"
-              :key="`${report.storeId}-${report.lossDate}`"
+              :key="report.id || `missing-${report.storeId}-${report.lossDate}`"
               class="record-row"
               :class="{ empty: !report.reported }"
               role="button"
@@ -887,7 +1034,10 @@ function currentMonth() {
             >
           <div class="record-main">
             <div class="record-title">
-              <strong>{{ report.storeName || report.storeId }} · {{ report.lossDate }}</strong>
+              <strong>
+                {{ report.storeName || report.storeId }} · {{ report.lossDate }}
+                <template v-if="report.reported && reportTime(report.submittedAt)"> · {{ reportTime(report.submittedAt) }}</template>
+              </strong>
               <span class="status-pill" :class="`status-${statusKey(report).toLowerCase()}`">{{ statusLabel(report) }}</span>
             </div>
             <p v-if="report.reported">
@@ -899,7 +1049,8 @@ function currentMonth() {
             <p v-else>当天尚未提交报损。</p>
             <div v-if="report.details?.length" class="detail-list">
               <span v-for="detail in report.details" :key="detail.id">
-                {{ detail.itemName }} {{ detail.lossQuantity }}{{ detail.unit || '' }}
+                {{ detail.itemName }}<template v-if="detail.peelState">（{{ peelStateLabel(detail.peelState) }}）</template>
+                {{ detail.lossQuantity }}{{ detail.unit || '' }}
               </span>
             </div>
             <div v-if="reportPhotos(report).length" class="photo-grid">
@@ -975,7 +1126,10 @@ function currentMonth() {
       <section class="detail-dialog" role="dialog" aria-modal="true" aria-label="报损详情">
         <header>
           <div>
-            <h2>{{ detailReport.storeName || detailReport.storeId }} · {{ detailReport.lossDate }}</h2>
+            <h2>
+              {{ detailReport.storeName || detailReport.storeId }} · {{ detailReport.lossDate }}
+              <template v-if="detailReport.reported && reportTime(detailReport.submittedAt)"> · {{ reportTime(detailReport.submittedAt) }}</template>
+            </h2>
             <p><span class="status-pill" :class="`status-${statusKey(detailReport).toLowerCase()}`">{{ statusLabel(detailReport) }}</span></p>
           </div>
           <UiButton variant="ghost" icon-only aria-label="关闭报损详情" title="关闭" @click="detailReport = null">
@@ -986,11 +1140,21 @@ function currentMonth() {
           该日期尚未提交报损。历史日期不能在此补报，请按现有业务规则处理。
         </div>
         <div v-else class="detail-body">
+          <section class="detail-settlement">
+            <div><span>总计损耗金额</span><strong>¥{{ formatMoney(detailReport.totalAmount) }}</strong></div>
+          </section>
           <section>
             <h3>报损明细</h3>
             <div class="detail-list detail-list--dialog">
               <span v-for="detail in detailReport.details || []" :key="detail.id">
-                {{ detail.itemName }} {{ detail.lossQuantity }}{{ detail.unit || '' }} → {{ detail.pricedQuantity }}{{ detail.pricingUnit || detail.unit || '' }} · ¥{{ formatMoney(detail.amountSnapshot) }}<template v-if="detail.lossReason"> · {{ detail.lossReason }}</template>
+                {{ detail.itemName }}<template v-if="detail.peelState">（{{ peelStateLabel(detail.peelState) }}）</template>
+                {{ detail.lossQuantity }}{{ detail.unit || '' }}
+                → {{ detail.pricedQuantity }}{{ detail.pricingUnit || detail.unit || '' }}
+                · ¥{{ formatMoney(detail.amountSnapshot) }}
+                <template v-if="detail.inventoryQuantity">
+                  · 扣库存 {{ detail.inventoryQuantity }}{{ detail.inventoryUnit || '' }}
+                </template>
+                <template v-if="detail.lossReason"> · {{ detail.lossReason }}</template>
               </span>
             </div>
           </section>
@@ -1174,7 +1338,52 @@ function currentMonth() {
   background: #fbfdfc;
 }
 
+.line-row--peel {
+  grid-template-columns: minmax(220px, 1.25fr) minmax(150px, .6fr) minmax(180px, .72fr) minmax(240px, 1fr) 42px;
+}
+
 .loss-form label { display: grid; min-width: 0; gap: 6px; color: var(--ds-secondary); font-size: 13px; font-weight: 700; }
+.peel-field {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: var(--ds-secondary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.peel-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 42px;
+  overflow: hidden;
+  border: 1px solid var(--ds-line-strong);
+  border-radius: 7px;
+  background: #fff;
+}
+
+.peel-toggle button {
+  border: 0;
+  background: transparent;
+  color: var(--ds-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.peel-toggle button + button { border-left: 1px solid var(--ds-line); }
+.peel-toggle button.active {
+  background: var(--ds-primary-soft);
+  color: var(--ds-primary-hover);
+  box-shadow: inset 0 0 0 1px var(--ds-primary);
+}
+
+.peel-toggle button:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid var(--ds-primary);
+  outline-offset: -2px;
+}
+
 .item-picker-trigger,
 .quantity-control,
 .reason-field input,
@@ -1235,6 +1444,24 @@ function currentMonth() {
 }
 
 .pricing-hint { color: var(--ds-muted); font-size: 11px; font-weight: 600; line-height: 1.35; }
+
+.settlement-block,
+.detail-settlement {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #efddb9;
+  border-radius: 8px;
+  background: var(--ds-warning-soft);
+}
+
+.settlement-block > div,
+.detail-settlement > div { display: grid; gap: 5px; align-content: center; }
+.settlement-block span,
+.detail-settlement span { color: var(--ds-muted); font-size: 12px; font-weight: 700; }
+.settlement-block strong,
+.detail-settlement strong { color: var(--ds-ink); font-size: 19px; }
 
 .reason-field input { padding: 8px 10px; }
 .quick-reasons { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -1588,6 +1815,7 @@ function currentMonth() {
   .loss-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .toolbar-export { grid-column: 2; align-self: end; justify-self: end; }
   .line-row { grid-template-columns: minmax(240px, 1.2fr) minmax(160px, .7fr) minmax(220px, 1fr) 42px; }
+  .line-row--peel { grid-template-columns: minmax(210px, 1.1fr) minmax(140px, .55fr) minmax(160px, .7fr) minmax(210px, 1fr) 42px; }
 }
 
 @media (max-width: 900px) {

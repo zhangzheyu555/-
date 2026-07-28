@@ -10,7 +10,8 @@ const props = defineProps<{
   totalPages: number
   loading: boolean
   selectedRowKey: string
-  checkedIds: Set<string>
+  approvalCheckedIds: Set<string>
+  generationCheckedEmployeeIds: Set<string>
   canEdit: boolean
   canReview: boolean
   deletingId: string
@@ -37,20 +38,48 @@ function attendanceDisplay(record: SalaryRecord) {
   return match ? `${match[0]}天` : '--'
 }
 
-function allChecked() {
-  const rows = props.rows.filter(isReviewable)
-  return rows.length > 0 && rows.every((row) => props.checkedIds.has(row.id))
+function isGenerationSelectable(row: SalaryRecord) {
+  return props.canEdit
+    && row.status === 'PENDING_GENERATION'
+    && Boolean(row.employeeId)
 }
 
-function someChecked() {
-  const rows = props.rows.filter(isReviewable)
-  return rows.some((row) => props.checkedIds.has(row.id)) && !allChecked()
-}
-
-function isReviewable(row: SalaryRecord) {
+function isApprovalSelectable(row: SalaryRecord) {
   return props.canReview
     && Boolean(row.id)
     && ['SUBMITTED', 'PENDING_REVIEW'].includes(row.status || '')
+}
+
+function isSelectable(row: SalaryRecord) {
+  return isGenerationSelectable(row) || isApprovalSelectable(row)
+}
+
+function isChecked(row: SalaryRecord) {
+  if (isGenerationSelectable(row)) {
+    return props.generationCheckedEmployeeIds.has(String(row.employeeId))
+  }
+  if (isApprovalSelectable(row)) return props.approvalCheckedIds.has(row.id)
+  return false
+}
+
+function allChecked() {
+  const selectableRows = props.rows.filter(isSelectable)
+  return selectableRows.length > 0 && selectableRows.every(isChecked)
+}
+
+function someChecked() {
+  const selectableRows = props.rows.filter(isSelectable)
+  return selectableRows.some(isChecked) && !allChecked()
+}
+
+function hasSelectableRows() {
+  return props.rows.some(isSelectable)
+}
+
+function selectionLabel(row: SalaryRecord) {
+  if (isGenerationSelectable(row)) return `选择${row.employeeName}生成工资`
+  if (isApprovalSelectable(row)) return `选择${row.employeeName}审核工资`
+  return `选择${row.employeeName}（当前不可批量操作）`
 }
 
 function rowKey(row: SalaryRecord) {
@@ -79,13 +108,13 @@ function deleteLabel(row: SalaryRecord) {
     <div v-else class="table-wrap">
       <table>
         <thead><tr>
-          <th v-if="canReview" class="check">
+          <th class="check">
             <input
               type="checkbox"
               :checked="allChecked()"
               :indeterminate="someChecked()"
-              :disabled="!rows.some(isReviewable)"
-              aria-label="选择当前页待审核工资"
+              :disabled="!hasSelectableRows()"
+              aria-label="选择当前页可操作员工"
               @change="emit('toggle-all', ($event.target as HTMLInputElement).checked)"
             />
           </th>
@@ -93,16 +122,7 @@ function deleteLabel(row: SalaryRecord) {
         </tr></thead>
         <tbody>
           <tr v-for="row in rows" :key="rowKey(row)" :class="{ selected: rowKey(row) === selectedRowKey }" @click="emit('select', row)">
-            <td v-if="canReview" class="check" @click.stop>
-              <input
-                type="checkbox"
-                :checked="checkedIds.has(row.id)"
-                :disabled="!isReviewable(row)"
-                :title="isReviewable(row) ? '加入批量审核' : '只有待审核工资可以勾选'"
-                :aria-label="`选择${row.employeeName}`"
-                @change="emit('toggle-row', row, ($event.target as HTMLInputElement).checked)"
-              />
-            </td>
+            <td class="check" @click.stop><input type="checkbox" :checked="isChecked(row)" :disabled="!isSelectable(row)" :aria-label="selectionLabel(row)" @change="emit('toggle-row', row, ($event.target as HTMLInputElement).checked)" /></td>
             <td><b>{{ row.employeeName }}</b></td>
             <td class="muted">{{ row.employeeId || '--' }}</td>
             <td>{{ row.position || '--' }}</td>

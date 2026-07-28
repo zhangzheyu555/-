@@ -49,10 +49,14 @@ export function installLegacyErrorDialogAdapter() {
   function scheduleScan() {
     if (scanQueued) return
     scanQueued = true
-    queueMicrotask(() => {
+    // Store actions may briefly expose a low-level loading error before the
+    // owning dialog converts it into an inline validation message or a more
+    // precise final error. Wait until the current microtask/render cycle is
+    // settled so transient states are not promoted into a blocking dialog.
+    window.setTimeout(() => {
       scanQueued = false
       scanLegacyErrors()
-    })
+    }, 0)
   }
 
   observer.observe(document.body, {
@@ -83,6 +87,7 @@ function scanLegacyErrors() {
     element.dataset.errorDialogMessage = message
     element.dataset.errorDialogPromoted = 'true'
     element.hidden = true
+    suppressPromotedText(element)
 
     reportAppError(message, {
       title: element.dataset.errorTitle?.trim() || inferAppErrorTitle(message),
@@ -94,6 +99,18 @@ function scanLegacyErrors() {
         : undefined,
     })
   }
+}
+
+function suppressPromotedText(element: HTMLElement) {
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+  const textNodes: Text[] = []
+  while (walker.nextNode()) {
+    const textNode = walker.currentNode as Text
+    const parent = textNode.parentElement
+    if (parent?.closest('button, a, [aria-hidden="true"]')) continue
+    textNodes.push(textNode)
+  }
+  for (const textNode of textNodes) textNode.data = ''
 }
 
 function isFieldValidation(element: HTMLElement) {

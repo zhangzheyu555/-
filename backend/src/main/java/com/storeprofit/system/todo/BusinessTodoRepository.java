@@ -278,7 +278,7 @@ public class BusinessTodoRepository {
         left join brand b on b.id = s.brand_id and b.tenant_id = s.tenant_id
         where sr.tenant_id = :tenantId
           and sr.month = :month
-          and sr.status = 'PENDING_REVIEW'
+          and sr.status in ('SUBMITTED', 'PENDING_REVIEW')
         order by s.code, sr.employee_name, sr.id
         """,
         new MapSqlParameterSource()

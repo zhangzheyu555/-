@@ -2,7 +2,7 @@ version: '1.0'
 name: master-pipeline
 displayName: MasterPipeline
 stages:
-  - stage: 
+  - stage:
     name: compile
     displayName: 编译
     steps:
@@ -31,7 +31,7 @@ stages:
         # 上传到制品库时的制品命名，默认output
         artifactName: output
         dependsOn: build_maven
-  - stage: 
+  - stage:
     name: release
     displayName: 发布
     steps:

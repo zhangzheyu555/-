@@ -1,5 +1,6 @@
 package com.storeprofit.system.qmai;
 
+import java.util.List;
 import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -58,6 +59,31 @@ public class QmaiConfigRepository {
           updated_by_name = values(updated_by_name)
         """, tenantId, brand, openId, grantCode, openKey, baseUrl, version, shops,
         consoleAccount, consolePassword, consoleToken, actorId, actorName);
+  }
+
+  public boolean storeExists(long tenantId, String storeId) {
+    Integer count = jdbcTemplate.queryForObject("""
+        select count(*) from store_branch where tenant_id = ? and id = ?
+        """, Integer.class, tenantId, storeId);
+    return count != null && count > 0;
+  }
+
+  /** Fully replaces the normalized mapping mirror after the canonical config is validated. */
+  public void replaceStoreMappings(long tenantId, String brand,
+      List<QmaiProperties.ShopMapping> mappings) {
+    jdbcTemplate.update("""
+        delete from qmai_store_mapping where tenant_id = ? and brand_code = ?
+        """, tenantId, brand);
+    if (mappings == null) {
+      return;
+    }
+    for (QmaiProperties.ShopMapping mapping : mappings) {
+      jdbcTemplate.update("""
+          insert into qmai_store_mapping(
+            tenant_id, brand_code, qmai_shop_id, qmai_shop_name, store_id)
+          values (?, ?, ?, ?, ?)
+          """, tenantId, brand, mapping.shopCode(), mapping.shopName(), mapping.storeId());
+    }
   }
 
   /** 数据库存的原始配置行。 */

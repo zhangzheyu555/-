@@ -4,7 +4,12 @@ import { AlertTriangle } from 'lucide-vue-next'
 import SearchableSingleSelect from '../common/SearchableSingleSelect.vue'
 import StatusBadge from '../common/StatusBadge.vue'
 import WarehousePrintButtons from './WarehousePrintButtons.vue'
-import type { WarehouseItem, WarehouseRequisition, WarehouseRequisitionLine } from '../../api/warehouse'
+import type {
+  WarehouseItem,
+  WarehouseRequisition,
+  WarehouseRequisitionLine,
+  WarehouseRequisitionReviewAction,
+} from '../../api/warehouse'
 import type { StoreInfo } from '../../api/operations'
 
 const props = withDefaults(defineProps<{
@@ -19,10 +24,7 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  approve: [id: string]
-  fulfillAvailable: [id: string]
-  markBackorder: [id: string]
-  waitReplenishment: [id: string]
+  approve: [action: WarehouseRequisitionReviewAction]
   reject: [id: string]
   ship: [id: string]
   downloadDelivery: [id: string]
@@ -31,6 +33,8 @@ const emit = defineEmits<{
 const expandedId = ref('')
 const selectedStoreId = ref('')
 const selectedSubmissionDate = ref('')
+const reviewingId = ref('')
+const reviewedPrices = ref<Record<string, string>>({})
 
 const storeOptions = computed(() => {
   const stores = new Map<string, string>()
@@ -91,7 +95,7 @@ function statusLabel(status: string) {
     WAITING_REPLENISHMENT: '待补货',
     PARTIALLY_SHIPPED: '部分发货 / 待补货',
     SHIPPED: '待门店收货',
-    RECEIVED: '门店已收货',
+    RECEIVED: '已完成',
     REJECTED: '已驳回',
   }
   return map[status] || '待处理'
@@ -107,7 +111,7 @@ function statusTone(status: string) {
 
 function lineText(row: WarehouseRequisition) {
   return row.lines
-    .map((line) => `${line.itemName} 申请 ${qty(line.requestedQuantity, line.unit)} / 已发 ${qty(line.shippedQuantity, line.unit)}`)
+    .map((line) => `${line.itemName} 申请 ${qty(line.requestedQuantity, line.unit)} / 已完成 ${qty(line.shippedQuantity, line.unit)}`)
     .join('，')
 }
 
@@ -131,16 +135,64 @@ function currentShortageQuantity(line: WarehouseRequisitionLine) {
   return Math.max(0, remainingQuantity(line) - expectedShipment(line))
 }
 
-function canShipAvailable(row: WarehouseRequisition) {
-  return row.lines.some((line) => expectedShipment(line) > 0)
-}
-
 function hasCurrentShortage(row: WarehouseRequisition) {
   return row.lines.some((line) => currentShortageQuantity(line) > 0)
 }
 
 function canReview(row: WarehouseRequisition) {
   return ['SUBMITTED', 'BACKORDERED', 'WAITING_REPLENISHMENT'].includes(row.status)
+}
+
+const reviewingRequisition = computed(() => (
+  props.requisitions.find((row) => row.id === reviewingId.value) || null
+))
+
+const reviewedPriceInvalid = computed(() => {
+  const row = reviewingRequisition.value
+  if (!row) return true
+  return row.lines.some((line) => {
+    const value = String(reviewedPrices.value[String(line.itemId)] ?? '').trim()
+    if (!/^\d+(?:\.\d{1,2})?$/.test(value)) return true
+    const price = Number(value)
+    return !Number.isFinite(price) || price < 0 || price > 999999999999.99
+  })
+})
+
+const reviewedTotal = computed(() => {
+  const row = reviewingRequisition.value
+  if (!row) return 0
+  return row.lines.reduce((sum, line) => {
+    const price = Number(reviewedPrices.value[String(line.itemId)] || 0)
+    return sum + Number(line.requestedQuantity || 0) * (Number.isFinite(price) ? price : 0)
+  }, 0)
+})
+
+function startReview(row: WarehouseRequisition) {
+  reviewingId.value = row.id
+  reviewedPrices.value = Object.fromEntries(row.lines.map((line) => [
+    String(line.itemId),
+    Number(line.unitPrice || 0).toFixed(2),
+  ]))
+  expandedId.value = row.id
+}
+
+function cancelReview() {
+  reviewingId.value = ''
+  reviewedPrices.value = {}
+}
+
+function submitReview() {
+  const row = reviewingRequisition.value
+  if (!row || reviewedPriceInvalid.value || props.actioningId === row.id) return
+  const action: WarehouseRequisitionReviewAction = {
+    id: row.id,
+    lines: row.lines.map((line) => ({
+      itemId: line.itemId,
+      unitPrice: Number(reviewedPrices.value[String(line.itemId)]),
+    })),
+  }
+  emit('approve', action)
+  cancelReview()
 }
 
 function hasShipped(row: WarehouseRequisition) {
@@ -153,7 +205,18 @@ function shortageSummary(row: WarehouseRequisition) {
   const details = lines
     .map((line) => `${line.itemName}缺货 ${qty(currentShortageQuantity(line), line.unit)}`)
     .join('，')
-  return `${details}；可先按当前库存发货，未发数量转为待补货。`
+  return `${details}；仍可整单审核完成，仓库不足部分将扣成负库存，门店库存按审核数量增加。`
+}
+
+function projectedWarehouseQuantity(line: WarehouseRequisitionLine) {
+  return Number(itemFor(line)?.warehouseAvailableQuantity || 0) - remainingQuantity(line)
+}
+
+function currency(value: number) {
+  return Number(value || 0).toLocaleString('zh-CN', {
+    style: 'currency',
+    currency: 'CNY',
+  })
 }
 </script>
 
@@ -162,7 +225,7 @@ function shortageSummary(row: WarehouseRequisition) {
     <div class="table-heading">
       <div>
         <h3>门店叫货待处理</h3>
-        <span>库存不足单可部分发货或转待补货，驳回仅用于申请本身不合理。</span>
+        <span>仓库审核时可调整叫货单价；库存不足也直接扣成负库存，并同步增加门店库存。</span>
       </div>
       <div class="requisition-filters" aria-label="叫货单筛选">
         <label class="filter-field">
@@ -229,22 +292,13 @@ function shortageSummary(row: WarehouseRequisition) {
                     {{ expandedId === row.id ? '收起明细' : '查看明细' }}
                   </button>
                   <button
-                    v-if="canManage && row.status === 'SUBMITTED' && !hasCurrentShortage(row)"
+                    v-if="canManage && canReview(row)"
                     class="mini-button primary"
                     type="button"
                     :disabled="actioningId === row.id"
-                    @click="emit('approve', row.id)"
+                    @click="startReview(row)"
                   >
-                    审核通过
-                  </button>
-                  <button
-                    v-if="canManage && canReview(row) && canShipAvailable(row) && (row.status !== 'SUBMITTED' || hasCurrentShortage(row))"
-                    class="mini-button primary"
-                    type="button"
-                    :disabled="actioningId === row.id"
-                    @click="emit('fulfillAvailable', row.id)"
-                  >
-                    {{ row.status === 'SUBMITTED' ? '按可用库存发货' : '补货后发货' }}
+                    {{ row.status === 'SUBMITTED' ? '审核并完成' : '审核并完成剩余数量' }}
                   </button>
                   <button
                     v-if="canManage && row.status === 'APPROVED'"
@@ -254,24 +308,6 @@ function shortageSummary(row: WarehouseRequisition) {
                     @click="emit('ship', row.id)"
                   >
                     发货出库
-                  </button>
-                  <button
-                    v-if="canManage && canReview(row) && row.status !== 'BACKORDERED'"
-                    class="mini-button"
-                    type="button"
-                    :disabled="actioningId === row.id"
-                    @click="emit('markBackorder', row.id)"
-                  >
-                    标记缺货
-                  </button>
-                  <button
-                    v-if="canManage && canReview(row) && row.status !== 'WAITING_REPLENISHMENT'"
-                    class="mini-button"
-                    type="button"
-                    :disabled="actioningId === row.id"
-                    @click="emit('waitReplenishment', row.id)"
-                  >
-                    等补货后再发
                   </button>
                   <button
                     v-if="canManage && row.status === 'SUBMITTED' && !hasShipped(row)"
@@ -301,6 +337,65 @@ function shortageSummary(row: WarehouseRequisition) {
                       <p>{{ shortageSummary(row) }}</p>
                     </div>
                   </div>
+                  <form
+                    v-if="reviewingId === row.id"
+                    class="review-price-form"
+                    @submit.prevent="submitReview"
+                  >
+                    <div class="review-price-heading">
+                      <div>
+                        <strong>审核价格</strong>
+                        <p>
+                          可修改本次叫货单价。确认后立即完成库存划转；库存不足时仓库库存允许为负数。
+                        </p>
+                      </div>
+                      <span>整单完成</span>
+                    </div>
+                    <div class="review-price-lines">
+                      <label
+                        v-for="line in row.lines"
+                        :key="`review-price-${line.itemId}`"
+                        class="review-price-line"
+                      >
+                        <span>
+                          <b>{{ line.itemName }}</b>
+                          <small>申请 {{ qty(line.requestedQuantity, line.unit) }}</small>
+                        </span>
+                        <span>审核单价（元）</span>
+                        <input
+                          v-model="reviewedPrices[String(line.itemId)]"
+                          type="number"
+                          min="0"
+                          max="999999999999.99"
+                          step="0.01"
+                          inputmode="decimal"
+                          :aria-label="`${line.itemName}审核单价`"
+                          :disabled="actioningId === row.id"
+                        />
+                      </label>
+                    </div>
+                    <div class="review-price-summary">
+                      <span>审核后整单金额：<b>{{ currency(reviewedTotal) }}</b></span>
+                      <span v-if="reviewedPriceInvalid" class="review-price-error">请输入不小于 0、最多两位小数的审核单价。</span>
+                    </div>
+                    <div class="review-price-actions">
+                      <button
+                        class="mini-button"
+                        type="button"
+                        :disabled="actioningId === row.id"
+                        @click="cancelReview"
+                      >
+                        取消
+                      </button>
+                      <button
+                        class="mini-button primary"
+                        type="submit"
+                        :disabled="reviewedPriceInvalid || actioningId === row.id"
+                      >
+                        {{ actioningId === row.id ? '处理中...' : '确认审核并完成' }}
+                      </button>
+                    </div>
+                  </form>
                   <div class="detail-grid">
                     <span>审核时间：{{ row.reviewedAt || '-' }}</span>
                     <span>发货时间：{{ row.shippedAt || '-' }}</span>
@@ -316,12 +411,13 @@ function shortageSummary(row: WarehouseRequisition) {
                     >
                       <b>{{ line.itemName }}</b>
                       <span>申请：{{ qty(line.requestedQuantity, line.unit) }}</span>
-                      <span>待发：{{ qty(remainingQuantity(line), line.unit) }}</span>
-                      <span>当前可发：{{ qty(expectedShipment(line), line.unit) }}</span>
-                      <span>已发：{{ qty(line.shippedQuantity || 0, line.unit) }}</span>
-                      <span>缺货：{{ qty(currentShortageQuantity(line), line.unit) }}</span>
+                      <span>本次审核：{{ qty(remainingQuantity(line), line.unit) }}</span>
+                      <span>当前仓库库存：{{ qty(Number(itemFor(line)?.warehouseAvailableQuantity || 0), line.unit) }}</span>
+                      <span>审核后仓库库存：{{ qty(projectedWarehouseQuantity(line), line.unit) }}</span>
+                      <span>已完成：{{ qty(line.shippedQuantity || 0, line.unit) }}</span>
+                      <span>叫货单价：{{ currency(Number(line.unitPrice || 0)) }}</span>
                       <span v-if="currentShortageQuantity(line) > 0" class="shortage-text">
-                        本次预计可发 {{ qty(expectedShipment(line), line.unit) }}，缺货 {{ qty(currentShortageQuantity(line), line.unit) }} 转待补货。
+                        库存不足 {{ qty(currentShortageQuantity(line), line.unit) }}，审核后直接记入仓库负库存，不转待补货。
                       </span>
                       <span v-if="line.note">备注：{{ line.note }}</span>
                     </div>
@@ -427,6 +523,98 @@ function shortageSummary(row: WarehouseRequisition) {
   opacity: 0.85;
 }
 
+.review-price-form {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #9bc8c2;
+  border-radius: 8px;
+  background: #f4fbfa;
+}
+
+.review-price-heading,
+.review-price-summary,
+.review-price-actions,
+.review-price-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.review-price-heading {
+  justify-content: space-between;
+}
+
+.review-price-heading p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.review-price-heading > span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #dff2ef;
+  color: #276b65;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.review-price-lines {
+  display: grid;
+  gap: 8px;
+}
+
+.review-price-line {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 110px 150px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.review-price-line > span:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.review-price-line b {
+  color: var(--ink);
+}
+
+.review-price-line small {
+  color: var(--muted);
+}
+
+.review-price-line input {
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+}
+
+.review-price-summary {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.review-price-error {
+  color: #b42318;
+  font-size: 12px;
+}
+
+.review-price-actions {
+  justify-content: flex-end;
+}
+
 .detail-panel {
   display: grid;
   gap: 12px;
@@ -475,6 +663,10 @@ function shortageSummary(row: WarehouseRequisition) {
 @media (max-width: 900px) {
   .detail-grid,
   .detail-line {
+    grid-template-columns: 1fr;
+  }
+
+  .review-price-line {
     grid-template-columns: 1fr;
   }
 }

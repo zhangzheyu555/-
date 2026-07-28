@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.util.List;
 import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -23,7 +24,8 @@ class ExamLearningMigrationTest {
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);
 
     assertThat(result.success).isTrue();
-    assertThat(Integer.parseInt(result.targetSchemaVersion)).isGreaterThanOrEqualTo(30);
+    assertThat(MigrationVersion.fromVersion(result.targetSchemaVersion))
+        .isGreaterThanOrEqualTo(MigrationVersion.fromVersion("30"));
     assertThat(tableNames(jdbc)).contains(
         "TRAINING_COURSE",
         "TRAINING_COURSE_MATERIAL",

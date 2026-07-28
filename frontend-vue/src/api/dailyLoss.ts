@@ -16,6 +16,19 @@ export interface DailyLossItem {
   quantityPerPricingUnit?: number
   unitPrice?: number
   active?: boolean
+  peelSelectionEnabled?: boolean
+  defaultPeelState?: 'PEELED' | 'UNPEELED'
+  peeledUnit?: string
+  peeledPricingUnit?: string
+  peeledQuantityPerPricingUnit?: number
+  peeledUnitPrice?: number
+  unpeeledUnit?: string
+  unpeeledPricingUnit?: string
+  unpeeledQuantityPerPricingUnit?: number
+  unpeeledUnitPrice?: number
+  yieldRate?: number
+  grossGramsPerUnit?: number
+  inventoryUnit?: string
 }
 
 export interface DailyLossAttachment {
@@ -63,6 +76,11 @@ export interface DailyLossReportDetail {
   unitPriceSnapshot?: number
   amountSnapshot?: number
   lossReason?: string
+  peelState?: 'PEELED' | 'UNPEELED'
+  priceBasis?: 'PEELED' | 'UNPEELED' | 'STANDARD'
+  yieldRate?: number
+  inventoryQuantity?: number
+  inventoryUnit?: string
   inventoryDeducted?: boolean
 }
 
@@ -108,6 +126,7 @@ export interface DailyLossReportLinePayload {
   itemConfigId: number
   lossQuantity: number
   lossReason?: string
+  peelState?: 'PEELED' | 'UNPEELED'
 }
 
 export interface DailyLossReportSaveRequest {

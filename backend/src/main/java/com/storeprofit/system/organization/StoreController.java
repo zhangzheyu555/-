@@ -45,6 +45,17 @@ public class StoreController {
     return ApiResponse.ok(organizationService.storeOptions(authService.requireUser(authorization)));
   }
 
+  @GetMapping("/{id}/inventory-reductions")
+  public ApiResponse<StoreInventoryReductionResponse> inventoryReductions(
+      @RequestHeader(value = "Authorization", required = false) String authorization,
+      @PathVariable String id,
+      @RequestParam(required = false) String month,
+      @RequestParam(required = false) Integer limit
+  ) {
+    return ApiResponse.ok(organizationService.inventoryReductions(
+        authService.requireUser(authorization), id, month, limit));
+  }
+
   @PostMapping
   public ApiResponse<StoreResponse> create(
       @RequestHeader(value = "Authorization", required = false) String authorization,

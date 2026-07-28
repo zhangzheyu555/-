@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { X } from 'lucide-vue-next'
 import type { SalaryRecord, SalaryRecordPayload } from '../../api/finance'
 import type { StoreInfo } from '../../api/operations'
-import { money, isEditable, wholeNumber } from '../../composables/useSalaryPage'
+import { money, isEditable, statusLabel, wholeNumber } from '../../composables/useSalaryPage'
 import { WAGE_FIELDS } from '../../composables/useSalaryWorkflow'
 import ModalFooter from '../ui/ModalFooter.vue'
 import UiButton from '../ui/UiButton.vue'
@@ -126,7 +126,7 @@ function onFieldInput() {
       </div>
       <div class="drawer-section-title">审核记录</div>
       <div class="detail-reference-grid">
-        <div><span>当前状态</span><b>{{ record?.status === 'PENDING_GENERATION' ? '待生成' : record?.status || '-' }}</b></div>
+        <div><span>当前状态</span><b>{{ statusLabel(record?.status) }}</b></div>
         <div><span>审核时间</span><b>{{ record?.reviewedAt || '-' }}</b></div>
         <div><span>发放时间</span><b>{{ record?.paidAt || '-' }}</b></div>
         <div><span>审核说明</span><b>{{ record?.reviewNote || '-' }}</b></div>

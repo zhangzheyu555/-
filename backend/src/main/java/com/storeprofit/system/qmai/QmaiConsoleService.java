@@ -1,7 +1,9 @@
 package com.storeprofit.system.qmai;
 
+import com.storeprofit.system.common.BusinessException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.net.http.HttpClient;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -14,8 +16,9 @@ import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
@@ -46,22 +49,23 @@ public class QmaiConsoleService {
   }
 
   /**
-   * 用已存令牌调后台任意接口路径，返回原始响应，用于定位营业额报表接口与参数。
+   * 用已存令牌调后台只读营业收入接口，返回原始响应，用于诊断配置。
    *
    * @param path 网关下的接口路径，如 biCenter/dataInfo/businessReport
    * @param body POST JSON 体（业务参数），可为空
    */
   public Map<String, Object> probe(long tenantId, String brand, String path, Map<String, Object> body) {
+    String safePath = normalizeReadOnlyPath(path);
     QmaiConfigService.EffectiveConfig cfg = configService.resolve(tenantId, brand);
     Map<String, Object> out = new LinkedHashMap<>();
-    out.put("path", path);
+    out.put("path", safePath);
     if (!cfg.hasConsoleToken()) {
       out.put("ok", false);
       out.put("error", "未粘贴商户后台登录令牌（qm_seller_token）。请在配置弹窗粘贴后重试。");
       return out;
     }
     try {
-      Map<String, Object> resp = call(cfg.consoleToken(), firstSellerId(cfg), path,
+      Map<String, Object> resp = call(cfg.consoleToken(), firstSellerId(cfg), safePath,
           body == null ? new LinkedHashMap<>() : body);
       out.put("ok", true);
       out.put("raw", resp);
@@ -170,15 +174,16 @@ public class QmaiConsoleService {
         BigDecimal.ZERO, 0, List.of());
   }
 
-  /** 门店 sellerId：取自 shops 配置的第一个纯数字项。 */
+  /** 门店 sellerId：取自 shops 配置的第一项企迈门店编号。 */
   private String firstSellerId(QmaiConfigService.EffectiveConfig cfg) {
     if (cfg.shops() == null) {
       return null;
     }
     for (String s : cfg.shops()) {
       String v = s == null ? "" : s.trim();
-      if (v.matches("\\d+")) {
-        return v;
+      String sellerId = v.split(":", -1)[0].trim();
+      if (sellerId.matches("\\d+")) {
+        return sellerId;
       }
     }
     return null;
@@ -216,8 +221,9 @@ public class QmaiConsoleService {
 
   @SuppressWarnings("unchecked")
   Map<String, Object> call(String token, String sellerId, String path, Map<String, Object> body) {
-    String url = GATEWAY + "/" + path.replaceFirst("^/+", "");
-    outboundPolicy.requireAllowed(url);
+    String safePath = normalizeReadOnlyPath(path);
+    String url = GATEWAY + "/" + safePath;
+    outboundPolicy.requireConsoleAllowed(url);
     // 后台鉴权：cookie qm_seller_token + ALL_DATA_SELLERID（选中门店），配真实 console 请求头。
     String cookie = "qm_seller_token=" + token
         + (sellerId != null && !sellerId.isBlank() ? "; ALL_DATA_SELLERID=" + sellerId : "");
@@ -259,10 +265,24 @@ public class QmaiConsoleService {
   }
 
   private RestClient restClient() {
-    SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-    int t = Math.toIntExact(Duration.ofSeconds(30).toMillis());
-    factory.setConnectTimeout(t);
-    factory.setReadTimeout(t);
+    Duration timeout = Duration.ofSeconds(30);
+    HttpClient httpClient = HttpClient.newBuilder()
+        .connectTimeout(timeout)
+        .followRedirects(HttpClient.Redirect.NEVER)
+        .build();
+    JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(httpClient);
+    factory.setReadTimeout(timeout);
     return RestClient.builder().requestFactory(factory).build();
+  }
+
+  private String normalizeReadOnlyPath(String path) {
+    String safePath = path == null ? "" : path.trim().replaceFirst("^/+", "");
+    if (!INCOME_METHOD.equals(safePath)) {
+      throw new BusinessException(
+          "QMAI_CONSOLE_PROBE_PATH_BLOCKED",
+          "仅允许探测已登记的企迈后台只读营业收入接口",
+          HttpStatus.BAD_REQUEST);
+    }
+    return safePath;
   }
 }

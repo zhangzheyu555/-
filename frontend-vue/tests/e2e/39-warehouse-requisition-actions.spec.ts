@@ -82,7 +82,20 @@ async function fulfillApi(route: Route) {
         inTransitQuantity: 0,
       },
       alerts: [],
-      items: [],
+      items: [{
+        id: 1,
+        code: 'TEST-ITEM',
+        name: '测试物料',
+        unit: '箱',
+        stockQuantity: 10,
+        storeStockQuantity: 0,
+        warehouseAvailableQuantity: 10,
+        unitPrice: 50,
+        stockStatus: '正常',
+        alertLevel: 'OK',
+        alertText: '正常',
+        active: true,
+      }],
       requisitions: [
         requisition('REQ-SUBMITTED', 'SUBMITTED'),
         requisition('REQ-APPROVED', 'APPROVED'),
@@ -102,17 +115,34 @@ async function prepare(page: Page) {
   await page.route(/^https?:\/\/[^/]+\/api\//, fulfillApi)
 }
 
-test('approved requisition can only ship while submitted requisition can approve or reject', async ({ page }) => {
+test('warehouse review can edit price and complete while legacy approved requisition can still ship', async ({ page }) => {
   await prepare(page)
   await page.goto('/warehouse/requests')
 
   const submitted = page.getByRole('row').filter({ hasText: 'REQ-SUBMITTED' })
-  await expect(submitted.getByRole('button', { name: '审核通过', exact: true })).toBeVisible()
+  await expect(submitted.getByRole('button', { name: '审核并完成', exact: true })).toBeVisible()
   await expect(submitted.getByRole('button', { name: '驳回', exact: true })).toBeVisible()
   await expect(submitted.getByRole('button', { name: '发货出库', exact: true })).toHaveCount(0)
 
+  await submitted.getByRole('button', { name: '审核并完成', exact: true }).click()
+  const reviewedPrice = page.getByRole('spinbutton', { name: '测试物料审核单价' })
+  await expect(reviewedPrice).toHaveValue('50.00')
+  await reviewedPrice.fill('58.80')
+  const reviewRequest = page.waitForRequest((request) => (
+    request.method() === 'POST'
+    && new URL(request.url()).pathname === '/api/warehouse/requisitions/REQ-SUBMITTED/review'
+  ))
+  await page.getByRole('button', { name: '确认审核并完成', exact: true }).click()
+  const payload = (await reviewRequest).postDataJSON()
+  expect(payload).toMatchObject({
+    approved: true,
+    handlingMode: 'FULL',
+    completeOnReview: true,
+    lines: [{ itemId: 1, approvedQuantity: 2, unitPrice: 58.8 }],
+  })
+
   const approved = page.getByRole('row').filter({ hasText: 'REQ-APPROVED' })
   await expect(approved.getByRole('button', { name: '发货出库', exact: true })).toBeVisible()
-  await expect(approved.getByRole('button', { name: '审核通过', exact: true })).toHaveCount(0)
+  await expect(approved.getByRole('button', { name: '审核并完成', exact: true })).toHaveCount(0)
   await expect(approved.getByRole('button', { name: '驳回', exact: true })).toHaveCount(0)
 })

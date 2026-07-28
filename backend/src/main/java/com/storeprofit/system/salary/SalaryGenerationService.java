@@ -5,14 +5,22 @@ import com.storeprofit.system.employee.EmployeeRepository;
 import com.storeprofit.system.employee.EmployeeResponse;
 import com.storeprofit.system.platform.auth.AccessControlService;
 import com.storeprofit.system.platform.auth.AuthUser;
+import com.storeprofit.system.platform.authorization.BusinessScope;
+import com.storeprofit.system.platform.authorization.DataScope;
 import com.storeprofit.system.platform.authorization.DataScopeDomains;
+import com.storeprofit.system.platform.authorization.DataScopeModes;
 import com.storeprofit.system.platform.authorization.BusinessScopeResolver;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.YearMonth;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -73,54 +81,62 @@ public class SalaryGenerationService {
   }
 
   public SalaryGenerateReport previewGeneration(AuthUser user, String storeId, String month) {
-    requireEditRole(user, storeId, month);
-    String effectiveMonth = SalaryQueryService.normalizeMonth(month);
-    storeId = resolveStoreForWrite(user, storeId, "预览生成工资", effectiveMonth);
-    requireStoreScope(user, storeId);
-    if (employeeRepository == null) {
-      throw new BusinessException("EMPLOYEE_REPOSITORY_UNAVAILABLE", "Employee repository is not available", HttpStatus.INTERNAL_SERVER_ERROR);
-    }
-    List<EmployeeResponse> employees = payrollEmployees(user.tenantId(), storeId, effectiveMonth);
+    return previewGeneration(user, new SalaryGenerateRequest(storeId, month));
+  }
+
+  public SalaryGenerateReport previewGeneration(AuthUser user, SalaryGenerateRequest request) {
+    GenerationScope scope = generationScope(user, request, "预览生成工资");
     int eligible = 0;
     int skipped = 0;
     int errors = 0;
     List<SalaryGenerateReport.SalarySkipDetail> skipDetails = new java.util.ArrayList<>();
-    for (EmployeeResponse employee : employees) {
-      if ("离职".equals(employee.status())) {
-        skipped++;
-        skipDetails.add(new SalaryGenerateReport.SalarySkipDetail(employee.id(), employee.name(), "员工已离职"));
-        continue;
+    List<SalaryGenerateReport.SalaryCandidate> candidates = new java.util.ArrayList<>();
+    for (StoreGenerationScope storeScope : scope.stores()) {
+      for (EmployeeResponse employee : storeScope.employees()) {
+        if ("离职".equals(employee.status())) {
+          skipped++;
+          skipDetails.add(skipDetail(employee, "员工已离职", storeScope));
+          continue;
+        }
+        Preparation preparation = prepareSalary(
+            user.tenantId(), storeScope.storeId(), scope.month(), employee);
+        if (!preparation.missingItems().isEmpty()) {
+          skipped++;
+          skipDetails.add(skipDetail(
+              employee,
+              "缺少" + String.join("、", preparation.missingItems()),
+              storeScope
+          ));
+          continue;
+        }
+        if (employee.hireDate() != null && !employee.hireDate().isBlank()) {
+          try {
+            java.time.LocalDate hireDate = java.time.LocalDate.parse(employee.hireDate());
+            YearMonth targetMonth = YearMonth.parse(scope.month());
+            if (hireDate.isAfter(targetMonth.atEndOfMonth())) {
+              skipped++;
+              skipDetails.add(skipDetail(
+                  employee, "入职日期晚于" + scope.month(), storeScope));
+              continue;
+            }
+          } catch (Exception ignored) {}
+        }
+        java.util.Optional<SalaryRecordResponse> existing = salaryRepository.recordForEmployeeMonth(
+            user.tenantId(), employee.id(), scope.month());
+        if ((existing.isPresent()
+                && !isRegenerableAssignment(existing.get(), storeScope.storeId()))
+            || (existing.isEmpty()
+                && salaryRepository.recordExistsForEmployee(
+                    user.tenantId(), storeScope.storeId(), scope.month(), employee.name()))) {
+          skipped++;
+          skipDetails.add(skipDetail(employee, "工资记录已存在", storeScope));
+          continue;
+        }
+        eligible++;
+        candidates.add(candidate(employee, storeScope));
       }
-      Preparation preparation = prepareSalary(user.tenantId(), storeId, effectiveMonth, employee);
-      if (!preparation.missingItems().isEmpty()) {
-        skipped++;
-        skipDetails.add(new SalaryGenerateReport.SalarySkipDetail(
-            employee.id(), employee.name(), "缺少" + String.join("、", preparation.missingItems())));
-        continue;
-      }
-      if (employee.hireDate() != null && !employee.hireDate().isBlank()) {
-        try {
-          java.time.LocalDate hireDate = java.time.LocalDate.parse(employee.hireDate());
-          YearMonth targetMonth = YearMonth.parse(effectiveMonth);
-          if (hireDate.isAfter(targetMonth.atEndOfMonth())) {
-            skipped++;
-            skipDetails.add(new SalaryGenerateReport.SalarySkipDetail(employee.id(), employee.name(), "入职日期晚于" + effectiveMonth));
-            continue;
-          }
-        } catch (Exception ignored) {}
-      }
-      java.util.Optional<SalaryRecordResponse> existing = salaryRepository.recordForEmployeeMonth(
-          user.tenantId(), employee.id(), effectiveMonth);
-      if ((existing.isPresent() && !isRegenerableAssignment(existing.get(), storeId))
-          || (existing.isEmpty()
-              && salaryRepository.recordExistsForEmployee(user.tenantId(), storeId, effectiveMonth, employee.name()))) {
-        skipped++;
-        skipDetails.add(new SalaryGenerateReport.SalarySkipDetail(employee.id(), employee.name(), "工资记录已存在"));
-        continue;
-      }
-      eligible++;
     }
-    return new SalaryGenerateReport(eligible, skipped, errors, skipDetails);
+    return new SalaryGenerateReport(eligible, skipped, errors, skipDetails, candidates);
   }
 
   @Transactional
@@ -134,93 +150,112 @@ public class SalaryGenerationService {
   }
 
   private GenerateResult generateInternal(AuthUser user, SalaryGenerateRequest request) {
-    if (request == null) {
-      throw new BusinessException("BAD_REQUEST", "Salary generation payload is required", HttpStatus.BAD_REQUEST);
-    }
-    requireEditRole(user, request.storeId(), request.month());
-    String month = SalaryQueryService.normalizeMonth(request.month());
-    String storeId = resolveStoreForWrite(user, request.storeId(), "生成工资", month);
-    requireStoreScope(user, storeId);
-    if (!salaryRepository.storeExists(user.tenantId(), storeId)) {
-      throw new BusinessException("STORE_NOT_FOUND", "门店不存在或不属于当前企业", HttpStatus.BAD_REQUEST);
-    }
-    if (employeeRepository == null) {
-      throw new BusinessException("EMPLOYEE_REPOSITORY_UNAVAILABLE", "Employee repository is not available", HttpStatus.INTERNAL_SERVER_ERROR);
-    }
-    List<EmployeeResponse> employees = payrollEmployees(user.tenantId(), storeId, month);
-    StoreCommissionContext commissionCtx = storeCommissionContext(user.tenantId(), storeId, month);
+    GenerationScope scope = generationScope(user, request, "生成工资");
+    String month = scope.month();
     int generated = 0;
     int skipped = 0;
     int errors = 0;
     List<SalaryGenerateReport.SalarySkipDetail> skipDetails = new java.util.ArrayList<>();
-    for (EmployeeResponse employee : employees) {
-      if ("离职".equals(employee.status())) {
-        skipped++;
-        skipDetails.add(new SalaryGenerateReport.SalarySkipDetail(employee.id(), employee.name(), "员工已离职"));
-        continue;
-      }
-      Preparation preparation = prepareSalary(user.tenantId(), storeId, month, employee);
-      if (!preparation.missingItems().isEmpty()) {
-        skipped++;
-        skipDetails.add(new SalaryGenerateReport.SalarySkipDetail(
-            employee.id(), employee.name(), "缺少" + String.join("、", preparation.missingItems())));
-        continue;
-      }
-      if (employee.hireDate() != null && !employee.hireDate().isBlank()) {
-        try {
-          java.time.LocalDate hireDate = java.time.LocalDate.parse(employee.hireDate());
-          YearMonth targetMonth = YearMonth.parse(month);
-          if (hireDate.isAfter(targetMonth.atEndOfMonth())) {
-            skipped++;
-            skipDetails.add(new SalaryGenerateReport.SalarySkipDetail(employee.id(), employee.name(), "入职日期晚于" + month));
-            continue;
-          }
-        } catch (Exception ignored) {
+    List<SalaryGenerateReport.SalaryCandidate> candidates = new java.util.ArrayList<>();
+    Map<String, SalaryRecordResponse> recordsById = new LinkedHashMap<>();
+    for (StoreGenerationScope storeScope : scope.stores()) {
+      String storeId = storeScope.storeId();
+      StoreCommissionContext commissionCtx =
+          storeCommissionContext(user.tenantId(), storeId, month);
+      int storeGenerated = 0;
+      int storeSkipped = 0;
+      int storeErrors = 0;
+      for (EmployeeResponse employee : storeScope.employees()) {
+        if ("离职".equals(employee.status())) {
+          skipped++;
+          storeSkipped++;
+          skipDetails.add(skipDetail(employee, "员工已离职", storeScope));
+          continue;
         }
+        Preparation preparation = prepareSalary(user.tenantId(), storeId, month, employee);
+        if (!preparation.missingItems().isEmpty()) {
+          skipped++;
+          storeSkipped++;
+          skipDetails.add(skipDetail(
+              employee,
+              "缺少" + String.join("、", preparation.missingItems()),
+              storeScope
+          ));
+          continue;
+        }
+        if (employee.hireDate() != null && !employee.hireDate().isBlank()) {
+          try {
+            java.time.LocalDate hireDate = java.time.LocalDate.parse(employee.hireDate());
+            YearMonth targetMonth = YearMonth.parse(month);
+            if (hireDate.isAfter(targetMonth.atEndOfMonth())) {
+              skipped++;
+              storeSkipped++;
+              skipDetails.add(skipDetail(
+                  employee, "入职日期晚于" + month, storeScope));
+              continue;
+            }
+          } catch (Exception ignored) {
+          }
+        }
+        java.util.Optional<SalaryRecordResponse> existing =
+            salaryRepository.recordForEmployeeMonth(
+                user.tenantId(), employee.id(), month);
+        if ((existing.isPresent() && !isRegenerableAssignment(existing.get(), storeId))
+            || (existing.isEmpty()
+                && salaryRepository.recordExistsForEmployee(
+                    user.tenantId(), storeId, month, employee.name()))) {
+          skipped++;
+          storeSkipped++;
+          skipDetails.add(skipDetail(employee, "工资记录已存在", storeScope));
+          continue;
+        }
+        SalaryRecordRequest row =
+            generatedRecord(storeId, month, employee, preparation, commissionCtx);
+        String salaryId = existing
+            .filter(record -> isRegenerableAssignment(record, storeId))
+            .map(SalaryRecordResponse::id)
+            .orElseGet(() -> generatedId(month, employee.id()));
+        salaryRepository.upsert(user.tenantId(), salaryId, row);
+        saveCalculationSnapshot(user.tenantId(), salaryId, employee, preparation, row);
+        generated++;
+        storeGenerated++;
+        candidates.add(candidate(employee, storeScope));
       }
-      java.util.Optional<SalaryRecordResponse> existing = salaryRepository.recordForEmployeeMonth(
-          user.tenantId(), employee.id(), month);
-      if ((existing.isPresent() && !isRegenerableAssignment(existing.get(), storeId))
-          || (existing.isEmpty()
-              && salaryRepository.recordExistsForEmployee(user.tenantId(), storeId, month, employee.name()))) {
-        skipped++;
-        skipDetails.add(new SalaryGenerateReport.SalarySkipDetail(employee.id(), employee.name(), "工资记录已存在"));
-        continue;
+      String detail =
+          "已生成 " + storeGenerated + " 条，跳过 " + storeSkipped + " 条，异常 " + storeErrors + " 条";
+      if (commissionCtx != null) {
+        detail += "；提成" + commissionCtx.rateLabel() + "档（每小时产值"
+            + commissionCtx.hourlyRevenue().stripTrailingZeros().toPlainString()
+            + "，人均月产值" + commissionCtx.perCapitaOutput().stripTrailingZeros().toPlainString()
+            + "，人均额度" + commissionCtx.quotaPerPerson().stripTrailingZeros().toPlainString()
+            + "，总池" + commissionCtx.pool().stripTrailingZeros().toPlainString()
+            + "）；店铺基金=总池−实发提成（约7.5%）";
       }
-      SalaryRecordRequest row = generatedRecord(storeId, month, employee, preparation, commissionCtx);
-      String salaryId = existing.filter(record -> isRegenerableAssignment(record, storeId))
-          .map(SalaryRecordResponse::id)
-          .orElseGet(() -> generatedId(month, employee.id()));
-      salaryRepository.upsert(user.tenantId(), salaryId, row);
-      saveCalculationSnapshot(user.tenantId(), salaryId, employee, preparation, row);
-      generated++;
+      salaryRepository.logAction(
+          user.tenantId(),
+          user.id(),
+          user.displayName(),
+          "salary_generate",
+          storeId + "-" + month,
+          storeId,
+          month,
+          detail
+      );
+      for (SalaryRecordResponse record :
+          salaryRepository.records(user.tenantId(), month, null, storeId)) {
+        recordsById.put(record.id(), record);
+      }
     }
-    String detail = "已生成 " + generated + " 条，跳过 " + skipped + " 条，异常 " + errors + " 条";
-    if (commissionCtx != null) {
-      detail += "；提成" + commissionCtx.rateLabel() + "档（每小时产值" + commissionCtx.hourlyRevenue().stripTrailingZeros().toPlainString()
-          + "，人均月产值" + commissionCtx.perCapitaOutput().stripTrailingZeros().toPlainString()
-          + "，人均额度" + commissionCtx.quotaPerPerson().stripTrailingZeros().toPlainString()
-          + "，总池" + commissionCtx.pool().stripTrailingZeros().toPlainString()
-          + "）；店铺基金=总池−实发提成（约7.5%）";
-    }
-    salaryRepository.logAction(
-        user.tenantId(),
-        user.id(),
-        user.displayName(),
-        "salary_generate",
-        storeId + "-" + month,
-        storeId,
-        month,
-        detail
+    return new GenerateResult(
+        List.copyOf(recordsById.values()),
+        new SalaryGenerateReport(generated, skipped, errors, skipDetails, candidates)
     );
-    List<SalaryRecordResponse> records = salaryRepository.records(user.tenantId(), month, null, storeId);
-    return new GenerateResult(records, new SalaryGenerateReport(generated, skipped, errors, skipDetails));
   }
 
   private record GenerateResult(List<SalaryRecordResponse> records, SalaryGenerateReport report) {}
 
   private List<EmployeeResponse> payrollEmployees(long tenantId, String storeId, String month) {
-    java.util.LinkedHashMap<String, EmployeeResponse> employees = new java.util.LinkedHashMap<>();
+    LinkedHashMap<String, EmployeeResponse> employees = new LinkedHashMap<>();
     for (EmployeeResponse employee : employeeRepository.records(tenantId, null, storeId, null)) {
       employees.put(employee.id(), employee);
     }
@@ -229,6 +264,260 @@ public class SalaryGenerationService {
           .ifPresent(employee -> employees.putIfAbsent(employee.id(), employee));
     }
     return List.copyOf(employees.values());
+  }
+
+  private GenerationScope generationScope(
+      AuthUser user,
+      SalaryGenerateRequest request,
+      String action
+  ) {
+    if (request == null) {
+      throw new BusinessException(
+          "BAD_REQUEST",
+          "Salary generation payload is required",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+    requireEditRole(user, request.storeId(), request.month());
+    String month = SalaryQueryService.normalizeMonth(request.month());
+    if (employeeRepository == null) {
+      throw new BusinessException(
+          "EMPLOYEE_REPOSITORY_UNAVAILABLE",
+          "Employee repository is not available",
+          HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+    boolean allStores = allStoresRequested(request.storeId());
+    List<StoreGenerationScope> stores = allStores
+        ? payrollForAllAuthorizedStores(user, month, action)
+        : payrollForOneStore(user, request.storeId(), month, action);
+    return new GenerationScope(
+        month,
+        selectedPayrollEmployees(stores, request.employeeIds(), allStores)
+    );
+  }
+
+  private List<StoreGenerationScope> payrollForOneStore(
+      AuthUser user,
+      String requestedStoreId,
+      String month,
+      String action
+  ) {
+    String storeId = resolveStoreForWrite(user, requestedStoreId, action, month);
+    requireStoreScope(user, storeId);
+    if (!salaryRepository.storeExists(user.tenantId(), storeId)) {
+      throw new BusinessException(
+          "STORE_NOT_FOUND",
+          "门店不存在或不属于当前企业",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+    String storeName = employeeRepository.storeName(user.tenantId(), storeId).orElse(storeId);
+    return List.of(new StoreGenerationScope(
+        storeId,
+        storeName,
+        payrollEmployees(user.tenantId(), storeId, month)
+    ));
+  }
+
+  private List<StoreGenerationScope> payrollForAllAuthorizedStores(
+      AuthUser user,
+      String month,
+      String action
+  ) {
+    DataScope dataScope = resolveGenerationDataScope(user, action, month);
+    List<SalaryRepository.SalaryGenerationStoreRow> activeStores =
+        salaryRepository.activeGenerationStores(user.tenantId(), dataScope);
+    if (activeStores.isEmpty()) {
+      if (dataScope.deniesStoreAccess()) {
+        throw new BusinessException(
+            "NO_STORE_SCOPE",
+            "当前账号没有可生成工资的门店范围",
+            HttpStatus.FORBIDDEN
+        );
+      }
+      throw new BusinessException(
+          "STORE_NOT_FOUND",
+          "当前工资数据范围内没有营业中的门店",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+
+    Map<String, StoreGenerationScopeBuilder> byStore = new LinkedHashMap<>();
+    for (SalaryRepository.SalaryGenerationStoreRow store : activeStores) {
+      requireStoreScope(user, store.storeId());
+      byStore.put(
+          store.storeId(),
+          new StoreGenerationScopeBuilder(store.storeId(), store.storeName())
+      );
+    }
+
+    /*
+     * Cross-store rule for one payroll month:
+     *   1. a draft/rejected SALADD row owns the employee for its assigned store;
+     *   2. otherwise the employee-file store owns the employee.
+     * The assignment is loaded tenant-wide so an employee assigned outside the caller's scope is
+     * not accidentally reintroduced through their home store. Only an authorized active target
+     * store is placed into the returned scope.
+     */
+    Map<String, String> assignedStoreByEmployee = new LinkedHashMap<>();
+    for (SalaryRepository.SalaryEmployeeStoreAssignment assignment :
+        salaryRepository.assignedEmployeeStores(user.tenantId(), month)) {
+      assignedStoreByEmployee.putIfAbsent(assignment.employeeId(), assignment.storeId());
+    }
+    Set<String> seenEmployeeIds = new LinkedHashSet<>();
+    for (EmployeeResponse employee :
+        employeeRepository.records(user.tenantId(), null, null, null)) {
+      if (!seenEmployeeIds.add(employee.id())) {
+        continue;
+      }
+      String targetStoreId =
+          assignedStoreByEmployee.getOrDefault(employee.id(), employee.storeId());
+      StoreGenerationScopeBuilder target = byStore.get(targetStoreId);
+      if (target != null) {
+        target.employees().add(employee);
+      }
+    }
+    return byStore.values().stream()
+        .map(StoreGenerationScopeBuilder::build)
+        .filter(store -> !store.employees().isEmpty())
+        .toList();
+  }
+
+  private DataScope resolveGenerationDataScope(
+      AuthUser user,
+      String action,
+      String month
+  ) {
+    if (businessScopeResolver != null) {
+      BusinessScope scope = businessScopeResolver.resolve(
+          user, DataScopeDomains.SALARY, null, null, action, month);
+      return scope.dataScope();
+    }
+    if (accessControl != null) {
+      DataScope scope = accessControl.dataScope(user, DataScopeDomains.SALARY);
+      if (scope != null) {
+        return scope;
+      }
+    }
+    if (AccessControlService.hasAllStoreScope(user)) {
+      return DataScope.all();
+    }
+    String ownStoreId = user == null ? null : SalaryQueryService.blankToNull(user.storeId());
+    return ownStoreId == null
+        ? DataScope.none()
+        : new DataScope(DataScopeModes.OWN_STORE, List.of(ownStoreId));
+  }
+
+  private List<StoreGenerationScope> selectedPayrollEmployees(
+      List<StoreGenerationScope> storeScopes,
+      List<String> requestedEmployeeIds,
+      boolean allStores
+  ) {
+    if (requestedEmployeeIds == null) {
+      return storeScopes;
+    }
+    Set<String> selectedIds = new LinkedHashSet<>();
+    for (String employeeId : requestedEmployeeIds) {
+      if (employeeId == null || employeeId.isBlank()) {
+        throw new BusinessException(
+            "SALARY_EMPLOYEE_SELECTION_INVALID",
+            "所选员工编号不能为空",
+            HttpStatus.BAD_REQUEST
+        );
+      }
+      selectedIds.add(employeeId.trim());
+    }
+    if (selectedIds.isEmpty()) {
+      throw new BusinessException(
+          "SALARY_EMPLOYEE_SELECTION_EMPTY",
+          "请至少选择一名员工",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+    Set<String> availableIds = new LinkedHashSet<>();
+    for (StoreGenerationScope storeScope : storeScopes) {
+      for (EmployeeResponse employee : storeScope.employees()) {
+        availableIds.add(employee.id());
+      }
+    }
+    if (!availableIds.containsAll(selectedIds)) {
+      throw new BusinessException(
+          "SALARY_EMPLOYEE_SELECTION_INVALID",
+          allStores
+              ? "所选员工不属于当前账号授权门店的当月工资名单"
+              : "所选员工不属于当前门店或当月工资名单",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+    return storeScopes.stream()
+        .map(store -> new StoreGenerationScope(
+            store.storeId(),
+            store.storeName(),
+            store.employees().stream()
+                .filter(employee -> selectedIds.contains(employee.id()))
+                .toList()
+        ))
+        .filter(store -> !store.employees().isEmpty())
+        .toList();
+  }
+
+  private SalaryGenerateReport.SalaryCandidate candidate(
+      EmployeeResponse employee,
+      StoreGenerationScope storeScope
+  ) {
+    return new SalaryGenerateReport.SalaryCandidate(
+        employee.id(),
+        employee.name(),
+        employee.position(),
+        storeScope.storeId(),
+        storeScope.storeName()
+    );
+  }
+
+  private SalaryGenerateReport.SalarySkipDetail skipDetail(
+      EmployeeResponse employee,
+      String reason,
+      StoreGenerationScope storeScope
+  ) {
+    return new SalaryGenerateReport.SalarySkipDetail(
+        employee.id(),
+        employee.name(),
+        reason,
+        storeScope.storeId(),
+        storeScope.storeName()
+    );
+  }
+
+  private static boolean allStoresRequested(String storeId) {
+    return storeId == null
+        || storeId.isBlank()
+        || "all".equals(storeId.trim().toLowerCase(Locale.ROOT));
+  }
+
+  private record GenerationScope(
+      String month,
+      List<StoreGenerationScope> stores
+  ) {}
+
+  private record StoreGenerationScope(
+      String storeId,
+      String storeName,
+      List<EmployeeResponse> employees
+  ) {}
+
+  private record StoreGenerationScopeBuilder(
+      String storeId,
+      String storeName,
+      java.util.ArrayList<EmployeeResponse> employees
+  ) {
+    StoreGenerationScopeBuilder(String storeId, String storeName) {
+      this(storeId, storeName, new java.util.ArrayList<>());
+    }
+
+    StoreGenerationScope build() {
+      return new StoreGenerationScope(storeId, storeName, List.copyOf(employees));
+    }
   }
 
   private static boolean isRegenerableAssignment(SalaryRecordResponse record, String storeId) {

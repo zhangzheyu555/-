@@ -5,6 +5,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -21,6 +22,7 @@ public class QmaiRecipeCalculationService {
       throw new BusinessException("QMAI_RECIPE_EMPTY", "请至少提供一条配方销量", HttpStatus.BAD_REQUEST);
     }
     Map<String, MutableUsage> totals = new LinkedHashMap<>();
+    Map<String, BigDecimal> otherMaterialTotals = new LinkedHashMap<>();
     BigDecimal cups = ZERO;
     for (ProductInput product : request.products()) {
       if (product == null || blank(product.productName()) || product.cups() == null
@@ -30,12 +32,20 @@ public class QmaiRecipeCalculationService {
       BigDecimal count = positive(product.cups(), "销量");
       cups = cups.add(count);
       for (IngredientInput ingredient : product.ingredients()) {
-        if (ingredient == null || blank(ingredient.materialName()) || blank(ingredient.fruit())
+        if (ingredient == null || blank(ingredient.materialName())
             || ingredient.gramsPerCup() == null || blank(ingredient.kind())) {
           throw new BusinessException("QMAI_RECIPE_INVALID", "配方原料信息不完整", HttpStatus.BAD_REQUEST);
         }
         BigDecimal net = positive(ingredient.gramsPerCup(), "单杯用量").multiply(count);
-        BigDecimal raw = switch (ingredient.kind().trim().toUpperCase()) {
+        String kind = ingredient.kind().trim().toUpperCase(Locale.ROOT);
+        if ("NONE".equals(kind)) {
+          otherMaterialTotals.merge(ingredient.materialName().trim(), net, BigDecimal::add);
+          continue;
+        }
+        if (blank(ingredient.fruit())) {
+          throw new BusinessException("QMAI_RECIPE_INVALID", "水果原料必须配置归属水果", HttpStatus.BAD_REQUEST);
+        }
+        BigDecimal raw = switch (kind) {
           case "FLESH" -> net.divide(positiveFactor(ingredient.factor(), "出肉率"), 6, RoundingMode.HALF_UP);
           case "JUICE" -> net.multiply(positiveFactor(ingredient.factor(), "折算系数"));
           case "ONE" -> net;
@@ -44,14 +54,27 @@ public class QmaiRecipeCalculationService {
         MutableUsage total = totals.computeIfAbsent(ingredient.fruit().trim(), ignored -> new MutableUsage());
         total.netGrams = total.netGrams.add(net);
         total.rawGrams = total.rawGrams.add(raw);
-        total.approximate |= "ONE".equalsIgnoreCase(ingredient.kind().trim());
+        total.approximate |= "ONE".equals(kind);
       }
     }
-    List<FruitUsage> fruits = totals.entrySet().stream().map(entry -> new FruitUsage(
-        entry.getKey(), scale(entry.getValue().netGrams), scale(entry.getValue().rawGrams),
-        scale(entry.getValue().rawGrams.divide(GRAMS_PER_JIN, 6, RoundingMode.HALF_UP)),
-        entry.getValue().approximate)).toList();
-    return new CalculationSnapshot(scale(cups), fruits);
+    List<FruitUsage> fruits = totals.entrySet().stream()
+        .sorted((left, right) -> {
+          int amount = right.getValue().rawGrams.compareTo(left.getValue().rawGrams);
+          return amount != 0 ? amount : left.getKey().compareTo(right.getKey());
+        })
+        .map(entry -> new FruitUsage(
+            entry.getKey(), scale(entry.getValue().netGrams), scale(entry.getValue().rawGrams),
+            scale(entry.getValue().rawGrams.divide(GRAMS_PER_JIN, 6, RoundingMode.HALF_UP)),
+            entry.getValue().approximate))
+        .toList();
+    List<MaterialUsage> otherMaterials = otherMaterialTotals.entrySet().stream()
+        .sorted((left, right) -> {
+          int amount = right.getValue().compareTo(left.getValue());
+          return amount != 0 ? amount : left.getKey().compareTo(right.getKey());
+        })
+        .map(entry -> new MaterialUsage(entry.getKey(), scale(entry.getValue())))
+        .toList();
+    return new CalculationSnapshot(scale(cups), fruits, otherMaterials);
   }
 
   private BigDecimal positive(BigDecimal value, String field) {
@@ -87,7 +110,17 @@ public class QmaiRecipeCalculationService {
   public record ProductInput(String productName, BigDecimal cups, List<IngredientInput> ingredients) {}
   public record IngredientInput(String materialName, String fruit, BigDecimal gramsPerCup, String kind,
       BigDecimal factor) {}
-  public record CalculationSnapshot(BigDecimal totalCups, List<FruitUsage> fruits) {}
+  public record CalculationSnapshot(
+      BigDecimal totalCups,
+      List<FruitUsage> fruits,
+      List<MaterialUsage> otherMaterials
+  ) {
+    /** Keeps existing internal callers source-compatible while the response gains non-fruit materials. */
+    public CalculationSnapshot(BigDecimal totalCups, List<FruitUsage> fruits) {
+      this(totalCups, fruits, List.of());
+    }
+  }
   public record FruitUsage(String fruit, BigDecimal netGrams, BigDecimal rawGrams, BigDecimal rawJin,
       boolean approximate) {}
+  public record MaterialUsage(String materialName, BigDecimal grams) {}
 }

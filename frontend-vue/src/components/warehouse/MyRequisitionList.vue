@@ -18,7 +18,7 @@ function statusLabel(row: WarehouseRequisition) {
     WAITING_REPLENISHMENT: '待补货',
     PARTIALLY_SHIPPED: '部分发货 / 待补货',
     SHIPPED: '待门店收货',
-    RECEIVED: '门店已收货',
+    RECEIVED: '已完成',
     REJECTED: '已驳回',
   }
   return row.statusLabel || map[row.status] || row.status
@@ -49,6 +49,9 @@ function progressText(row: WarehouseRequisition) {
     if (row.status === 'APPROVED') {
       return `${line.itemName}：已发 ${qty(shipped, line.unit)}，待发 ${qty(outstanding, line.unit)}`
     }
+    if (row.status === 'RECEIVED') {
+      return `${line.itemName}：已完成 ${qty(shipped, line.unit)}，已计入门店库存`
+    }
     return `${line.itemName}：已发 ${qty(shipped, line.unit)}，未发 ${qty(outstanding, line.unit)}`
   }).join('；')
 }
@@ -56,6 +59,7 @@ function progressText(row: WarehouseRequisition) {
 function actionText(row: WarehouseRequisition) {
   if (['SHIPPED', 'PARTIALLY_SHIPPED'].includes(row.status)) return '请确认本次收货'
   if (['BACKORDERED', 'WAITING_REPLENISHMENT'].includes(row.status)) return '等待仓库补发'
+  if (row.status === 'RECEIVED') return '仓库审核完成，库存已入门店'
   return '-'
 }
 </script>
@@ -74,7 +78,7 @@ function actionText(row: WarehouseRequisition) {
           <tr>
             <th>单号</th>
             <th>商品</th>
-            <th>发货进度</th>
+            <th>完成进度</th>
             <th>状态</th>
             <th>仓库说明</th>
             <th>提交时间</th>

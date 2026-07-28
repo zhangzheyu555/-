@@ -58,6 +58,32 @@ export interface StoreInfo {
   version?: number
 }
 
+export interface StoreInventoryReductionRow {
+  id: number
+  itemId: number
+  itemCode: string
+  itemName: string
+  unit: string
+  quantityReduced: number
+  currentQuantity: number
+  sourceType?: string
+  sourceLabel: string
+  sourceId?: string
+  note?: string
+  operatorName?: string
+  createdAt?: string
+}
+
+export interface StoreInventoryReductionResponse {
+  storeId: string
+  storeName: string
+  month: string
+  movementCount: number
+  itemCount: number
+  truncated: boolean
+  rows: StoreInventoryReductionRow[]
+}
+
 export interface BrandInfo {
   id: number
   code: string
@@ -129,6 +155,15 @@ export function queryAuditLogs(query: OperationLogQuery, signal?: AbortSignal) {
 export function getStores(options: { knowledgeBaseScope?: boolean; signal?: AbortSignal } = {}) {
   const query = options.knowledgeBaseScope ? '?knowledgeBaseScope=true' : ''
   return apiGet<StoreInfo[]>(`/api/stores${query}`, { signal: options.signal })
+}
+
+export function getStoreInventoryReductions(storeId: string, month?: string, limit = 100) {
+  const query = new URLSearchParams()
+  if (month) query.set('month', month)
+  query.set('limit', String(limit))
+  return apiGet<StoreInventoryReductionResponse>(
+    `/api/stores/${encodeURIComponent(storeId)}/inventory-reductions?${query.toString()}`,
+  )
 }
 
 export function getBrands() {

@@ -1271,39 +1271,42 @@ test('store manager sees a read-only supply warehouse and requisition does not s
   expect(log.consoleErrors).toEqual([])
 })
 
-test('warehouse handles insufficient stock with explicit available, shortage and partial shipment actions', async ({ page }) => {
+test('warehouse handles insufficient stock with editable review price and immediate negative inventory transfer', async ({ page }) => {
   const log = await prepare(page, requisitionProcessorSession)
   await page.goto('/warehouse/requests?warehouseId=1')
 
   const requisitionRow = page.locator('tbody tr').filter({ hasText: shortageRequisition.id }).first()
   await expect(requisitionRow).toBeVisible()
-  await expect(requisitionRow).toContainText('鲜牛奶 申请 5 箱 / 已发 0 箱')
+  await expect(requisitionRow).toContainText('鲜牛奶 申请 5 箱 / 已完成 0 箱')
   await expect(requisitionRow).toContainText('鲜牛奶缺货 2 箱')
-  for (const action of ['按可用库存发货', '标记缺货', '等补货后再发', '驳回']) {
+  for (const action of ['审核并完成', '驳回']) {
     await expect(requisitionRow.getByRole('button', { name: action, exact: true })).toBeVisible()
   }
-  await expect(requisitionRow.getByRole('button', { name: '审核通过', exact: true })).toHaveCount(0)
+  for (const action of ['按可用库存审核', '标记缺货', '等补货后再发']) {
+    await expect(requisitionRow.getByRole('button', { name: action, exact: true })).toHaveCount(0)
+  }
 
   await requisitionRow.getByRole('button', { name: '查看明细', exact: true }).click()
   const detail = page.locator('.detail-line').filter({ hasText: '鲜牛奶' })
   await expect(detail).toContainText('申请：5 箱')
-  await expect(detail).toContainText('待发：5 箱')
-  await expect(detail).toContainText('当前可发：3 箱')
-  await expect(detail).toContainText('已发：0 箱')
-  await expect(detail).toContainText('缺货：2 箱')
+  await expect(detail).toContainText('本次审核：5 箱')
+  await expect(detail).toContainText('当前仓库库存：3 箱')
+  await expect(detail).toContainText('审核后仓库库存：-2 箱')
+  await expect(detail).toContainText('已完成：0 箱')
+  await expect(detail).toContainText('不转待补货')
 
-  await requisitionRow.getByRole('button', { name: '按可用库存发货', exact: true }).click()
-  const dialog = page.getByRole('alertdialog', { name: '按可用库存发货' })
-  await expect(dialog).toContainText('只扣减实际发出数量，未发数量转为缺货待处理')
-  await dialog.getByRole('button', { name: '确认部分发货', exact: true }).click()
+  await requisitionRow.getByRole('button', { name: '审核并完成', exact: true }).click()
+  await page.getByRole('spinbutton', { name: '鲜牛奶审核单价' }).fill('52.30')
+  await page.getByRole('button', { name: '确认审核并完成', exact: true }).click()
 
   await expect.poll(() => log.requisitionReviewBodies.length).toBe(1)
   expect(log.requisitionReviewBodies[0]).toMatchObject({
     approved: true,
-    handlingMode: 'AVAILABLE_ONLY',
-    lines: [{ itemId: 11, approvedQuantity: 5 }],
+    handlingMode: 'FULL',
+    completeOnReview: true,
+    lines: [{ itemId: 11, approvedQuantity: 5, unitPrice: 52.3 }],
   })
-  await expect.poll(() => log.requisitionShipCount).toBe(1)
+  expect(log.requisitionShipCount).toBe(0)
   await page.screenshot({ path: '../output/playwright/warehouse-requisition-shortage-desktop.png', fullPage: true })
   expect(log.consoleErrors).toEqual([])
 })
@@ -1349,11 +1352,11 @@ test('warehouse shortage controls remain usable without whole-page overflow on m
 
   const requisitionRow = page.locator('tbody tr').filter({ hasText: shortageRequisition.id }).first()
   await expect(requisitionRow).toBeVisible()
-  const availableButton = requisitionRow.getByRole('button', { name: '按可用库存发货', exact: true })
-  await expect(availableButton).toBeVisible()
-  await expect(requisitionRow.getByRole('button', { name: '等补货后再发', exact: true })).toBeVisible()
-  await availableButton.scrollIntoViewIfNeeded()
-  for (const action of ['按可用库存发货', '标记缺货', '等补货后再发', '驳回']) {
+  const reviewButton = requisitionRow.getByRole('button', { name: '审核并完成', exact: true })
+  await expect(reviewButton).toBeVisible()
+  await expect(requisitionRow.getByRole('button', { name: '等补货后再发', exact: true })).toHaveCount(0)
+  await reviewButton.scrollIntoViewIfNeeded()
+  for (const action of ['审核并完成', '驳回']) {
     const box = await requisitionRow.getByRole('button', { name: action, exact: true }).boundingBox()
     expect(box?.x).toBeGreaterThanOrEqual(0)
     expect((box?.x || 0) + (box?.width || 0)).toBeLessThanOrEqual(390)
@@ -1369,13 +1372,16 @@ test('warehouse shortage controls remain usable without whole-page overflow on m
   expect(log.consoleErrors).toEqual([])
 })
 
-test('warehouse role keeps its tenant-wide warehouse scope read-only', async ({ page }) => {
+test('warehouse role exposes its assigned warehouse list without silently saving', async ({ page }) => {
   const log = await prepare(page, baseSession)
   await page.goto('/users')
   await page.getByRole('button', { name: '配置 warehouse_admin 的账号授权' }).click()
-  await expect(page.getByLabel('仓库数据范围')).toHaveValue('ALL')
-  await expect(page.getByLabel('仓库数据范围')).toBeDisabled()
-  await expect(page.getByLabel('指定仓库范围')).toHaveCount(0)
+  await expect(page.getByLabel('仓库数据范围')).toHaveValue('WAREHOUSE_LIST')
+  await expect(page.getByLabel('仓库数据范围')).toBeEnabled()
+  const warehouseScope = page.getByLabel('指定仓库范围')
+  await expect(warehouseScope).toBeVisible()
+  await expect(warehouseScope.getByRole('checkbox', { name: '荆州总仓 · 总仓' })).toBeChecked()
+  await expect(warehouseScope.getByRole('checkbox', { name: '山东分仓 · 区域分仓' })).not.toBeChecked()
   await page.screenshot({ path: '../output/playwright/warehouse-permission-scope.png', fullPage: true })
   expect(log.accessProfileBody).toBeNull()
   expect(log.consoleErrors).toEqual([])
@@ -1566,14 +1572,15 @@ test('save success with refresh failure shows refresh message not save failure',
   // Editor closes (save succeeded)
   await expect(editor).toHaveCount(0)
 
-  // Page-level error shows refresh failure, not save failure
-  const pageError = page.locator('.warehouse-page .error-box')
-  await expect(pageError).toBeVisible()
-  await expect(pageError).toContainText('物料已保存，但列表刷新失败')
+  // Page-level refresh failure is promoted into the unified error dialog.
+  const refreshError = page.getByRole('alertdialog', { name: '保存未完成' })
+  await expect(refreshError).toContainText('物料已保存，但列表刷新失败')
 
   // Success message should also appear
   const successBox = page.locator('.warehouse-page .success-box')
   await expect(successBox).toContainText('物料档案已新增')
+  await refreshError.getByRole('button', { name: '重试' }).click()
+  await expect(refreshError).toHaveCount(0)
 
   // Only one POST
   expect(log.itemSaveCallCount).toBe(1)

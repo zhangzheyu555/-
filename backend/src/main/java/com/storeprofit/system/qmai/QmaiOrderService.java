@@ -1,7 +1,10 @@
 package com.storeprofit.system.qmai;
 
+import com.storeprofit.system.common.BusinessException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDate;
@@ -11,15 +14,16 @@ import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
-import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
@@ -30,13 +34,11 @@ import org.springframework.web.client.RestClient;
  * openId/grantCode/openKey 时调真实接口；未配置或调用失败时返回空结果和明确状态，
  * 绝不伪造营业数据。
  *
- * <p><b>上线前必须校准两处（见 README 接入说明）：</b>
+ * <p><b>企迈开放平台契约：</b>
  * <ol>
- *   <li>{@link #sign} 的签名算法——当前按「排序拼接 + openKey 包裹 + MD5 大写」实现，
- *       与本仓库饿了么模块同规则；需用一条真实签名请求（qmai CLI 抓包）核对 canonical 拼法
- *       与哈希类型（MD5 / HMAC-SHA256）是否一致。</li>
- *   <li>订单接口路径 {@link #ORDER_LIST_METHOD} 与响应字段名（金额/日期/状态）——以企迈开放平台
- *       文档为准，当前解析已做多字段名容错。</li>
+ *   <li>签名与官方 qmai-cli 一致：公共参数排序拼接，以 openKey 执行 HMAC-SHA1，
+ *       结果 Base64 后再做 URL QueryEscape。</li>
+ *   <li>所有业务能力只使用代码中登记的固定接口；诊断 signMode 仅用于管理员排查签名兼容性。</li>
  * </ol>
  */
 @Service
@@ -54,6 +56,8 @@ public class QmaiOrderService {
   private static final String SHOP_LIST_METHOD = "v3/org/shop/getShopList";
   /** POS 优惠券核销。 */
   private static final String COUPON_WRITE_OFF_METHOD = "v3/crm/coupon/writeOffCoupon";
+  private static final java.util.Set<String> READ_ONLY_PROBE_METHODS =
+      java.util.Set.of(SHOP_LIST_METHOD, TURNOVER_METHOD);
 
   private final QmaiConfigService configService;
   private final QmaiOutboundPolicy outboundPolicy;
@@ -90,16 +94,23 @@ public class QmaiOrderService {
   /** 诊断（可指定签名基串构造模式，用于快速定位企迈验签规则）。 */
   public Map<String, Object> probe(long tenantId, String brand, String path,
       Map<String, Object> bizParams, int signMode) {
+    String safePath = path == null ? "" : path.trim().replaceFirst("^/+", "");
+    if (!READ_ONLY_PROBE_METHODS.contains(safePath)) {
+      throw new BusinessException(
+          "QMAI_PROBE_PATH_BLOCKED",
+          "仅允许探测已登记的企迈只读接口",
+          HttpStatus.BAD_REQUEST);
+    }
     QmaiConfigService.EffectiveConfig cfg = configService.resolve(tenantId, brand);
     Map<String, Object> out = new LinkedHashMap<>();
-    out.put("path", path);
+    out.put("path", safePath);
     if (!cfg.isConfigured()) {
       out.put("ok", false);
       out.put("error", "凭证未配置齐全（openId/grantCode/openKey）。");
       return out;
     }
     try {
-      Map<String, Object> resp = callOpenApi(cfg, path,
+      Map<String, Object> resp = callOpenApi(cfg, safePath,
           bizParams == null ? new LinkedHashMap<>() : bizParams, signMode);
       out.put("ok", true);
       out.put("raw", resp);
@@ -126,6 +137,181 @@ public class QmaiOrderService {
     return callOpenApi(cfg, COUPON_WRITE_OFF_METHOD, bizParams, 0);
   }
 
+  /**
+   * Fetches one mapped shop day for durable synchronization.
+   *
+   * <p>This strict variant deliberately does not catch an upstream or pagination error. The
+   * synchronization service persists the returned snapshot only after every page succeeds,
+   * which guarantees that a failed day leaves its previous local snapshot untouched.
+   */
+  QmaiDailySalesSnapshot fetchDailyShop(
+      QmaiConfigService.EffectiveConfig cfg,
+      QmaiProperties.ShopMapping shop,
+      LocalDate businessDate
+  ) {
+    if (cfg == null || !cfg.isConfigured()) {
+      throw new IllegalStateException("企迈凭证未配置齐全");
+    }
+    if (shop == null || shop.storeId() == null || shop.storeId().isBlank()) {
+      throw new IllegalArgumentException("企迈门店尚未映射到系统门店");
+    }
+    long shopId;
+    try {
+      shopId = Long.parseLong(shop.shopCode().trim());
+    } catch (RuntimeException ex) {
+      throw new IllegalArgumentException("企迈门店编号格式不正确", ex);
+    }
+
+    int sourceRows = 0;
+    BigDecimal receivable = BigDecimal.ZERO;
+    BigDecimal received = BigDecimal.ZERO;
+    BigDecimal cost = BigDecimal.ZERO;
+    BigDecimal refund = BigDecimal.ZERO;
+    Map<String, ProductAccumulator> products = new LinkedHashMap<>();
+    int pageNo = 1;
+    int pageSize = 200;
+    while (pageNo <= 200) {
+      Map<String, Object> bizParams = new LinkedHashMap<>();
+      bizParams.put("pageNo", pageNo);
+      bizParams.put("pageSize", pageSize);
+      bizParams.put("shopId", shopId);
+      bizParams.put("queryDate", businessDate.format(DATE));
+      List<Map<String, Object>> rows =
+          turnoverRows(callOpenApi(cfg, TURNOVER_METHOD, bizParams, 0));
+      sourceRows = Math.addExact(sourceRows, rows.size());
+      for (Map<String, Object> row : rows) {
+        receivable = receivable.add(strictMoney(row.get("receivableAmount")));
+        received = received.add(strictMoney(row.get("receivedAmount")));
+        cost = cost.add(strictMoney(row.get("costAmount")));
+        refund = refund.add(strictMoney(row.get("refundAmount")));
+
+        String itemName = normalizeItemName(
+            str(firstNonNull(row, "name", "itemName", "goodsName")));
+        if (itemName == null || itemName.isBlank()) {
+          continue;
+        }
+        String productId = clip(str(firstNonNull(
+            row, "productId", "itemId", "goodsId", "spuId")), 120);
+        String skuId = clip(str(firstNonNull(
+            row, "skuId", "itemSkuId", "specId")), 120);
+        String category = clip(str(firstNonNull(row, "categoryName")), 160);
+        String normalizedItemName = clip(itemName, 300);
+        String productKey = productKey(productId, skuId, normalizedItemName, category);
+        ProductAccumulator item = products.computeIfAbsent(productKey,
+            ignored -> new ProductAccumulator(
+                productKey, productId, skuId, normalizedItemName, category));
+        item.quantity = item.quantity.add(strictQty(row.get("num")));
+        item.refundQuantity = item.refundQuantity.add(strictQty(row.get("refundNum")));
+        item.receivable = item.receivable.add(strictMoney(row.get("receivableAmount")));
+        item.received = item.received.add(strictMoney(row.get("receivedAmount")));
+        item.cost = item.cost.add(strictMoney(row.get("costAmount")));
+        item.refund = item.refund.add(strictMoney(row.get("refundAmount")));
+        if ((item.categoryName == null || item.categoryName.isBlank()
+            || item.categoryName.contains("未关联"))
+            && category != null && !category.isBlank() && !category.contains("未关联")) {
+          item.categoryName = category;
+        }
+      }
+      if (rows.size() < pageSize) {
+        List<QmaiDailySalesSnapshot.Product> productRows = products.values().stream()
+            .map(ProductAccumulator::snapshot)
+            .toList();
+        return new QmaiDailySalesSnapshot(
+            String.valueOf(shopId), shop.storeId().trim(), businessDate, sourceRows,
+            receivable, received, cost, refund, productRows);
+      }
+      pageNo++;
+    }
+    throw new IllegalStateException("企迈营业额分页超过安全上限");
+  }
+
+  private String productKey(String productId, String skuId, String itemName, String category) {
+    String identity = hasText(productId) || hasText(skuId)
+        ? safe(productId) + "|" + safe(skuId)
+        : safe(itemName) + "|" + safe(category);
+    try {
+      return HexFormat.of().formatHex(
+          MessageDigest.getInstance("SHA-256").digest(identity.getBytes(StandardCharsets.UTF_8)));
+    } catch (Exception ex) {
+      throw new IllegalStateException("企迈商品标识计算失败", ex);
+    }
+  }
+
+  private boolean hasText(String value) {
+    return value != null && !value.isBlank();
+  }
+
+  private String safe(String value) {
+    return value == null ? "" : value.trim();
+  }
+
+  private String clip(String value, int maxLength) {
+    if (value == null) {
+      return null;
+    }
+    String normalized = value.trim();
+    return normalized.length() <= maxLength
+        ? normalized
+        : normalized.substring(0, maxLength);
+  }
+
+  /**
+   * Strict parser used only by durable synchronization.
+   *
+   * <p>The turnover contract returns amounts in yuan. Invalid non-null values fail the whole
+   * shop day instead of silently persisting zero or guessing that a large integer is cents.
+   */
+  private BigDecimal strictMoney(Object value) {
+    if (value == null || String.valueOf(value).isBlank()) {
+      return BigDecimal.ZERO.setScale(2);
+    }
+    try {
+      return new BigDecimal(String.valueOf(value)).abs().setScale(2, RoundingMode.HALF_UP);
+    } catch (RuntimeException ex) {
+      throw new IllegalStateException("企迈返回了无法识别的金额", ex);
+    }
+  }
+
+  private BigDecimal strictQty(Object value) {
+    if (value == null || String.valueOf(value).isBlank()) {
+      return BigDecimal.ZERO.setScale(3);
+    }
+    try {
+      return new BigDecimal(String.valueOf(value)).abs().setScale(3, RoundingMode.HALF_UP);
+    } catch (RuntimeException ex) {
+      throw new IllegalStateException("企迈返回了无法识别的商品数量", ex);
+    }
+  }
+
+  private static final class ProductAccumulator {
+    private final String productKey;
+    private final String productId;
+    private final String skuId;
+    private final String itemName;
+    private String categoryName;
+    private BigDecimal quantity = BigDecimal.ZERO;
+    private BigDecimal refundQuantity = BigDecimal.ZERO;
+    private BigDecimal receivable = BigDecimal.ZERO;
+    private BigDecimal received = BigDecimal.ZERO;
+    private BigDecimal cost = BigDecimal.ZERO;
+    private BigDecimal refund = BigDecimal.ZERO;
+
+    private ProductAccumulator(String productKey, String productId, String skuId,
+        String itemName, String categoryName) {
+      this.productKey = productKey;
+      this.productId = productId;
+      this.skuId = skuId;
+      this.itemName = itemName;
+      this.categoryName = categoryName;
+    }
+
+    private QmaiDailySalesSnapshot.Product snapshot() {
+      return new QmaiDailySalesSnapshot.Product(
+          productKey, productId, skuId, itemName, categoryName, quantity, refundQuantity,
+          receivable, received, cost, refund);
+    }
+  }
+
   /** 按自然月聚合。 */
   public QmaiSummaryResponse summaryForMonth(long tenantId, String brand, String month,
       Collection<String> allowedStoreIds) {
@@ -135,9 +321,12 @@ public class QmaiOrderService {
     } catch (RuntimeException ex) {
       ym = YearMonth.now(ZONE);
     }
-    LocalDate today = LocalDate.now(ZONE);
+    LocalDate yesterday = LocalDate.now(ZONE).minusDays(1);
     LocalDate first = ym.atDay(1);
-    LocalDate last = ym.atEndOfMonth().isAfter(today) ? today : ym.atEndOfMonth();
+    LocalDate last = ym.atEndOfMonth().isAfter(yesterday) ? yesterday : ym.atEndOfMonth();
+    if (first.isAfter(last)) {
+      return unavailable(0, "LIVE", "所选月份暂无已结束日期的数据。");
+    }
     List<LocalDate> dates = new ArrayList<>();
     for (LocalDate d = first; !d.isAfter(last); d = d.plusDays(1)) {
       dates.add(d);
@@ -349,21 +538,58 @@ public class QmaiOrderService {
       long recordCount, BigDecimal receivable, BigDecimal received,
       BigDecimal cost, BigDecimal refund, List<QmaiSummaryResponse.Item> items) {}
 
-  @SuppressWarnings("unchecked")
-  private List<Map<String, Object>> turnoverRows(Map<String, Object> resp) {
+  /**
+   * Strictly validates the documented turnover response shape.
+   *
+   * <p>A present empty resultList is a legitimate zero-sales day. Missing nodes, malformed rows,
+   * or missing required money fields indicate contract drift and fail the whole shop day.
+   */
+  List<Map<String, Object>> turnoverRows(Map<String, Object> resp) {
+    if (resp == null) {
+      throw new IllegalStateException("企迈营业额响应为空");
+    }
     List<Map<String, Object>> rows = new ArrayList<>();
     Object data = resp.get("data");
-    if (data instanceof Map<?, ?> dm) {
-      Object list = ((Map<String, Object>) dm).get("resultList");
-      if (list instanceof List<?> l) {
-        for (Object it : l) {
-          if (it instanceof Map<?, ?> m) {
-            rows.add((Map<String, Object>) m);
-          }
-        }
+    if (!(data instanceof Map<?, ?> dataMap)) {
+      throw new IllegalStateException("企迈营业额响应缺少 data 对象");
+    }
+    if (!dataMap.containsKey("resultList")) {
+      throw new IllegalStateException("企迈营业额响应缺少 resultList");
+    }
+    Object resultList = dataMap.get("resultList");
+    if (!(resultList instanceof List<?> list)) {
+      throw new IllegalStateException("企迈营业额 resultList 格式不正确");
+    }
+    for (Object item : list) {
+      if (!(item instanceof Map<?, ?> rawRow)) {
+        throw new IllegalStateException("企迈营业额明细行格式不正确");
       }
+      Map<String, Object> row = new LinkedHashMap<>();
+      for (Map.Entry<?, ?> entry : rawRow.entrySet()) {
+        if (!(entry.getKey() instanceof String key)) {
+          throw new IllegalStateException("企迈营业额明细字段格式不正确");
+        }
+        row.put(key, entry.getValue());
+      }
+      for (String field : List.of(
+          "receivableAmount", "receivedAmount", "costAmount", "refundAmount")) {
+        requireMoneyField(row, field);
+      }
+      rows.add(row);
     }
     return rows;
+  }
+
+  private void requireMoneyField(Map<String, Object> row, String field) {
+    if (!row.containsKey(field) || row.get(field) == null
+        || String.valueOf(row.get(field)).isBlank()) {
+      throw new IllegalStateException("企迈营业额明细缺少必需金额字段");
+    }
+    try {
+      new BigDecimal(String.valueOf(row.get(field)));
+    } catch (RuntimeException ex) {
+      throw new IllegalStateException("企迈营业额明细金额格式不正确", ex);
+    }
   }
 
   /**
@@ -405,7 +631,8 @@ public class QmaiOrderService {
   @SuppressWarnings("unchecked")
   private Map<String, Object> callOnce(QmaiConfigService.EffectiveConfig cfg,
       String method, Map<String, Object> bizParams, int signMode) {
-    // 依据企迈签名示例：timestamp 为 10 位秒级，nonce 为整数，token=Base64(HMAC-SHA1)。
+    // 依据企迈 qmai-cli：timestamp 为 10 位秒级，nonce 为整数，
+    // token=URL-Encode(Base64(HMAC-SHA1))。
     long ts = System.currentTimeMillis() / 1000L;
     int nonce = NONCE_SEQ.updateAndGet(v -> v >= 2_000_000_000 ? 1 : v + 1);
     String token = signHmacSha1(cfg, ts, nonce, bizParams, signMode);
@@ -445,13 +672,12 @@ public class QmaiOrderService {
   }
 
   /**
-   * 企迈 token 签名：公共参数 + 业务参数按 key 升序拼成 key=value&… 基串，
-   * 用 openKey 作密钥 HMAC-SHA1，结果 Base64。（依据官方签名示例反推的标准构造。）
+   * 企迈 token 签名：默认将公共参数按 key 升序拼成 key=value&… 基串，
+   * 用 openKey 作密钥执行 HMAC-SHA1，结果 Base64 后按官方 qmai-cli 做 URL QueryEscape。
    *
-   * <p>基串具体拼法（是否含业务参数、分隔符）如未通过真实接口，可调本方法微调；
-   * 基串仅 debug 输出且不含 openKey。
+   * <p>非默认 signMode 保留给平台管理员诊断历史签名兼容性；任何模式都不得记录签名基串。
    */
-  private String signHmacSha1(QmaiConfigService.EffectiveConfig cfg, long ts, int nonce,
+  String signHmacSha1(QmaiConfigService.EffectiveConfig cfg, long ts, int nonce,
       Map<String, Object> bizParams, int signMode) {
     // 公共参数
     TreeMap<String, String> authOnly = new TreeMap<>();
@@ -483,18 +709,17 @@ public class QmaiOrderService {
         base = kv(m, "&", true);
       }
       case 8 -> base = cfg.openKey() + kv(authOnly, "", false) + cfg.openKey(); // openKey 首尾包裹
-      // 默认=已验证的正确构造：仅公共参数按 key 升序 key=value& + HMAC-SHA1(openKey) + Base64。
+      // 默认：仅公共参数按 key 升序 key=value& + HMAC-SHA1(openKey) + Base64 + URL 编码。
       default -> base = kv(authOnly, "&", true);
-    }
-    if (log.isDebugEnabled()) {
-      log.debug("企迈 token 基串 mode={}（不含 openKey）: {}", signMode, base);
     }
     try {
       javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA1");
       mac.init(new javax.crypto.spec.SecretKeySpec(
           cfg.openKey().getBytes(StandardCharsets.UTF_8), "HmacSHA1"));
       byte[] raw = mac.doFinal(base.getBytes(StandardCharsets.UTF_8));
-      return java.util.Base64.getEncoder().encodeToString(raw);
+      String base64 = java.util.Base64.getEncoder().encodeToString(raw);
+      // 企迈官方 qmai-cli ComputeToken 会在 Base64 后执行 url.QueryEscape。
+      return URLEncoder.encode(base64, StandardCharsets.UTF_8);
     } catch (Exception ex) {
       throw new IllegalStateException("HMAC-SHA1 计算失败", ex);
     }
@@ -522,10 +747,12 @@ public class QmaiOrderService {
   }
 
   private RestClient restClient(QmaiConfigService.EffectiveConfig cfg) {
-    SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-    int t = Math.toIntExact(Math.min(cfg.timeout().toMillis(), Integer.MAX_VALUE));
-    factory.setConnectTimeout(t);
-    factory.setReadTimeout(t);
+    HttpClient httpClient = HttpClient.newBuilder()
+        .connectTimeout(cfg.timeout())
+        .followRedirects(HttpClient.Redirect.NEVER)
+        .build();
+    JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(httpClient);
+    factory.setReadTimeout(cfg.timeout());
     return RestClient.builder().requestFactory(factory).build();
   }
 
@@ -699,17 +926,4 @@ public class QmaiOrderService {
     return o == null ? null : String.valueOf(o);
   }
 
-  private String md5(String input) {
-    try {
-      MessageDigest md = MessageDigest.getInstance("MD5");
-      byte[] digest = md.digest(input.getBytes(StandardCharsets.UTF_8));
-      StringBuilder sb = new StringBuilder();
-      for (byte b : digest) {
-        sb.append(String.format("%02x", b));
-      }
-      return sb.toString();
-    } catch (Exception ex) {
-      throw new IllegalStateException("MD5 失败", ex);
-    }
-  }
 }

@@ -147,19 +147,20 @@ function stockState(line: DraftLine) {
   const item = itemFor(line)
   const unit = item?.stockUnit || item?.unit
   const requested = Math.max(0, Number(line.requestedQuantity || 0))
-  const available = Math.max(0, Number(item?.warehouseAvailableQuantity || 0))
+  const current = Number(item?.warehouseAvailableQuantity || 0)
+  const available = Math.max(0, current)
   const expected = Math.min(requested, available)
   const shortage = Math.max(0, requested - expected)
   if (available <= 0) {
     return {
       tone: 'out',
-      text: `当前无库存 · 缺货 ${qty(shortage, unit)} · 可提交缺货申请`,
+      text: `当前库存 ${qty(current, unit)} · 审核后预计 ${qty(current - requested, unit)} · 可继续叫货`,
     }
   }
   if (shortage > 0) {
     return {
       tone: 'partial',
-      text: `部分不足 · 预计可发 ${qty(expected, unit)} · 缺货 ${qty(shortage, unit)}`,
+      text: `库存不足 ${qty(shortage, unit)} · 审核后预计 ${qty(current - requested, unit)}`,
     }
   }
   return {
@@ -236,7 +237,7 @@ defineExpose({ addItem })
       <AlertTriangle v-if="shortageCount > 0" :size="17" />
       <CheckCircle2 v-else :size="17" />
       <span v-if="shortageCount > 0">
-        {{ shortageCount }} 项存在缺货，可继续提交；仓库将明确已发数量和待补数量。
+        {{ shortageCount }} 项库存不足，可继续提交；仓库审核后将直接扣成负库存并完成叫货。
       </span>
       <span v-else>当前物料库存充足，预计可正常发货。</span>
     </div>

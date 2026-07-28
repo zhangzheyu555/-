@@ -15,15 +15,30 @@ public record DailyLossItemResponse(
     String pricingUnit,
     BigDecimal quantityPerPricingUnit,
     BigDecimal unitPrice,
-    boolean active
+    boolean active,
+    boolean peelSelectionEnabled,
+    String defaultPeelState,
+    String peeledUnit,
+    String peeledPricingUnit,
+    BigDecimal peeledQuantityPerPricingUnit,
+    BigDecimal peeledUnitPrice,
+    String unpeeledUnit,
+    String unpeeledPricingUnit,
+    BigDecimal unpeeledQuantityPerPricingUnit,
+    BigDecimal unpeeledUnitPrice,
+    BigDecimal yieldRate,
+    BigDecimal grossGramsPerUnit,
+    String inventoryUnit
 ) {
   public DailyLossItemResponse(long id, String code, String name, String category, String stockUnit,
       BigDecimal unitPrice) {
-    this(id, code, name, category, category, category, stockUnit, stockUnit, BigDecimal.ONE, unitPrice, true);
+    this(id, code, name, category, category, category, stockUnit, stockUnit, BigDecimal.ONE, unitPrice, true,
+        false, null, null, null, null, null, null, null, null, null, null, null, null);
   }
 
   public DailyLossItemResponse(long id, String code, String name, String stockUnit, BigDecimal unitPrice) {
-    this(id, code, name, null, null, null, stockUnit, stockUnit, BigDecimal.ONE, unitPrice, true);
+    this(id, code, name, null, null, null, stockUnit, stockUnit, BigDecimal.ONE, unitPrice, true,
+        false, null, null, null, null, null, null, null, null, null, null, null, null);
   }
 
   @JsonProperty("code")

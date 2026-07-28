@@ -106,8 +106,14 @@ public class SalaryQueryService {
         .toList();
 
     Map<String, Integer> statusCounts = new LinkedHashMap<>();
+    statusCounts.put("PENDING_GENERATION", 0);
+    statusCounts.put("PENDING_REVIEW", 0);
+    statusCounts.put("PENDING_PAYMENT", 0);
     for (SalaryRecordResponse row : scopedRows) {
-      statusCounts.merge(row.status(), 1, Integer::sum);
+      String businessStatus = activeBusinessStatus(row.status());
+      if (businessStatus != null) {
+        statusCounts.merge(businessStatus, 1, Integer::sum);
+      }
     }
     SalaryRepository.SalaryEmployeePageResult pageResult = salaryRepository.employeeSalaryPage(
         user.tenantId(), targetMonth, businessScope.brandId(), targetStoreId, statusFilter, keywordFilter,
@@ -133,6 +139,19 @@ public class SalaryQueryService {
       throw new BusinessException("BAD_PAGE_SIZE", "每页数量必须在1到100之间", HttpStatus.BAD_REQUEST);
     }
     return size;
+  }
+
+  static String activeBusinessStatus(String workflowStatus) {
+    String normalized = workflowStatus == null
+        ? "PENDING_GENERATION"
+        : workflowStatus.trim().toUpperCase(java.util.Locale.ROOT);
+    return switch (normalized) {
+      case "", "PENDING_GENERATION" -> "PENDING_GENERATION";
+      case "DRAFT", "REJECTED", "SUBMITTED", "PENDING_REVIEW" -> "PENDING_REVIEW";
+      case "APPROVED" -> "PENDING_PAYMENT";
+      case "PAID", "LOCKED" -> null;
+      default -> null;
+    };
   }
 
   public List<SalaryAvailableMonth> availableMonths(AuthUser user, String storeId) {

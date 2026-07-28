@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
-import { Check, ChevronDown, Download, Eye, RotateCcw, UserPlus } from 'lucide-vue-next'
+import { Check, ChevronDown, Download, Eye, Filter, RotateCcw, UserPlus } from 'lucide-vue-next'
 import {
   approveSalaryRecord, assignSalaryEmployee, getSalaryAssignmentCandidates, getSalaryBusinessMetrics,
   saveSalaryAttendance, saveSalaryRecord,
@@ -35,10 +35,10 @@ const emit = defineEmits<{
 
 const auth = useAuthStore()
 const STATUS_OPTIONS = [
-  { value: '', label: '全部状态' }, { value: 'PENDING_GENERATION', label: '待生成' },
-  { value: 'DRAFT', label: '草稿' }, { value: 'SUBMITTED', label: '待审核' },
-  { value: 'APPROVED', label: '已审核' }, { value: 'REJECTED', label: '已驳回' },
-  { value: 'PAID', label: '已发放' }, { value: 'LOCKED', label: '已锁定' },
+  { value: 'ACTIVE', label: '全部' },
+  { value: 'PENDING_GENERATION', label: '待生成' },
+  { value: 'PENDING_REVIEW', label: '待审核' },
+  { value: 'PENDING_PAYMENT', label: '待发放' },
 ]
 
 const page = useSalaryPage()
@@ -48,7 +48,8 @@ const businessMetricsScopeKey = ref('')
 const businessMetricsLoading = ref(false)
 const businessMetricsError = ref('')
 const selectedRowKey = ref('')
-const checkedIds = ref(new Set<string>())
+const selectedApprovalRecordIds = ref(new Set<string>())
+const selectedGenerationEmployeeIds = ref(new Set<string>())
 const batchApprovalRecords = ref<SalaryRecord[]>([])
 const batchApprovalOpen = ref(false)
 const batchApproving = ref(false)
@@ -63,6 +64,9 @@ const salaryDetailDirty = ref(false)
 const detailSavingKey = ref('')
 const detailError = ref('')
 const salaryDiscardOpen = ref(false)
+const filterMenuOpen = ref(false)
+const filterMenuRoot = ref<HTMLElement | null>(null)
+const filterButton = ref<HTMLButtonElement | null>(null)
 const batchApprovalError = ref('')
 let pendingSalaryDiscardAction: (() => void) | null = null
 let pendingSalaryDiscardCancel: (() => void) | null = null
@@ -83,13 +87,17 @@ const workflow = useSalaryWorkflow({
     && context.month === page.selectedMonth.value
     && !page.loading.value
     && !initialScopeBlocked.value
-    && page.accessibleStores.value.some((store) => store.id === context.storeId),
+    && (
+      context.storeId === 'all'
+        ? page.effectiveStoreId.value === 'all' && page.accessibleStores.value.length > 0
+        : page.accessibleStores.value.some((store) => store.id === context.storeId)
+    ),
   loadPage: async () => reloadSalaryData(),
   onDeleted: (record) => {
     if (selectedRowKey.value === rowKey(record)) selectedRowKey.value = ''
-    const nextCheckedIds = new Set(checkedIds.value)
+    const nextCheckedIds = new Set(selectedApprovalRecordIds.value)
     nextCheckedIds.delete(record.id)
-    checkedIds.value = nextCheckedIds
+    selectedApprovalRecordIds.value = nextCheckedIds
     removeVisibleRecord(record)
   },
 })
@@ -169,13 +177,16 @@ const scopeActionGuidance = computed(() => {
   if (!page.canEdit.value) return ''
   if (!page.hasValidMonth.value) return '请选择有效月份后再处理工资。'
   if (!page.effectiveStoreId.value || page.effectiveStoreId.value === 'all') {
-    return '顶部添加人员和批量生成需先选择具体门店；也可在员工明细中按其所属门店进入生成预览。'
+    return page.effectiveStoreId.value === 'all'
+      ? '添加人员需先选择具体门店；工资可按全部授权门店统一预览并选择员工生成。'
+      : '当前没有可用的授权门店。'
   }
   if (!page.isEffectiveStoreActive.value) return '当前门店已停用，不能继续添加人员、生成或修改工资。'
   return ''
 })
 const previewStoreName = computed(() => {
   const storeId = workflow.previewContext.value?.storeId
+  if (storeId === 'all') return '全部授权门店'
   return storeId ? page.storeMap.value.get(storeId)?.name || storeId : page.selectedStoreName.value
 })
 const selectedDetailSaving = computed(() => Boolean(
@@ -202,6 +213,8 @@ const salaryStatusModel = computed({
     page.statusFilter.value = value
   }),
 })
+const activeSalaryStatusLabel = computed(() =>
+  STATUS_OPTIONS.find((option) => option.value === page.statusFilter.value)?.label || '全部')
 const salaryKeywordModel = computed({
   get: () => page.keyword.value,
   set: (value: string) => requestSalaryDiscard(() => {
@@ -209,6 +222,17 @@ const salaryKeywordModel = computed({
     page.keyword.value = value
   }),
 })
+const generationSelectionModel = computed({
+  get: () => [...selectedGenerationEmployeeIds.value],
+  set: (values: string[]) => {
+    selectedGenerationEmployeeIds.value = new Set(values
+      .map((value) => String(value || '').trim())
+      .filter(Boolean))
+  },
+})
+const generationScopeLabel = computed(() => workflow.previewContext.value?.storeId === 'all'
+  ? '全部授权门店'
+  : previewStoreName.value)
 
 function clearInteractionFeedback() {
   actionError.value = ''
@@ -253,6 +277,66 @@ function discardSalaryChanges() {
   action?.()
 }
 
+function filterMenuItems() {
+  return Array.from(filterMenuRoot.value
+    ?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') || [])
+}
+
+async function openFilterMenu() {
+  if (filterMenuOpen.value) return
+  filterMenuOpen.value = true
+  await nextTick()
+  const items = filterMenuItems()
+  const activeIndex = STATUS_OPTIONS.findIndex(
+    (option) => option.value === page.statusFilter.value)
+  items[Math.max(0, activeIndex)]?.focus()
+}
+
+function closeFilterMenu(returnFocus = false) {
+  filterMenuOpen.value = false
+  if (returnFocus) void nextTick(() => filterButton.value?.focus())
+}
+
+function toggleFilterMenu() {
+  if (filterMenuOpen.value) {
+    closeFilterMenu()
+    return
+  }
+  void openFilterMenu()
+}
+
+function selectSalaryStatus(value: string) {
+  const changed = value !== page.statusFilter.value
+  closeFilterMenu(true)
+  if (changed) salaryStatusModel.value = value
+}
+
+function closeFilterMenuOnOutsideClick(event: PointerEvent) {
+  if (!filterMenuOpen.value) return
+  const target = event.target
+  if (target instanceof Node && !filterMenuRoot.value?.contains(target)) {
+    filterMenuOpen.value = false
+  }
+}
+
+function navigateFilterMenu(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeFilterMenu(true)
+    return
+  }
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+  const items = filterMenuItems()
+  if (!items.length) return
+  event.preventDefault()
+  const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement)
+  let nextIndex = 0
+  if (event.key === 'End') nextIndex = items.length - 1
+  else if (event.key === 'ArrowUp') nextIndex = currentIndex <= 0 ? items.length - 1 : currentIndex - 1
+  else if (event.key === 'ArrowDown') nextIndex = currentIndex < 0 || currentIndex === items.length - 1 ? 0 : currentIndex + 1
+  items[nextIndex]?.focus()
+}
+
 function clearSalaryFilters() {
   if (!page.hasActiveListFilters.value) {
     reportAppError('当前没有可清除的筛选条件。', { title: '无需清除筛选' })
@@ -260,9 +344,10 @@ function clearSalaryFilters() {
   }
   requestSalaryDiscard(() => {
     clearInteractionFeedback()
-    checkedIds.value = new Set()
+    selectedApprovalRecordIds.value = new Set()
+    selectedGenerationEmployeeIds.value = new Set()
     void (async () => {
-      await page.setListFiltersWithoutReload('', '')
+      await page.setListFiltersWithoutReload('ACTIVE', '')
       await loadSalaryPage(1)
     })()
   })
@@ -380,15 +465,23 @@ function salaryScopeActionError(actionLabel: '添加人员' | '生成本月工�
   if (initialScopeBlocked.value) {
     return `当前门店已停用或不在工资权限范围内，不能${actionLabel}。`
   }
-  if (!page.effectiveStoreId.value || page.effectiveStoreId.value === 'all') {
-    return `请先选择具体门店，再${actionLabel}。`
+  if (!page.effectiveStoreId.value) {
+    return `当前没有可${actionLabel}的授权门店。`
   }
-  if (!page.isEffectiveStoreActive.value) return `当前门店已停用，不能${actionLabel}。`
+  if (actionLabel === '添加人员' && page.effectiveStoreId.value === 'all') {
+    return '请先选择具体门店，再添加人员。'
+  }
+  if (page.effectiveStoreId.value !== 'all' && !page.isEffectiveStoreActive.value) {
+    return `当前门店已停用，不能${actionLabel}。`
+  }
+  if (page.effectiveStoreId.value === 'all' && !page.accessibleStores.value.length) {
+    return `当前没有可${actionLabel}的授权门店。`
+  }
   if (page.loading.value) return '工资数据正在加载，请稍候再试。'
   return ''
 }
 
-async function previewGeneration() {
+async function previewGeneration(employeeIds?: string[]) {
   actionError.value = ''
   detailError.value = ''
   const scopeError = salaryScopeActionError('生成本月工资')
@@ -396,7 +489,26 @@ async function previewGeneration() {
     reportAppError(scopeError, { title: '无法生成本月工资' })
     return
   }
-  await workflow.doPreview()
+  const requestedEmployeeIds = employeeIds === undefined
+    ? undefined
+    : Array.from(new Set(employeeIds.map((id) => String(id || '').trim()).filter(Boolean)))
+  if (requestedEmployeeIds !== undefined && !requestedEmployeeIds.length) {
+    reportAppError('请先选择需要生成工资的员工。', { title: '无法生成所选工资' })
+    return
+  }
+  const report = await workflow.doPreview(requestedEmployeeIds)
+  if (!report) return
+  const candidateIds = Array.from(new Set((report.candidates || [])
+    .map((candidate) => String(candidate.employeeId || '').trim())
+    .filter(Boolean)))
+  const availableIds = new Set(candidateIds)
+  selectedGenerationEmployeeIds.value = new Set(requestedEmployeeIds === undefined
+    ? candidateIds
+    : requestedEmployeeIds.filter((employeeId) => availableIds.has(employeeId)))
+}
+
+async function previewSelectedGeneration() {
+  await previewGeneration([...selectedGenerationEmployeeIds.value])
 }
 
 async function previewEmployeeGeneration(record: SalaryRecord) {
@@ -415,14 +527,40 @@ async function previewEmployeeGeneration(record: SalaryRecord) {
     detailError.value = '该员工所属门店已停用或不在当前工资权限范围内，无法生成工资。'
     return
   }
-  await workflow.doPreview({
+  const report = await workflow.doPreview(undefined, {
     storeId,
     month: page.selectedMonth.value,
   })
+  if (!report) return
+  const previewCandidates = (report.candidates || []).length || report.generated <= 0 || !record.employeeId
+    ? report.candidates || []
+    : [{
+      employeeId: record.employeeId,
+      employeeName: record.employeeName,
+      position: record.position,
+      storeId,
+      storeName: record.storeName,
+    }]
+  if (previewCandidates !== report.candidates) {
+    workflow.previewData.value = { ...report, candidates: previewCandidates }
+  }
+  selectedGenerationEmployeeIds.value = new Set(previewCandidates
+    .map((candidate) => String(candidate.employeeId || '').trim())
+    .filter(Boolean))
 }
 
 async function confirmGeneration() {
-  await workflow.doGenerate()
+  const generated = await workflow.doGenerate([...selectedGenerationEmployeeIds.value])
+  if (generated) {
+    selectedGenerationEmployeeIds.value = new Set()
+    return
+  }
+  const availableIds = new Set((workflow.previewData.value?.candidates || [])
+    .map((candidate) => String(candidate.employeeId || '').trim())
+    .filter(Boolean))
+  selectedGenerationEmployeeIds.value = new Set(
+    [...selectedGenerationEmployeeIds.value].filter((employeeId) => availableIds.has(employeeId)),
+  )
 }
 
 async function openAddEmployee() {
@@ -491,7 +629,7 @@ async function confirmAddEmployee(employeeId: string) {
       employeeId,
     })
     addEmployeeOpen.value = false
-    await page.setListFiltersWithoutReload('', '')
+    await page.setListFiltersWithoutReload('ACTIVE', '')
     page.successMessage.value = `已将 ${record.employeeName} 添加到当月工资名单，岗位保持为${record.position || '原岗位'}`
     const loaded = await reloadSalaryData(1)
     selectedRowKey.value = rowKey(record)
@@ -527,7 +665,7 @@ async function confirmCreateEmployee(payload: EmployeeUpsert) {
     addEmployeeRequestController = null
     addEmployeeLoading.value = false
     addEmployeeOpen.value = false
-    await page.setListFiltersWithoutReload('', '')
+    await page.setListFiltersWithoutReload('ACTIVE', '')
     selectedRowKey.value = `employee:${created.id}`
     page.successMessage.value = `已新建 ${created.name} 的员工档案，并加入 ${month} 工资名单`
     const loaded = await reloadSalaryData(1)
@@ -553,14 +691,14 @@ function isReviewableRecord(record: SalaryRecord) {
 async function batchApprove() {
   actionError.value = ''
   batchApprovalError.value = ''
-  const selected = checkedIds.value
+  const selected = selectedApprovalRecordIds.value
   if (!selected.size) {
     reportAppError('请先选择待审核工资，再进行批量审核。', { title: '无法批量审核' })
     return
   }
   const records = page.filteredRows.value.filter((row) => selected.has(row.id) && isReviewableRecord(row))
   if (!records.length) {
-    checkedIds.value = new Set()
+    selectedApprovalRecordIds.value = new Set()
     reportAppError('所选工资已不处于待审核状态，请刷新后重新选择。', { title: '无法批量审核' })
     return
   }
@@ -599,7 +737,7 @@ async function confirmBatchApproval() {
   }
 
   const failedIds = new Set(failures.map(({ record }) => record.id))
-  checkedIds.value = failedIds
+  selectedApprovalRecordIds.value = failedIds
   batchApprovalOpen.value = false
   batchApprovalRecords.value = []
   batchApprovalError.value = ''
@@ -626,17 +764,32 @@ function selectRecord(record: SalaryRecord) {
   })
 }
 function toggleRow(record: SalaryRecord, checked: boolean) {
-  if (!isReviewableRecord(record) || !page.canReview.value) return
-  const next = new Set(checkedIds.value)
-  if (checked) next.add(record.id); else next.delete(record.id)
-  checkedIds.value = next
+  if (record.status === 'PENDING_GENERATION' && page.canEdit.value && record.employeeId) {
+    const next = new Set(selectedGenerationEmployeeIds.value)
+    if (checked) next.add(record.employeeId); else next.delete(record.employeeId)
+    selectedGenerationEmployeeIds.value = next
+    return
+  }
+  if (page.canReview.value && record.id && ['SUBMITTED', 'PENDING_REVIEW'].includes(record.status || '')) {
+    const next = new Set(selectedApprovalRecordIds.value)
+    if (checked) next.add(record.id); else next.delete(record.id)
+    selectedApprovalRecordIds.value = next
+  }
 }
 function toggleAll(checked: boolean) {
-  const next = new Set(checkedIds.value)
-  for (const row of page.filteredRows.value.filter(isReviewableRecord)) {
-    checked ? next.add(row.id) : next.delete(row.id)
+  const nextApprovalIds = new Set(selectedApprovalRecordIds.value)
+  const nextGenerationIds = new Set(selectedGenerationEmployeeIds.value)
+  for (const row of page.filteredRows.value) {
+    if (page.canEdit.value && row.status === 'PENDING_GENERATION' && row.employeeId) {
+      if (checked) nextGenerationIds.add(row.employeeId)
+      else nextGenerationIds.delete(row.employeeId)
+    } else if (page.canReview.value && row.id && ['SUBMITTED', 'PENDING_REVIEW'].includes(row.status || '')) {
+      if (checked) nextApprovalIds.add(row.id)
+      else nextApprovalIds.delete(row.id)
+    }
   }
-  checkedIds.value = next
+  selectedApprovalRecordIds.value = nextApprovalIds
+  selectedGenerationEmployeeIds.value = nextGenerationIds
 }
 
 async function markPaid(record: SalaryRecord) {
@@ -752,11 +905,14 @@ function removeVisibleRecord(record: SalaryRecord) {
 watch(page.filteredRows, (rows) => {
   if (!rows.some((row) => rowKey(row) === selectedRowKey.value)) selectedRowKey.value = rows[0] ? rowKey(rows[0]) : ''
   const visibleReviewableIds = new Set(rows.filter(isReviewableRecord).map((row) => row.id))
-  const nextCheckedIds = new Set([...checkedIds.value].filter((id) => visibleReviewableIds.has(id)))
-  if (nextCheckedIds.size !== checkedIds.value.size) checkedIds.value = nextCheckedIds
+  const nextApprovalIds = new Set([...selectedApprovalRecordIds.value].filter((id) => visibleReviewableIds.has(id)))
+  if (nextApprovalIds.size !== selectedApprovalRecordIds.value.size) {
+    selectedApprovalRecordIds.value = nextApprovalIds
+  }
 }, { immediate: true })
 watch([page.effectiveStoreId, page.selectedMonth, page.effectiveBrandId], () => {
-  checkedIds.value = new Set()
+  selectedApprovalRecordIds.value = new Set()
+  selectedGenerationEmployeeIds.value = new Set()
   actionError.value = ''
   detailError.value = ''
   workflow.closePreview()
@@ -767,7 +923,8 @@ watch([page.effectiveStoreId, page.selectedMonth, page.effectiveBrandId], () => 
   void loadBusinessMetrics()
 })
 watch([page.statusFilter, page.keyword, page.page], () => {
-  checkedIds.value = new Set()
+  selectedApprovalRecordIds.value = new Set()
+  selectedGenerationEmployeeIds.value = new Set()
   if (!batchApproving.value) cancelBatchApproval()
 })
 watch([page.loading, businessMetricsLoading], ([pageLoading, metricsLoading]) => {
@@ -779,12 +936,17 @@ watch(salaryDetailDirty, (dirty) => emit('dirtyChange', dirty), { immediate: tru
 watch(() => [props.initialStoreId, props.initialMonth], applyInitialScope)
 
 onMounted(async () => {
+  document.addEventListener('pointerdown', closeFilterMenuOnOutsideClick)
   await page.loadStores()
   page.applyRouteDefaults()
   applyInitialScope()
   page.initializing.value = false
   if (initialScopeBlocked.value) return
   await reloadSalaryData(1)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', closeFilterMenuOnOutsideClick)
 })
 
 onBeforeRouteLeave(() => {
@@ -835,7 +997,6 @@ onBeforeUnmount(() => {
           aria-label="门店"
           @update:model-value="salaryStoreModel = String($event)"
         />
-        <select v-model="salaryStatusModel" aria-label="工资状态"><option v-for="option in STATUS_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option></select>
         <button
           v-if="page.canEdit.value"
           class="add-person-button"
@@ -847,9 +1008,9 @@ onBeforeUnmount(() => {
           v-if="page.canEdit.value"
           class="primary-button"
           :disabled="workflow.previewLoading.value || salaryOperationBusy"
-          title="生成当前门店本月工资"
-          @click="previewGeneration"
-        ><Eye :size="16" />{{ workflow.previewLoading.value ? '正在准备预览…' : '生成本月工资' }}</button>
+          :title="page.effectiveStoreId.value === 'all' ? '预览全部授权门店本月可生成工资的员工' : ''"
+          @click="previewGeneration()"
+        ><Eye :size="16" />{{ workflow.previewLoading.value ? '正在准备预览…' : page.effectiveStoreId.value === 'all' ? '全部授权门店全选并生成' : '全选并生成' }}</button>
         <button v-if="page.canExport.value" class="export-button" :disabled="!page.hasValidMonth.value || page.loading.value || workflow.exporting.value" @click="workflow.doExport()"><Download :size="16" />{{ workflow.exporting.value ? '正在导出…' : '导出工资表' }}</button>
       </div>
     </header>
@@ -895,7 +1056,57 @@ onBeforeUnmount(() => {
     <div class="table-tools">
       <SearchInput v-model="salaryKeywordModel" class="salary-search" placeholder="搜索姓名、工号或岗位" aria-label="搜索工资记录" />
       <div>
-        <button v-if="page.canReview.value" class="batch-button" :disabled="salaryOperationBusy" @click="batchApprove"><Check :size="16" />批量审核<span v-if="checkedIds.size">（{{ checkedIds.size }}）</span></button>
+        <button
+          v-if="page.canEdit.value"
+          class="batch-button"
+          :disabled="salaryOperationBusy"
+          @click="previewSelectedGeneration"
+        ><Eye :size="16" />生成所选工资<span v-if="selectedGenerationEmployeeIds.size">（{{ selectedGenerationEmployeeIds.size }}）</span></button>
+        <button v-if="page.canReview.value" class="batch-button" :disabled="salaryOperationBusy" @click="batchApprove"><Check :size="16" />批量审核<span v-if="selectedApprovalRecordIds.size">（{{ selectedApprovalRecordIds.size }}）</span></button>
+        <div ref="filterMenuRoot" class="salary-filter">
+          <button
+            ref="filterButton"
+            class="filter-button"
+            type="button"
+            aria-label="筛选"
+            aria-haspopup="menu"
+            :aria-expanded="filterMenuOpen"
+            aria-controls="salary-status-filter-menu"
+            @click="toggleFilterMenu"
+            @keydown.down.stop.prevent="openFilterMenu()"
+            @keydown.esc.stop.prevent="closeFilterMenu(true)"
+          >
+            <Filter :size="16" />
+            <span>筛选</span>
+            <span v-if="page.statusFilter.value !== 'ACTIVE'" class="filter-button__value">
+              {{ activeSalaryStatusLabel }}
+            </span>
+            <ChevronDown :size="15" :class="{ 'is-open': filterMenuOpen }" />
+          </button>
+          <div
+            v-if="filterMenuOpen"
+            id="salary-status-filter-menu"
+            class="salary-filter-menu"
+            role="menu"
+            aria-label="工资状态筛选"
+            aria-orientation="vertical"
+            @keydown="navigateFilterMenu"
+          >
+            <div class="salary-filter-menu__title">工资状态</div>
+            <button
+              v-for="option in STATUS_OPTIONS"
+              :key="option.value"
+              type="button"
+              role="menuitemradio"
+              :aria-checked="page.statusFilter.value === option.value"
+              :class="{ active: page.statusFilter.value === option.value }"
+              @click="selectSalaryStatus(option.value)"
+            >
+              <span>{{ option.label }}</span>
+              <Check v-if="page.statusFilter.value === option.value" :size="16" />
+            </button>
+          </div>
+        </div>
         <button class="filter-button" :disabled="salaryOperationBusy" title="清除工资状态和搜索关键词" @click="clearSalaryFilters"><RotateCcw :size="16" />清除筛选</button>
       </div>
     </div>
@@ -904,8 +1115,11 @@ onBeforeUnmount(() => {
       <SalaryTable
         :rows="page.filteredRows.value" :total="page.total.value" :page="page.page.value"
         :total-pages="page.totalPages.value" :loading="page.loading.value"
-        :selected-row-key="selectedRowKey" :checked-ids="checkedIds"
-        :can-edit="page.canEdit.value" :can-review="page.canReview.value" :deleting-id="workflow.deletingId.value"
+        :selected-row-key="selectedRowKey"
+        :approval-checked-ids="selectedApprovalRecordIds"
+        :generation-checked-employee-ids="selectedGenerationEmployeeIds"
+        :can-edit="page.canEdit.value" :can-review="page.canReview.value"
+        :deleting-id="workflow.deletingId.value"
         @page-change="requestSalaryPage" @select="selectRecord" @delete="workflow.doDelete" @toggle-row="toggleRow" @toggle-all="toggleAll"
       />
       <SalaryDetailPanel
@@ -923,7 +1137,10 @@ onBeforeUnmount(() => {
       :show="workflow.showPreview.value" :preview-data="workflow.previewData.value"
       :preview-loading="workflow.previewLoading.value" :preview-error="workflow.previewError.value"
       :generating="workflow.generating.value" :can-generate="workflow.canConfirmGeneration.value"
+      :selected-employee-ids="generationSelectionModel"
+      :scope-label="generationScopeLabel"
       :store-name="previewStoreName" :month="workflow.previewContext.value?.month || page.selectedMonth.value"
+      @update:selected-employee-ids="generationSelectionModel = $event"
       @close="workflow.closePreview" @retry="workflow.doPreview" @generate="confirmGeneration"
     />
 
@@ -1003,7 +1220,18 @@ onBeforeUnmount(() => {
 .business-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
 .business-metrics article { min-height: 92px; padding: 14px 18px; border: 1px solid #dfe8e6; border-radius: 6px; background: #fff; }.business-metrics > article > span { color: #526765; font-size: 14px; }.business-metrics b { display: block; margin-top: 8px; font-size: 25px; line-height: 1; font-variant-numeric: tabular-nums; }.business-metrics small { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 9px; color: #6f817f; font-size: 12px; }.business-metrics small span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.business-metrics small button,.aux-warning button,.page-error button { flex: none; padding: 0; border: 0; background: transparent; color: #27756e; font-size: 12px; font-weight: 600; cursor: pointer; }
 .rule-bar { border: 1px solid #d9e7e5; border-radius: 5px; background: #f9fbfb; }.rule-bar summary { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 40px; padding: 0 14px; color: #526765; cursor: pointer; list-style: none; }.rule-bar summary::-webkit-details-marker { display: none; }.rule-bar summary > span { display: inline-flex; align-items: center; gap: 10px; }.rule-bar summary b { color: #276b65; font-size: 14px; }.rule-bar summary span:last-child { color: #27756e; font-size: 13px; }.rule-bar[open] summary svg { transform: rotate(180deg); }.rule-bar > div { padding: 10px 14px; border-top: 1px solid #e2ebe9; color: #526765; font-size: 13px; }
-.table-tools { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 2px; }.table-tools > div { display: flex; gap: 8px; }.table-tools > .salary-search { width: 300px; flex: none; }.filter-button { border: 1px solid #d8e4e2; background: #fff; color: #526765; }
+.table-tools { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 2px; }.table-tools > div { display: flex; gap: 8px; }.table-tools > .salary-search { width: 300px; flex: none; }
+.salary-filter { position: relative; display: inline-flex; }
+.filter-button { border: 1px solid #d8e4e2; background: #fff; color: #526765; }
+.filter-button[aria-expanded='true'] { border-color: #4f948e; color: #276b65; box-shadow: 0 0 0 2px rgb(79 148 142 / 12%); }
+.filter-button__value { padding: 2px 6px; border-radius: 999px; background: #eaf5f3; color: #276b65; font-size: 11px; }
+.filter-button svg:last-child { transition: transform .16s ease; }
+.filter-button svg:last-child.is-open { transform: rotate(180deg); }
+.salary-filter-menu { position: absolute; z-index: 40; top: calc(100% + 7px); right: 0; display: grid; width: 180px; max-width: calc(100vw - 24px); max-height: min(320px, 48vh); overflow-y: auto; padding: 7px; border: 1px solid var(--ds-line, #d8e4e2); border-radius: 7px; background: #fff; box-shadow: 0 14px 28px rgb(32 59 56 / 16%); }
+.salary-filter-menu__title { padding: 7px 9px 6px; color: #7a8d8a; font-size: 12px; font-weight: 700; }
+.salary-filter-menu button { justify-content: space-between; width: 100%; min-height: 36px; padding: 0 9px; border: 0; border-radius: 5px; background: transparent; color: #405654; font-size: 13px; font-weight: 600; }
+.salary-filter-menu button:hover,.salary-filter-menu button:focus-visible { background: #f1f7f6; color: #276b65; outline: none; }
+.salary-filter-menu button.active { background: #eaf5f3; color: #276b65; }
 .salary-workspace { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 18px; align-items: start; min-width: 0; }
 .scope-guidance { padding: 9px 12px; border: 1px solid #d9e7e5; border-radius: 5px; background: #f7fbfa; color: #526765; font-size: 13px; line-height: 1.55; }
 .page-error,.aux-warning { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 12px; border-radius: 4px; font-size: 13px; }.page-error { border: 1px solid #efc9c2; background: #fff5f3; color: #a93f31; }.aux-warning { border: 1px solid #eadfbd; background: #fffaf0; color: #7b6533; }.inline-error,.success-box { padding: 9px 12px; border-radius: 4px; font-size: 13px; }.inline-error { border-left: 3px solid #d8583f; background: #fff2ef; color: #b94736; }.success-box { border-left: 3px solid #276b65; background: #eef7f5; color: #245f59; }

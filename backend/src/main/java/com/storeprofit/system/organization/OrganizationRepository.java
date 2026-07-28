@@ -1,11 +1,15 @@
 package com.storeprofit.system.organization;
 
 import com.storeprofit.system.platform.authorization.DataScope;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -21,6 +25,8 @@ import org.springframework.stereotype.Repository;
 public class OrganizationRepository {
   private static final List<String> STORE_LINK_COLUMNS = List.of("store_id", "return_store_id");
   private static final List<String> STORE_DELETE_LINK_EXCLUDED_TABLES = List.of("store_branch", "operation_log");
+  private static final DateTimeFormatter DATE_TIME_FORMAT =
+      DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
   private final JdbcTemplate jdbcTemplate;
 
@@ -70,6 +76,69 @@ public class OrganizationRepository {
     appendStoreScope(sql, params, "s.id", dataScope);
     sql.append(" order by b.sort_order, s.code, s.id");
     return jdbcTemplate.query(sql.toString(), this::mapStore, params.toArray());
+  }
+
+  public InventoryReductionSummary inventoryReductionSummary(
+      long tenantId,
+      String storeId,
+      LocalDateTime start,
+      LocalDateTime end
+  ) {
+    return jdbcTemplate.queryForObject("""
+        select count(*) as movement_count, count(distinct m.item_id) as item_count
+        from store_inventory_movement m
+        where m.tenant_id = ? and m.store_id = ?
+          and m.quantity_delta < 0
+          and m.created_at >= ? and m.created_at < ?
+        """, (rs, rowNum) -> new InventoryReductionSummary(
+            rs.getLong("movement_count"),
+            rs.getInt("item_count")
+        ), tenantId, storeId, start, end);
+  }
+
+  public List<StoreInventoryReductionResponse.ReductionRow> inventoryReductions(
+      long tenantId,
+      String storeId,
+      LocalDateTime start,
+      LocalDateTime end,
+      int limit
+  ) {
+    return jdbcTemplate.query("""
+        select m.id, m.item_id, i.code as item_code, i.name as item_name,
+               coalesce(si.unit, i.stock_unit, i.unit, '件') as unit,
+               abs(m.quantity_delta) as quantity_reduced,
+               coalesce(si.quantity, 0) as current_quantity,
+               m.source_type, m.source_id, m.note,
+               u.display_name as operator_name, m.created_at
+        from store_inventory_movement m
+        join warehouse_item i
+          on i.tenant_id = m.tenant_id and i.id = m.item_id
+        left join store_inventory si
+          on si.tenant_id = m.tenant_id
+         and si.store_id = m.store_id
+         and si.item_id = m.item_id
+        left join auth_user u
+          on u.tenant_id = m.tenant_id and u.id = m.created_by
+        where m.tenant_id = ? and m.store_id = ?
+          and m.quantity_delta < 0
+          and m.created_at >= ? and m.created_at < ?
+        order by m.created_at desc, m.id desc
+        limit ?
+        """, (rs, rowNum) -> new StoreInventoryReductionResponse.ReductionRow(
+            rs.getLong("id"),
+            rs.getLong("item_id"),
+            rs.getString("item_code"),
+            rs.getString("item_name"),
+            rs.getString("unit"),
+            reducedQuantity(rs.getBigDecimal("quantity_reduced")),
+            storeQuantity(rs.getBigDecimal("current_quantity")),
+            rs.getString("source_type"),
+            inventoryReductionSourceLabel(rs.getString("source_type")),
+            rs.getString("source_id"),
+            rs.getString("note"),
+            rs.getString("operator_name"),
+            formatDateTime(rs.getObject("created_at", LocalDateTime.class))
+        ), tenantId, storeId, start, end, limit);
   }
 
   public long ensureBrand(long tenantId, String code, String name, String color, int sortOrder) {
@@ -410,6 +479,31 @@ public class OrganizationRepository {
     return value == null || value.isBlank() ? null : value;
   }
 
+  private BigDecimal reducedQuantity(BigDecimal value) {
+    return storeQuantity(value);
+  }
+
+  private BigDecimal storeQuantity(BigDecimal value) {
+    return (value == null ? BigDecimal.ZERO : value).setScale(4, RoundingMode.HALF_UP);
+  }
+
+  private String inventoryReductionSourceLabel(String sourceType) {
+    if (sourceType == null || sourceType.isBlank()) {
+      return "库存调整";
+    }
+    return switch (sourceType.trim().toUpperCase(Locale.ROOT)) {
+      case "DAILY_LOSS" -> "每日报损";
+      case "STORE_RETURN" -> "配送退货";
+      case "INVENTORY_CHECK" -> "库存盘点";
+      case "MANUAL_ADJUSTMENT" -> "手工调整";
+      default -> "其他库存减少";
+    };
+  }
+
+  private String formatDateTime(LocalDateTime value) {
+    return value == null ? null : value.format(DATE_TIME_FORMAT);
+  }
+
   private List<StoreLinkColumn> storeLinkColumns(DatabaseMetaData metadata, String catalog, String schema)
       throws SQLException {
     List<StoreLinkColumn> columns = new ArrayList<>();
@@ -542,6 +636,9 @@ public class OrganizationRepository {
   }
 
   private record StoreLinkColumn(String tableName, String columnName, boolean tenantScoped) {
+  }
+
+  public record InventoryReductionSummary(long movementCount, int itemCount) {
   }
 
   public record ManagerReference(

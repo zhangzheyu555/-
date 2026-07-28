@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ExternalLink, X } from 'lucide-vue-next'
 import PageHeader from '../components/common/PageHeader.vue'
 import SearchableSingleSelect from '../components/common/SearchableSingleSelect.vue'
@@ -30,6 +30,9 @@ const auth = useAuthStore()
 // Personal permission overrides never elevate non-BOSS/SUPERVISOR users to credential management.
 const canManage = computed(() => auth.hasPermission('platform.manage')
   && ['BOSS', 'SUPERVISOR'].includes(auth.role))
+const canExport = computed(() => auth.hasPermission('finance.export')
+  && ['BOSS', 'FINANCE'].includes(auth.role))
+const isFinanceViewer = computed(() => auth.role === 'FINANCE')
 
 /* ---------------- 品牌切换（每品牌独立一套企迈凭证与数据） ---------------- */
 const BRANDS = [
@@ -96,6 +99,8 @@ function switchBrand(k: BrandKey) {
   income.value = null
   incomeError.value = ''
   itemShopFilter.value = ''
+  businessDate.value = ''
+  resetBackfillState()
   activeTab.value = 'turnover'
   void loadLocalPlatformState()
 }
@@ -181,6 +186,7 @@ interface TurnoverSummary {
 
 interface QmaiRevenueRow {
   storeId: string
+  storeName?: string
   orderCount: number
   revenue: number
   refund: number
@@ -189,6 +195,7 @@ interface QmaiRevenueRow {
 
 interface QmaiProductRow {
   storeId: string
+  storeName?: string
   itemName: string
   categoryName: string
   quantity: number
@@ -269,15 +276,191 @@ const incomePct = (c: IncomeChannel) =>
     ? ((c.revenue / income.value.totalRevenue) * 100).toFixed(1) + '%'
     : '—'
 
-const now = new Date()
-const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+function formatShanghaiDate(date: Date) {
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date)
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((entry) => entry.type === type)?.value || ''
+  return `${part('year')}-${part('month')}-${part('day')}`
+}
+
+const today = formatShanghaiDate(new Date())
+const latestClosedBusinessDate = formatShanghaiDate(new Date(Date.now() - 24 * 60 * 60 * 1000))
+const currentMonth = today.slice(0, 7)
 // 选中的月份，格式 YYYY-MM，默认当前月
 const month = ref(currentMonth)
+// 单日历史筛选仅用于营业额、商品销售及其导出；留空时查看整月。
+const businessDate = ref('')
 const monthLabel = computed(() => {
   const [y, m] = month.value.split('-')
   return `${y}年${Number(m)}月`
 })
+const turnoverRangeLabel = computed(() => businessDate.value || monthLabel.value)
 const isCurrentMonthOrLater = computed(() => month.value >= currentMonth)
+
+interface QmaiBackfillBatch {
+  id: number | string
+  status: string
+  targetMonth: string
+  totalTasks?: number
+  completedTasks?: number
+  failedTasks?: number
+  totalDays?: number
+  processedDays?: number
+  failedDays?: number
+  dailyRows?: number
+  productRows?: number
+  errorSummary?: string | null
+  message?: string | null
+  createdAt?: string | null
+  startedAt?: string | null
+  finishedAt?: string | null
+}
+
+const backfillBatch = ref<QmaiBackfillBatch | null>(null)
+const backfillSubmitting = ref(false)
+const backfillError = ref('')
+let backfillRequestSerial = 0
+let backfillPollTimer: ReturnType<typeof setTimeout> | null = null
+
+const BACKFILL_RUNNING_STATUSES = new Set(['PENDING', 'QUEUED', 'RUNNING', 'PROCESSING'])
+const BACKFILL_SUCCESS_STATUSES = new Set(['SUCCESS', 'SUCCEEDED', 'COMPLETED'])
+const backfillRunning = computed(() =>
+  !!backfillBatch.value && BACKFILL_RUNNING_STATUSES.has(String(backfillBatch.value.status || '').toUpperCase()))
+const backfillBusy = computed(() => backfillSubmitting.value || backfillRunning.value)
+const backfillTotal = computed(() =>
+  Number(backfillBatch.value?.totalDays ?? backfillBatch.value?.totalTasks ?? 0))
+const backfillProcessed = computed(() =>
+  Number(backfillBatch.value?.processedDays ?? backfillBatch.value?.completedTasks ?? 0))
+const backfillFailed = computed(() =>
+  Number(backfillBatch.value?.failedDays ?? backfillBatch.value?.failedTasks ?? 0))
+const backfillUnitLabel = computed(() =>
+  backfillBatch.value?.totalDays === undefined ? '项' : '天')
+const backfillPercent = computed(() => {
+  if (!backfillTotal.value) return backfillRunning.value ? 0 : 100
+  return Math.min(100, Math.round((backfillProcessed.value / backfillTotal.value) * 100))
+})
+const backfillStatusLabel = computed(() => {
+  if (backfillSubmitting.value) return '正在创建补取任务'
+  const status = String(backfillBatch.value?.status || '').toUpperCase()
+  if (BACKFILL_RUNNING_STATUSES.has(status)) return '正在补取历史数据'
+  if (BACKFILL_SUCCESS_STATUSES.has(status)) return '历史数据补取完成'
+  if (['PARTIAL', 'PARTIAL_FAILED', 'PARTIAL_SUCCESS'].includes(status)) return '部分日期补取失败'
+  if (status === 'FAILED') return '历史数据补取失败'
+  return status ? '历史数据补取状态待确认' : ''
+})
+const backfillFailureMessage = computed(() => {
+  if (!backfillBatch.value || (!backfillFailed.value
+    && !['FAILED', 'PARTIAL', 'PARTIAL_FAILED'].includes(String(backfillBatch.value.status || '').toUpperCase()))) {
+    return ''
+  }
+  return backfillBatch.value.errorSummary || backfillBatch.value.message
+    || `有 ${backfillFailed.value} 天补取失败，请稍后重试。`
+})
+
+function isBackfillBatch(value: unknown): value is QmaiBackfillBatch {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+    && 'status' in value && 'targetMonth' in value
+}
+
+function stopBackfillPolling() {
+  if (backfillPollTimer) {
+    clearTimeout(backfillPollTimer)
+    backfillPollTimer = null
+  }
+}
+
+function resetBackfillState() {
+  stopBackfillPolling()
+  backfillRequestSerial += 1
+  backfillBatch.value = null
+  backfillSubmitting.value = false
+  backfillError.value = ''
+}
+
+function scheduleBackfillPoll(requestedBrand: BrandKey, requestedMonth: string) {
+  stopBackfillPolling()
+  backfillPollTimer = setTimeout(() => {
+    if (brand.value === requestedBrand && month.value === requestedMonth) {
+      void loadLatestBackfill(true)
+    }
+  }, 1500)
+}
+
+async function loadLatestBackfill(silent = false) {
+  const serial = ++backfillRequestSerial
+  const requestedBrand = brand.value
+  const requestedMonth = month.value
+  const wasRunning = backfillRunning.value
+  if (!silent) backfillError.value = ''
+  try {
+    const batch = await apiGet<QmaiBackfillBatch | null>(
+      `/api/qmai/sync/batches/latest?brand=${encodeURIComponent(requestedBrand)}&month=${encodeURIComponent(requestedMonth)}`,
+    )
+    if (serial !== backfillRequestSerial
+      || brand.value !== requestedBrand || month.value !== requestedMonth) return
+    backfillError.value = ''
+    backfillBatch.value = isBackfillBatch(batch) ? batch : null
+    if (backfillRunning.value) {
+      scheduleBackfillPoll(requestedBrand, requestedMonth)
+    } else if (wasRunning
+      && BACKFILL_SUCCESS_STATUSES.has(String(backfillBatch.value?.status || '').toUpperCase())) {
+      void loadTurnover()
+    }
+  } catch (e) {
+    if (serial === backfillRequestSerial
+      && brand.value === requestedBrand && month.value === requestedMonth) {
+      backfillError.value = e instanceof Error ? e.message : '读取历史补取进度失败。'
+      if (silent && backfillRunning.value) {
+        scheduleBackfillPoll(requestedBrand, requestedMonth)
+      }
+    }
+  }
+}
+
+async function startBackfill() {
+  if (!canManage.value || backfillBusy.value) return
+  stopBackfillPolling()
+  const serial = ++backfillRequestSerial
+  const requestedBrand = brand.value
+  const requestedMonth = month.value
+  const requestedBusinessDate = businessDate.value
+  backfillSubmitting.value = true
+  backfillBatch.value = null
+  backfillError.value = ''
+  try {
+    const dayQuery = requestedBusinessDate
+      ? `&businessDate=${encodeURIComponent(requestedBusinessDate)}`
+      : ''
+    const batch = await apiPost<QmaiBackfillBatch>(
+      `/api/qmai/sync/backfill?brand=${encodeURIComponent(requestedBrand)}&month=${encodeURIComponent(requestedMonth)}${dayQuery}`,
+      {},
+      { timeout: 60000 },
+    )
+    if (serial !== backfillRequestSerial
+      || brand.value !== requestedBrand || month.value !== requestedMonth) return
+    backfillBatch.value = isBackfillBatch(batch) ? batch : null
+    if (!backfillBatch.value) {
+      backfillError.value = '补取任务已提交，但没有收到批次进度，请稍后重新进入页面查看。'
+      return
+    }
+    if (backfillRunning.value) {
+      scheduleBackfillPoll(requestedBrand, requestedMonth)
+    } else if (BACKFILL_SUCCESS_STATUSES.has(String(backfillBatch.value.status || '').toUpperCase())) {
+      void loadTurnover()
+    }
+  } catch (e) {
+    if (serial === backfillRequestSerial) {
+      backfillError.value = e instanceof Error ? e.message : '提交历史数据补取任务失败。'
+    }
+  } finally {
+    if (serial === backfillRequestSerial) backfillSubmitting.value = false
+  }
+}
 
 const money = (n: number) =>
   '¥' + (Number(n) || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -322,7 +505,14 @@ const sortArrow = (key: SortKey) =>
 
 /* ---------------- 企迈商品销售（同一次读取的数据，切标签即看） ---------------- */
 const activeTab = ref<'turnover' | 'items' | 'usage' | 'pos'>('turnover')
-const qmaiRecipeEnabled = import.meta.env.VITE_QMAI_RECIPE_ENABLED === 'true'
+watch(isFinanceViewer, (financeOnly) => {
+  if (financeOnly && (activeTab.value === 'usage' || activeTab.value === 'pos')) {
+    activeTab.value = 'turnover'
+  }
+}, { immediate: true })
+const snapshotExportDenied = computed(() => !isConsoleBrand.value
+  && (activeTab.value === 'turnover' || activeTab.value === 'items')
+  && !canExport.value)
 
 /* ---------------- POS：企迈优惠券核销 ---------------- */
 const posLoading = ref(false)
@@ -528,10 +718,31 @@ interface RecipeUsageFruit {
   approximate: boolean
 }
 
+interface RecipeUsageMaterial {
+  materialName: string
+  grams: number
+}
+
+interface RecipeUsageMatchedProduct {
+  recipeName: string
+  cups: number
+}
+
+interface RecipeUsageUnmatchedProduct {
+  name: string
+  cups: number
+}
+
 interface RecipeUsageSnapshot {
   month: string
   matchedProductCount: number
-  calculation: { totalCups: number; fruits: RecipeUsageFruit[] }
+  matchedProducts: RecipeUsageMatchedProduct[]
+  unmatchedProducts: RecipeUsageUnmatchedProduct[]
+  calculation: {
+    totalCups: number
+    fruits: RecipeUsageFruit[]
+    otherMaterials: RecipeUsageMaterial[]
+  }
 }
 
 const recipeUsage = ref<RecipeUsageSnapshot | null>(null)
@@ -548,9 +759,13 @@ const currentRecipeUsageScopeKey = computed(() => recipeUsageKey(brand.value, mo
 const scopedRecipeUsage = computed(() =>
   recipeUsageScopeKey.value === currentRecipeUsageScopeKey.value ? recipeUsage.value : null,
 )
-const usageResult = computed(() => scopedRecipeUsage.value?.calculation ?? {
-  totalCups: 0,
-  fruits: [] as RecipeUsageFruit[],
+const usageResult = computed(() => {
+  const calculation = scopedRecipeUsage.value?.calculation
+  return {
+    totalCups: calculation?.totalCups ?? 0,
+    fruits: calculation?.fruits ?? [] as RecipeUsageFruit[],
+    otherMaterials: calculation?.otherMaterials ?? [] as RecipeUsageMaterial[],
+  }
 })
 
 async function loadRecipeUsage() {
@@ -592,7 +807,8 @@ function clearRecipeUsage() {
 
 function exportUsageExcel() {
   if (recipeUsageScopeKey.value !== currentRecipeUsageScopeKey.value
-    || !scopedRecipeUsage.value?.calculation.fruits.length) return
+    || (!scopedRecipeUsage.value?.calculation.fruits.length
+      && !scopedRecipeUsage.value?.calculation.otherMaterials.length)) return
   const requestedBrand = brand.value
   const requestedMonth = month.value
   void downloadServerCsv(
@@ -608,8 +824,11 @@ function shiftMonth(delta: number) {
   if (delta > 0 && next > currentMonth) {
     return // 不查未来月份
   }
+  businessDate.value = ''
   month.value = next
   clearRecipeUsage()
+  resetBackfillState()
+  if (canManage.value && !isConsoleBrand.value) void loadLatestBackfill()
   if (isConsoleBrand.value) {
     income.value = null
     incomeError.value = ''
@@ -617,6 +836,32 @@ function shiftMonth(delta: number) {
     turnover.value = null
     void loadTurnover()
   }
+}
+
+function applyBusinessDateFilter() {
+  const selectedDate = businessDate.value
+  if (!selectedDate) {
+    turnover.value = null
+    void loadTurnover()
+    return
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(selectedDate)) return
+  const selectedMonth = selectedDate.slice(0, 7)
+  if (month.value !== selectedMonth) {
+    month.value = selectedMonth
+    clearRecipeUsage()
+    resetBackfillState()
+    if (canManage.value && !isConsoleBrand.value) void loadLatestBackfill()
+  }
+  turnover.value = null
+  void loadTurnover()
+}
+
+function clearBusinessDateFilter() {
+  if (!businessDate.value) return
+  businessDate.value = ''
+  turnover.value = null
+  void loadTurnover()
 }
 
 function syncConsoleIncome() {
@@ -627,27 +872,33 @@ async function loadTurnover() {
   const serial = ++turnoverLoadSerial
   const requestedMonth = month.value
   const requestedBrand = brand.value
+  const requestedBusinessDate = businessDate.value
   turnoverLoading.value = true
   turnoverError.value = ''
   try {
-    const query = `month=${encodeURIComponent(requestedMonth)}&brand=${encodeURIComponent(requestedBrand)}`
+    const dayQuery = requestedBusinessDate
+      ? `&businessDate=${encodeURIComponent(requestedBusinessDate)}`
+      : ''
+    const query = `month=${encodeURIComponent(requestedMonth)}&brand=${encodeURIComponent(requestedBrand)}${dayQuery}`
     const [revenueRows, productRows] = await Promise.all([
       apiGet<QmaiRevenueRow[]>(`/api/qmai/revenue?${query}`, { timeout: 300000 }),
       apiGet<QmaiProductRow[]>(`/api/qmai/products?${query}`, { timeout: 300000 }),
     ])
-    if (serial !== turnoverLoadSerial || month.value !== requestedMonth || brand.value !== requestedBrand) return false
+    if (serial !== turnoverLoadSerial || month.value !== requestedMonth
+      || brand.value !== requestedBrand || businessDate.value !== requestedBusinessDate) return false
     const shops = revenueRows.map((row) => ({
-      shopCode: row.storeId, shopName: row.storeId, bizDate: requestedMonth,
+      shopCode: row.storeId, shopName: row.storeName || row.storeId,
+      bizDate: requestedBusinessDate || requestedMonth,
       validOrderCount: row.orderCount, totalAmountSum: row.revenue, incomeSum: row.revenue,
-      costSum: row.cost, refundSum: row.refund, profitSum: row.revenue - row.cost - row.refund,
+      costSum: row.cost, refundSum: row.refund, profitSum: row.revenue - row.cost,
     }))
     const items = productRows.map((row) => ({
-      shopCode: row.storeId, shopName: row.storeId, itemName: row.itemName,
+      shopCode: row.storeId, shopName: row.storeName || row.storeId, itemName: row.itemName,
       categoryName: row.categoryName, num: row.quantity, incomeSum: row.revenue,
       costSum: 0, refundSum: row.refund, refundNum: row.refundQuantity,
     }))
     turnover.value = {
-      mode: 'SNAPSHOT', note: '已读取本地企迈导入快照，未发起外网请求。', days: 0,
+      mode: 'SNAPSHOT', note: `已读取${requestedBusinessDate || requestedMonth}本地企迈导入快照，未发起外网请求。`, days: 0,
       generatedAt: new Date().toISOString(),
       totalAmount: shops.reduce((sum, row) => sum + row.totalAmountSum, 0),
       income: shops.reduce((sum, row) => sum + row.incomeSum, 0),
@@ -658,7 +909,8 @@ async function loadTurnover() {
     }
     return true
   } catch (e) {
-    if (serial === turnoverLoadSerial && month.value === requestedMonth && brand.value === requestedBrand) {
+    if (serial === turnoverLoadSerial && month.value === requestedMonth
+      && brand.value === requestedBrand && businessDate.value === requestedBusinessDate) {
       turnoverError.value = e instanceof Error ? e.message : '读取营业额失败。'
     }
     return false
@@ -672,18 +924,24 @@ function exportExcel() {
   if (!t?.shops?.length) {
     return
   }
+  const dayQuery = businessDate.value
+    ? `&businessDate=${encodeURIComponent(businessDate.value)}`
+    : ''
   void downloadServerCsv(
-    `/api/qmai/revenue.csv?month=${encodeURIComponent(month.value)}&brand=${encodeURIComponent(brand.value)}`,
-    `${brandLabel.value}_企迈营业额_${monthLabel.value}.csv`,
+    `/api/qmai/revenue.csv?month=${encodeURIComponent(month.value)}&brand=${encodeURIComponent(brand.value)}${dayQuery}`,
+    `${brandLabel.value}_企迈营业额_${businessDate.value || monthLabel.value}.csv`,
   )
 }
 
 function exportItemsExcel() {
   if (!turnover.value?.items.length) return
   // 导出由后端从授权范围快照生成并写审计，避免浏览器绕过导出权限或审计。
+  const dayQuery = businessDate.value
+    ? `&businessDate=${encodeURIComponent(businessDate.value)}`
+    : ''
   void downloadServerCsv(
-    `/api/qmai/products.csv?month=${encodeURIComponent(month.value)}&brand=${encodeURIComponent(brand.value)}`,
-    `${brandLabel.value}_企迈商品销量_${monthLabel.value}.csv`,
+    `/api/qmai/products.csv?month=${encodeURIComponent(month.value)}&brand=${encodeURIComponent(brand.value)}${dayQuery}`,
+    `${brandLabel.value}_企迈商品销量_${businessDate.value || monthLabel.value}.csv`,
   )
 }
 
@@ -705,6 +963,8 @@ async function downloadServerCsv(path: string, filename: string) {
 function exportActive() {
   if (isConsoleBrand.value) {
     exportIncomeExcel()
+  } else if (snapshotExportDenied.value) {
+    return
   } else if (activeTab.value === 'items') {
     exportItemsExcel()
   } else if (activeTab.value === 'usage') {
@@ -719,7 +979,10 @@ function exportActive() {
 async function loadLocalPlatformState() {
   const qmaiLoaded = await loadQmai()
   if (isConsoleBrand.value) return qmaiLoaded
-  const turnoverLoaded = await loadTurnover()
+  const [turnoverLoaded] = await Promise.all([
+    loadTurnover(),
+    canManage.value ? loadLatestBackfill() : Promise.resolve(),
+  ])
   return qmaiLoaded && turnoverLoaded
 }
 
@@ -734,6 +997,11 @@ onMounted(() => {
   void loadLocalPlatformState().then((loaded) => {
     if (loaded) markFresh()
   })
+})
+
+onBeforeUnmount(() => {
+  stopBackfillPolling()
+  backfillRequestSerial += 1
 })
 </script>
 
@@ -791,32 +1059,99 @@ onMounted(() => {
           <button v-if="!isConsoleBrand" :class="{ active: activeTab === 'items' }" @click="activeTab = 'items'">
             企迈商品销售
           </button>
-          <button v-if="!isConsoleBrand && qmaiRecipeEnabled" :class="{ active: activeTab === 'usage' }" @click="activeTab = 'usage'">
+          <button v-if="!isConsoleBrand && !isFinanceViewer" :class="{ active: activeTab === 'usage' }" @click="activeTab = 'usage'">
             物料用量
           </button>
-          <button v-if="!isConsoleBrand" :class="{ active: activeTab === 'pos' }" @click="activeTab = 'pos'">
+          <button v-if="!isConsoleBrand && !isFinanceViewer" :class="{ active: activeTab === 'pos' }" @click="activeTab = 'pos'">
             POS
           </button>
         </div>
         <div v-if="activeTab !== 'pos'" class="range-tabs">
           <button :disabled="anyLoading" @click="shiftMonth(-12)">◀◀ 上一年</button>
           <button :disabled="anyLoading" @click="shiftMonth(-1)">◀ 上一月</button>
+          <label
+            v-if="!isConsoleBrand && (activeTab === 'turnover' || activeTab === 'items')"
+            class="date-filter"
+          >
+            <span>历史日期</span>
+            <input
+              v-model="businessDate"
+              type="date"
+              :max="latestClosedBusinessDate"
+              :disabled="turnoverLoading"
+              aria-label="选择企迈历史日期"
+              @change="applyBusinessDateFilter"
+            />
+          </label>
+          <button
+            v-if="!isConsoleBrand && businessDate
+              && (activeTab === 'turnover' || activeTab === 'items')"
+            :disabled="turnoverLoading"
+            @click="clearBusinessDateFilter"
+          >
+            查看整月
+          </button>
           <span class="month-label">{{ monthLabel }}</span>
           <button :disabled="anyLoading || isCurrentMonthOrLater" @click="shiftMonth(1)">下一月 ▶</button>
           <button :disabled="anyLoading || isCurrentMonthOrLater" @click="shiftMonth(12)">下一年 ▶▶</button>
+          <button
+            v-if="!isConsoleBrand && canManage
+              && (activeTab === 'turnover' || activeTab === 'items')"
+            class="backfill-action"
+            :disabled="backfillBusy || anyLoading"
+            @click="startBackfill"
+          >
+            {{ backfillBusy ? '补取中…' : businessDate ? '补取所选日期' : '补取本月历史数据' }}
+          </button>
           <button v-if="isConsoleBrand" class="sync-action" :disabled="anyLoading" @click="syncConsoleIncome">
             {{ anyLoading ? '同步中…' : '同步企迈数据' }}
           </button>
           <button
             class="export"
-            :disabled="isConsoleBrand ? !income?.channels?.length
-              : activeTab === 'items' ? !sortedItems.length
-                : activeTab === 'usage' ? !usageResult.fruits.length : !turnover?.shops?.length"
+            :disabled="snapshotExportDenied || (isConsoleBrand ? !income?.channels?.length
+            : activeTab === 'items' ? !sortedItems.length
+                : activeTab === 'usage'
+                  ? (!usageResult.fruits.length && !usageResult.otherMaterials.length)
+                  : !turnover?.shops?.length)"
+            :title="snapshotExportDenied ? '仅老板或财务可以导出企迈营业额和商品销售' : ''"
             @click="exportActive"
           >
             导出 Excel
           </button>
+          <span v-if="snapshotExportDenied" class="export-permission-hint">
+            仅老板或财务可以导出
+          </span>
         </div>
+      </div>
+
+      <div
+        v-if="!isConsoleBrand && canManage
+          && (activeTab === 'turnover' || activeTab === 'items')
+          && (backfillSubmitting || backfillBatch || backfillError)"
+        class="backfill-progress"
+        :class="{ failed: !!backfillFailureMessage || !!backfillError }"
+        aria-live="polite"
+      >
+        <div class="backfill-progress-head">
+          <strong>{{ backfillStatusLabel || '历史数据补取' }}</strong>
+          <span v-if="backfillBatch && backfillTotal">
+            {{ backfillProcessed }}/{{ backfillTotal }} {{ backfillUnitLabel }}（{{ backfillPercent }}%）
+          </span>
+        </div>
+        <progress
+          v-if="backfillBatch && backfillTotal"
+          :value="backfillProcessed"
+          :max="backfillTotal"
+          aria-label="历史数据补取进度"
+        />
+        <p v-if="backfillBatch && !backfillFailureMessage" class="msg muted">
+          已写入营业额 {{ Number(backfillBatch.dailyRows || 0).toLocaleString('zh-CN') }} 行，
+          商品销售 {{ Number(backfillBatch.productRows || 0).toLocaleString('zh-CN') }} 行。
+          {{ backfillRunning ? '任务在后台执行，离开页面不会中断。' : '' }}
+        </p>
+        <p v-if="backfillFailureMessage || backfillError" class="msg error">
+          {{ backfillFailureMessage || backfillError }}
+        </p>
       </div>
 
       <!-- 令牌通道品牌：营业收入按支付渠道 -->
@@ -894,7 +1229,7 @@ onMounted(() => {
 
       <p v-if="activeTab !== 'pos' && turnoverError" class="msg warn-text">{{ turnoverError }}</p>
       <p v-else-if="activeTab !== 'pos' && turnoverLoading" class="msg muted">
-        正在读取 {{ monthLabel }} 全部门店营业额与商品销量…
+        正在读取 {{ turnoverRangeLabel }} 全部门店营业额与商品销量…
       </p>
       <p v-else-if="activeTab !== 'pos' && !turnover" class="msg muted">
         系统会自动读取该月已经导入的企迈营业额与商品销量。
@@ -1024,16 +1359,18 @@ onMounted(() => {
             {{ recipeUsageLoading ? '生成中…' : '生成月度用量快照' }}
           </button>
           <button @click="clearRecipeUsage">清空</button>
-          <span class="msg muted">配方目录、单杯克重和折算系数由服务端按租户与品牌管理；浏览器不可编辑。</span>
+          <span class="msg muted">
+            单杯用量按上传表管理；中/大杯及 500/1000ml 同品按 1:1 分匀后计算，浏览器不可编辑。
+          </span>
         </div>
         <p v-if="recipeUsageError" class="msg warn-text">{{ recipeUsageError }}</p>
         <p v-else-if="recipeUsageLoading" class="msg muted">正在读取受管配方目录与本地销量快照…</p>
 
-        <template v-if="usageResult.fruits.length">
+        <template v-if="usageResult.fruits.length || usageResult.otherMaterials.length">
           <h4 class="usage-title">
             水果采购测算 · {{ scopedRecipeUsage?.matchedProductCount || 0 }} 个匹配商品 · {{ qtyFmt(usageResult.totalCups) }} 杯
           </h4>
-          <table class="turnover-table">
+          <table v-if="usageResult.fruits.length" class="turnover-table">
             <thead>
               <tr>
                 <th>水果</th>
@@ -1051,8 +1388,41 @@ onMounted(() => {
               </tr>
             </tbody>
           </table>
+
+          <h4 v-if="usageResult.otherMaterials.length" class="usage-title">其他物料（非水果）</h4>
+          <table v-if="usageResult.otherMaterials.length" class="turnover-table usage-others">
+            <thead>
+              <tr><th>物料</th><th class="num">折合用量（千克/升）</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="material in usageResult.otherMaterials" :key="material.materialName">
+                <td>{{ material.materialName }}</td>
+                <td class="num">{{ (Number(material.grams) / 1000).toFixed(3) }}</td>
+              </tr>
+            </tbody>
+          </table>
         </template>
-        <p v-else-if="!recipeUsageLoading && !recipeUsageError" class="msg muted">点击上方按钮后，系统会以服务端受管目录和授权范围内销量生成不可编辑的用量快照。</p>
+        <details v-if="scopedRecipeUsage?.unmatchedProducts?.length" class="usage-unmatched">
+          <summary>
+            配方表没有的售卖商品（{{ scopedRecipeUsage.unmatchedProducts.length }} 个，未计入测算）
+          </summary>
+          <p class="msg muted">
+            <span
+              v-for="product in scopedRecipeUsage.unmatchedProducts"
+              :key="product.name"
+              class="unmatched-item"
+            >
+              {{ product.name }}（{{ qtyFmt(product.cups) }}杯）
+            </span>
+          </p>
+        </details>
+        <p
+          v-if="!usageResult.fruits.length && !usageResult.otherMaterials.length
+            && !recipeUsageLoading && !recipeUsageError"
+          class="msg muted"
+        >
+          点击上方按钮后，系统会以服务端受管目录和授权范围内销量生成不可编辑的用量快照。
+        </p>
       </template>
 
       <template v-else-if="activeTab === 'pos'">
@@ -1231,7 +1601,9 @@ onMounted(() => {
 
 .panel-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
+  max-width: 100%;
   background: #f3f4f6;
   border-radius: 10px;
   padding: 4px;
@@ -1259,6 +1631,16 @@ onMounted(() => {
   align-items: center;
   gap: 14px;
   flex-wrap: wrap;
+  min-width: 0;
+  width: 100%;
+  max-width: calc(100vw - 72px);
+}
+
+.items-toolbar .msg {
+  flex: 1 1 260px;
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .view-toggle {
@@ -1305,6 +1687,9 @@ onMounted(() => {
 
 .range-tabs {
   display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
@@ -1407,6 +1792,37 @@ td.muted {
   margin-left: 8px;
 }
 
+.range-tabs .date-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 8px;
+  font-size: 13px;
+  color: #374151;
+  white-space: nowrap;
+}
+
+.range-tabs .date-filter input {
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #fff;
+  color: #111827;
+  font: inherit;
+}
+
+.range-tabs .date-filter input:focus {
+  outline: 2px solid rgba(37, 99, 235, 0.22);
+  border-color: #2563eb;
+}
+
+.range-tabs button.backfill-action {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
+
 .range-tabs .month-label {
   min-width: 96px;
   text-align: center;
@@ -1429,6 +1845,46 @@ td.muted {
 .range-tabs button.export:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.range-tabs .export-permission-hint {
+  align-self: center;
+  color: #b45309;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.backfill-progress {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: #eff6ff;
+}
+
+.backfill-progress.failed {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.backfill-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #1e3a8a;
+  font-size: 13px;
+}
+
+.backfill-progress.failed .backfill-progress-head {
+  color: #991b1b;
+}
+
+.backfill-progress progress {
+  width: 100%;
+  height: 8px;
+  accent-color: #2563eb;
 }
 
 .stat-cards {
@@ -1713,6 +2169,25 @@ td.muted {
 @media (max-width: 640px) {
   .platform-grid {
     grid-template-columns: 1fr;
+  }
+
+  .range-tabs {
+    justify-content: flex-start;
+  }
+
+  .range-tabs .date-filter {
+    width: 100%;
+    padding-left: 0;
+  }
+
+  .range-tabs .date-filter input {
+    flex: 1;
+  }
+
+  .backfill-progress-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
   }
 }
 </style>

@@ -85,7 +85,7 @@ class InspectionServiceHealthTest {
     InspectionService sidecar = new InspectionService(
         mock(InspectionRecordRepository.class), null, null, null,
         "http://inspection-service:8000/detect", "http://inspection-service:8000/export",
-        Duration.ofMillis(100), "QA", "INTERNAL", null);
+        Duration.ofMillis(100), "QA", "INTERNAL", true, null);
 
     InspectionServiceHealthResponse sidecarResponse = sidecar.serviceHealth();
 
@@ -101,7 +101,7 @@ class InspectionServiceHealthTest {
       InspectionService blocked = new InspectionService(
           mock(InspectionRecordRepository.class), null, null, null,
           blockedTarget, blockedTarget.replace("/detect", "/export"),
-          Duration.ofMillis(100), "QA", "INTERNAL", null);
+          Duration.ofMillis(100), "QA", "INTERNAL", true, null);
 
       assertThat(blocked.serviceHealth().status())
           .as("target must remain blocked: %s", blockedTarget)
