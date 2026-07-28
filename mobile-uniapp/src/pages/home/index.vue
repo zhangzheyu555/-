@@ -159,7 +159,7 @@ const metrics = computed<WorkspaceMetric[]>(() => {
       { label: '库存商品', value: summary.itemCount, unit: '项', tone: 'brand' },
       { label: '库存预警', value: summary.lowStockCount, unit: '项', tone: summary.lowStockCount ? 'danger' : 'success' },
       { label: '待处理叫货', value: summary.pendingRequisitionCount, unit: '单', tone: 'info' },
-      { label: '待确认收货', value: summary.pendingReceiptCount, unit: '单', tone: 'neutral' },
+      { label: '历史待收货', value: summary.pendingReceiptCount, unit: '单', tone: 'neutral' },
     ]
   }
   if (exams.value) {
@@ -276,8 +276,8 @@ function storeStatusLabel(status: string | undefined): string {
     </view>
 
     <view v-if="session.user?.role === 'STORE_MANAGER' && warehouse" class="section-card fulfilment-preview">
-      <view class="section-card__head"><view><text class="section-card__eyebrow">库存履约</text><text class="section-card__title">本店库存与收货</text></view></view>
-      <view class="fulfilment-preview__grid"><view><text>库存预警</text><b>{{ warehouse.summary.lowStockCount }} 项</b></view><view><text>待确认收货</text><b>{{ warehouse.summary.pendingReceiptCount }} 单</b></view><view><text>待处理叫货</text><b>{{ warehouse.summary.pendingRequisitionCount }} 单</b></view></view>
+      <view class="section-card__head"><view><text class="section-card__eyebrow">库存履约</text><text class="section-card__title">本店库存与叫货</text></view></view>
+      <view class="fulfilment-preview__grid"><view><text>库存预警</text><b>{{ warehouse.summary.lowStockCount }} 项</b></view><view><text>历史待收货</text><b>{{ warehouse.summary.pendingReceiptCount }} 单</b></view><view><text>待审核叫货</text><b>{{ warehouse.summary.pendingRequisitionCount }} 单</b></view></view>
     </view>
 
     <view v-if="workspaceError" class="workspace-message">{{ workspaceError }}</view>

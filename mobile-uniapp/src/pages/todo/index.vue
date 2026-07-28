@@ -68,21 +68,21 @@ async function refresh() {
       const requisitions = await getMobileRequisitions()
       const existingRecords = new Set(roleTodos.map(item => String(item.sourceRecordId || '')))
       const requisitionTodos: RoleTodoItem[] = requisitions
-        .filter(record => ['SUBMITTED', 'APPROVED'].includes(record.status) && !existingRecords.has(record.id))
+        .filter(record => record.status === 'SUBMITTED' && !existingRecords.has(record.id))
         .map(record => ({
           id: `warehouse-requisition-${record.id}`,
-          title: record.status === 'SUBMITTED' ? `审核门店叫货：${record.storeName}` : `确认叫货发货：${record.storeName}`,
+          title: `审核门店叫货：${record.storeName}`,
           summary: `${record.lines.length} 种物料${record.note ? ` · ${record.note}` : ''}`,
-          status: record.status === 'SUBMITTED' ? 'PENDING' : 'IN_PROGRESS',
-          processStatus: record.status === 'SUBMITTED' ? '待仓库审核' : '待仓库发货',
-          priority: record.status === 'SUBMITTED' ? 80 : 85,
+          status: 'PENDING',
+          processStatus: '待仓库审核并入账',
+          priority: 80,
           storeId: record.storeId,
           storeName: record.storeName,
           sourceModule: '仓库叫货',
           sourceRecordId: record.id,
           occurredAt: record.submittedAt,
           updatedAt: record.reviewedAt || record.submittedAt,
-          action: { target: 'warehouse', label: record.status === 'SUBMITTED' ? '进入审核' : '进入发货', params: { id: record.id } },
+          action: { target: 'warehouse', label: '进入审核', params: { id: record.id } },
         }))
       todos.value = [...requisitionTodos, ...roleTodos]
     }

@@ -19,7 +19,7 @@ const RULES: MenuRule[] = [
     key: 'inventory', group: 'store', label: '门店库存', description: '查看实时库存与预警', path: '/pkg-store/inventory/index', tone: 'green', icon: '▦',
   },
   {
-    key: 'requisition', group: 'store', label: '叫货与收货', description: '修改数量、提交叫货、确认收货', path: '/pkg-store/requisition/index', tone: 'orange', icon: '+',
+    key: 'requisition', group: 'store', label: '门店叫货', description: '填写数量、提交叫货、查看入库结果', path: '/pkg-store/requisition/index', tone: 'orange', icon: '+',
   },
   {
     key: 'business', group: 'store', label: '本店经营', description: '查看月度经营结果与异常提醒', path: '/pkg-store/business/index', tone: 'green', icon: '▥',

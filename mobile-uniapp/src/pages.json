@@ -12,7 +12,7 @@
     { "root": "pkg-store", "pages": [
       { "path": "inventory/index", "style": { "navigationBarTitleText": "门店库存", "enablePullDownRefresh": true } },
       { "path": "business/index", "style": { "navigationBarTitleText": "本店经营", "enablePullDownRefresh": true } },
-      { "path": "requisition/index", "style": { "navigationBarTitleText": "叫货与收货", "enablePullDownRefresh": true } },
+      { "path": "requisition/index", "style": { "navigationBarTitleText": "门店叫货", "enablePullDownRefresh": true } },
       { "path": "movements/index", "style": { "navigationBarTitleText": "库存流水", "enablePullDownRefresh": true } },
       { "path": "requisition-detail/index", "style": { "navigationBarTitleText": "叫货单详情", "enablePullDownRefresh": true } },
       { "path": "daily-loss/index", "style": { "navigationBarTitleText": "每日报损", "enablePullDownRefresh": true } }

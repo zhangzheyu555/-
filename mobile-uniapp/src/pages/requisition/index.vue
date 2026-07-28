@@ -41,8 +41,8 @@ const selectedLines = computed(() => activeItems.value
   .filter((line) => line.quantity > 0))
 const selectedTotal = computed(() => selectedLines.value.reduce((sum, line) => sum + line.quantity, 0))
 const pendingReceipts = computed(() => requisitions.value.filter(record => record.status === 'SHIPPED'))
-const processingRecords = computed(() => requisitions.value.filter(record => ['SUBMITTED', 'APPROVED'].includes(record.status)))
-const historyRecords = computed(() => requisitions.value.filter(record => ['RECEIVED', 'REJECTED', 'TODO_DONE'].includes(record.status)))
+const processingRecords = computed(() => requisitions.value.filter(record => record.status === 'SUBMITTED'))
+const historyRecords = computed(() => requisitions.value.filter(record => ['APPROVED', 'RECEIVED', 'REJECTED', 'TODO_DONE'].includes(record.status)))
 const visibleRecords = computed(() => {
   if (recordFilter.value === 'PROCESSING') return processingRecords.value
   if (recordFilter.value === 'HISTORY') return historyRecords.value
@@ -123,7 +123,7 @@ async function submit() {
         requestedQuantity: quantity,
       })),
     })
-    actionMessage.value = `叫货单 ${saved.id} 已提交，仓库将按真实库存审核。`
+    actionMessage.value = `叫货单 ${saved.id} 已提交，仓库审核后将直接完成库存同步。`
     Object.keys(quantities).forEach((key) => delete quantities[Number(key)])
     note.value = ''
     requestId.value = ''
@@ -132,7 +132,7 @@ async function submit() {
     await refresh()
     await showOperationSuccess(
       '叫货已提交',
-      `叫货单 ${saved.id} 已提交，仓库将按实际库存审核。`,
+      `叫货单 ${saved.id} 已提交，仓库审核通过后会直接计入本店库存。`,
     )
   } catch (error) {
     errorMessage.value = friendlyError(error, '叫货单未提交成功；再次提交会沿用同一请求编号，不会重复建单。')
@@ -200,7 +200,7 @@ function openDetail(record: WarehouseRequisition) {
 }
 
 function denyAndReturn() {
-  uni.showToast({ title: '叫货与收货仅向店长开放', icon: 'none' })
+  uni.showToast({ title: '门店叫货仅向店长开放', icon: 'none' })
   setTimeout(() => uni.reLaunch({ url: '/pages/home/index' }), 500)
 }
 
@@ -230,7 +230,7 @@ function friendlyError(error: unknown, fallback: string) {
     </view>
 
     <view v-if="!canRead" class="state-card">
-      <text class="state-title">叫货与收货仅向店长开放</text>
+      <text class="state-title">门店叫货仅向店长开放</text>
       <text class="muted">还需具备后端叫货权限和本店数据范围，页面不会扩大权限。</text>
     </view>
 
@@ -238,43 +238,44 @@ function friendlyError(error: unknown, fallback: string) {
       <view v-if="errorMessage" class="message error">{{ errorMessage }}</view>
       <view v-if="actionMessage" class="message success">{{ actionMessage }}</view>
 
-      <view class="section-head priority-head">
-        <view>
-          <text class="section-title">待确认收货</text>
-          <text class="muted">货物送达门店并核对无误后再确认</text>
-        </view>
-        <text class="count-badge" :class="{ urgent: pendingReceipts.length }">{{ pendingReceipts.length }} 单</text>
-      </view>
-      <view v-if="!pendingReceipts.length && !loading" class="state-card compact-state">当前没有待确认收货的叫货单</view>
-      <view v-for="record in pendingReceipts" :key="record.id" class="record-card receipt-card">
-        <view class="record-head">
+      <template v-if="pendingReceipts.length">
+        <view class="section-head priority-head">
           <view>
-            <text class="item-name">{{ record.statusLabel || record.status }}</text>
-            <text class="muted">{{ record.id }} · {{ record.warehouseName || '配送仓库' }}</text>
+            <text class="section-title">历史待收货</text>
+            <text class="muted">仅处理流程升级前已发货的历史叫货单</text>
           </view>
-          <text class="line-count">{{ record.lines.length }} 种</text>
+          <text class="count-badge urgent">{{ pendingReceipts.length }} 单</text>
         </view>
-        <view class="line-summary">
-          <text v-for="line in record.lines" :key="line.itemId" class="line-text">
-            {{ line.itemName }} × {{ formatNumber(line.requestedQuantity) }}
-          </text>
+        <view v-for="record in pendingReceipts" :key="record.id" class="record-card receipt-card">
+          <view class="record-head">
+            <view>
+              <text class="item-name">历史单待确认</text>
+              <text class="muted">{{ record.id }} · {{ record.warehouseName || '配送仓库' }}</text>
+            </view>
+            <text class="line-count">{{ record.lines.length }} 种</text>
+          </view>
+          <view class="line-summary">
+            <text v-for="line in record.lines" :key="line.itemId" class="line-text">
+              {{ line.itemName }} × {{ formatNumber(line.requestedQuantity) }}
+            </text>
+          </view>
+          <button class="detail-button" @click="openDetail(record)">查看详情</button>
+          <button
+            v-if="canReceive"
+            class="receive-button"
+            :loading="receivingId === record.id"
+            :disabled="Boolean(receivingId)"
+            @click="receive(record)"
+          >
+            历史单确认收货
+          </button>
         </view>
-        <button class="detail-button" @click="openDetail(record)">查看详情</button>
-        <button
-          v-if="canReceive"
-          class="receive-button"
-          :loading="receivingId === record.id"
-          :disabled="Boolean(receivingId)"
-          @click="receive(record)"
-        >
-          确认收货
-        </button>
-      </view>
+      </template>
 
       <view v-if="canCreate && !createFormOpen" class="create-entry">
         <view>
           <text class="section-title">需要补货？</text>
-          <text class="muted">创建新的叫货单，提交后由仓库审核并安排发货</text>
+          <text class="muted">提交后由仓库审核，审核通过即同步双方库存</text>
         </view>
         <button class="create-button" @click="openCreateForm">新建叫货单</button>
       </view>

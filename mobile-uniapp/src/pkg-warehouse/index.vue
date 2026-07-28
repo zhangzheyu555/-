@@ -21,7 +21,7 @@ const pendingReturns = computed(() => returns.value.filter(record => ['APPROVED'
 const history = computed(() => requisitions.value.filter(record => !['SUBMITTED', 'APPROVED'].includes(record.status)))
 const tabs = computed(() => [
   { key: 'REVIEW' as const, label: '待审核', count: pendingReview.value.length },
-  { key: 'SHIP' as const, label: '待发货', count: pendingShip.value.length },
+  { key: 'SHIP' as const, label: '历史待发货', count: pendingShip.value.length },
   { key: 'RETURN' as const, label: '退货待收', count: pendingReturns.value.length },
   { key: 'HISTORY' as const, label: '历史记录', count: history.value.length },
 ])
@@ -44,8 +44,8 @@ async function refresh() {
 async function ship(record: WarehouseRequisition) {
   if (!canShip.value || actingId.value) return
   actingId.value = record.id; error.value = ''; notice.value = ''
-  try { await shipMobileRequisition(record.id); notice.value = '已发货，库存与操作日志已由服务端同步。'; await refresh() }
-  catch (cause) { error.value = Number((cause as { status?: number })?.status) === 409 ? '单据状态已变化，请刷新后重试。' : '发货未完成，请检查网络或单据状态。' }
+  try { await shipMobileRequisition(record.id); notice.value = '历史叫货单已发货，库存与操作日志已由服务端同步。'; await refresh() }
+  catch (cause) { error.value = Number((cause as { status?: number })?.status) === 409 ? '单据状态已变化，请刷新后重试。' : '历史叫货单发货未完成，请检查网络或单据状态。' }
   finally { actingId.value = '' }
 }
 
@@ -79,8 +79,9 @@ function selectTab(key: 'REVIEW' | 'SHIP' | 'RETURN' | 'HISTORY') {
         <view v-for="record in pendingReview" :key="record.id" class="card" @click="openRequisition(record)"><view class="card-head"><view><text class="card-title">{{ record.storeName || '门店叫货' }}</text><text class="copy">待仓库审核 · {{ record.lines.length }} 种物料</text></view><text class="arrow">审核 ›</text></view></view>
       </template>
       <template v-else-if="activeTab==='SHIP'">
-        <view v-if="!pendingShip.length&&!loading" class="state small">当前没有待发货叫货单</view>
-        <view v-for="record in pendingShip" :key="record.id" class="card" @click="openRequisition(record)"><view class="card-head"><view><text class="card-title">{{ record.storeName || '门店叫货' }}</text><text class="copy">已审核 · {{ record.lines.length }} 种物料</text></view><text class="arrow">详情 ›</text></view><button v-if="canShip" :loading="actingId===record.id" :disabled="Boolean(actingId)" @click.stop="ship(record)">确认发货</button></view>
+        <view class="hint">仅处理流程升级前已经审核的历史单。新叫货单会在审核时直接完成仓库扣减和门店入库。</view>
+        <view v-if="!pendingShip.length&&!loading" class="state small">当前没有历史待发货叫货单</view>
+        <view v-for="record in pendingShip" :key="record.id" class="card" @click="openRequisition(record)"><view class="card-head"><view><text class="card-title">{{ record.storeName || '门店叫货' }}</text><text class="copy">历史已审核 · {{ record.lines.length }} 种物料</text></view><text class="arrow">详情 ›</text></view><button v-if="canShip" :loading="actingId===record.id" :disabled="Boolean(actingId)" @click.stop="ship(record)">历史单确认发货</button></view>
       </template>
       <template v-else-if="activeTab==='RETURN'">
         <view v-if="!pendingReturns.length&&!loading" class="state small">当前没有待收退货单</view>

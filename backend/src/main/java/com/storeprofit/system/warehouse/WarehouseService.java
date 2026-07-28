@@ -1625,6 +1625,7 @@ public class WarehouseService {
     BigDecimal total = BigDecimal.ZERO;
     BigDecimal newlyApprovedTotal = BigDecimal.ZERO;
     Map<Long, BigDecimal> completionQuantities = new LinkedHashMap<>();
+    List<String> priceChanges = new ArrayList<>();
     for (WarehouseRequisitionLineResponse line : requisition.lines()) {
       BigDecimal shipped = amount(line.shippedQuantity());
       WarehouseRequisitionReviewLineRequest reviewedLine = reviewedLines.get(line.itemId());
@@ -1632,6 +1633,14 @@ public class WarehouseService {
           ? amount(line.requestedQuantity())
           : amount(reviewedLine == null ? line.requestedQuantity() : reviewedLine.approvedQuantity());
       BigDecimal reviewedUnitPrice = reviewedUnitPrice(line, reviewedLine);
+      BigDecimal originalUnitPrice = amount(line.unitPrice());
+      if (reviewedUnitPrice.compareTo(originalUnitPrice) != 0) {
+        priceChanges.add(
+            line.itemName() + " "
+                + originalUnitPrice.toPlainString() + "→"
+                + reviewedUnitPrice.toPlainString()
+        );
+      }
       if (requestedTarget.compareTo(line.requestedQuantity()) > 0) {
         throw new BusinessException("APPROVED_QUANTITY_TOO_LARGE", "批准数量不能超过申请数量", HttpStatus.BAD_REQUEST);
       }
@@ -1682,6 +1691,7 @@ public class WarehouseService {
       total = total.add(approved.multiply(reviewedUnitPrice));
       newlyApprovedTotal = newlyApprovedTotal.add(quantityToApprove);
     }
+    String auditNote = requisitionReviewAuditNote(request.note(), priceChanges);
     if (mode == WarehouseRequisitionHandlingMode.AVAILABLE_ONLY
         && newlyApprovedTotal.signum() == 0) {
       throw new BusinessException(
@@ -1698,7 +1708,7 @@ public class WarehouseService {
             user.tenantId(), requisitionId, user.id(), request.note());
         warehouseRepository.logAction(
             user.tenantId(), user.id(), user.displayName(), "完成已全部发货的叫货单",
-            requisitionId, requisition.storeId(), request.note());
+            requisitionId, requisition.storeId(), auditNote);
         return;
       }
       completeRequisitionOnReview(
@@ -1707,7 +1717,8 @@ public class WarehouseService {
           supplyWarehouse,
           completionQuantities,
           total,
-          request.note()
+          request.note(),
+          auditNote
       );
       return;
     }
@@ -1719,7 +1730,7 @@ public class WarehouseService {
         user.tenantId(), requisitionId, nextStatus, total, user.id(), request.note());
     warehouseRepository.logAction(
         user.tenantId(), user.id(), user.displayName(), action,
-        requisitionId, requisition.storeId(), request.note());
+        requisitionId, requisition.storeId(), auditNote);
   }
 
   private void rejectRequisition(
@@ -1778,13 +1789,24 @@ public class WarehouseService {
     return amount(rawPrice);
   }
 
+  private String requisitionReviewAuditNote(String note, List<String> priceChanges) {
+    String base = note == null ? "" : note.trim();
+    if (priceChanges.isEmpty()) {
+      return base.isEmpty() ? null : base;
+    }
+    String priceSummary = "单价调整：" + String.join("；", priceChanges);
+    String resolved = base.isEmpty() ? priceSummary : base + "；" + priceSummary;
+    return resolved.length() <= 255 ? resolved : resolved.substring(0, 255);
+  }
+
   private void completeRequisitionOnReview(
       AuthUser user,
       WarehouseRequisitionResponse requisition,
       FacilityRow supplyWarehouse,
       Map<Long, BigDecimal> completionQuantities,
       BigDecimal total,
-      String note
+      String note,
+      String auditNote
   ) {
     String resolvedNote = note == null || note.isBlank()
         ? "仓库审核完成，库存已自动划入门店"
@@ -1868,7 +1890,7 @@ public class WarehouseService {
         "审核并完成叫货",
         requisition.id(),
         requisition.storeId(),
-        resolvedNote
+        auditNote == null ? resolvedNote : auditNote
     );
     warehouseRepository.insertTodoAction(
         "todo-act-" + UUID.randomUUID(),

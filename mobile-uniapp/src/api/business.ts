@@ -86,10 +86,26 @@ export function receiveMobileRequisition(requisitionId: string, note?: string) {
 export function shipMobileRequisition(requisitionId: string) {
   return apiPost<void>(`/api/warehouse/requisitions/${encodeURIComponent(requisitionId)}/ship`)
 }
-export function reviewMobileRequisition(requisitionId: string, approved: boolean, note?: string, lines: Array<{ itemId: number; approvedQuantity: number }> = []) {
-  return apiPost<void, { approved: boolean; note?: string; lines: Array<{ itemId: number; approvedQuantity: number }> }>(
+
+export interface MobileRequisitionReviewPayload {
+  approved: boolean
+  note?: string
+  handlingMode: 'FULL'
+  completeOnReview: true
+  lines: Array<{
+    itemId: number
+    approvedQuantity: number
+    unitPrice: number
+  }>
+}
+
+export function reviewMobileRequisition(
+  requisitionId: string,
+  payload: MobileRequisitionReviewPayload,
+) {
+  return apiPost<void, MobileRequisitionReviewPayload>(
     `/api/warehouse/requisitions/${encodeURIComponent(requisitionId)}/review`,
-    { approved, note, lines },
+    payload,
   )
 }
 

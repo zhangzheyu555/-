@@ -213,6 +213,45 @@ class WarehouseServiceTest {
   }
 
   @Test
+  void completeReviewAuditRecordsUnitPriceChanges() {
+    WarehouseRequisitionResponse created = service.createRequisition(
+        storeManager(),
+        new WarehouseRequisitionRequest(
+            "rg1",
+            List.of(new WarehouseRequisitionLineRequest(
+                1L, new BigDecimal("2"), "审核改单价")),
+            "审核时确认采购成本"
+        )
+    );
+
+    service.review(
+        warehouseManager(),
+        created.id(),
+        new WarehouseRequisitionReviewRequest(
+            true,
+            List.of(new WarehouseRequisitionReviewLineRequest(
+                1L, new BigDecimal("2"), new BigDecimal("72.35"))),
+            "价格复核完成",
+            WarehouseRequisitionHandlingMode.FULL,
+            true
+        )
+    );
+
+    String reason = jdbcTemplate.queryForObject("""
+        select reason
+        from operation_log
+        where tenant_id = 1 and action = '审核并完成叫货' and target_id = ?
+        order by id desc
+        limit 1
+        """, String.class, created.id());
+    assertThat(reason)
+        .contains("价格复核完成")
+        .contains("鲜奶")
+        .contains("88.00")
+        .contains("72.35");
+  }
+
+  @Test
   void completeOnReviewSettlesFullRequestIntoNegativeStockWithoutBackorder() {
     BigDecimal warehouseStockBefore = itemStock(1L);
     WarehouseRequisitionResponse created = service.createRequisition(

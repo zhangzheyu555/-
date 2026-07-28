@@ -113,6 +113,7 @@ export interface WarehouseRequisitionLine {
   itemId: number
   itemName: string
   unit?: string
+  unitPrice?: number
   requestedQuantity: number
   approvedQuantity: number
   shippedQuantity?: number

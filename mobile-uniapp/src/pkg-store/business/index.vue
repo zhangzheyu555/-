@@ -109,7 +109,7 @@ function friendlyError(cause: unknown) { const status = Number((cause as { statu
       <view v-if="monthLoading" class="state">正在加载 {{ selectedMonth }} 经营数据…</view>
       <template v-else-if="selectedEntry">
         <view class="hero"><text class="hero-label">本期净利润</text><text :class="['hero-value',{negative:selectedEntry.net<0}]">{{ money(selectedEntry.net) }}</text><text class="hero-copy">营业额 {{ money(selectedEntry.income) }} · 利润率 {{ percent(selectedEntry.margin) }}</text></view>
-        <view class="metrics"><view><text class="metric">{{ percent(selectedEntry.costRatio) }}</text><text class="label">成本占比</text></view><view><text class="metric">{{ percent(incomeChangeRate) }}</text><text class="label">营收环比</text></view><view><text class="metric">{{ workbench.todayFocus.pendingCount }}</text><text class="label">待处理事项</text></view><view><text class="metric">{{ workbench.todayFocus.pendingReceiptCount }}</text><text class="label">待确认收货</text></view></view>
+        <view class="metrics"><view><text class="metric">{{ percent(selectedEntry.costRatio) }}</text><text class="label">成本占比</text></view><view><text class="metric">{{ percent(incomeChangeRate) }}</text><text class="label">营收环比</text></view><view><text class="metric">{{ workbench.todayFocus.pendingCount }}</text><text class="label">待处理事项</text></view><view><text class="metric">{{ workbench.todayFocus.pendingReceiptCount }}</text><text class="label">历史待收货</text></view></view>
         <view v-if="selectedReminders.length" class="section warning"><text class="section-title">经营提醒</text><text v-for="reminder in selectedReminders" :key="reminder" class="reminder">{{ reminder }}</text></view>
       </template>
       <view v-else class="state">{{ selectedMonth }} 暂无经营数据。</view>

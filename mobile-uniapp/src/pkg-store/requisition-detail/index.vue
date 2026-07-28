@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { onLoad, onPullDownRefresh } from '@dcloudio/uni-app'
 import { getMobileRequisitions, receiveMobileRequisition, reviewMobileRequisition } from '@/api/business'
 import StatusTimeline, { type TimelineItem } from '@/components/StatusTimeline.vue'
@@ -7,6 +7,7 @@ import { canPerformMobileAction, hasPermission } from '@/permissions'
 import { openProtectedFile } from '@/platform'
 import { canUseMobileCapability, useSessionStore } from '@/stores'
 import { MOBILE_PERMISSIONS, type WarehouseRequisition } from '@/types/business'
+import RequisitionReviewPriceEditor from './RequisitionReviewPriceEditor.vue'
 
 const session = useSessionStore()
 const requisitionId = ref('')
@@ -14,19 +15,31 @@ const record = ref<WarehouseRequisition | null>(null)
 const loading = ref(false)
 const receiving = ref(false)
 const message = ref('')
+const reviewPrices = reactive<Record<number, string>>({})
 const canRead = computed(() => canUseMobileCapability(session.user, 'requisition') || canUseMobileCapability(session.user, 'warehouse'))
 const canReceive = computed(() => canRead.value && session.hasPermission(MOBILE_PERMISSIONS.requisitionReceive))
 const canReview = computed(() => canPerformMobileAction(session.user, 'warehouse.requisition.review'))
 const canReadFiles = computed(() => hasPermission(session.user, 'attachment.read'))
+const hasInvalidReviewPrice = computed(() => (record.value?.lines || []).some(line => !isValidPrice(reviewPrices[line.itemId])))
 const timeline = computed<TimelineItem[]>(() => {
   const row = record.value
   if (!row) return []
   const rejected = row.status === 'REJECTED'
+  if (['APPROVED', 'SHIPPED'].includes(row.status)) {
+    return [
+      { label: '门店提交叫货', time: row.submittedAt, done: true },
+      { label: '仓库完成审核', time: row.reviewedAt, done: true },
+      { label: '历史流程：仓库确认发货', time: row.shippedAt, done: row.status === 'SHIPPED' },
+      { label: '历史流程：门店确认收货', time: row.receivedAt, done: false },
+    ]
+  }
   return [
     { label: '门店提交叫货', time: row.submittedAt, done: Boolean(row.submittedAt) || row.status !== 'DRAFT' },
-    { label: rejected ? '仓库审核驳回' : '仓库完成审核', time: row.reviewedAt, done: rejected || ['APPROVED','SHIPPED','RECEIVED'].includes(row.status) },
-    { label: '仓库确认发货', time: row.shippedAt, done: ['SHIPPED','RECEIVED'].includes(row.status) },
-    { label: '门店确认收货', time: row.receivedAt, done: row.status === 'RECEIVED' },
+    {
+      label: rejected ? '仓库审核驳回' : '仓库审核并入账',
+      time: row.receivedAt || row.reviewedAt,
+      done: rejected || row.status === 'RECEIVED',
+    },
   ]
 })
 
@@ -40,6 +53,11 @@ async function refresh() {
   try {
     const rows = await getMobileRequisitions()
     record.value = rows.find(row => row.id === requisitionId.value) || null
+    if (record.value?.status === 'SUBMITTED') {
+      for (const line of record.value.lines) {
+        reviewPrices[line.itemId] = Number(line.unitPrice || 0).toFixed(2)
+      }
+    }
     if (!record.value) message.value = '叫货单不存在或当前账号无权查看。'
   } catch (cause) { message.value = friendlyError(cause, '叫货单详情暂时无法加载。') }
   finally { loading.value = false }
@@ -59,16 +77,31 @@ async function receive() {
 async function review(approved: boolean) {
   const row = record.value
   if (!row || !canReview.value || row.status !== 'SUBMITTED' || receiving.value) return
+  if (approved && hasInvalidReviewPrice.value) {
+    message.value = '请先修正审核单价，每项价格需为非负数且最多保留两位小数。'
+    return
+  }
   const note = approved ? '移动端仓库审核通过' : await promptText('请填写驳回原因')
   if (!approved && !note) return
   receiving.value = true
   message.value = ''
   try {
-    await reviewMobileRequisition(row.id, approved, note || undefined, row.lines.map(line => ({
-      itemId: line.itemId,
-      approvedQuantity: approved ? Number(line.requestedQuantity) : 0,
-    })))
-    message.value = approved ? '叫货单已审核通过，可继续确认发货。' : '叫货单已驳回。'
+    await reviewMobileRequisition(row.id, {
+      approved,
+      note: note || undefined,
+      handlingMode: 'FULL',
+      completeOnReview: true,
+      lines: approved
+        ? row.lines.map(line => ({
+            itemId: line.itemId,
+            approvedQuantity: Number(line.requestedQuantity),
+            unitPrice: Number(reviewPrices[line.itemId]),
+          }))
+        : [],
+    })
+    message.value = approved
+      ? '叫货单已完成：仓库库存已扣减，门店库存已增加。'
+      : '叫货单已驳回。'
     await refresh()
   } catch (cause) { message.value = friendlyError(cause, '审核失败，请刷新后重试。') }
   finally { receiving.value = false }
@@ -83,6 +116,15 @@ async function openDelivery() {
 
 function confirmAction(content: string) { return new Promise<boolean>(resolve => uni.showModal({ title: '确认收货', content, confirmText: '确认', success: result => resolve(Boolean(result.confirm)), fail: () => resolve(false) })) }
 function promptText(placeholder: string) { return new Promise<string>(resolve => uni.showModal({ title: '驳回叫货单', editable: true, placeholderText: placeholder, success: result => resolve(result.confirm ? String(result.content || '').trim() : ''), fail: () => resolve('') })) }
+function updateReviewPrice(itemId: number, value: string) { reviewPrices[itemId] = value.trim() }
+function isValidPrice(value: string | undefined) {
+  const normalized = String(value ?? '').trim()
+  const price = Number(normalized)
+  return /^\d+(?:\.\d{0,2})?$/.test(normalized)
+    && Number.isFinite(price)
+    && price >= 0
+    && price <= 999999999999.99
+}
 function formatQuantity(value: number | undefined) { const number = Number(value || 0); return Number.isInteger(number) ? String(number) : number.toFixed(2) }
 function friendlyError(cause: unknown, fallback: string) { const status = Number((cause as { status?: number })?.status || 0); return status === 403 ? '当前账号无权查看或操作该叫货单。' : status === 409 ? '单据状态已变化，请刷新后重试。' : status === 401 ? '登录已过期，请重新登录。' : fallback }
 </script>
@@ -94,9 +136,16 @@ function friendlyError(cause: unknown, fallback: string) { const status = Number
     <template v-if="record">
       <view class="header"><view><text class="eyebrow">{{ record.warehouseName || '配送仓库' }}</text><text class="title">叫货单详情</text><text class="copy">{{ record.id }}</text></view><text class="status">{{ record.statusLabel || record.status }}</text></view>
       <view class="section"><text class="section-title">物料明细</text><view v-for="line in record.lines" :key="line.itemId" class="line"><text class="name">{{ line.itemName }}</text><view class="quantities"><text>申请 {{ formatQuantity(line.requestedQuantity) }}</text><text>核定 {{ formatQuantity(line.approvedQuantity) }}</text><text>实发 {{ formatQuantity(line.shippedQuantity) }}</text><text>已收 {{ formatQuantity(line.receivedQuantity) }}</text></view><text v-if="line.warningText" class="warning">{{ line.warningText }}</text></view></view>
+      <RequisitionReviewPriceEditor
+        v-if="canReview&&record.status==='SUBMITTED'"
+        :lines="record.lines"
+        :prices="reviewPrices"
+        :disabled="receiving"
+        @update-price="updateReviewPrice"
+      />
       <view v-if="record.note" class="section"><text class="section-title">叫货备注</text><text class="copy note">{{ record.note }}</text></view>
       <view class="section"><text class="section-title">处理进度</text><StatusTimeline :items="timeline"/></view>
-      <view class="actions"><button v-if="canReview&&record.status==='SUBMITTED'" :loading="receiving" :disabled="receiving" @click="review(false)">驳回</button><button v-if="canReview&&record.status==='SUBMITTED'" class="primary" :loading="receiving" :disabled="receiving" @click="review(true)">审核通过</button><button v-if="canReadFiles&&['SHIPPED','RECEIVED'].includes(record.status)" @click="openDelivery">查看配送出库单</button><button v-if="canReceive&&record.status==='SHIPPED'" class="primary" :loading="receiving" :disabled="receiving" @click="receive">确认收货</button></view>
+      <view class="actions"><button v-if="canReview&&record.status==='SUBMITTED'" :loading="receiving" :disabled="receiving" @click="review(false)">驳回</button><button v-if="canReview&&record.status==='SUBMITTED'" class="primary" :loading="receiving" :disabled="receiving||hasInvalidReviewPrice" @click="review(true)">审核并入账</button><button v-if="canReadFiles&&['SHIPPED','RECEIVED'].includes(record.status)" @click="openDelivery">查看配送出库单</button><button v-if="canReceive&&record.status==='SHIPPED'" class="primary" :loading="receiving" :disabled="receiving" @click="receive">历史单确认收货</button></view>
     </template>
   </view>
 </template>
