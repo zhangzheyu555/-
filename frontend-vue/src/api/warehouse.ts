@@ -746,8 +746,11 @@ export function updateWarehouseAlertSettings(
   return apiPost<void, typeof payload>(`/api/warehouse/items/${itemId}/alert-settings`, payload)
 }
 
-export function getWarehouseReturns() {
-  return apiGet<WarehouseReturnOrder[]>('/api/warehouse/returns')
+export function getWarehouseReturns(warehouseId?: string | number) {
+  return apiGet<WarehouseReturnOrder[]>(
+    '/api/warehouse/returns',
+    warehouseId ? { params: { warehouseId } } : undefined,
+  )
 }
 
 export function createWarehouseReturn(payload: WarehouseReturnCreatePayload) {

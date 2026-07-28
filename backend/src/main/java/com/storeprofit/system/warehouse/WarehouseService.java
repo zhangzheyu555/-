@@ -1144,17 +1144,34 @@ public class WarehouseService {
   }
 
   public List<WarehouseReturnResponse> returns(AuthUser user) {
+    return returns(user, null);
+  }
+
+  public List<WarehouseReturnResponse> returns(AuthUser user, Long warehouseId) {
     if (topologyService != null) {
-      List<WarehouseFacilityResponse> facilities = topologyService.visibleFacilities(user);
-      List<WarehouseReturnResponse> rows = facilities.stream()
-          .flatMap(facility -> warehouseRepository.returns(user.tenantId(),
-              isStoreManager(user) ? user.storeId() : null, facility.id()).stream())
-          .collect(Collectors.toMap(WarehouseReturnResponse::id, Function.identity(), (a, b) -> a,
-              java.util.LinkedHashMap::new)).values().stream().toList();
+      List<WarehouseReturnResponse> rows;
+      if (warehouseId != null) {
+        FacilityRow facility = topologyService.requireVisibleFacility(
+            user, warehouseId, "查看配送退货单");
+        rows = warehouseRepository.returns(
+            user.tenantId(),
+            isStoreManager(user) ? user.storeId() : null,
+            facility.id()
+        );
+      } else {
+        List<WarehouseFacilityResponse> facilities = topologyService.visibleFacilities(user);
+        rows = facilities.stream()
+            .flatMap(facility -> warehouseRepository.returns(user.tenantId(),
+                isStoreManager(user) ? user.storeId() : null, facility.id()).stream())
+            .collect(Collectors.toMap(WarehouseReturnResponse::id, Function.identity(), (a, b) -> a,
+                java.util.LinkedHashMap::new)).values().stream().toList();
+      }
       return isStoreManager(user) ? safeReturns(rows) : rows;
     }
     WarehouseReadScope readScope = requireReturnRead(user);
-    List<WarehouseReturnResponse> returns = scopedReturns(user, readScope);
+    List<WarehouseReturnResponse> returns = warehouseId == null
+        ? scopedReturns(user, readScope)
+        : scopedReturns(user, readScope, warehouseId);
     return readScope.central() ? returns : safeReturns(returns);
   }
 
@@ -2535,6 +2552,26 @@ public class WarehouseService {
     }
     return readScope.storeIds().stream()
         .flatMap(storeId -> warehouseRepository.returns(user.tenantId(), storeId).stream())
+        .distinct()
+        .sorted(Comparator.comparing(
+            WarehouseReturnResponse::createdAt,
+            Comparator.nullsLast(Comparator.reverseOrder())
+        ))
+        .limit(120)
+        .toList();
+  }
+
+  private List<WarehouseReturnResponse> scopedReturns(
+      AuthUser user,
+      WarehouseReadScope readScope,
+      long warehouseId
+  ) {
+    if (readScope.central() || readScope.allStores()) {
+      return warehouseRepository.returns(user.tenantId(), null, warehouseId);
+    }
+    return readScope.storeIds().stream()
+        .flatMap(storeId -> warehouseRepository.returns(
+            user.tenantId(), storeId, warehouseId).stream())
         .distinct()
         .sorted(Comparator.comparing(
             WarehouseReturnResponse::createdAt,
