@@ -72,7 +72,7 @@ const emit = defineEmits<{
             <span v-if="photo.reviewStatus === 'pending'" class="review-pending">模型结果仅供参考，请督导确认</span>
             <span v-else-if="photo.reviewStatus === 'accepted'" class="review-confirmed"><CheckCircle2 :size="15" />督导已确认，保存后按条款扣分</span>
             <span v-else class="review-dismissed"><CheckCircle2 :size="15" />督导已确认无问题</span>
-            <button v-if="props.detectionCount(photo.detection) > 0 && photo.reviewStatus === 'pending'" class="primary-button" type="button" :disabled="!props.detectionClauseId(photo.detection) || props.reviewBusy(photo) || props.saving" :title="props.detectionClauseId(photo.detection) ? '确认后将在保存时由服务端计算扣分' : '尚未匹配正式条款，不能直接确认'" @click="emit('confirm', photo)">确认问题并加入扣分</button>
+            <button v-if="props.detectionCount(photo.detection) > 0 && photo.reviewStatus === 'pending'" class="primary-button" type="button" :disabled="props.reviewBusy(photo) || props.saving" :title="props.detectionClauseId(photo.detection) ? '确认后将在保存时由服务端计算扣分' : '点击查看无法确认的原因'" @click="emit('confirm', photo)">确认问题并加入扣分</button>
             <button v-if="photo.reviewStatus === 'pending'" class="secondary-button" type="button" :disabled="props.reviewBusy(photo) || props.saving" @click="emit('dismiss', photo)">{{ props.detectionCount(photo.detection) > 0 ? '人工确认无问题' : '确认未发现问题' }}</button>
             <button v-else class="secondary-button" type="button" :disabled="props.reviewBusy(photo) || props.saving" @click="emit('undo', photo)">撤销本次确认</button>
           </div>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { Package, PackagePlus, Pencil, ToggleLeft, ToggleRight, Trash2 } from 'lucide-vue-next'
 import SearchInput from '../common/SearchInput.vue'
 import StatusBadge from '../common/StatusBadge.vue'
@@ -39,6 +39,8 @@ const searchText = ref('')
 const lowStockOnly = ref(false)
 const expiringOnly = ref(false)
 const expandedItemId = ref<number | null>(null)
+const focusedItemId = ref<number | null>(null)
+const inventoryMainRef = ref<HTMLElement | null>(null)
 
 const selectedItem = computed(() => props.items.find((item) => item.id === expandedItemId.value) || null)
 const selectedBatches = computed(() => selectedItem.value ? batchesFor(selectedItem.value.id) : [])
@@ -51,8 +53,12 @@ const visibleItems = computed(() => props.items.filter((item) => {
     return false
   }
   if (!matchesCategory(item)) return false
-  if (lowStockOnly.value && !isLowStock(item)) return false
-  if (expiringOnly.value && item.alertLevel !== 'EXPIRING') return false
+  const matchesLowStock = isLowStock(item)
+  const matchesExpiring = isExpiring(item)
+  const hasRiskFilter = lowStockOnly.value || expiringOnly.value
+  const matchesRiskFilter = (lowStockOnly.value && matchesLowStock)
+    || (expiringOnly.value && matchesExpiring)
+  if (hasRiskFilter && !matchesRiskFilter && focusedItemId.value !== item.id) return false
   return true
 }))
 
@@ -80,6 +86,51 @@ function descendantIds(id: number) {
 function isLowStock(item: WarehouseItem) {
   return ['LOW', 'OUT'].includes(item.alertLevel) || ['低库存', '缺货'].includes(item.stockStatus)
 }
+
+function isExpiring(item: WarehouseItem) {
+  return item.alertLevel === 'EXPIRING' || item.stockStatus === '临期'
+}
+
+function clearFilters() {
+  searchText.value = ''
+  lowStockOnly.value = false
+  expiringOnly.value = false
+  focusedItemId.value = null
+}
+
+async function scrollToInventory() {
+  await nextTick()
+  inventoryMainRef.value?.scrollIntoView({ block: 'start' })
+  inventoryMainRef.value?.focus({ preventScroll: true })
+}
+
+async function showRiskInventory() {
+  searchText.value = ''
+  lowStockOnly.value = true
+  expiringOnly.value = true
+  focusedItemId.value = null
+  await scrollToInventory()
+}
+
+async function focusInventoryItem(itemId: number, alertType = '') {
+  searchText.value = ''
+  lowStockOnly.value = alertType !== 'EXPIRING'
+  expiringOnly.value = alertType === 'EXPIRING'
+  focusedItemId.value = itemId
+  await nextTick()
+  const targetRow = inventoryMainRef.value?.querySelector<HTMLElement>(`[data-inventory-item-id="${itemId}"]`)
+  if (!targetRow) {
+    await scrollToInventory()
+    return
+  }
+  targetRow.scrollIntoView({ block: 'center' })
+  targetRow.focus({ preventScroll: true })
+}
+
+defineExpose({
+  showRiskInventory,
+  focusInventoryItem,
+})
 
 function batchesFor(itemId: number) {
   return props.batches.filter((batch) => batch.itemId === itemId)
@@ -122,7 +173,7 @@ function statusTone(status?: string) {
       @remove="emit('deleteCategory', $event)"
     />
 
-    <section class="content-card inventory-main">
+    <section ref="inventoryMainRef" class="content-card inventory-main" tabindex="-1" aria-label="库存物料">
       <div class="table-heading inventory-heading">
         <div>
           <h3>库存物料</h3>
@@ -139,16 +190,17 @@ function statusTone(status?: string) {
           class="inventory-search"
           placeholder="搜索物料名称、编码、规格或库位"
           aria-label="搜索库存物料"
+          @update:model-value="focusedItemId = null"
         />
         <label class="filter-check">
-          <input v-model="lowStockOnly" type="checkbox" />
+          <input v-model="lowStockOnly" type="checkbox" @change="focusedItemId = null" />
           低库存
         </label>
         <label class="filter-check">
-          <input v-model="expiringOnly" type="checkbox" />
+          <input v-model="expiringOnly" type="checkbox" @change="focusedItemId = null" />
           临期
         </label>
-        <button class="mini-button" type="button" @click="searchText = ''; lowStockOnly = false; expiringOnly = false">清除筛选</button>
+        <button class="mini-button" type="button" @click="clearFilters">清除筛选</button>
       </div>
 
       <div class="table-wrap">
@@ -167,7 +219,12 @@ function statusTone(status?: string) {
           </thead>
           <tbody>
             <template v-for="item in visibleItems" :key="item.id">
-              <tr :class="{ disabled: !item.active }">
+              <tr
+                :class="{ disabled: !item.active, 'inventory-target-row': focusedItemId === item.id }"
+                :data-inventory-item-id="item.id"
+                :data-inventory-target="focusedItemId === item.id ? 'true' : undefined"
+                :tabindex="focusedItemId === item.id ? -1 : undefined"
+              >
                 <td>
                   <div class="item-cell">
                     <span class="item-thumb">
@@ -257,6 +314,11 @@ function statusTone(status?: string) {
 
 .inventory-main {
   min-width: 0;
+  scroll-margin-top: 18px;
+}
+
+.inventory-main:focus {
+  outline: none;
 }
 
 .inventory-heading {
@@ -352,6 +414,19 @@ function statusTone(status?: string) {
 tr.disabled td {
   color: #98a3af;
   background: #fbfcfd;
+}
+
+tr.inventory-target-row td {
+  background: var(--ds-primary-soft, #edf9f8);
+}
+
+tr.inventory-target-row td:first-child {
+  box-shadow: inset 4px 0 0 var(--ds-primary, #2c8582);
+}
+
+tr.inventory-target-row:focus {
+  outline: 2px solid var(--ds-primary, #2c8582);
+  outline-offset: -2px;
 }
 
 @media (max-width: 768px) {

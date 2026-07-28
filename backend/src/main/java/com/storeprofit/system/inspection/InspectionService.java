@@ -798,7 +798,7 @@ public class InspectionService {
     }
 
     InspectionScoreSnapshotValidator.ScoreRepair repair = InspectionScoreSnapshotValidator.calculate(
-        standards, record.itemResults(), version, missingFields);
+        standards, record.itemResults(), version, record.photosJson(), missingFields);
     if (!missingFields.isEmpty()) {
       throw scoreRepairRequired(missingFields);
     }

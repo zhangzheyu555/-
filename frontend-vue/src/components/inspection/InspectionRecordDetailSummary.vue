@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Download, ImagePlus } from 'lucide-vue-next'
-import type { InspectionCategoryCode, InspectionItemResult, InspectionRecord } from '../../api/inspection'
+import type { InspectionCategoryCode, InspectionRecord } from '../../api/inspection'
 import type { InspectionScoreView } from '../../utils/inspectionScore'
 
 const props = defineProps<{
@@ -22,8 +22,6 @@ const props = defineProps<{
   hasMigrationAudit: (record: InspectionRecord) => boolean
   migrationAuditText: (record: InspectionRecord) => string
   requiresManualReview: (record: InspectionRecord) => boolean
-  deductionItems: InspectionItemResult[]
-  itemDeduction: (item: InspectionItemResult) => number
 }>()
 
 const emit = defineEmits<{
@@ -45,6 +43,8 @@ const emit = defineEmits<{
       <button class="secondary-button" type="button" @click="emit('close')">返回巡检记录</button>
     </div>
   </header>
+
+  <slot name="priority" />
 
   <div class="inspection-detail-grid">
     <div><span>门店</span><b>{{ props.record.storeName || props.record.storeId }}</b></div>
@@ -68,22 +68,14 @@ const emit = defineEmits<{
 
   <p v-if="!props.score(props.record).valid" class="inspection-repair-note danger">评分数据待修复：{{ props.score(props.record).error }}</p>
   <p v-if="props.record.repairReason" class="inspection-repair-note">修复说明：{{ props.record.repairReason }}</p>
-
-  <section class="inspection-detail-section">
-    <h4>扣分项明细</h4>
-    <div v-if="!props.deductionItems.length" class="empty-state compact">暂无扣分项。</div>
-    <ul v-else class="inspection-detail-list">
-      <li v-for="item in props.deductionItems" :key="item.standardItemId">
-        {{ item.categoryName || item.dimension }} · {{ item.code || '未编号' }} {{ item.title }}：扣 {{ props.itemDeduction(item) }} 分；{{ item.deductionReason || '未填写扣分原因' }}
-      </li>
-    </ul>
-  </section>
 </template>
 
 <style scoped>
 .inspection-detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .inspection-detail-head h3 { margin: 0; font-size: 18px; font-weight: 900; }
 .inspection-detail-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.inspection-detail-actions > button { width: auto; height: 40px; min-height: 40px; margin: 0; padding: 0 14px; flex: 0 0 auto; line-height: 1; white-space: nowrap; }
+.inspection-detail-actions > button :deep(svg) { flex: none; }
 .inspection-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 14px; }
 .inspection-detail-grid div { min-height: 66px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fafbfc; }
 .inspection-detail-grid span { display: block; color: var(--muted); font-size: 12px; font-weight: 700; }
@@ -93,11 +85,9 @@ const emit = defineEmits<{
 .repair-status.review { background: var(--ds-warning-soft); color: #77440d !important; }
 .inspection-repair-note { margin: -2px 0 14px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--ds-surface-muted); color: var(--ds-secondary); line-height: 1.55; }
 .danger { color: var(--bad); }
-.inspection-detail-section { padding-top: 12px; border-top: 1px solid var(--line); }
-.inspection-detail-section h4 { margin: 0 0 8px; font-size: 14px; }
-.inspection-detail-list { margin: 0; padding-left: 18px; color: var(--ink); }
 @media (max-width: 720px) {
   .inspection-detail-head { display: grid; }
   .inspection-detail-actions { display: grid; width: 100%; }
+  .inspection-detail-actions > button { width: 100%; height: 44px; min-height: 44px; }
 }
 </style>

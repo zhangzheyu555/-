@@ -8,6 +8,7 @@ import ActionConfirmDialog from '../components/ui/ActionConfirmDialog.vue'
 import InspectionHistoricalEvidenceDialog from '../components/inspection/InspectionHistoricalEvidenceDialog.vue'
 import InspectionHistoricalEvidencePanel from '../components/inspection/InspectionHistoricalEvidencePanel.vue'
 import InspectionRecordDetailSummary from '../components/inspection/InspectionRecordDetailSummary.vue'
+import InspectionRecordIssueSummary from '../components/inspection/InspectionRecordIssueSummary.vue'
 import InspectionStandardReadinessNotice from '../components/inspection/InspectionStandardReadinessNotice.vue'
 import InspectionPhotoDetectionList from '../components/inspection/InspectionPhotoDetectionList.vue'
 import InspectionScoreSummary from '../components/inspection/InspectionScoreSummary.vue'
@@ -107,12 +108,13 @@ const persistedDecisionBusyKeys = ref<string[]>([])
 const draftReviewTimers = new Map<string, number>()
 const exportingRecordId = ref('')
 const uploading = ref(false)
+const photoFileInput = ref<HTMLInputElement | null>(null)
 const loadingDetectionService = ref(false)
 const loadingStandard = ref(false)
 const detectionService = ref<InspectionServiceHealth | null>(null)
 const errorMessage = ref('')
 const actionMessage = ref('')
-const actionErrorDialog = ref<{ title: string; message: string } | null>(null)
+const actionErrorDialog = ref<{ title: string; message: string; confirmLabel: string } | null>(null)
 const selectedRecordId = ref('')
 const detailRecord = ref<InspectionRecord | null>(null)
 const detailLoading = ref(false)
@@ -140,9 +142,9 @@ const draftDiscardDialogOpen = ref(false)
 let pendingDraftDiscardAction: (() => void) | null = null
 let pendingDraftDiscardCancel: (() => void) | null = null
 
-function showActionError(title: string, message: string) {
+function showActionError(title: string, message: string, confirmLabel = '返回修改') {
   errorMessage.value = ''
-  actionErrorDialog.value = { title, message }
+  actionErrorDialog.value = { title, message, confirmLabel }
 }
 
 function closeActionError() {
@@ -665,7 +667,7 @@ async function loadPageData(options: { protectDraft?: boolean } = {}) {
 
 async function retryLoadStandard() {
   if (hasInspectionDraftChanges.value || uploading.value || saving.value) {
-    errorMessage.value = '当前巡检草稿包含未保存内容。请先完成或清空草稿，再重试获取标准。'
+    showActionError('无法重新获取标准', '当前巡检草稿包含未保存内容。请先保存或清空草稿，再重新获取标准。', '返回处理')
     return
   }
   loadingStandard.value = true
@@ -680,7 +682,7 @@ async function retryLoadStandard() {
       ? `已获取有效标准 ${globalStandard.value.version || ''}，共 ${globalStandardStats.value.clauseCount} 条。`
       : `已重新获取标准，当前仍有 ${invalidStandardDiagnostics.value.length} 项校验未通过。`
   } catch (error) {
-    errorMessage.value = friendlyError(error, '稽核标准获取失败，请稍后重试。')
+    showActionError('稽核标准获取失败', friendlyError(error, '稽核标准获取失败，请稍后重试。'), '返回重试')
   } finally {
     loadingStandard.value = false
   }
@@ -1174,6 +1176,10 @@ function deductionCount(record: InspectionRecord) {
   return recordItemResults(record).filter((item) => itemDeduction(item) > 0 || item.issueFound || item.redLineHit).length
 }
 
+function recordIssueItems(record: InspectionRecord) {
+  return recordItemResults(record).filter((item) => itemDeduction(item) > 0 || item.issueFound || item.redLineHit)
+}
+
 function recordScore(record: InspectionRecord) {
   return inspectionScoreView(record)
 }
@@ -1196,7 +1202,7 @@ async function exportRecord(record: InspectionRecord) {
     await downloadInspectionExcel(String(record.id), `茹菓-${store}-巡检报告-${date}-${record.id}.xlsx`)
     actionMessage.value = '巡检报告已生成并开始下载。'
   } catch (error) {
-    errorMessage.value = inspectionExportError(error)
+    showActionError('无法导出巡检报告', inspectionExportError(error), '返回重试')
   } finally {
     exportingRecordId.value = ''
   }
@@ -1222,7 +1228,11 @@ async function decidePersistedDetection(photo: DraftPhoto, action: 'confirm' | '
       : (response.changed ? '已撤销模型建议，系统已恢复该条款原评分。' : '该模型建议已处于撤销状态。')
     markFresh()
   } catch (error) {
-    errorMessage.value = friendlyError(error, action === 'confirm' ? '模型建议确认失败，请重试。' : '模型建议撤销失败，请重试。')
+    showActionError(
+      action === 'confirm' ? '无法确认模型建议' : '无法撤销模型建议',
+      friendlyError(error, action === 'confirm' ? '模型建议确认失败，请重试。' : '模型建议撤销失败，请重试。'),
+      '返回重试',
+    )
   } finally {
     persistedDecisionBusyKeys.value = persistedDecisionBusyKeys.value.filter((item) => item !== key)
   }
@@ -1248,6 +1258,18 @@ async function handleAttachmentChange(event: Event) {
   input.value = ''
 }
 
+function requestPhotoSelection() {
+  if (!standardReady.value) {
+    showActionError('无法上传巡检照片', '当前稽核标准尚未就绪，请先点击“重试获取标准”，确认标准有效后再上传。', '返回检查')
+    return
+  }
+  if (!draft.storeId) {
+    showActionError('无法上传巡检照片', '请先选择本次巡检门店，再拍照或选择现场图片。', '返回填写')
+    return
+  }
+  photoFileInput.value?.click()
+}
+
 async function handlePhotoDrop(event: DragEvent) {
   await uploadPhotos(Array.from(event.dataTransfer?.files || []))
 }
@@ -1270,20 +1292,36 @@ async function loadDetectionServiceStatus() {
   }
 }
 
+async function retryDetectionServiceStatus() {
+  const available = await loadDetectionServiceStatus()
+  if (!available) {
+    showActionError(
+      '识别服务不可用',
+      detectionService.value?.message || '识别服务不可用，请确认本机图片识别服务已启动。',
+      '返回重试',
+    )
+  }
+}
+
 async function uploadPhotos(files: File[]) {
   const imageFiles = files.filter((file) => file.type.startsWith('image/'))
-  if (!imageFiles.length) return
+  if (!files.length) return
+  if (!imageFiles.length) {
+    showActionError('无法上传巡检照片', '请选择 JPG、PNG、WEBP 等图片文件。')
+    return
+  }
   if (!standardReady.value) {
-    errorMessage.value = '当前标准未通过校验，重新获取并确认标准有效后才能上传巡检证据。'
+    showActionError('无法上传巡检照片', '当前标准未通过校验，重新获取并确认标准有效后才能上传巡检证据。', '返回检查')
     return
   }
   if (!draft.storeId) {
-    errorMessage.value = '请先选择巡检门店后再上传照片。'
+    showActionError('无法上传巡检照片', '请先选择巡检门店后再上传照片。', '返回填写')
     return
   }
   uploading.value = true
   errorMessage.value = ''
   let detectedCount = 0
+  let failedCount = 0
   try {
     for (const file of imageFiles) {
       const uploaded = await uploadInspectionAttachment(file, draft.storeId, `inspection-${draft.storeId}-draft`)
@@ -1291,12 +1329,16 @@ async function uploadPhotos(files: File[]) {
       const photo = draft.photos[draft.photos.length - 1]
       await runPhotoDetection(photo)
       if (photo.detectionStatus === 'success') detectedCount += 1
+      else failedCount += 1
     }
     actionMessage.value = detectedCount > 0
       ? `已上传并识别 ${detectedCount} 张现场照片，请督导确认模型建议。`
       : ''
+    if (failedCount > 0) {
+      showActionError('图片识别未完成', `有 ${failedCount} 张照片识别失败。照片和草稿均已保留，请关闭弹窗后重试识别或移除失败照片。`, '返回处理')
+    }
   } catch (error) {
-    errorMessage.value = friendlyError(error, '照片上传失败。')
+    showActionError('无法上传巡检照片', friendlyError(error, '照片上传失败，当前草稿已保留，请稍后重试。'), '返回重试')
   } finally {
     uploading.value = false
   }
@@ -1347,11 +1389,22 @@ async function retryPhotoDetection(photo: DraftPhoto) {
   errorMessage.value = ''
   actionMessage.value = ''
   await runPhotoDetection(photo)
+  if (photo.detectionStatus === 'failed') {
+    showActionError('图片识别未完成', photo.detectionError || '识别服务不可用，请启动服务后重试。', '返回重试')
+  }
 }
 
 async function confirmModelIssue(photo: DraftPhoto) {
   const result = photo.detection
-  if (!result || detectionCount(result) <= 0 || isDraftReviewBusy(photo)) return
+  if (isDraftReviewBusy(photo)) return
+  if (!result || detectionCount(result) <= 0) {
+    showActionError('无法确认模型问题', '当前照片没有可确认的模型问题，请重新识别或人工核对条款。')
+    return
+  }
+  if (!detectionClauseId(result)) {
+    showActionError('无法确认模型问题', '模型建议尚未匹配到正式稽核条款，不能直接形成扣分。请在“添加扣分项”中选择正式条款并记录现场问题。')
+    return
+  }
   const key = detectionKey(result)
   if (!key) {
     showActionError('无法确认模型问题', '识别结果缺少服务端确认编号，请重新识别后再确认。')
@@ -1597,6 +1650,10 @@ function addDeduction() {
   actionMessage.value = ''
   const clause = selectedClause.value
 
+  if (!standardReady.value) {
+    showActionError('无法添加扣分项', '当前稽核标准尚未就绪，请先点击“重试获取标准”，确认标准有效后再添加。')
+    return
+  }
   if (!deductionForm.dimension) {
     showActionError('无法添加扣分项', '请选择问题维度。')
     return
@@ -1691,32 +1748,25 @@ function restoreDeduction(detail: DeductionDetail) {
   normalizeItemScore(target)
 }
 
+function showInspectionSaveError(message: string) {
+  showActionError('无法保存巡检', message, '返回填写')
+}
+
 async function submitRecord() {
+  if (saving.value || uploading.value) return
   errorMessage.value = ''
   actionMessage.value = ''
   if (saveBlockedReason.value) {
-    errorMessage.value = saveBlockedReason.value
-    return
-  }
-  if (!draft.storeId) {
-    errorMessage.value = '请选择巡检门店。'
-    return
-  }
-  if (!draft.inspectionDate) {
-    errorMessage.value = '请选择巡检日期。'
-    return
-  }
-  if (!draft.inspector.trim()) {
-    errorMessage.value = '请填写督导人姓名。'
+    showInspectionSaveError(saveBlockedReason.value)
     return
   }
   if (!Number.isFinite(Number(draft.fullScore)) || Number(draft.fullScore) <= 0) {
-    errorMessage.value = '满分基准必须大于 0。'
+    showInspectionSaveError('满分基准必须大于 0。')
     return
   }
   const missingReason = draft.itemResults.find((item) => (item.issueFound || itemDeduction(item) > 0) && !item.deductionReason?.trim())
   if (missingReason) {
-    errorMessage.value = `请填写 ${missingReason.code || missingReason.title || '扣分条款'} 的扣分原因。`
+    showInspectionSaveError(`请填写 ${missingReason.code || missingReason.title || '扣分条款'} 的扣分原因。`)
     return
   }
 
@@ -1753,7 +1803,7 @@ async function submitRecord() {
     if (loaded) markFresh()
     await router.push({ path: '/operations/inspection/records', query: { recordId: savedRecordId } })
   } catch (error) {
-    errorMessage.value = inspectionSaveError(error)
+    showInspectionSaveError(inspectionSaveError(error))
   } finally {
     saving.value = false
   }
@@ -2043,12 +2093,26 @@ onUnmounted(() => {
           :has-migration-audit="hasMigrationAudit"
           :migration-audit-text="migrationAuditText"
           :requires-manual-review="requiresManualReview"
-          :deduction-items="recordItemResults(selectedRecord).filter((item) => itemDeduction(item) > 0)"
-          :item-deduction="itemDeduction"
           @supplement="openHistoricalEvidenceDialog()"
           @export="exportRecord(selectedRecord)"
           @close="closeRecordDetail"
-        />
+        >
+          <template #priority>
+            <InspectionRecordIssueSummary
+              :record="selectedRecord"
+              :items="recordIssueItems(selectedRecord)"
+              :format-score="formatScore"
+              :item-deduction="itemDeduction"
+              :risk-label="riskLabel"
+              :clause-photos="recordClausePhotos"
+              :photo-state="detailPhotoState"
+              :photo-message="detailPhotoMessage"
+              @preview="openDetailPhotoPreview"
+              @retry="retryDetailPhoto"
+              @image-error="markDetailPhotoFailed"
+            />
+          </template>
+        </InspectionRecordDetailSummary>
         <InspectionRecordSnapshotTable
           :record="selectedRecord"
           :items="recordItemResults(selectedRecord)"
@@ -2166,13 +2230,22 @@ onUnmounted(() => {
               v-if="detectionService && !detectionServiceUp && !loadingDetectionService"
               class="secondary-button"
               type="button"
-              @click="loadDetectionServiceStatus"
+              @click="retryDetectionServiceStatus"
             >重试</button>
-            <label class="primary-button upload-button" :class="{ disabled: !standardReady }">
+            <button class="primary-button upload-button" type="button" :disabled="uploading" @click="requestPhotoSelection">
               <ImagePlus :size="16" />
               {{ uploading ? '上传识别中...' : '拍照/选图' }}
-              <input type="file" accept="image/*" capture="environment" multiple :disabled="uploading || !standardReady" @change="handleAttachmentChange" />
-            </label>
+            </button>
+            <input
+              ref="photoFileInput"
+              hidden
+              type="file"
+              accept="image/*"
+              capture="environment"
+              multiple
+              :disabled="uploading"
+              @change="handleAttachmentChange"
+            />
           </div>
         </div>
         <InspectionPhotoDetectionList
@@ -2207,7 +2280,6 @@ onUnmounted(() => {
         :yellow-risk-count="yellowRiskCount"
         :saving="saving"
         :uploading="uploading"
-        :save-blocked-reason="saveBlockedReason"
         @save="submitRecord"
       />
 
@@ -2249,7 +2321,6 @@ onUnmounted(() => {
         :note="draft.note"
         :saving="saving"
         :uploading="uploading"
-        :save-blocked-reason="saveBlockedReason"
         @update:note="draft.note = $event"
         @reset="requestResetInspectionDraft"
         @save="submitRecord"
@@ -2284,7 +2355,7 @@ onUnmounted(() => {
       :open="Boolean(actionErrorDialog)"
       :title="actionErrorDialog?.title || '操作未完成'"
       :message="actionErrorDialog?.message || ''"
-      confirm-label="返回修改"
+      :confirm-label="actionErrorDialog?.confirmLabel || '返回修改'"
       confirm-variant="danger"
       acknowledge-only
       @cancel="closeActionError"
@@ -2716,13 +2787,6 @@ onUnmounted(() => {
   position: relative;
 }
 
-.upload-button input {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  cursor: pointer;
-}
-
 .inspection-upload-actions,
 .inspection-review-actions {
   display: flex;
@@ -2801,11 +2865,6 @@ onUnmounted(() => {
   line-height: 1.5;
 }
 
-.upload-button.disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
 .detection-service-status.down {
   border-color: rgba(220, 53, 69, 0.3);
   background: var(--ds-danger-soft);
@@ -2818,12 +2877,6 @@ onUnmounted(() => {
 
 .inspection-score-bar {
   position: relative;
-}
-
-.inspection-save-hint {
-  grid-column: 1 / -1;
-  color: var(--warn);
-  text-align: right;
 }
 
 .inspection-score-bar,

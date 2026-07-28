@@ -104,6 +104,11 @@ const canonicalExportStandard = {
   }),
 }
 
+const tinyPng = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL13wAAAABJRU5ErkJggg==',
+  'base64',
+)
+
 const bossUser = {
   id: 9001,
   tenantId: 1,
@@ -381,7 +386,6 @@ test('dirty inspection drafts require confirmation before being cleared', async 
   await seedSession(page)
   await page.goto('/operations/inspection/tasks')
 
-  await expect(page.locator('.inspection-note-card').getByRole('status')).toContainText('请填写督导人姓名')
   await page.getByLabel('督导人').fill('测试督导')
   await page.getByLabel('整改要求 / 备注').fill('闭店前完成复查')
   await page.getByRole('button', { name: '清空表单' }).click()
@@ -396,6 +400,170 @@ test('dirty inspection drafts require confirmation before being cleared', async 
   await page.getByRole('button', { name: '放弃草稿' }).click()
   await expect(page.getByLabel('督导人')).toHaveValue('')
   await expect(page.getByLabel('整改要求 / 备注')).toHaveValue('')
+})
+
+test('save stays clickable and reports incomplete inspection fields in an error dialog', async ({ page }) => {
+  await mockInspectionApi(page)
+  await seedSession(page)
+  await page.goto('/operations/inspection/tasks')
+
+  const saveButtons = page.getByRole('button', { name: '保存巡检' })
+  await expect(saveButtons).toHaveCount(2)
+  await expect(saveButtons.first()).toBeEnabled()
+  await expect(saveButtons.last()).toBeEnabled()
+  await expect(page.locator('.inspection-save-hint')).toHaveCount(0)
+
+  await saveButtons.first().click()
+
+  const dialog = page.getByRole('alertdialog', { name: '无法保存巡检' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText('请填写督导人姓名')
+  await page.getByRole('button', { name: '返回填写' }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(saveButtons.first()).toBeEnabled()
+})
+
+test('inspection detail prioritizes the issue with evidence and keeps the 105-clause audit snapshot collapsed', async ({ page }) => {
+  const recordId = 'INS-DETAIL-PRIORITY-ISSUE'
+  const attachmentId = 777
+  const issueClauseId = 70
+  const reason = '角落、灯带及边角有积灰污点，需及时清理干净'
+  const itemResults = canonicalExportStandard.items.map((item) => {
+    const isIssue = item.id === issueClauseId
+    return {
+      snapshotId: item.id,
+      standardItemId: item.id,
+      code: isIssue ? 'H-4.1.2' : item.code,
+      dimension: item.dimension,
+      categoryName: item.dimension.replace('标准', ''),
+      categoryCode: item.dimension.includes('物料') ? 'MATERIAL' : item.dimension.includes('卫生') ? 'HYGIENE' : 'SERVICE',
+      title: isIssue ? '店铺内部' : item.title,
+      standardScore: isIssue ? 2 : item.suggestedScore,
+      actualScore: isIssue ? 0 : item.suggestedScore,
+      deductionScore: isIssue ? 4 : 0,
+      deductionReason: isIssue ? reason : '',
+      riskLevel: item.riskLevel,
+      issueFound: isIssue,
+      redLineHit: false,
+      photoAttachmentIds: isIssue ? [attachmentId] : [],
+    }
+  })
+  const record = {
+    id: recordId,
+    storeId: 'STORE-1',
+    storeName: '测试门店',
+    brand: '茹菓',
+    inspectionDate: '2026-07-28',
+    inspector: '测试督导',
+    fullScore: 200,
+    score: 196,
+    maxScore: 200,
+    passScore: 180,
+    passed: true,
+    resultCode: 'PASSED',
+    standardVersionId: canonicalExportStandard.id,
+    standardVersion: canonicalExportStandard.version,
+    materialScore: 37,
+    hygieneScore: 59,
+    serviceScore: 100,
+    photosJson: JSON.stringify([{ attachmentId, fileName: '店铺内部问题.jpg', contentType: 'image/jpeg' }]),
+    deductionsJson: '[]',
+    redlinesJson: '[]',
+    itemResults,
+  }
+  await mockInspectionApi(
+    page,
+    [record],
+    undefined,
+    canonicalExportStandard,
+    undefined,
+    { [recordId]: record },
+  )
+  await page.route(`**/api/inspections/${recordId}/evidence/attachments`, (route) => json(route, {
+    recordId,
+    storeId: 'STORE-1',
+    candidates: [{
+      attachmentId,
+      photoIndex: 0,
+      fileName: '店铺内部问题.jpg',
+      contentType: 'image/jpeg',
+      status: 'LINKED',
+      linkedClauseIds: [issueClauseId],
+    }],
+  }))
+  await page.route(`**/api/storage/attachments/${attachmentId}`, (route) => route.fulfill({
+    status: 200,
+    contentType: 'image/png',
+    body: tinyPng,
+  }))
+  await seedSession(page)
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await page.goto(`/operations/inspection/records?recordId=${recordId}`)
+
+  const issues = page.getByRole('region', { name: '本次发现的问题（1项）' })
+  await expect(issues).toBeVisible()
+  await expect(issues.getByText('H-4.1.2', { exact: true })).toBeVisible()
+  await expect(issues.getByText('扣 4 分', { exact: true })).toBeVisible()
+  await expect(issues.getByText(reason, { exact: true })).toBeVisible()
+  await expect(issues.getByRole('button', { name: '预览 店铺内部问题.jpg' })).toBeVisible()
+  const issueBox = await issues.boundingBox()
+  expect(issueBox).not.toBeNull()
+  expect(issueBox!.y + issueBox!.height).toBeLessThanOrEqual(720)
+
+  await page.setViewportSize({ width: 1464, height: 1000 })
+  const actionButtons = [
+    page.getByRole('button', { name: '补传并关联证据' }),
+    page.getByRole('button', { name: '导出Excel' }),
+    page.getByRole('button', { name: '返回巡检记录' }),
+  ]
+  const actionGeometry = await Promise.all(actionButtons.map(async (button) => {
+    await expect(button).toBeVisible()
+    const box = await button.boundingBox()
+    const layout = await button.evaluate((element) => {
+      const style = window.getComputedStyle(element)
+      return {
+        whiteSpace: style.whiteSpace,
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+      }
+    })
+    return { box, layout }
+  }))
+  const actionTops = actionGeometry.map(({ box }) => box!.y)
+  const actionHeights = actionGeometry.map(({ box }) => box!.height)
+  expect(Math.max(...actionTops) - Math.min(...actionTops)).toBeLessThanOrEqual(1)
+  expect(Math.max(...actionHeights) - Math.min(...actionHeights)).toBeLessThanOrEqual(1)
+  expect(Math.min(...actionHeights)).toBeGreaterThanOrEqual(40)
+  actionGeometry.forEach(({ layout }) => {
+    expect(layout.whiteSpace).toBe('nowrap')
+    expect(layout.scrollHeight).toBeLessThanOrEqual(layout.clientHeight)
+  })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true)
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  const mobileActionGeometry = await Promise.all(actionButtons.map(async (button) => {
+    const box = await button.boundingBox()
+    const whiteSpace = await button.evaluate((element) => window.getComputedStyle(element).whiteSpace)
+    return { box, whiteSpace }
+  }))
+  const mobileLefts = mobileActionGeometry.map(({ box }) => box!.x)
+  const mobileWidths = mobileActionGeometry.map(({ box }) => box!.width)
+  const mobileHeights = mobileActionGeometry.map(({ box }) => box!.height)
+  expect(Math.max(...mobileLefts) - Math.min(...mobileLefts)).toBeLessThanOrEqual(1)
+  expect(Math.max(...mobileWidths) - Math.min(...mobileWidths)).toBeLessThanOrEqual(1)
+  expect(Math.max(...mobileHeights) - Math.min(...mobileHeights)).toBeLessThanOrEqual(1)
+  expect(Math.min(...mobileHeights)).toBeGreaterThanOrEqual(44)
+  mobileActionGeometry.forEach(({ whiteSpace }) => expect(whiteSpace).toBe('nowrap'))
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true)
+
+  const expandSnapshot = page.getByRole('button', { name: '查看完整标准快照（105条）' })
+  await expect(expandSnapshot).toBeVisible()
+  const snapshotTable = page.getByRole('table', { name: '当时使用的完整标准快照（105条）条款' })
+  await expect(snapshotTable).toHaveCount(0)
+  await expandSnapshot.click()
+  await expect(page.getByRole('button', { name: '收起完整标准快照（105条）' })).toBeVisible()
+  await expect(snapshotTable).toBeVisible()
+  await expect(snapshotTable.locator('tbody tr')).toHaveCount(105)
 })
 
 test('canonical E2E red-line fixture uses a complete formal standard and downloads xlsx with an authenticated request', async ({ page }) => {
@@ -454,8 +622,10 @@ test('canonical E2E red-line fixture uses a complete formal standard and downloa
   await expect(page.locator('.inspection-detail-grid').getByText('100 / 100', { exact: true })).toBeVisible()
   await expect(page.locator('.inspection-detail-grid').getByText('196 / 200')).toBeVisible()
   await expect(page.locator('.inspection-detail-grid').getByText('1 / 0', { exact: true })).toBeVisible()
-  await expect(page.getByRole('cell', { name: '食安红线：E2E 导出回归' })).toBeVisible()
-  await expect(page.getByText('扣 4 分', { exact: true })).toBeVisible()
+  const issues = page.getByRole('region', { name: '本次发现的问题（1项）' })
+  await expect(issues.getByText('食安红线：E2E 导出回归', { exact: true })).toBeVisible()
+  await expect(issues.getByText('扣 4 分', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '查看完整标准快照（105条）' })).toBeVisible()
 
   await page.setViewportSize({ width: 1280, height: 720 })
   await expect(page.locator('.inspection-detail-grid').getByText('2026.07-R1', { exact: true })).toBeVisible()
@@ -549,7 +719,7 @@ test('inspection export labels only an optimistic-lock conflict as reopen and re
   await expect(page.getByText(/需人工修复评分后导出/)).toHaveCount(0)
 })
 
-test('invalid 105-item standard remains visible with category diagnostics and blocks new inspection saving', async ({ page }) => {
+test('invalid 105-item standard remains visible and explains the save failure in a dialog', async ({ page }) => {
   await mockInspectionApi(page, [], undefined, invalidStandard)
   await seedSession(page)
   await page.goto('/operations/inspection/standards')
@@ -567,7 +737,17 @@ test('invalid 105-item standard remains visible with category diagnostics and bl
   await expect(page.locator('[data-category="MATERIAL"] tbody tr')).toHaveCount(43)
   await expect(page.locator('[data-category="HYGIENE"] tbody tr')).toHaveCount(47)
   await expect(page.locator('[data-category="SERVICE"] tbody tr')).toHaveCount(15)
-  await expect(page.getByRole('button', { name: '保存巡检' }).first()).toBeDisabled()
+  await expect(page.getByRole('button', { name: '拍照/选图' })).toBeEnabled()
+  await page.getByRole('button', { name: '拍照/选图' }).click()
+  const uploadDialog = page.getByRole('alertdialog', { name: '无法上传巡检照片' })
+  await expect(uploadDialog).toContainText('当前稽核标准尚未就绪')
+  await uploadDialog.getByRole('button', { name: '返回检查' }).click()
+  await page.getByLabel('督导人').fill('测试督导')
+  await expect(page.getByRole('button', { name: '保存巡检' }).first()).toBeEnabled()
+  await page.getByRole('button', { name: '保存巡检' }).first().click()
+  const saveDialog = page.getByRole('alertdialog', { name: '无法保存巡检' })
+  await expect(saveDialog).toContainText('当前标准未通过校验，请重试获取标准后再保存')
+  await saveDialog.getByRole('button', { name: '返回填写' }).click()
   await expect(page.getByRole('button', { name: '重试获取标准' }).first()).toBeEnabled()
 })
 
@@ -646,6 +826,7 @@ test('only an inspection record conflict is labelled as another-user concurrent 
   await page.getByRole('button', { name: '保存巡检' }).first().click()
   await expect(page.getByText('当前巡检标准校验未通过，已禁止保存。请重试获取标准后再试。')).toBeVisible()
   await expect(page.getByText(/其他人更新/)).toHaveCount(0)
+  await page.getByRole('alertdialog', { name: '无法保存巡检' }).getByRole('button', { name: '返回填写' }).click()
 
   failure = {
     code: 'INSPECTION_STANDARD_STALE',
@@ -654,6 +835,7 @@ test('only an inspection record conflict is labelled as another-user concurrent 
   await page.getByRole('button', { name: '保存巡检' }).first().click()
   await expect(page.getByText('巡检标准已更新，请清空当前草稿并重试获取标准后重新评分。')).toBeVisible()
   await expect(page.getByText(/其他人更新/)).toHaveCount(0)
+  await page.getByRole('alertdialog', { name: '无法保存巡检' }).getByRole('button', { name: '返回填写' }).click()
 
   failure = {
     code: 'INSPECTION_RECORD_CONFLICT',
@@ -661,6 +843,7 @@ test('only an inspection record conflict is labelled as another-user concurrent 
   }
   await page.getByRole('button', { name: '保存巡检' }).first().click()
   await expect(page.getByText('这条巡检已被其他人更新，请重新打开当前记录后再提交。')).toBeVisible()
+  await expect(page.locator('.error-box').filter({ hasText: '这条巡检已被其他人更新' })).toHaveCount(0)
 })
 
 test('read-only store manager is routed to records and cannot see manage tabs', async ({ page }) => {

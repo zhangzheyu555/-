@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { LoaderCircle, XCircle } from 'lucide-vue-next'
+import { computed, ref, watch } from 'vue'
+import { ChevronDown, LoaderCircle, XCircle } from 'lucide-vue-next'
 import type { InspectionItemResult, InspectionRecord } from '../../api/inspection'
 import type { InspectionDraftPhoto } from '../../composables/useInspectionDraft'
 
@@ -30,17 +31,44 @@ const emit = defineEmits<{
   imageError: [photo: InspectionDraftPhoto]
 }>()
 
+const expanded = ref(false)
+const snapshotLabel = computed(() => props.heading.includes('完整标准快照')
+  ? `完整标准快照（${props.items.length}条）`
+  : `历史条款快照（${props.items.length}条）`)
+const toggleLabel = computed(() => `${expanded.value ? '收起' : '查看'}${snapshotLabel.value}`)
+
+watch(() => props.record.id, () => {
+  expanded.value = false
+})
+
 function preview(photo: InspectionDraftPhoto, event: MouseEvent) {
   emit('preview', photo, event)
 }
 </script>
 
 <template>
-  <section class="inspection-detail-section">
-    <h4>{{ props.heading }}</h4>
-    <div v-if="!props.items.length" class="empty-state compact">{{ props.emptyText }}</div>
-    <div v-else class="inspection-table-wrap">
-      <table class="inspection-table snapshot-table">
+  <section class="inspection-detail-section snapshot-disclosure" role="region" :aria-label="snapshotLabel">
+    <template v-if="props.items.length">
+      <button
+        class="snapshot-disclosure-toggle"
+        type="button"
+        :aria-label="toggleLabel"
+        :aria-expanded="expanded"
+        aria-controls="inspection-record-snapshot"
+        @click="expanded = !expanded"
+      >
+        <span>
+          <b>{{ props.heading }}</b>
+          <small>完整条款仅用于历史审计，默认收起。</small>
+        </span>
+        <span class="snapshot-disclosure-action">
+          {{ expanded ? '收起' : '展开查看' }}
+          <ChevronDown :size="18" :class="{ expanded }" />
+        </span>
+      </button>
+      <div v-if="expanded" id="inspection-record-snapshot" class="snapshot-disclosure-content">
+        <div class="inspection-table-wrap">
+        <table class="inspection-table snapshot-table" :aria-label="`${props.heading}条款`">
         <thead><tr><th>条款</th><th class="r">标准分</th><th class="r">实得分</th><th class="r">实际扣分</th><th>扣分原因</th><th>现场证据</th><th>状态</th></tr></thead>
         <tbody>
           <tr v-for="item in props.items" :key="`snapshot-${item.standardItemId}`">
@@ -88,12 +116,29 @@ function preview(photo: InspectionDraftPhoto, event: MouseEvent) {
             <td><span class="evidence-status" :class="{ effective: props.itemDeduction(item) > 0, pending: props.clauseEvidenceStatus(props.record, item).includes('未计分'), unlinked: props.clauseEvidenceStatus(props.record, item) === '未关联证据' }">{{ props.clauseEvidenceStatus(props.record, item) }}</span></td>
           </tr>
         </tbody>
-      </table>
-    </div>
+        </table>
+        </div>
+      </div>
+    </template>
+    <template v-else>
+      <h4>{{ props.heading }}</h4>
+      <div class="empty-state compact">{{ props.emptyText }}</div>
+    </template>
   </section>
 </template>
 
 <style scoped>
+.snapshot-disclosure { padding-top: 12px; border-top: 1px solid var(--line); }
+.snapshot-disclosure > h4 { margin: 0 0 8px; font-size: 14px; }
+.snapshot-disclosure-toggle { display: flex; width: 100%; min-height: 58px; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--ds-surface-muted); color: var(--ink); text-align: left; cursor: pointer; }
+.snapshot-disclosure-toggle:hover, .snapshot-disclosure-toggle:focus-visible { border-color: var(--primary); background: var(--primary-soft); }
+.snapshot-disclosure-toggle > span:first-child { display: grid; min-width: 0; gap: 3px; }
+.snapshot-disclosure-toggle b { font-size: 14px; }
+.snapshot-disclosure-toggle small { color: var(--muted); font-size: 12px; }
+.snapshot-disclosure-action { display: inline-flex; flex: none; align-items: center; gap: 5px; color: var(--primary-dark); font-size: 12px; font-weight: 800; white-space: nowrap; }
+.snapshot-disclosure-action svg { transition: transform .18s ease; }
+.snapshot-disclosure-action svg.expanded { transform: rotate(180deg); }
+.snapshot-disclosure-content { padding-top: 10px; }
 .inspection-table-wrap { width: 100%; overflow-x: auto; }
 .inspection-table { width: 100%; min-width: 760px; border-collapse: collapse; }
 .inspection-table .r { text-align: right; }
@@ -122,4 +167,10 @@ function preview(photo: InspectionDraftPhoto, event: MouseEvent) {
 .evidence-status.pending, .evidence-status.unlinked { background: var(--ds-warning-soft); color: #77440d; }
 .spin { animation: inspection-snapshot-spin 0.9s linear infinite; }
 @keyframes inspection-snapshot-spin { to { transform: rotate(360deg); } }
+@media (max-width: 720px) {
+  .snapshot-disclosure-toggle { min-height: 64px; align-items: flex-start; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .snapshot-disclosure-action svg, .spin { transition: none; animation: none; }
+}
 </style>

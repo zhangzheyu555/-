@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { ArrowRight, ClipboardList, PackagePlus, Warehouse } from 'lucide-vue-next'
 import SecondaryNavigation from '../components/common/SecondaryNavigation.vue'
@@ -23,6 +23,7 @@ import { PERMISSIONS } from '../permissions/permissions'
 import { getStores, type StoreInfo } from '../api/operations'
 import { getWarehouseItemRequisitionScopeContext } from '../api/warehouse'
 import type {
+  WarehouseAlert,
   WarehouseInfo,
   WarehouseItem,
   WarehouseItemPayload,
@@ -68,6 +69,7 @@ const requisitionStoresAttempted = ref(false)
 const itemScopeContext = ref<WarehouseItemRequisitionScopeContext | null>(null)
 const itemScopeContextAttempted = ref(false)
 const movementPanelRef = ref<InstanceType<typeof WarehouseMovementPanel> | null>(null)
+const inventoryPanelRef = ref<InstanceType<typeof WarehouseInventoryPanel> | null>(null)
 const materialSubmitError = ref<MaterialSubmitError | null>(null)
 
 function mapErrorCodeToTarget(code?: string, status?: number): MaterialSubmitError['target'] {
@@ -459,6 +461,20 @@ async function setTab(tab: WarehouseTab) {
   } catch {
     // 当前路由已是目标页时无需提示。
   }
+}
+
+async function showRiskInventory() {
+  warehouse.setCategory('all')
+  await setTab('inventory')
+  await nextTick()
+  await inventoryPanelRef.value?.showRiskInventory()
+}
+
+async function focusInventoryAlert(alert: WarehouseAlert) {
+  warehouse.setCategory('all')
+  await setTab('inventory')
+  await nextTick()
+  await inventoryPanelRef.value?.focusInventoryItem(alert.itemId, alert.type)
 }
 
 async function openWarehouse(target: WarehouseInfo) {
@@ -929,14 +945,21 @@ watch(
         <div class="warehouse-alerts-panel">
           <div class="table-heading">
             <div><h3>库存预警</h3></div>
-            <button class="mini-button" type="button" @click="setTab('inventory')">查看库存</button>
+            <button class="mini-button" type="button" @click="showRiskInventory">查看库存</button>
           </div>
           <div v-if="alerts.length" class="overview-list">
-            <div v-for="alert in alerts.slice(0, 6)" :key="`${alert.type}-${alert.itemId}`" class="overview-list-row">
+            <button
+              v-for="alert in alerts.slice(0, 6)"
+              :key="`${alert.type}-${alert.itemId}`"
+              class="overview-list-row overview-alert-row"
+              type="button"
+              :aria-label="`查看${alert.itemName}库存`"
+              @click="focusInventoryAlert(alert)"
+            >
               <b :class="statusClass(alert.severity)">{{ alert.type === 'EXPIRING' ? '临期' : '低库存' }}</b>
               <strong>{{ alert.itemName }}</strong>
               <span>{{ alert.message }}</span>
-            </div>
+            </button>
           </div>
           <div v-else class="empty-state compact">当前没有库存预警。</div>
         </div>
@@ -982,6 +1005,7 @@ watch(
 
     <WarehouseInventoryPanel
       v-if="currentTab() === 'warehouse' && warehouseDetailSection === 'inventory'"
+      ref="inventoryPanelRef"
       :items="items"
       :categories="warehouse.categories"
       :selected-category="warehouse.selectedCategory"
@@ -1516,6 +1540,26 @@ watch(
 
 .overview-list-row strong {
   color: var(--ink);
+}
+
+.overview-alert-row {
+  width: 100%;
+  padding: 0;
+  border-width: 0 0 1px;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.overview-alert-row:hover,
+.overview-alert-row:focus-visible {
+  background: var(--ds-primary-soft);
+}
+
+.overview-alert-row:focus-visible {
+  outline: 2px solid var(--ds-primary);
+  outline-offset: -2px;
 }
 
 .overview-list-row b.warn {
