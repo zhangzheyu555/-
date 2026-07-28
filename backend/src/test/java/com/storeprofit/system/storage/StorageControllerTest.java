@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.storeprofit.system.common.ApiResponse;
@@ -23,6 +24,35 @@ class StorageControllerTest {
   private final GlobalExceptionHandler exceptionHandler = new GlobalExceptionHandler();
   private final AuthUser storeManager = new AuthUser(
       7L, 1L, "default", "manager-s1", "s1", "店长", "STORE_MANAGER", "s1", true);
+
+  @Test
+  void legacyKvReadIsGoneAndCannotReachStorageService() {
+    when(authService.requireUser("Bearer scoped-token")).thenReturn(storeManager);
+
+    assertThatThrownBy(() -> controller.get("Bearer scoped-token", "entries"))
+        .isInstanceOfSatisfying(BusinessException.class, error -> {
+          assertThat(error.getCode()).isEqualTo("LEGACY_KV_API_DISABLED");
+          assertThat(error.getStatus()).isEqualTo(HttpStatus.GONE);
+        });
+
+    verify(authService).requireUser("Bearer scoped-token");
+    verifyNoInteractions(storageService);
+  }
+
+  @Test
+  void legacyKvWriteIsGoneAndCannotReachStorageService() {
+    when(authService.requireUser("Bearer scoped-token")).thenReturn(storeManager);
+    StorageWriteRequest request = new StorageWriteRequest("entries", "[]");
+
+    assertThatThrownBy(() -> controller.set("Bearer scoped-token", request))
+        .isInstanceOfSatisfying(BusinessException.class, error -> {
+          assertThat(error.getCode()).isEqualTo("LEGACY_KV_API_DISABLED");
+          assertThat(error.getStatus()).isEqualTo(HttpStatus.GONE);
+        });
+
+    verify(authService).requireUser("Bearer scoped-token");
+    verifyNoInteractions(storageService);
+  }
 
   @Test
   void deniedAttachmentReadIsMappedToHttp403() {

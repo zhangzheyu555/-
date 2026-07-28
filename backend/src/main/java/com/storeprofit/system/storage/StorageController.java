@@ -31,25 +31,31 @@ public class StorageController {
   }
 
   @GetMapping
+  @Deprecated(since = "0.2.0", forRemoval = true)
   public StorageValueResponse get(
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @RequestParam String key
   ) {
-    if (key == null || key.isBlank()) {
-      throw new IllegalArgumentException("key 不能为空");
-    }
-    AuthUser user = authService.requireUser(authorization);
-    return new StorageValueResponse(storageService.get(user, key).orElse(null));
+    authService.requireUser(authorization);
+    throw legacyKvApiDisabled();
   }
 
   @PostMapping
+  @Deprecated(since = "0.2.0", forRemoval = true)
   public StorageValueResponse set(
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @Valid @RequestBody StorageWriteRequest request
   ) {
-    AuthUser user = authService.requireUser(authorization);
-    storageService.set(user, request.key(), request.value());
-    return new StorageValueResponse(request.value());
+    authService.requireUser(authorization);
+    throw legacyKvApiDisabled();
+  }
+
+  private BusinessException legacyKvApiDisabled() {
+    return new BusinessException(
+        "LEGACY_KV_API_DISABLED",
+        "历史兼容数据接口已停用",
+        HttpStatus.GONE
+    );
   }
 
   @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)

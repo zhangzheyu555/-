@@ -1,8 +1,9 @@
 package com.storeprofit.system.migration;
 
 import com.storeprofit.system.common.ApiResponse;
+import com.storeprofit.system.common.BusinessException;
 import com.storeprofit.system.platform.auth.AuthService;
-import com.storeprofit.system.platform.auth.AuthUser;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -22,19 +23,21 @@ public class MigrationController {
   }
 
   @GetMapping("/status")
+  @Deprecated(since = "0.2.0", forRemoval = true)
   public ApiResponse<MigrationStatusResponse> status(
       @RequestHeader(value = "Authorization", required = false) String authorization
   ) {
-    AuthUser user = authService.requireUser(authorization);
-    return ApiResponse.ok(migrationStatusService.status(user));
+    authService.requireUser(authorization);
+    throw legacyKvApiDisabled();
   }
 
   @GetMapping("/legacy-kv/preview")
+  @Deprecated(since = "0.2.0", forRemoval = true)
   public ApiResponse<LegacyKvMigrationPreviewResponse> legacyKvPreview(
       @RequestHeader(value = "Authorization", required = false) String authorization
   ) {
-    AuthUser user = authService.requireUser(authorization);
-    return ApiResponse.ok(migrationStatusService.legacyKvPreview(user));
+    authService.requireUser(authorization);
+    throw legacyKvApiDisabled();
   }
 
   @PostMapping("/browser-storage/preview")
@@ -42,25 +45,35 @@ public class MigrationController {
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @RequestBody BrowserStoragePreviewRequest request
   ) {
-    AuthUser user = authService.requireUser(authorization);
-    return ApiResponse.ok(migrationStatusService.browserStoragePreview(user, request));
+    return ApiResponse.ok(migrationStatusService.browserStoragePreview(
+        authService.requireUser(authorization), request));
   }
 
   @PostMapping("/browser-storage/run")
+  @Deprecated(since = "0.2.0", forRemoval = true)
   public ApiResponse<BrowserStorageMigrationRunResponse> browserStorageRun(
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @RequestBody BrowserStoragePreviewRequest request
   ) {
-    AuthUser user = authService.requireUser(authorization);
-    return ApiResponse.ok(migrationStatusService.browserStorageRun(user, request));
+    authService.requireUser(authorization);
+    throw legacyKvApiDisabled();
   }
 
   @PostMapping("/legacy-kv/run")
+  @Deprecated(since = "0.2.0", forRemoval = true)
   public ApiResponse<LegacyKvMigrationRunResponse> legacyKvRun(
       @RequestHeader(value = "Authorization", required = false) String authorization,
       @RequestBody LegacyKvMigrationRunRequest request
   ) {
-    AuthUser user = authService.requireUser(authorization);
-    return ApiResponse.ok(migrationStatusService.legacyKvRun(user, request));
+    authService.requireUser(authorization);
+    throw legacyKvApiDisabled();
+  }
+
+  private BusinessException legacyKvApiDisabled() {
+    return new BusinessException(
+        "LEGACY_KV_API_DISABLED",
+        "历史兼容数据接口已停用",
+        HttpStatus.GONE
+    );
   }
 }
