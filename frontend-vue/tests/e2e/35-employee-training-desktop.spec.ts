@@ -35,6 +35,7 @@ interface State {
   employees: EmployeeRow[]
   submittedExamBodies: Array<Record<string, unknown>>
   consoleErrors: string[]
+  failNextEmployeeUpdate: boolean
 }
 
 const stores = [{ id: 'EMP_A', code: 'EMP-A', name: '合成员工门店', brandId: 1, brandName: '茹菓', status: '营业中' }]
@@ -69,6 +70,7 @@ function newState(): State {
     }],
     submittedExamBodies: [],
     consoleErrors: [],
+    failNextEmployeeUpdate: false,
   }
 }
 
@@ -105,6 +107,10 @@ async function fulfillApi(route: Route, state: State, user: Session) {
     return route.fulfill(ok(state.employees.at(-1)))
   }
   if (path.startsWith('/api/employees/') && request.method() === 'PUT') {
+    if (state.failNextEmployeeUpdate) {
+      state.failNextEmployeeUpdate = false
+      return route.fulfill(businessError(503, 'EMPLOYEE_UPDATE_UNAVAILABLE', '员工档案服务暂时不可用，请稍后重试'))
+    }
     const body = request.postDataJSON() as Record<string, unknown>
     const id = path.split('/').at(-1)!
     const row = state.employees.find((item) => item.id === id)
@@ -209,11 +215,47 @@ test('store manager completes employee archive create, account, offboarding and 
   await dialog.getByRole('option', { name: /合成员工门店/ }).click()
   await dialog.getByLabel(/姓名/).fill('新员工')
   await dialog.getByRole('button', { name: '保存' }).click()
-  await expect(page.getByText('该门店已有同名员工：新员工')).toBeVisible()
+  const createErrorDialog = page.getByRole('alertdialog', { name: '新增员工失败' })
+  await expect(createErrorDialog).toContainText('该门店已有同名员工：新员工')
+  await expect(dialog.locator('.msg.error')).toHaveCount(0)
+  await createErrorDialog.getByRole('button', { name: '返回填写' }).click()
+  await expect(dialog.getByLabel(/姓名/)).toHaveValue('新员工')
   expect(state.employees.filter((item) => item.name === '新员工')).toHaveLength(1)
 
   await expectNoWholePageOverflow(page, '1280px 员工档案管理')
   expect(state.consoleErrors.filter((message) => !message.includes('DUPLICATE') && !message.includes('409'))).toEqual([])
+})
+
+test('新增和编辑员工档案的校验与保存错误使用弹窗，并保留抽屉内容', async ({ page }) => {
+  const state = newState()
+  await prepare(page, state, session('STORE_MANAGER', ['employee.read', 'employee.manage'], 21, '/store'))
+  await page.goto('/staff')
+
+  await page.getByRole('button', { name: '新增员工' }).click()
+  let drawer = page.getByRole('dialog', { name: '新增员工' })
+  await drawer.getByRole('button', { name: '保存' }).click()
+
+  let errorDialog = page.getByRole('alertdialog', { name: '员工档案信息不完整' })
+  await expect(errorDialog).toContainText('门店与姓名必填')
+  await expect(drawer.locator('.msg.error')).toHaveCount(0)
+  await errorDialog.getByRole('button', { name: '返回填写' }).click()
+  await expect(drawer).toBeVisible()
+  await drawer.getByRole('button', { name: '取消' }).click()
+
+  const existingRow = page.locator('tr', { hasText: '已有员工' })
+  await existingRow.getByRole('button', { name: '编辑', exact: true }).click()
+  drawer = page.getByRole('dialog', { name: '编辑员工档案' })
+  await drawer.getByLabel('身份证号').fill('')
+  await drawer.getByLabel('备注').fill('保留这段未保存内容')
+  state.failNextEmployeeUpdate = true
+  await drawer.getByRole('button', { name: '保存' }).click()
+
+  errorDialog = page.getByRole('alertdialog', { name: '编辑员工档案失败' })
+  await expect(errorDialog).toContainText('员工档案服务暂时不可用，请稍后重试')
+  await expect(drawer.locator('.msg.error')).toHaveCount(0)
+  await errorDialog.getByRole('button', { name: '返回填写' }).click()
+  await expect(drawer).toBeVisible()
+  await expect(drawer.getByLabel('备注')).toHaveValue('保留这段未保存内容')
 })
 
 test('员工工作台的历史页内错误改为可重试弹窗', async ({ page }) => {

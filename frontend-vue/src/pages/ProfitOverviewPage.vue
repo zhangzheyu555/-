@@ -1,11 +1,8 @@
 ﻿<script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { Download, FileBarChart, PackageMinus } from 'lucide-vue-next'
+import { computed, ref, watch } from 'vue'
+import { Download, FileBarChart } from 'lucide-vue-next'
 import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
-import {
-  getStoreInventoryReductions,
-  type StoreInventoryReductionResponse,
-} from '../api/operations'
+import { getStores, type StoreInfo } from '../api/operations'
 import { downloadCsvRows } from '../api/reports'
 import BusinessScopeBar from '../components/common/BusinessScopeBar.vue'
 import PageHeader from '../components/common/PageHeader.vue'
@@ -22,19 +19,20 @@ const profit = useProfitStore()
 const scope = useBusinessScope()
 let routeLoadSerial = 0
 const loadedFilterKey = ref('')
-const inventoryReductions = ref<StoreInventoryReductionResponse | null>(null)
-const inventoryReductionLoading = ref(false)
-const inventoryReductionError = ref('')
-let inventoryReductionRequestId = 0
+const storeCatalog = ref<StoreInfo[]>([])
+const storeCatalogLoaded = ref(false)
+let storeCatalogRequestId = 0
 const dashboardMatchesCurrentFilter = computed(() => Boolean(profit.dashboard)
   && loadedFilterKey.value === currentFilterKey())
 
 const { markFresh } = useForegroundReload(async () => {
   const filterKey = currentFilterKey()
-  const loaded = await profit.load()
+  const [loaded] = await Promise.all([
+    profit.load(),
+    loadStoreCatalog({ force: true }),
+  ])
   if (!loaded || profit.error || currentFilterKey() !== filterKey) return false
   loadedFilterKey.value = filterKey
-  await loadInventoryReductions()
   return true
 }, {
   canReload: () => !profit.loading,
@@ -90,24 +88,49 @@ const marginRanking = computed(() => {
   return [...profit.entries].sort((a, b) => amount(b.margin) - amount(a.margin))
 })
 
-const scopeStoreOptions = computed(() => profit.storeOptions.map((entry) => ({
-  id: entry.storeId,
-  name: entry.storeName || entry.storeCode || entry.storeId,
-  brandId: entry.brandId,
-  brandName: normalizeBrandName(entry.brandName || ''),
-})))
-const managerEntry = computed(() => profit.entries.find((entry) => entry.storeId === scope.boundStoreId.value) || profit.entries[0] || null)
-const inventoryReductionStoreId = computed(() => (
-  scope.isStoreManager.value ? scope.boundStoreId.value : profit.storeId
-))
-const inventoryReductionStoreName = computed(() => {
-  const storeId = inventoryReductionStoreId.value
-  if (!storeId) return ''
-  return profit.storeOptions.find((entry) => entry.storeId === storeId)?.storeName
-    || profit.entries.find((entry) => entry.storeId === storeId)?.storeName
-    || storeId
+const scopeStoreOptions = computed(() => {
+  const byId = new Map<string, {
+    id: string
+    name: string
+    code?: string
+    brandId?: number
+    brandName?: string
+    area?: string
+    regionCode?: string
+    status?: string
+  }>()
+
+  for (const store of storeCatalog.value) {
+    if (!store.id || byId.has(store.id)) continue
+    byId.set(store.id, {
+      id: store.id,
+      name: store.name || store.code || store.id,
+      code: store.code,
+      brandId: store.brandId,
+      brandName: normalizeBrandName(store.brandName || ''),
+      area: store.area,
+      regionCode: store.regionCode,
+      status: store.status,
+    })
+  }
+
+  // 利润接口会随当前门店筛选而只返回一家；它只作为目录接口失败时的兼容兜底，
+  // 不能再作为门店选择框的主数据源。
+  for (const entry of profit.storeOptions) {
+    if (!entry.storeId || byId.has(entry.storeId)) continue
+    byId.set(entry.storeId, {
+      id: entry.storeId,
+      name: entry.storeName || entry.storeCode || entry.storeId,
+      code: entry.storeCode,
+      brandId: entry.brandId,
+      brandName: normalizeBrandName(entry.brandName || ''),
+      area: entry.area,
+    })
+  }
+
+  return Array.from(byId.values())
 })
-const inventoryReductionRows = computed(() => inventoryReductions.value?.rows || [])
+const managerEntry = computed(() => profit.entries.find((entry) => entry.storeId === scope.boundStoreId.value) || profit.entries[0] || null)
 const storeManagementAccessDenied = computed(() => (
   scope.isStoreManager.value && route.query.notice === 'STORE_MANAGEMENT_FORBIDDEN'
 ))
@@ -203,43 +226,34 @@ function currentFilterKey() {
 
 async function retryProfitData() {
   const filterKey = currentFilterKey()
-  const loaded = await profit.load()
+  const [loaded] = await Promise.all([
+    profit.load(),
+    loadStoreCatalog({ force: true }),
+  ])
   if (!loaded || profit.error || currentFilterKey() !== filterKey) return
   loadedFilterKey.value = filterKey
-  await loadInventoryReductions()
   markFresh()
 }
 
-async function loadInventoryReductions() {
-  const storeId = inventoryReductionStoreId.value
-  const month = profit.month
-  const requestId = ++inventoryReductionRequestId
-  if (!storeId) {
-    inventoryReductions.value = null
-    inventoryReductionError.value = ''
-    inventoryReductionLoading.value = false
-    return true
-  }
-  inventoryReductionLoading.value = true
-  inventoryReductionError.value = ''
+async function loadStoreCatalog(options: { force?: boolean } = {}) {
+  if (scope.isStoreManager.value || (storeCatalogLoaded.value && !options.force)) return true
+
+  const requestId = ++storeCatalogRequestId
   try {
-    const response = await getStoreInventoryReductions(storeId, month || undefined)
-    if (
-      requestId !== inventoryReductionRequestId
-      || inventoryReductionStoreId.value !== storeId
-      || profit.month !== month
-    ) return false
-    inventoryReductions.value = response
+    const stores = await getStores()
+    if (requestId !== storeCatalogRequestId) return false
+    storeCatalog.value = stores
+    storeCatalogLoaded.value = true
     return true
-  } catch (loadError) {
-    if (requestId !== inventoryReductionRequestId) return false
-    inventoryReductions.value = null
-    inventoryReductionError.value = loadError instanceof Error
-      ? loadError.message
-      : '库存减少记录加载失败'
+  } catch {
+    if (requestId !== storeCatalogRequestId) return false
+    reportAppError('门店目录加载失败，当前仅能显示已有利润数据中的门店。', {
+      title: '门店列表加载失败',
+      actionLabel: '重新加载',
+      action: () => loadStoreCatalog({ force: true }),
+      sourceKey: 'profit-overview-store-catalog',
+    })
     return false
-  } finally {
-    if (requestId === inventoryReductionRequestId) inventoryReductionLoading.value = false
   }
 }
 
@@ -254,15 +268,23 @@ async function applyRouteFilters() {
   profit.setFilters({ month, brandId, storeId })
   const filterKey = currentFilterKey()
   const dashboardChanged = !profit.dashboard || loadedFilterKey.value !== filterKey
-  const loaded = dashboardChanged ? await profit.load() : true
+  const [loaded] = await Promise.all([
+    dashboardChanged ? profit.load() : Promise.resolve(true),
+    loadStoreCatalog(),
+  ])
   if (serial !== routeLoadSerial) return
   if (loaded && !profit.error) {
     loadedFilterKey.value = currentFilterKey()
     markFresh()
   }
 
-  if (!scope.isStoreManager.value && loaded && !profit.error && profit.storeId && !profit.storeOptions.some((entry) => entry.storeId === profit.storeId)) {
-    profit.setStore('')
+  if (!scope.isStoreManager.value && loaded && !profit.error && profit.storeId) {
+    const selectedStore = scopeStoreOptions.value.find((entry) => entry.id === profit.storeId)
+    const belongsToBrand = !profit.brandId || Boolean(selectedStore && (
+      String(selectedStore.brandId ?? '') === profit.brandId
+      || selectedStore.brandName === currentBrandName.value
+    ))
+    if (!selectedStore || !belongsToBrand) profit.setStore('')
   }
 
   const query: LocationQueryRaw = { ...route.query }
@@ -290,18 +312,6 @@ function compactMoney(value: unknown) {
   const n = amount(value)
   if (Math.abs(n) >= 10000) return `${(n / 10000).toFixed(1)}万`
   return money(n).replace('¥', '')
-}
-
-function inventoryQuantity(value: unknown) {
-  return new Intl.NumberFormat('zh-CN', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 4,
-  }).format(amount(value))
-}
-
-function inventoryMovementTime(value?: string) {
-  if (!value) return '-'
-  return value.replace('T', ' ').slice(0, 16)
 }
 
 function trendBarHeight(point: ProfitTrendPoint) {
@@ -354,15 +364,6 @@ watch(
   () => { void applyRouteFilters() },
   { immediate: true },
 )
-watch(
-  () => [inventoryReductionStoreId.value, profit.month],
-  () => { void loadInventoryReductions() },
-  { immediate: true },
-)
-
-onBeforeUnmount(() => {
-  inventoryReductionRequestId += 1
-})
 </script>
 
 <template>
@@ -457,70 +458,6 @@ onBeforeUnmount(() => {
         <strong v-else-if="managerEntry">本月收入、成本和费用数据已形成经营结果。</strong>
         <strong v-else>当前月份尚未录入经营数据。</strong>
       </div>
-
-      <section
-        v-if="inventoryReductionStoreId"
-        class="content-card inventory-reduction-card"
-        aria-label="库存减少记录"
-      >
-        <div class="inventory-reduction-heading">
-          <div class="inventory-reduction-title">
-            <PackageMinus :size="19" />
-            <div>
-              <h3>库存减少记录</h3>
-              <p>{{ inventoryReductionStoreName }} · {{ inventoryReductions?.month || profit.month || '本月' }}，按审核后的实际库存流水显示</p>
-            </div>
-          </div>
-          <div v-if="inventoryReductions" class="inventory-reduction-summary" aria-label="库存减少汇总">
-            <span><b>{{ inventoryReductions.movementCount }}</b> 笔减少</span>
-            <span><b>{{ inventoryReductions.itemCount }}</b> 种物料</span>
-          </div>
-        </div>
-
-        <div v-if="inventoryReductionLoading" class="empty-state compact">正在读取库存减少记录...</div>
-        <div v-else-if="inventoryReductionError" class="inventory-reduction-error" role="alert">
-          <span>{{ inventoryReductionError }}</span>
-          <button class="ghost-button" type="button" @click="loadInventoryReductions">重试</button>
-        </div>
-        <div v-else-if="!inventoryReductionRows.length" class="empty-state compact">
-          当前门店在本月没有库存减少记录。
-        </div>
-        <template v-else>
-          <div class="inventory-reduction-table-wrap">
-            <table class="inventory-reduction-table">
-              <thead>
-                <tr>
-                  <th>发生时间</th>
-                  <th>物料</th>
-                  <th class="r">减少数量</th>
-                  <th class="r">当前库存</th>
-                  <th>来源</th>
-                  <th>说明</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="row in inventoryReductionRows" :key="row.id">
-                  <td class="movement-time">{{ inventoryMovementTime(row.createdAt) }}</td>
-                  <td class="inventory-item-cell">
-                    <b>{{ row.itemName }}</b>
-                    <small>{{ row.itemCode }}</small>
-                  </td>
-                  <td class="r inventory-reduction-quantity">-{{ inventoryQuantity(row.quantityReduced) }} {{ row.unit }}</td>
-                  <td class="r">{{ inventoryQuantity(row.currentQuantity) }} {{ row.unit }}</td>
-                  <td><span class="inventory-source-badge">{{ row.sourceLabel }}</span></td>
-                  <td class="inventory-note-cell">
-                    <span>{{ row.note || '库存减少' }}</span>
-                    <small v-if="row.operatorName">操作人：{{ row.operatorName }}</small>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <p v-if="inventoryReductions?.truncated" class="inventory-reduction-limit">
-            当前显示所选月份最近 100 笔库存减少记录。
-          </p>
-        </template>
-      </section>
 
       <section v-if="!scope.isStoreManager.value" class="profit-brand-section">
         <div class="profit-section-title">品牌卡片</div>
@@ -1116,172 +1053,6 @@ onBeforeUnmount(() => {
   background: var(--ds-primary-hover);
 }
 
-.inventory-reduction-card {
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
-  padding: 16px 18px 18px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  box-shadow: none;
-}
-
-.inventory-reduction-heading {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.inventory-reduction-title {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  gap: 9px;
-}
-
-.inventory-reduction-title h3 {
-  margin: 0;
-  font-size: 18px;
-}
-
-.inventory-reduction-title p {
-  margin: 4px 0 0;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-  overflow-wrap: anywhere;
-}
-
-.inventory-reduction-summary {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.inventory-reduction-summary span {
-  padding: 7px 10px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: #f8fafc;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 800;
-  white-space: nowrap;
-}
-
-.inventory-reduction-summary b {
-  color: var(--ink);
-  font-variant-numeric: tabular-nums;
-}
-
-.inventory-reduction-error {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 14px;
-  padding: 12px 14px;
-  border: 1px solid #f2c7c7;
-  border-radius: 8px;
-  background: #fff7f7;
-  color: var(--bad);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.inventory-reduction-table-wrap {
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
-  margin-top: 14px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  overscroll-behavior-x: contain;
-}
-
-.inventory-reduction-table {
-  width: 100%;
-  min-width: 850px;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.inventory-reduction-table th,
-.inventory-reduction-table td {
-  padding: 11px 10px;
-  border-bottom: 1px solid var(--line);
-  text-align: left;
-  vertical-align: middle;
-}
-
-.inventory-reduction-table th {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.inventory-reduction-table .r {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.movement-time {
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.inventory-item-cell b,
-.inventory-item-cell small,
-.inventory-note-cell span,
-.inventory-note-cell small {
-  display: block;
-}
-
-.inventory-item-cell small,
-.inventory-note-cell small {
-  margin-top: 3px;
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.inventory-reduction-quantity {
-  color: var(--bad);
-  font-weight: 900;
-}
-
-.inventory-source-badge {
-  display: inline-flex;
-  align-items: center;
-  min-height: 26px;
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: #fff3e8;
-  color: #9a4c12;
-  font-size: 12px;
-  font-weight: 900;
-  white-space: nowrap;
-}
-
-.inventory-note-cell {
-  min-width: 180px;
-  overflow-wrap: anywhere;
-}
-
-.inventory-reduction-limit {
-  margin: 10px 0 0;
-  color: var(--muted);
-  font-size: 12px;
-  text-align: right;
-}
-
 .profit-ranking-table {
   width: 100%;
   min-width: 860px;
@@ -1460,15 +1231,6 @@ onBeforeUnmount(() => {
 
   .manager-completeness strong {
     text-align: left;
-  }
-
-  .inventory-reduction-heading {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .inventory-reduction-summary {
-    justify-content: flex-start;
   }
 
   .manager-trend-row {

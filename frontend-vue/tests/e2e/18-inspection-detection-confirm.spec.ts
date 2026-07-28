@@ -191,11 +191,13 @@ test('model suggestion shows a returned annotation and only the 200-point deduct
   expect(nestedKeys(confirmationBody).filter((key) => forbiddenKeys.has(key))).toEqual([])
 
   const hygieneScore = page.locator('.category-score').filter({ hasText: '卫生得分' })
-  await expect(hygieneScore).toContainText('59 分（满分63）')
+  await expect(hygieneScore).toContainText('59 / 63 分')
   const scoreSummary = page.locator('.inspection-score-summary')
-  await expect(scoreSummary.locator('div').filter({ hasText: '总分' })).toContainText('196 / 200')
-  await expect(scoreSummary.locator('div').filter({ hasText: '扣分合计' })).toContainText('-4')
-  await expect(scoreSummary.locator('div').filter({ hasText: '结果' })).toContainText('合格')
+  await expect(scoreSummary.getByRole('heading', { name: '200 分制评分结果' })).toBeVisible()
+  await expect(scoreSummary.locator('.total-score-card')).toContainText('196 / 200 分')
+  await expect(scoreSummary.locator('.deduction-score-card')).toContainText('扣 4 分')
+  await expect(scoreSummary.locator('.result-score-card')).toContainText('合格')
+  await expect(scoreSummary).toContainText('合格线 180 分')
   await expect(page.getByText('督导已确认，保存后按条款扣分')).toBeVisible()
 
   const screenshotPath = path.resolve(process.cwd(), '..', 'output', 'playwright', 'inspection-detection-confirm-196.png')
@@ -203,8 +205,8 @@ test('model suggestion shows a returned annotation and only the 200-point deduct
   await page.screenshot({ path: screenshotPath, fullPage: true })
 
   await useDesktopViewport(page)
-  await expect(scoreSummary.locator('div').filter({ hasText: '总分' })).toContainText('196 / 200')
-  await expect(scoreSummary.locator('div').filter({ hasText: '结果' })).toContainText('合格')
+  await expect(scoreSummary.locator('.total-score-card')).toContainText('196 / 200 分')
+  await expect(scoreSummary.locator('.result-score-card')).toContainText('合格')
   await expectNoWholePageOverflow(page, '1280px desktop inspection confirmation')
   await page.screenshot({
     path: path.resolve(process.cwd(), '..', 'output', 'playwright', 'inspection-detection-confirm-196-desktop.png'),
@@ -411,6 +413,7 @@ test('record detail keeps effective deductions separate from unmatched AI eviden
   await page.getByRole('row', { name: /花台店/ }).click()
 
   await expect(page.getByText('历史巡检条款快照（1条）')).toBeVisible()
+  await page.getByRole('button', { name: '查看历史条款快照（1条）' }).click()
   const snapshot = page.locator('.snapshot-table')
   await expect(snapshot.getByRole('columnheader', { name: '实得分' })).toBeVisible()
   await expect(snapshot.getByRole('columnheader', { name: '实际扣分' })).toBeVisible()

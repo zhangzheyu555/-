@@ -275,6 +275,52 @@ test('更换主凭证只删除明确由 imageUrl 指向的旧主附件，不触�
   expect(mutationEvents).not.toContain('delete-supplement-77')
 })
 
+test('新增报销校验错误使用弹窗提示并保留已填写内容', async ({ page }) => {
+  const expenseRequests: URL[] = []
+  await prepareExpensePage(page, {
+    rows: [],
+    expenseRequests,
+  })
+
+  await page.goto('expenses')
+  await page.getByRole('button', { name: '新增报销' }).click()
+  const drawer = page.getByRole('dialog', { name: '新增报销' })
+  await drawer.getByLabel('报销金额').fill('0')
+  await drawer.getByLabel('报销类别').fill('门店耗材')
+  await drawer.getByLabel('报销说明').fill('保留这段已填写的报销说明')
+  await drawer.getByRole('button', { name: '保存并提交' }).click()
+
+  const errorDialog = page.getByRole('alertdialog', { name: '报销信息不完整' })
+  await expect(errorDialog).toContainText('请输入大于 0 的报销金额。')
+  await expect(drawer.locator('.compact-error')).toHaveCount(0)
+  await errorDialog.getByRole('button', { name: '返回填写' }).click()
+  await expect(drawer.getByLabel('报销类别')).toHaveValue('门店耗材')
+  await expect(drawer.getByLabel('报销说明')).toHaveValue('保留这段已填写的报销说明')
+})
+
+test('新增报销的无效凭证使用弹窗提示且不残留顶部错误条', async ({ page }) => {
+  const expenseRequests: URL[] = []
+  await prepareExpensePage(page, {
+    rows: [],
+    expenseRequests,
+  })
+
+  await page.goto('expenses')
+  await page.getByRole('button', { name: '新增报销' }).click()
+  const drawer = page.getByRole('dialog', { name: '新增报销' })
+  await drawer.locator('input[type="file"]').setInputFiles({
+    name: 'invalid-receipt.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from('%PDF-1.4 invalid expense receipt'),
+  })
+
+  const errorDialog = page.getByRole('alertdialog', { name: '报销凭证不可用' })
+  await expect(errorDialog).toContainText('不是有效的 JPG、PNG 或 WebP 图片')
+  await expect(drawer.locator('.compact-error')).toHaveCount(0)
+  await errorDialog.getByRole('button', { name: '返回填写' }).click()
+  await expect(drawer.getByText('尚未选择附件')).toBeVisible()
+})
+
 test('新建报销失败重试复用同一个 Idempotency-Key', async ({ page }) => {
   const expenseRequests: URL[] = []
   const createIdempotencyKeys: string[] = []
@@ -297,7 +343,10 @@ test('新建报销失败重试复用同一个 Idempotency-Key', async ({ page })
 
   await drawer.getByRole('button', { name: '保存草稿' }).click()
   await expect.poll(() => createIdempotencyKeys.length).toBe(1)
-  await expect(drawer.getByText('受控创建失败，请重试。')).toBeVisible()
+  const saveErrorDialog = page.getByRole('alertdialog', { name: '报销保存失败' })
+  await expect(saveErrorDialog).toContainText('受控创建失败，请重试。')
+  await expect(drawer.locator('.compact-error')).toHaveCount(0)
+  await saveErrorDialog.getByRole('button', { name: '返回填写' }).click()
 
   await drawer.getByRole('button', { name: '保存草稿' }).click()
   await expect.poll(() => createIdempotencyKeys.length).toBe(2)

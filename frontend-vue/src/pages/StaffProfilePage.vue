@@ -11,6 +11,7 @@ import {
 } from '../api/employees'
 import { getStores, type StoreInfo } from '../api/operations'
 import SearchableSingleSelect from '../components/common/SearchableSingleSelect.vue'
+import { reportAppError } from '../errors/appErrorDialog'
 
 const auth = useAuthStore()
 const canManage = computed(() => auth.hasPermission(PERMISSIONS.EMPLOYEE_MANAGE))
@@ -208,7 +209,6 @@ const employeeFormStoreOptions = computed(() => {
   return options
 })
 const saving = ref(false)
-const dialogError = ref('')
 
 function normalizeBirthdayInput(value?: string) {
   const raw = String(value || '').trim()
@@ -230,7 +230,6 @@ function onIdCardInput(event: Event) {
 function openCreate() {
   Object.assign(form, emptyForm())
   editingId.value = ''
-  dialogError.value = ''
   syncHourlyMode()
   dialogOpen.value = true
 }
@@ -245,21 +244,28 @@ function openEdit(row: EmployeeRecord) {
     managerDate: row.managerDate, remark: row.remark, hourlyRate: row.hourlyRate ?? null,
   })
   editingId.value = row.id
-  dialogError.value = ''
   syncHourlyMode()
   dialogOpen.value = true
 }
+
+function reportEditorError(reason: unknown, title: string) {
+  reportAppError(reason, {
+    title,
+    actionLabel: '返回填写',
+  })
+}
+
 async function save() {
   if (!form.storeId || !form.name.trim()) {
-    dialogError.value = '门店与姓名必填。'
+    reportEditorError('门店与姓名必填。', '员工档案信息不完整')
     return
   }
   if (form.phone && !/^\d{11}$/.test(form.phone)) {
-    dialogError.value = '电话号码必须是11位数字。'
+    reportEditorError('电话号码必须是11位数字。', '员工档案信息不完整')
     return
   }
   if (form.idCardNo && !/^\d{17}[\dX]$/.test(form.idCardNo.toUpperCase())) {
-    dialogError.value = '身份证号码必须是18位，最后一位可以是数字或X。'
+    reportEditorError('身份证号码必须是18位，最后一位可以是数字或X。', '员工档案信息不完整')
     return
   }
   const birthday = normalizeBirthdayInput(form.birthday)
@@ -267,12 +273,11 @@ async function save() {
   if (birthday && (!birthdayMatch
     || Number(birthdayMatch[1]) < 1 || Number(birthdayMatch[1]) > 12
     || Number(birthdayMatch[2]) < 1 || Number(birthdayMatch[2]) > new Date(2024, Number(birthdayMatch[1]), 0).getDate())) {
-    dialogError.value = '生日请按“4月14日”格式填写。'
+    reportEditorError('生日请按“4月14日”格式填写。', '员工档案信息不完整')
     return
   }
   form.birthday = birthday
   saving.value = true
-  dialogError.value = ''
   try {
     const payload = {
       ...form,
@@ -286,7 +291,7 @@ async function save() {
     dialogOpen.value = false
     await load()
   } catch (e) {
-    dialogError.value = e instanceof Error ? e.message : '保存失败。'
+    reportEditorError(e instanceof Error ? e : '保存失败。', editingId.value ? '编辑员工档案失败' : '新增员工失败')
   } finally {
     saving.value = false
   }
@@ -557,7 +562,6 @@ function exportCsv() {
           <label>店长转正<input v-model="form.managerDate" type="date" /></label>
           <label>合同签署<input v-model="form.contractSignText" type="text" /></label>
           <label>备注<input v-model="form.remark" type="text" /></label>
-          <p v-if="dialogError" class="msg error">{{ dialogError }}</p>
         </div>
         <footer class="staff-drawer-foot">
           <button class="btn ghost" @click="dialogOpen = false">取消</button>
@@ -747,10 +751,6 @@ tr.birthday-soon-row td.birthday-soon {
 
 .form-grid :deep(.searchable-single-select) {
   width: 100%;
-}
-
-.form-grid .msg {
-  grid-column: 1 / -1;
 }
 
 .hourly-row {

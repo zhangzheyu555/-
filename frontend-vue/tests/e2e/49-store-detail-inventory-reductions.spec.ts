@@ -1,5 +1,4 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
-import { expectNoWholePageOverflow } from './auth.setup'
 
 const bossSession = {
   id: 1,
@@ -9,7 +8,7 @@ const bossSession = {
   role: 'BOSS',
   roleLabel: '老板（系统管理员）',
   storeScope: ['all'],
-  permissions: ['store.read', 'finance.read', 'inspection.read'],
+  permissions: ['store.read', 'finance.read', 'finance.profit.read', 'inspection.read'],
   dataScopes: {
     STORE: { mode: 'ALL', storeIds: [], warehouseIds: [] },
     FINANCE: { mode: 'ALL', storeIds: [], warehouseIds: [] },
@@ -134,32 +133,17 @@ async function prepare(page: Page) {
   })
 }
 
-test('利润概览按所选门店显示库存减少记录，并适配 390px 手机宽度', async ({ page }, testInfo) => {
+test('利润概览彻底移除库存减少记录模块和对应请求', async ({ page }) => {
+  const inventoryReductionRequests: string[] = []
+  page.on('request', (request) => {
+    if (request.url().includes('/inventory-reductions')) {
+      inventoryReductionRequests.push(request.url())
+    }
+  })
   await prepare(page)
-  await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/profit?storeId=rg4&month=2026-07')
 
-  const card = page.getByRole('region', { name: '库存减少记录' })
-  await expect(card).toBeVisible()
-  await expect(card).toContainText('荆州之星店 · 2026-07')
-  await expect(card).toContainText('2 笔减少')
-  await expect(card).toContainText('2 种物料')
-  await expect(card).toContainText('葡萄')
-  await expect(card).toContainText('-0.2031 斤')
-  await expect(card).toContainText('荔枝')
-  await expect(card).toContainText('-0.11 斤')
-  await expect(card).toContainText('每日报损')
-
-  await expectNoWholePageOverflow(page, '390px 门店库存减少记录')
-  const tableOverflow = await card.locator('.inventory-reduction-table-wrap').evaluate((element) => ({
-    clientWidth: element.clientWidth,
-    scrollWidth: element.scrollWidth,
-    overflowX: getComputedStyle(element).overflowX,
-  }))
-  expect(tableOverflow.scrollWidth).toBeGreaterThan(tableOverflow.clientWidth)
-  expect(tableOverflow.overflowX).toBe('auto')
-
-  await card.screenshot({
-    path: testInfo.outputPath('profit-store-inventory-mobile.png'),
-  })
+  await expect(page.getByRole('heading', { name: '利润概览' })).toBeVisible()
+  await expect(page.getByRole('region', { name: '库存减少记录' })).toHaveCount(0)
+  expect(inventoryReductionRequests).toEqual([])
 })
