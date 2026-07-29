@@ -1,6 +1,10 @@
--- RuGuo recipe catalog verified against 《单杯用量(2).xls》 Sheet3.
+-- RuGuo recipe catalog verified against 《单杯用量(2).xls》 Sheet3 and the
+-- 2026-07-29 supplemental recipe screenshots supplied by the business owner.
 -- Business data import, intentionally separate from Flyway schema migrations.
 -- Medium/large and 500/1000ml variants are averaged 1:1 into one base recipe.
+-- Ice is omitted consistently because it is not an inventory material in this catalog.
+-- “加茶至刻度线” quantities are derived after subtracting the listed shaker ingredients.
+-- 西瓜大战椰子的 190ml prepared coconut drink is split by the stated 5:1 ratio.
 -- Change only the tenant variable when importing the same catalog into another authorized tenant.
 set names utf8mb4 collate utf8mb4_unicode_ci;
 set @qmai_recipe_tenant_id := 1;
@@ -235,12 +239,60 @@ values
   ('元气小红瓶', 5, '雪梨', '雪梨', 150, 'FLESH', 0.788623),
   ('元气小红瓶', 6, '柠檬皮', '柠檬', 5, 'FLESH', 0.9),
   ('乘风破浪阳光橙', 1, '橙子', '橙子', 280, 'FLESH', 0.54),
-  ('乘风破浪阳光橙', 2, '雪梨', '雪梨', 170, 'FLESH', 0.788623);
+  ('乘风破浪阳光橙', 2, '雪梨', '雪梨', 170, 'FLESH', 0.788623),
+  ('玫珑蜜瓜冰', 1, '玫珑瓜果肉', '玫珑瓜', 210, 'ONE', null),
+  ('玫珑蜜瓜冰', 2, '茶', null, 60, 'NONE', null),
+  ('玫珑蜜瓜冰', 3, '糖', null, 30, 'NONE', null),
+  ('西瓜大战椰子', 1, '西瓜果肉', '西瓜', 200, 'FLESH', 0.8),
+  ('西瓜大战椰子', 2, '生椰乳', null, 158.333, 'NONE', null),
+  ('西瓜大战椰子', 3, '水', null, 31.667, 'NONE', null),
+  ('生椰龙眼冰', 1, '龙眼果肉', '龙眼', 160, 'ONE', null),
+  ('生椰龙眼冰', 2, '蒟蒻/爆爆珠', null, 50, 'NONE', null),
+  ('生椰龙眼冰', 3, '生椰乳', null, 100, 'NONE', null),
+  ('青柠百香果', 1, '蒟蒻', null, 25, 'NONE', null),
+  ('青柠百香果', 2, '茶冻', null, 70, 'NONE', null),
+  ('青柠百香果', 3, '柠檬角', '柠檬', 40, 'FLESH', 0.9),
+  ('青柠百香果', 4, '百香果', '百香果', 30, 'ONE', null),
+  ('青柠百香果', 5, '小金橘', '金桔', 10, 'ONE', null),
+  ('青柠百香果', 6, '糖', null, 70, 'NONE', null),
+  ('青柠百香果', 7, '茶', null, 200, 'NONE', null),
+  ('芝芝玫珑瓜', 1, '玫珑瓜果肉', '玫珑瓜', 210, 'ONE', null),
+  ('芝芝玫珑瓜', 2, '茶', null, 60, 'NONE', null),
+  ('芝芝玫珑瓜', 3, '糖', null, 30, 'NONE', null),
+  ('芝芝玫珑瓜', 4, '奶盖', null, 50, 'NONE', null),
+  ('羽衣甘蓝柠檬茶', 1, '茶冻', null, 70, 'NONE', null),
+  ('羽衣甘蓝柠檬茶', 2, '柠檬角', '柠檬', 80, 'FLESH', 0.9),
+  ('羽衣甘蓝柠檬茶', 3, '羽衣甘蓝汁', '羽衣甘蓝', 25, 'JUICE', 1),
+  ('羽衣甘蓝柠檬茶', 4, '糖', null, 60, 'NONE', null),
+  ('羽衣甘蓝柠檬茶', 5, '茶', null, 235, 'NONE', null),
+  ('丹青', 1, '茉莉绿茶', null, 250, 'NONE', null),
+  ('丹青', 2, '爱护奶', null, 20, 'NONE', null),
+  ('丹青', 3, '牛奶', null, 90, 'NONE', null),
+  ('丹青', 4, '糖', null, 35, 'NONE', null),
+  ('芳华', 1, '蜜桃乌龙茶', null, 250, 'NONE', null),
+  ('芳华', 2, '爱护奶', null, 20, 'NONE', null),
+  ('芳华', 3, '牛奶', null, 90, 'NONE', null),
+  ('芳华', 4, '糖', null, 35, 'NONE', null),
+  ('青岚', 1, '鲜牛乳', null, 240, 'NONE', null),
+  ('青岚', 2, '爱护奶', null, 30, 'NONE', null),
+  ('青岚', 3, '糖', null, 20, 'NONE', null),
+  ('青岚', 4, '奶盖', null, 50, 'NONE', null),
+  ('青岚', 5, '抹茶液', null, 60, 'NONE', null),
+  ('满杯百香果', 1, '蒟蒻', null, 25, 'NONE', null),
+  ('满杯百香果', 2, '茶冻', null, 70, 'NONE', null),
+  ('满杯百香果', 3, '百香果', '百香果', 60, 'ONE', null),
+  ('满杯百香果', 4, '糖', null, 70, 'NONE', null),
+  ('满杯百香果', 5, '茶', null, 220, 'NONE', null),
+  ('阳光小青提', 1, '带皮青提', '青提', 100, 'ONE', null),
+  ('阳光小青提', 2, '雪梨', '雪梨', 200, 'FLESH', 0.788623),
+  ('阳光小青提', 3, '凤梨', '凤梨', 70, 'FLESH', 0.598264),
+  ('阳光小青提', 4, '苹果', '苹果', 50, 'FLESH', 0.897855),
+  ('阳光小青提', 5, '柠檬皮', '柠檬', 5, 'FLESH', 0.9);
 
 update qmai_recipe_definition
 set active = 0,
     version_no = version_no + 1,
-    updated_by_name = '系统导入（单杯用量表）'
+    updated_by_name = '系统导入（单杯用量表+补充配方截图）'
 where tenant_id = @qmai_recipe_tenant_id
   and brand_code = @qmai_recipe_brand_code
   and active = 1;
@@ -248,12 +300,12 @@ where tenant_id = @qmai_recipe_tenant_id
 insert into qmai_recipe_definition
   (tenant_id, brand_code, product_name, active, version_no, updated_by_name)
 select distinct @qmai_recipe_tenant_id, @qmai_recipe_brand_code, product_name, 1, 1,
-  '系统导入（单杯用量表）'
+  '系统导入（单杯用量表+补充配方截图）'
 from tmp_qmai_recipe_import
 on duplicate key update
   active = 1,
   version_no = qmai_recipe_definition.version_no + 1,
-  updated_by_name = '系统导入（单杯用量表）';
+  updated_by_name = '系统导入（单杯用量表+补充配方截图）';
 
 delete ingredient
 from qmai_recipe_ingredient ingredient

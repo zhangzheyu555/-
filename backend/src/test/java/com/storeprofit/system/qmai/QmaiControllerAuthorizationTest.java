@@ -145,6 +145,18 @@ class QmaiControllerAuthorizationTest {
   }
 
   @Test
+  void removedPosCouponWriteOffEndpointIsNotRegistered() {
+    boolean registered = java.util.Arrays.stream(QmaiController.class.getDeclaredMethods())
+        .flatMap(method -> java.util.Arrays.stream(
+            method.getAnnotationsByType(
+                org.springframework.web.bind.annotation.PostMapping.class)))
+        .flatMap(mapping -> java.util.Arrays.stream(mapping.value()))
+        .anyMatch("/pos/write-off-coupon"::equals);
+
+    assertThat(registered).isFalse();
+  }
+
+  @Test
   void revenueCsvUsesRealLineBreaks() throws Exception {
     AuthUser boss = user("BOSS");
     when(access.requireUser("Bearer boss")).thenReturn(boss);

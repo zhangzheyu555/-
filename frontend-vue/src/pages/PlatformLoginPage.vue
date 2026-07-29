@@ -232,7 +232,7 @@ const income = ref<ConsoleIncome | null>(null)
 const incomeLoading = ref(false)
 const incomeError = ref('')
 const anyLoading = computed(() =>
-  turnoverLoading.value || incomeLoading.value || posLoading.value)
+  turnoverLoading.value || incomeLoading.value)
 
 async function loadIncome() {
   if (!qmai.value?.consoleTokenSet) {
@@ -504,72 +504,15 @@ const sortArrow = (key: SortKey) =>
   sortKey.value === key ? (sortAsc.value ? ' ▲' : ' ▼') : ''
 
 /* ---------------- 企迈商品销售（同一次读取的数据，切标签即看） ---------------- */
-const activeTab = ref<'turnover' | 'items' | 'usage' | 'pos'>('turnover')
+const activeTab = ref<'turnover' | 'items' | 'usage'>('turnover')
 watch(isFinanceViewer, (financeOnly) => {
-  if (financeOnly && (activeTab.value === 'usage' || activeTab.value === 'pos')) {
+  if (financeOnly && activeTab.value === 'usage') {
     activeTab.value = 'turnover'
   }
 }, { immediate: true })
 const snapshotExportDenied = computed(() => !isConsoleBrand.value
   && (activeTab.value === 'turnover' || activeTab.value === 'items')
   && !canExport.value)
-
-/* ---------------- POS：企迈优惠券核销 ---------------- */
-const posLoading = ref(false)
-const posError = ref('')
-const posResult = ref<Record<string, unknown> | null>(null)
-const posConfirmed = ref(false)
-const posPayload = ref(JSON.stringify({
-  amount: 0,
-  bizId: '',
-  channelType: 0,
-  couponsCardList: [],
-  customerId: 0,
-  familyCardNo: '',
-  multiMark: '',
-  orderAmount: 0,
-  orderNo: '',
-  orderSource: 0,
-  orderTotalAmount: 0,
-  perCouponUseDetailList: [{ amount: 0, cardId: '' }],
-  reason: '',
-  tradeMarks: [],
-  type: 0,
-  useCount: 0,
-}, null, 2))
-
-async function submitPosWriteOff() {
-  posError.value = ''
-  posResult.value = null
-  if (!posConfirmed.value) {
-    posError.value = '请先确认这是一次真实核销操作。'
-    return
-  }
-  let body: Record<string, unknown>
-  try {
-    body = JSON.parse(posPayload.value) as Record<string, unknown>
-  } catch {
-    posError.value = '请求 JSON 格式不正确。'
-    return
-  }
-  if (!String(body.bizId || '').trim() || !String(body.orderNo || '').trim()) {
-    posError.value = 'bizId 和 orderNo 不能为空。'
-    return
-  }
-  posLoading.value = true
-  try {
-    posResult.value = await apiPost<Record<string, unknown>>(
-      `/api/qmai/pos/write-off-coupon?brand=${encodeURIComponent(brand.value)}`,
-      body,
-      { timeout: 60000 },
-    )
-    posConfirmed.value = false
-  } catch (e) {
-    posError.value = e instanceof Error ? e.message : '企迈优惠券核销失败。'
-  } finally {
-    posLoading.value = false
-  }
-}
 
 // 门店筛选：'' = 全部门店
 const itemShopFilter = ref('')
@@ -969,8 +912,6 @@ function exportActive() {
     exportItemsExcel()
   } else if (activeTab.value === 'usage') {
     exportUsageExcel()
-  } else if (activeTab.value === 'pos') {
-    return
   } else {
     exportExcel()
   }
@@ -1062,11 +1003,8 @@ onBeforeUnmount(() => {
           <button v-if="!isConsoleBrand && !isFinanceViewer" :class="{ active: activeTab === 'usage' }" @click="activeTab = 'usage'">
             物料用量
           </button>
-          <button v-if="!isConsoleBrand && !isFinanceViewer" :class="{ active: activeTab === 'pos' }" @click="activeTab = 'pos'">
-            POS
-          </button>
         </div>
-        <div v-if="activeTab !== 'pos'" class="range-tabs">
+        <div class="range-tabs">
           <button :disabled="anyLoading" @click="shiftMonth(-12)">◀◀ 上一年</button>
           <button :disabled="anyLoading" @click="shiftMonth(-1)">◀ 上一月</button>
           <label
@@ -1227,11 +1165,11 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <p v-if="activeTab !== 'pos' && turnoverError" class="msg warn-text">{{ turnoverError }}</p>
-      <p v-else-if="activeTab !== 'pos' && turnoverLoading" class="msg muted">
+      <p v-if="turnoverError" class="msg warn-text">{{ turnoverError }}</p>
+      <p v-else-if="turnoverLoading" class="msg muted">
         正在读取 {{ turnoverRangeLabel }} 全部门店营业额与商品销量…
       </p>
-      <p v-else-if="activeTab !== 'pos' && !turnover" class="msg muted">
+      <p v-else-if="!turnover" class="msg muted">
         系统会自动读取该月已经导入的企迈营业额与商品销量。
       </p>
 
@@ -1360,11 +1298,11 @@ onBeforeUnmount(() => {
           </button>
           <button @click="clearRecipeUsage">清空</button>
           <span class="msg muted">
-            单杯用量按上传表管理；中/大杯及 500/1000ml 同品按 1:1 分匀后计算，浏览器不可编辑。
+            配料单杯用量只取你提供的配方表和配方图片，再乘以企迈销量；未匹配商品不计入。
           </span>
         </div>
         <p v-if="recipeUsageError" class="msg warn-text">{{ recipeUsageError }}</p>
-        <p v-else-if="recipeUsageLoading" class="msg muted">正在读取受管配方目录与本地销量快照…</p>
+        <p v-else-if="recipeUsageLoading" class="msg muted">正在读取已导入配方与本地企迈销量快照…</p>
 
         <template v-if="usageResult.fruits.length || usageResult.otherMaterials.length">
           <h4 class="usage-title">
@@ -1421,36 +1359,8 @@ onBeforeUnmount(() => {
             && !recipeUsageLoading && !recipeUsageError"
           class="msg muted"
         >
-          点击上方按钮后，系统会以服务端受管目录和授权范围内销量生成不可编辑的用量快照。
+          点击上方按钮后，系统会按配方表和配方图片中的单杯用量，乘以授权范围内企迈销量生成快照。
         </p>
-      </template>
-
-      <template v-else-if="activeTab === 'pos'">
-        <div class="pos-panel">
-          <div>
-            <h4 class="usage-title">企迈 POS · 优惠券核销</h4>
-            <p class="msg muted">请求由完整项目后端签名发送，企迈密钥不会暴露到浏览器。</p>
-          </div>
-          <label class="pos-json-label">
-            核销请求 JSON
-            <textarea v-model="posPayload" class="pos-json" spellcheck="false" />
-          </label>
-          <label class="pos-confirm">
-            <input v-model="posConfirmed" type="checkbox" />
-            我确认以上信息无误，并执行真实优惠券核销
-          </label>
-          <div>
-            <button class="refresh danger-action" :disabled="posLoading || !canManage" @click="submitPosWriteOff">
-              {{ posLoading ? '核销中…' : '提交核销' }}
-            </button>
-            <span v-if="!canManage" class="msg muted">仅老板或授权的平台管理员可执行。</span>
-          </div>
-          <p v-if="posError" class="msg warn-text">{{ posError }}</p>
-          <div v-if="posResult" class="pos-result">
-            <strong>企迈响应</strong>
-            <pre>{{ JSON.stringify(posResult, null, 2) }}</pre>
-          </div>
-        </div>
       </template>
 
       </template>
@@ -2109,55 +2019,6 @@ td.muted {
 .btn.primary:disabled {
   opacity: 0.6;
   cursor: default;
-}
-
-.pos-panel {
-  display: grid;
-  gap: 14px;
-  max-width: 900px;
-}
-
-.pos-json-label {
-  display: grid;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #374151;
-}
-
-.pos-json {
-  width: 100%;
-  min-height: 360px;
-  padding: 12px;
-  border: 1px solid #d1d5db;
-  border-radius: 10px;
-  resize: vertical;
-  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-
-.pos-confirm {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: #92400e;
-}
-
-.danger-action {
-  background: #b91c1c !important;
-}
-
-.pos-result {
-  padding: 12px;
-  border-radius: 10px;
-  background: #f8fafc;
-  border: 1px solid #d1d5db;
-}
-
-.pos-result pre {
-  margin: 8px 0 0;
-  overflow: auto;
-  white-space: pre-wrap;
 }
 
 @media (max-width: 1000px) {

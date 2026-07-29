@@ -49,6 +49,19 @@
    docker compose up -d --no-deps backend
    ```
 
+## 本机与服务器同时使用
+
+- macOS 本机通过 `run-backend-mysql.sh` 启动时，依次使用启动环境变量、登录钥匙串
+  `AI-Profit-OS/QMAI_CREDENTIAL_ENCRYPTION_KEY`，最后才读取 `${QMAI_LOCAL_ENV_FILE}`；
+  未指定该变量时默认读取 `~/.config/completeproject/qmai.env`。文件加载器只读取
+  `QMAI_CREDENTIAL_ENCRYPTION_KEY`，不会执行文件中的其他内容。
+- 服务器使用 `deploy/docker-compose.production.yml` 时，继续由 `ENV_FILE` 指向服务器自己的
+  受限环境文件。生产部署不会读取或依赖开发电脑上的文件。
+- 两端连接同一个数据库或使用从同一数据库复制出的企迈密文时，必须配置同一把主密钥。
+  两端数据库完全独立且没有复制密文时，应各自使用独立主密钥。
+- 已由容器、CI 或启动环境注入的 `QMAI_CREDENTIAL_ENCRYPTION_KEY` 优先级最高，本机加载器
+  不会覆盖它。
+
 ## 无密钥泄露验证
 
 后端健康后，仅验证变量是否存在，不显示值：
