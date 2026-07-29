@@ -8,6 +8,7 @@ import type {
   WarehouseReturnCreatePayload,
   WarehouseReturnOrder,
 } from '../../api/warehouse'
+import { availableStoreReturnQuantity } from '../../utils/storeReturnAvailability'
 import ModalFooter from '../ui/ModalFooter.vue'
 import UiButton from '../ui/UiButton.vue'
 import UnsavedChangesDialog from '../ui/UnsavedChangesDialog.vue'
@@ -60,28 +61,16 @@ function localDate() {
   return `${year}-${month}-${day}`
 }
 
-function returnedQuantity(itemId: number) {
-  return props.returns
-    .filter((row) => (
-      row.sourceRequisitionId === props.requisition?.id
-      && !['REJECTED', 'CANCELLED'].includes(row.status)
-    ))
-    .flatMap((row) => row.lines)
-    .filter((line) => line.itemId === itemId)
-    .reduce((total, line) => total + Number(line.quantity || 0), 0)
-}
-
 function buildLines() {
-  return (props.requisition?.lines || []).map((line) => {
-    const shipped = Number(line.shippedQuantity || 0)
-    const remainingFromSource = Math.max(0, shipped - returnedQuantity(line.itemId))
+  const requisition = props.requisition
+  if (!requisition) return []
+  return requisition.lines.map((line) => {
     const item = props.items.find((candidate) => candidate.id === line.itemId)
-    const currentStoreStock = item ? Math.max(0, Number(item.storeStockQuantity || 0)) : remainingFromSource
     return {
       itemId: line.itemId,
       itemName: line.itemName,
       unit: line.unit || item?.stockUnit || item?.unit || '',
-      availableQuantity: Math.min(remainingFromSource, currentStoreStock),
+      availableQuantity: availableStoreReturnQuantity(requisition, line, props.returns, props.items),
       quantity: '',
     }
   })

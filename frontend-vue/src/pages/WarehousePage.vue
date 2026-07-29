@@ -16,6 +16,7 @@ import type { WarehouseItem, WarehouseRequisition, WarehouseReturnCreatePayload 
 import { PERMISSIONS } from '../permissions/permissions'
 import { useBusinessScope } from '../composables/useBusinessScope'
 import { useForegroundReload } from '../composables/useForegroundReload'
+import { hasAvailableStoreReturn } from '../utils/storeReturnAvailability'
 import WarehouseWorkbenchPage from './WarehouseWorkbenchPage.vue'
 
 const auth = useAuthStore()
@@ -56,7 +57,8 @@ const storeNavigationItems = computed(() => {
   return items
 })
 const activeStoreNavigation = computed(() => String(route.meta.storeWarehouseTab || 'inventory'))
-const activeItems = computed(() => (overview.value?.items || []).filter((item) => item.active !== false))
+const allItems = computed(() => overview.value?.items || [])
+const activeItems = computed(() => allItems.value.filter((item) => item.active !== false))
 const supplyWarehouse = computed(() => warehouse.warehouses[0] || overview.value?.warehouse || null)
 const supplyWarehouseName = computed(() => supplyWarehouse.value?.name || '供货仓待配置')
 const requisitions = computed(() => overview.value?.requisitions || [])
@@ -221,6 +223,13 @@ async function confirmReceiveRequisition() {
 }
 
 function openReturnDialog(requisition: WarehouseRequisition) {
+  if (!hasAvailableStoreReturn(requisition, warehouse.returns, allItems.value)) {
+    reportAppError('该叫货单已全部退货，或门店当前已无可退库存。', {
+      title: '当前无可退物料',
+      sourceKey: `store-return-unavailable:${requisition.id}`,
+    })
+    return
+  }
   returnTarget.value = requisition
 }
 
@@ -337,6 +346,7 @@ watch(
           v-if="canCreateRequisition || canReceiveRequisition"
           :requisitions="requisitions"
           :returns="warehouse.returns"
+          :items="allItems"
           :receiving-id="warehouse.receivingId"
           :actioning-id="warehouse.actioningId"
           :downloading-id="warehouse.downloadingId"
@@ -366,7 +376,7 @@ watch(
       :open="Boolean(returnTarget)"
       :requisition="returnTarget"
       :returns="warehouse.returns"
-      :items="activeItems"
+      :items="allItems"
       :warehouse-name="supplyWarehouseName"
       :submitting="warehouse.actioningId === `return-create:${returnTarget?.id || ''}`"
       @close="closeReturnDialog"
