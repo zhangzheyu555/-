@@ -6,24 +6,42 @@ const ok = (data: unknown) => ({
   body: JSON.stringify({ success: true, data }),
 })
 
+const bossSession = {
+  id: 1,
+  tenantId: 1,
+  tenantName: 'TEST 租户',
+  displayName: 'TEST 老板',
+  role: 'BOSS',
+  roleLabel: '老板（系统管理员）',
+  storeScope: ['all'],
+  permissions: ['system.dashboard.read'],
+  dataScopes: {
+    STORE: { mode: 'ALL', storeIds: [] },
+    FINANCE: { mode: 'ALL', storeIds: [] },
+    SALARY: { mode: 'ALL', storeIds: [] },
+    WAREHOUSE: { mode: 'ALL', storeIds: [] },
+    INSPECTION: { mode: 'ALL', storeIds: [] },
+    EXAM: { mode: 'ALL', storeIds: [] },
+  },
+  defaultWorkspace: '/boss',
+  permissionVersion: 1,
+}
+
+let bossDashboardOverride: (() => unknown) | null = null
+
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => {
+  bossDashboardOverride = null
+  await page.addInitScript((session) => {
     localStorage.setItem('ai_profit_vue_token', 'TEST-BOSS-TOKEN')
-    localStorage.setItem('ai_profit_vue_user', JSON.stringify({
-      id: 1,
-      tenantId: 1,
-      tenantName: 'TEST 租户',
-      displayName: 'TEST 老板',
-      role: 'BOSS',
-      roleLabel: '老板（系统管理员）',
-      storeScope: ['all'],
-    }))
-  })
+    localStorage.setItem('ai_profit_vue_user', JSON.stringify(session))
+  }, bossSession)
 
   await page.route('**/*', (route) => {
     const path = new URL(route.request().url()).pathname
     if (!path.startsWith('/api/')) return route.continue()
+    if (path === '/api/auth/me') return route.fulfill(ok(bossSession))
     if (path === '/api/boss/todo-dashboard') {
+      if (bossDashboardOverride) return route.fulfill(ok(bossDashboardOverride()))
       return route.fulfill(ok({
         roleName: '老板',
         dataSource: 'TEST',
@@ -31,11 +49,11 @@ test.beforeEach(async ({ page }) => {
         todayFocus: {
           totalOpenCount: 34,
           needsBossActionCount: 0,
-          roleWorkCount: 34,
-          highRiskCount: 34,
-          highRiskGroupCount: 1,
+          roleWorkCount: 40,
+          highRiskCount: 40,
+          highRiskGroupCount: 3,
           doneReviewCount: 0,
-          summary: '今天暂无必须老板拍板的事项；岗位仍有 34 条高风险事项。',
+          summary: '今天暂无必须老板拍板的事项；岗位仍有 40 条高风险事项。',
         },
         needsBossAction: [],
         highRiskReminders: [{
@@ -43,16 +61,66 @@ test.beforeEach(async ({ page }) => {
           sourceModule: 'finance',
           ownerName: '财务',
           storeName: 'TEST 门店',
+          month: '2026-07',
           count: 34,
           highestRisk: 'RISK',
           highestPriority: 95,
           earliestDueAt: '2026-07-10T18:00:00',
           topStores: ['TEST 门店'],
+          action: {
+            target: 'report',
+            label: '查看利润表',
+            params: {
+              storeId: 'TEST-STORE',
+              month: '2026-07',
+              mode: 'single',
+            },
+          },
+        }, {
+          groupKey: 'TEST-RISK-SECOND',
+          sourceModule: 'inspection',
+          ownerName: '督导',
+          storeName: 'TEST 门店',
+          month: '2026-07',
+          count: 4,
+          highestRisk: 'RISK',
+          highestPriority: 90,
+          earliestDueAt: '2026-07-11T18:00:00',
+          topStores: ['TEST 门店'],
+          action: {
+            target: 'inspect',
+            label: '查看巡店记录',
+            params: {
+              storeId: 'TEST-STORE',
+              inspectionId: 'INSP-EXACT-001',
+              month: '2026-07',
+            },
+          },
+        }, {
+          groupKey: 'TEST-RISK-THIRD',
+          sourceModule: 'warehouse',
+          ownerName: '仓库管理员',
+          storeName: '第二门店',
+          month: '2026-07',
+          count: 2,
+          highestRisk: 'RISK',
+          highestPriority: 85,
+          earliestDueAt: '2026-07-12T18:00:00',
+          topStores: ['第二门店'],
+          action: {
+            target: 'warehouse',
+            label: '查看库存预警',
+            params: {
+              warehouseId: '1',
+              itemId: '12',
+              month: '2026-07',
+            },
+          },
         }],
         roleProgress: [{
           ownerName: '财务',
-          openCount: 34,
-          riskCount: 34,
+          openCount: 40,
+          riskCount: 40,
           pendingCount: 0,
           earliestDueAt: '2026-07-10T18:00:00',
           topSources: ['finance'],
@@ -90,7 +158,7 @@ test('boss action count is separated from role risk counts and every tab remains
   await expect(tabs.getByRole('button', { name: /需要我处理\s*0/ })).toBeVisible()
   await expect(tabs.getByRole('button', { name: /待复核\s*0/ })).toBeVisible()
   await expect(tabs.getByRole('button', { name: /培训考试\s*0/ })).toBeVisible()
-  await expect(tabs.getByRole('button', { name: /风险门店\s*1/ })).toBeVisible()
+  await expect(tabs.getByRole('button', { name: /风险门店\s*2/ })).toBeVisible()
   await expect(tabs.getByRole('button', { name: /岗位进度\s*1/ })).toBeVisible()
   await expect(tabs.getByRole('button', { name: /已完成\s*0/ })).toBeVisible()
 
@@ -98,17 +166,111 @@ test('boss action count is separated from role risk counts and every tab remains
   await expect(page.getByText('当前没有等待复核的经营事项')).toBeVisible()
   await tabs.getByRole('button', { name: /培训考试/ }).click()
   await expect(page.getByText('当前没有进行中的考试。')).toBeVisible()
-  await tabs.getByRole('button', { name: /风险门店/ }).click()
+  const riskMetric = page.getByRole('button', { name: /40 条风险提醒.*2 家风险门店/ })
+  await expect(riskMetric).toContainText('40')
+  await expect(riskMetric).toContainText('涉及 2 家风险门店')
+  await riskMetric.click()
+  await expect(tabs.getByRole('button', { name: /风险门店\s*2/ })).toHaveClass(/active/)
+  await expect(page.locator('#risks')).toBeVisible()
   await expect(page.getByText(/有 34 条风险提醒/)).toBeVisible()
   await tabs.getByRole('button', { name: /岗位进度/ }).click()
-  await expect(page.getByText(/34 条处理中/)).toBeVisible()
+  await expect(page.getByText(/40 条处理中/)).toBeVisible()
   await tabs.getByRole('button', { name: /已完成/ }).click()
   await expect(page.getByText('当前没有已处理复盘。')).toBeVisible()
+})
+
+test('every risk card opens its exact source record with the original context', async ({ page }) => {
+  const openRisks = async () => {
+    await page.goto('/boss')
+    await page.getByRole('button', { name: /40 条风险提醒.*2 家风险门店/ }).click()
+  }
+
+  await openRisks()
+  const profitRisk = page.locator('.boss-risk-card').filter({ hasText: '利润表 · 财务' })
+  await profitRisk.getByRole('button', { name: '查看利润表' }).click()
+  await expect(page).toHaveURL(/\/profit-table\?/)
+  expect(new URL(page.url()).searchParams.get('storeId')).toBe('TEST-STORE')
+  expect(new URL(page.url()).searchParams.get('month')).toBe('2026-07')
+  expect(new URL(page.url()).searchParams.get('mode')).toBe('single')
+
+  await openRisks()
+  const inspectionRisk = page.locator('.boss-risk-card').filter({ hasText: '督导巡店 · 督导' })
+  await inspectionRisk.getByRole('button', { name: '查看巡店记录' }).click()
+  await expect(page).toHaveURL(/\/operations\/inspection\/records\?/)
+  expect(new URL(page.url()).searchParams.get('recordId')).toBe('INSP-EXACT-001')
+  expect(new URL(page.url()).searchParams.get('storeId')).toBe('TEST-STORE')
+  expect(new URL(page.url()).searchParams.get('month')).toBe('2026-07')
+
+  await openRisks()
+  const warehouseRisk = page.locator('.boss-risk-card').filter({ hasText: '仓库中心 · 仓库管理员' })
+  await warehouseRisk.getByRole('button', { name: '查看库存预警' }).click()
+  await expect(page).toHaveURL(/\/warehouse\/alerts\?/)
+  expect(new URL(page.url()).searchParams.get('warehouseId')).toBe('1')
+  expect(new URL(page.url()).searchParams.get('itemId')).toBe('12')
+  expect(new URL(page.url()).searchParams.get('month')).toBe('2026-07')
+})
+
+test('a stale profit risk card refreshes its exact store and month before navigation', async ({ page }) => {
+  let dashboardRequests = 0
+  bossDashboardOverride = () => {
+    dashboardRequests += 1
+    return {
+      roleName: '老板',
+      dataSource: 'TEST',
+      updatedAt: '2026-07-29T08:00:00',
+      todayFocus: {
+        totalOpenCount: 1,
+        needsBossActionCount: 0,
+        roleWorkCount: 1,
+        highRiskCount: 1,
+        highRiskGroupCount: 1,
+        doneReviewCount: 0,
+      },
+      needsBossAction: [],
+      highRiskReminders: [{
+        groupKey: '利润表|财务|万达2店|2026-06',
+        sourceModule: '利润表',
+        ownerName: '财务',
+        storeName: '万达2店',
+        month: '2026-06',
+        count: 1,
+        highestRisk: '高风险',
+        highestPriority: 90,
+        topStores: ['万达2店'],
+        ...(dashboardRequests > 1 ? {
+          action: {
+            target: 'report',
+            label: '查看利润表',
+            params: {
+              storeId: 'rg4',
+              month: '2026-06',
+              mode: 'single',
+            },
+          },
+        } : {}),
+      }],
+      roleProgress: [],
+      doneReview: [],
+    }
+  }
+
+  await page.goto('/boss')
+  await page.getByRole('button', { name: /1 条风险提醒.*1 家风险门店/ }).click()
+  const wandaRisk = page.locator('.boss-risk-card').filter({ hasText: '万达2店' })
+  await wandaRisk.getByRole('button', { name: '查看对应利润表' }).click()
+
+  await expect(page).toHaveURL(/\/profit-table\?/)
+  expect(new URL(page.url()).searchParams.get('storeId')).toBe('rg4')
+  expect(new URL(page.url()).searchParams.get('month')).toBe('2026-06')
+  expect(new URL(page.url()).searchParams.get('mode')).toBe('single')
+  expect(dashboardRequests).toBe(2)
 })
 
 test('boss dashboard uses readable typography and one scroll owner', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   await page.goto('/boss')
+  await expect(page.locator('.sidebar-navigation-title').first()).toBeVisible()
+  await expect(page.locator('.boss-kpi-strip')).toBeVisible()
 
   const styles = await page.evaluate(() => {
     const body = getComputedStyle(document.body)
@@ -194,8 +356,9 @@ test('month and store filters are forwarded to the real profit query', async ({ 
 
   await page.goto('/boss?month=2026-06&storeId=TEST-STORE')
 
-  await expect(page.getByText('2026-06 经营数据')).toBeVisible()
-  await expect(page.locator('.kpi-item').filter({ hasText: '营业额' }).locator('.kpi-value')).toContainText('1,200')
+  const revenueMetric = page.locator('.kpi-item').filter({ hasText: '营业额' })
+  await expect(revenueMetric).toContainText('2026-06')
+  await expect(revenueMetric.locator('.kpi-value')).toContainText('1,200')
   await expect(page.locator('.kpi-item').filter({ hasText: '净利润' })).toContainText('净利率 20.0%')
   expect(entryRequests.length).toBeGreaterThan(0)
   expect(entryRequests.every((url) => url.searchParams.get('storeId') === 'TEST-STORE')).toBeTruthy()

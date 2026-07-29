@@ -722,7 +722,10 @@ public class RoleTodoService {
         updatedAt,
         row.createdAt(),
         new RoleTodoActionResponse("warehouse", "查看库存调整", params(
-            "adjustmentId", String.valueOf(row.id())
+            "adjustmentId", String.valueOf(row.id()),
+            "warehouseId", String.valueOf(row.warehouseId()),
+            "itemId", String.valueOf(row.itemId()),
+            "month", monthFromDateTime(row.createdAt())
         ))
     );
   }

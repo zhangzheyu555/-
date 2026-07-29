@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
+import type { RouteLocationRaw } from 'vue-router'
 import { closeBossTodo, getBossTodoDashboard, getBossTodos, resolveBossTodo } from '../api/boss'
 import type { BossTodoDashboard, RoleTodoItem } from '../api/todos'
+import { roleTodoActionRoute } from '../utils/roleTodoNavigation'
 
 export interface BossFocus {
   needsBossActionCount: number
@@ -22,7 +24,8 @@ export interface BossRiskGroup {
   highestRiskLabel: string
   earliestDueAt?: string
   topStores: string[]
-  targetRoute: string
+  targetRoute: RouteLocationRaw
+  actionLabel: string
   tone: 'warn' | 'bad' | 'info'
 }
 
@@ -203,6 +206,7 @@ function groupRiskItems(items: RoleTodoItem[]): NonNullable<BossTodoDashboard['h
   return Array.from(groups.entries()).map(([key, rows]) => {
     const [sourceModule, ownerName, storeName, month] = key.split('|')
     const priority = Math.max(...rows.map((row) => Number(row.priority || 0)))
+    const lead = [...rows].sort((left, right) => Number(right.priority || 0) - Number(left.priority || 0))[0]
     return {
       groupKey: key,
       sourceModule,
@@ -213,6 +217,7 @@ function groupRiskItems(items: RoleTodoItem[]): NonNullable<BossTodoDashboard['h
       highestPriority: priority,
       earliestDueAt: rows.map((row) => row.dueAt).filter(Boolean).sort()[0],
       topStores: Array.from(new Set(rows.map((row) => row.storeName || row.storeId).filter(Boolean))).slice(0, 3) as string[],
+      action: lead?.action,
     }
   })
 }
@@ -239,6 +244,7 @@ function mapRiskGroup(item: NonNullable<BossTodoDashboard['highRiskReminders']>[
   const highestRiskLabel = item.riskLabel || riskLabel(item.highestRisk, item.highestPriority)
   const sourceName = sourceLabel(source)
   const ownerName = item.ownerName || ownerFromSource(source)
+  const actionRoute = roleTodoActionRoute({ action: item.action })
   return {
     id: item.groupKey || `boss-risk-${index}`,
     title: `${sourceName} · ${ownerName}`,
@@ -251,9 +257,19 @@ function mapRiskGroup(item: NonNullable<BossTodoDashboard['highRiskReminders']>[
     highestRiskLabel,
     earliestDueAt: formatDateTime(item.earliestDueAt),
     topStores: item.topStores || [],
-    targetRoute: routeForSource(source),
+    targetRoute: actionRoute || routeForSource(source),
+    actionLabel: cleanText(item.action?.label || sourceActionLabel(sourceName)),
     tone: riskTone(item.highestRisk, item.highestPriority),
   }
+}
+
+function sourceActionLabel(sourceName: string) {
+  if (sourceName === '利润表') return '查看对应利润表'
+  if (sourceName === '督导巡店') return '查看对应巡检'
+  if (sourceName === '仓库中心') return '查看对应库存'
+  if (sourceName === '员工工资') return '查看对应工资'
+  if (sourceName === '报销栏') return '查看对应报销'
+  return '查看来源页面'
 }
 
 function mapRoleProgress(item: NonNullable<BossTodoDashboard['roleProgress']>[number], index: number): BossRoleProgressItem {
@@ -356,15 +372,15 @@ export function statusLabel(status?: string) {
 }
 
 function riskLabel(highestRisk?: string, highestPriority?: number) {
-  if (highestRisk === 'RED' || highestPriority === 3) return '严重风险'
-  if (highestRisk === 'ORANGE' || highestPriority === 2) return '较高风险'
-  if (highestRisk === 'BLUE' || highestPriority === 1) return '提醒'
+  if (includesText(highestRisk || '', ['RED', '严重风险']) || Number(highestPriority || 0) >= 95) return '严重风险'
+  if (includesText(highestRisk || '', ['ORANGE', '高风险', '较高风险']) || Number(highestPriority || 0) >= 90) return '高风险'
+  if (includesText(highestRisk || '', ['BLUE', '提醒']) || highestPriority === 1) return '提醒'
   return '风险提醒'
 }
 
 function riskTone(highestRisk?: string, highestPriority?: number): BossRiskGroup['tone'] {
-  if (highestRisk === 'RED' || highestPriority === 3) return 'bad'
-  if (highestRisk === 'ORANGE' || highestPriority === 2) return 'warn'
+  if (includesText(highestRisk || '', ['RED', '严重风险']) || Number(highestPriority || 0) >= 95) return 'bad'
+  if (includesText(highestRisk || '', ['ORANGE', 'RISK', '高风险', '较高风险']) || Number(highestPriority || 0) >= 90) return 'warn'
   return 'info'
 }
 

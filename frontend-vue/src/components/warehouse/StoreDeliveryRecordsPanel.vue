@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { PackageCheck, RotateCcw } from 'lucide-vue-next'
-import type { WarehouseRequisition, WarehouseReturnOrder } from '../../api/warehouse'
+import type { WarehouseItem, WarehouseRequisition, WarehouseReturnOrder } from '../../api/warehouse'
+import { hasAvailableStoreReturn } from '../../utils/storeReturnAvailability'
 import StatusBadge from '../common/StatusBadge.vue'
 import WarehousePrintButtons from './WarehousePrintButtons.vue'
 
 const props = defineProps<{
   requisitions: WarehouseRequisition[]
   returns: WarehouseReturnOrder[]
+  items: WarehouseItem[]
   receivingId: string
   actioningId: string
   downloadingId: string
@@ -64,7 +66,21 @@ function isPendingReceipt(row: WarehouseRequisition) {
 }
 
 function canReturn(row: WarehouseRequisition) {
-  return props.canCreateReturn && row.status === 'RECEIVED' && row.lines.some((line) => Number(line.shippedQuantity || 0) > 0)
+  return Boolean(
+    props.canCreateReturn
+    && row.status === 'RECEIVED'
+    && hasAvailableStoreReturn(row, props.returns, props.items),
+  )
+}
+
+function hasDeliveredLine(row: WarehouseRequisition) {
+  return row.lines.some((line) => Number(line.receivedQuantity ?? line.shippedQuantity ?? 0) > 0)
+}
+
+function hasNoReturnableItems(row: WarehouseRequisition) {
+  return row.status === 'RECEIVED'
+    && hasDeliveredLine(row)
+    && !hasAvailableStoreReturn(row, props.returns, props.items)
 }
 
 function requisitionStatusLabel(row: WarehouseRequisition) {
@@ -238,6 +254,13 @@ function returnLineText(row: WarehouseReturnOrder) {
             >
               <RotateCcw :size="15" />发起配送退货
             </button>
+            <span
+              v-else-if="hasNoReturnableItems(row)"
+              class="store-delivery-return-unavailable"
+              title="该叫货单已全部退货，或门店当前已无可退库存"
+            >
+              <RotateCcw :size="15" />无可退物料
+            </span>
           </div>
         </article>
         <p v-if="!requisitions.length" class="empty-cell">还没有叫货或收货记录。</p>
@@ -288,7 +311,14 @@ function returnLineText(row: WarehouseReturnOrder) {
                   >
                     发起配送退货
                   </button>
-                  <span v-if="!isPendingReceipt(row) && !canReturn(row)" class="store-delivery-no-action">—</span>
+                  <span
+                    v-else-if="hasNoReturnableItems(row)"
+                    class="store-delivery-return-unavailable"
+                    title="该叫货单已全部退货，或门店当前已无可退库存"
+                  >
+                    无可退物料
+                  </span>
+                  <span v-else-if="!isPendingReceipt(row)" class="store-delivery-no-action">—</span>
                 </div>
               </td>
             </tr>
@@ -550,6 +580,16 @@ function returnLineText(row: WarehouseReturnOrder) {
   color: var(--ds-muted);
 }
 
+.store-delivery-return-unavailable {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ds-muted);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .store-return-records {
   padding-bottom: 0;
 }
@@ -662,6 +702,14 @@ function returnLineText(row: WarehouseReturnOrder) {
   .store-delivery-card__actions {
     display: grid;
     gap: 8px;
+  }
+
+  .store-delivery-card__actions .store-delivery-return-unavailable {
+    min-height: 44px;
+    justify-content: center;
+    border: 1px dashed var(--ds-line);
+    border-radius: 8px;
+    background: var(--ds-surface-subtle, #f7faf9);
   }
 
   .store-delivery-card .mini-button,
