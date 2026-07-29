@@ -63,6 +63,19 @@ public class GlobalExceptionHandler {
         .body(ApiResponse.fail(ex.getCode(), ex.getMessage(), requestId));
   }
 
+  @ExceptionHandler(LoginProtectionUnavailableException.class)
+  public ResponseEntity<ApiResponse<Void>> handleLoginProtectionUnavailable(
+      LoginProtectionUnavailableException ex,
+      HttpServletRequest request
+  ) {
+    String requestId = RequestIdFilter.getRequestId(request);
+    log.warn("Login protection unavailable: retryAfterSeconds={} requestId={}",
+        ex.getRetryAfterSeconds(), requestId);
+    return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+        .header(HttpHeaders.RETRY_AFTER, String.valueOf(ex.getRetryAfterSeconds()))
+        .body(ApiResponse.fail(ex.getCode(), ex.getMessage(), requestId));
+  }
+
   @ExceptionHandler(BusinessException.class)
   public ResponseEntity<ApiResponse<Void>> handleBusiness(BusinessException ex, HttpServletRequest request) {
     String requestId = RequestIdFilter.getRequestId(request);

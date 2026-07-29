@@ -96,12 +96,16 @@ app:
   auth:
     token-ttl-hours: 12
     login-protection:
+      store-mode: ${AUTH_LOGIN_STORE_MODE:REDIS_REQUIRED}
       initial-attempts: ${AUTH_LOGIN_INITIAL_ATTEMPTS:5}
       base-cooldown: ${AUTH_LOGIN_BASE_COOLDOWN:30s}
       max-cooldown: ${AUTH_LOGIN_MAX_COOLDOWN:5m}
       reset-after: ${AUTH_LOGIN_RESET_AFTER:5m}
       max-tracked-accounts: ${AUTH_LOGIN_MAX_TRACKED_ACCOUNTS:10000}
       max-concurrent-password-verifications: ${AUTH_LOGIN_MAX_CONCURRENT_PASSWORD_VERIFICATIONS:4}
+      ip-attempts-per-minute: ${AUTH_LOGIN_IP_ATTEMPTS_PER_MINUTE:30}
+      wechat-attempts-per-minute: ${AUTH_WECHAT_LOGIN_IP_ATTEMPTS_PER_MINUTE:60}
+      unavailable-retry-after: ${AUTH_LOGIN_UNAVAILABLE_RETRY_AFTER:5s}
   wechat-mini-program:
     app-id: ${WECHAT_MINI_APP_ID:}
     app-secret: ${WECHAT_MINI_APP_SECRET:}

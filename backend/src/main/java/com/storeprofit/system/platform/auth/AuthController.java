@@ -2,6 +2,7 @@ package com.storeprofit.system.platform.auth;
 
 import com.storeprofit.system.common.ApiResponse;
 import com.storeprofit.system.platform.session.SessionUser;
+import com.storeprofit.system.platform.security.ClientIpResolver;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -10,14 +11,23 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.beans.factory.annotation.Autowired;
 
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
   private final AuthService authService;
+  private final ClientIpResolver clientIpResolver;
 
-  public AuthController(AuthService authService) {
+  @Autowired
+  public AuthController(AuthService authService, ClientIpResolver clientIpResolver) {
     this.authService = authService;
+    this.clientIpResolver = clientIpResolver;
+  }
+
+  /** Compatibility constructor for focused controller contract tests. */
+  public AuthController(AuthService authService) {
+    this(authService, new ClientIpResolver());
   }
 
   @PostMapping("/login")
@@ -25,10 +35,19 @@ public class AuthController {
       @Valid @RequestBody LoginRequest request,
       HttpServletRequest servletRequest
   ) {
-    return ApiResponse.ok(authService.login(request, servletRequest.getRemoteAddr()));
+    return ApiResponse.ok(authService.login(request, clientIpResolver.resolve(servletRequest)));
   }
 
   @PostMapping("/wechat/login")
+  public ApiResponse<LoginResponse> weChatLogin(
+      @Valid @RequestBody WeChatLoginRequest request,
+      HttpServletRequest servletRequest
+  ) {
+    return ApiResponse.ok(authService.weChatLogin(
+        request.code(), request.tenantId(), clientIpResolver.resolve(servletRequest)));
+  }
+
+  /** Compatibility entry point; production requests use the servlet-aware overload above. */
   public ApiResponse<LoginResponse> weChatLogin(@Valid @RequestBody WeChatLoginRequest request) {
     return ApiResponse.ok(authService.weChatLogin(request.code(), request.tenantId()));
   }
