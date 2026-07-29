@@ -10,6 +10,7 @@ import com.storeprofit.system.platform.session.SessionUser;
 import com.storeprofit.system.platform.authorization.DataScope;
 import com.storeprofit.system.platform.authorization.DataScopeDomains;
 import com.storeprofit.system.platform.authorization.DataScopeModes;
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -26,15 +27,18 @@ class AuthControllerContractTest {
     WeChatBindingStatus binding = new WeChatBindingStatus(true, true);
     WeChatLoginRequest loginRequest = new WeChatLoginRequest("valid-code", null);
     WeChatBindRequest bindRequest = new WeChatBindRequest("valid-code");
-    when(authService.weChatLogin("valid-code", null)).thenReturn(login);
+    HttpServletRequest servletRequest = mock(HttpServletRequest.class);
+    when(servletRequest.getRemoteAddr()).thenReturn("127.0.0.1");
+    when(servletRequest.getHeader("X-Real-IP")).thenReturn("203.0.113.8");
+    when(authService.weChatLogin("valid-code", null, "203.0.113.8")).thenReturn(login);
     when(authService.requireUser("Bearer token")).thenReturn(user);
     when(authService.weChatBindingStatus(user)).thenReturn(binding);
     when(authService.bindWeChat(user, "valid-code")).thenReturn(binding);
 
-    assertThat(controller.weChatLogin(loginRequest).data()).isSameAs(login);
+    assertThat(controller.weChatLogin(loginRequest, servletRequest).data()).isSameAs(login);
     assertThat(controller.weChatBinding("Bearer token").data()).isEqualTo(binding);
     assertThat(controller.bindWeChat("Bearer token", bindRequest).data()).isEqualTo(binding);
-    verify(authService).weChatLogin("valid-code", null);
+    verify(authService).weChatLogin("valid-code", null, "203.0.113.8");
     verify(authService, times(2)).requireUser("Bearer token");
     verify(authService).bindWeChat(user, "valid-code");
   }

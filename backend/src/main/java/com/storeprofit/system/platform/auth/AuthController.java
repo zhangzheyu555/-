@@ -47,11 +47,6 @@ public class AuthController {
         request.code(), request.tenantId(), clientIpResolver.resolve(servletRequest)));
   }
 
-  /** Compatibility entry point; production requests use the servlet-aware overload above. */
-  public ApiResponse<LoginResponse> weChatLogin(@Valid @RequestBody WeChatLoginRequest request) {
-    return ApiResponse.ok(authService.weChatLogin(request.code(), request.tenantId()));
-  }
-
   @GetMapping("/wechat/binding")
   public ApiResponse<WeChatBindingStatus> weChatBinding(
       @RequestHeader(value = "Authorization", required = false) String authorization
