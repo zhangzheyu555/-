@@ -4,13 +4,15 @@ import { onBeforeRouteLeave } from 'vue-router'
 import { Check, ChevronDown, Download, Eye, Filter, RotateCcw, UserPlus } from 'lucide-vue-next'
 import {
   approveSalaryRecord, assignSalaryEmployee, getSalaryAssignmentCandidates, getSalaryBusinessMetrics,
-  saveSalaryAttendance, saveSalaryRecord,
+  markSalaryPaid, saveSalaryAttendance, saveSalaryRecord, submitSalaryRecord,
   type SalaryAssignmentCandidate, type SalaryBusinessMetrics, type SalaryRecord, type SalaryRecordPayload,
 } from '../../api/finance'
 import { createEmployee, type EmployeeUpsert } from '../../api/employees'
 import { ApiError } from '../../api/http'
 import { useForegroundReload } from '../../composables/useForegroundReload'
-import { isHourlySalaryRecord, useSalaryPage, money, userError, wholeNumber } from '../../composables/useSalaryPage'
+import {
+  isHourlySalaryRecord, isOneClickApprovable, useSalaryPage, money, userError, wholeNumber,
+} from '../../composables/useSalaryPage'
 import { useSalaryWorkflow } from '../../composables/useSalaryWorkflow'
 import { reportAppError } from '../../errors/appErrorDialog'
 import { PERMISSIONS } from '../../permissions/permissions'
@@ -38,7 +40,7 @@ const STATUS_OPTIONS = [
   { value: 'ACTIVE', label: '全部' },
   { value: 'PENDING_GENERATION', label: '待生成' },
   { value: 'PENDING_REVIEW', label: '待审核' },
-  { value: 'PENDING_PAYMENT', label: '待发放' },
+  { value: 'PAID', label: '已发放' },
 ]
 
 const page = useSalaryPage()
@@ -685,22 +687,30 @@ function clearAddEmployeeSubmissionError() {
 }
 
 function isReviewableRecord(record: SalaryRecord) {
-  return Boolean(record.id) && ['SUBMITTED', 'PENDING_REVIEW'].includes(record.status || '')
+  return isOneClickApprovable(
+    record,
+    page.canEdit.value,
+    page.canReview.value,
+    page.canPay.value,
+  )
 }
 
 async function batchApprove() {
   actionError.value = ''
   batchApprovalError.value = ''
   const selected = selectedApprovalRecordIds.value
-  if (!selected.size) {
-    reportAppError('请先选择待审核工资，再进行批量审核。', { title: '无法批量审核' })
-    return
-  }
-  const records = page.filteredRows.value.filter((row) => selected.has(row.id) && isReviewableRecord(row))
+  const records = page.filteredRows.value.filter((row) =>
+    isReviewableRecord(row) && (!selected.size || selected.has(row.id)))
   if (!records.length) {
     selectedApprovalRecordIds.value = new Set()
-    reportAppError('所选工资已不处于待审核状态，请刷新后重新选择。', { title: '无法批量审核' })
+    reportAppError(
+      '当前列表没有可一键审批的工资。待生成工资需先生成，已发放工资无需重复处理。',
+      { title: '无法一键审批' },
+    )
     return
+  }
+  if (!selected.size) {
+    selectedApprovalRecordIds.value = new Set(records.map((record) => record.id))
   }
   batchApprovalRecords.value = records
   batchApprovalOpen.value = true
@@ -723,7 +733,18 @@ async function confirmBatchApproval() {
   const failures: Array<{ record: SalaryRecord; error: unknown }> = []
   for (const record of records) {
     try {
-      await approveSalaryRecord(record.id)
+      let status = String(record.status || '').toUpperCase()
+      if (['DRAFT', 'REJECTED'].includes(status)) {
+        await submitSalaryRecord(record.id)
+        status = 'SUBMITTED'
+      }
+      if (['SUBMITTED', 'PENDING_REVIEW'].includes(status)) {
+        await approveSalaryRecord(record.id)
+        status = 'APPROVED'
+      }
+      if (status === 'APPROVED') {
+        await markSalaryPaid(record.id)
+      }
       approvedIds.add(record.id)
     } catch (error) {
       failures.push({ record, error })
@@ -732,7 +753,7 @@ async function confirmBatchApproval() {
   batchApproving.value = false
 
   if (!approvedIds.size) {
-    batchApprovalError.value = userError(failures[0]?.error, '批量审核失败，请稍后重试。')
+    batchApprovalError.value = userError(failures[0]?.error, '一键审批失败，请稍后重试。')
     return
   }
 
@@ -741,16 +762,16 @@ async function confirmBatchApproval() {
   batchApprovalOpen.value = false
   batchApprovalRecords.value = []
   batchApprovalError.value = ''
-  page.successMessage.value = `已审核 ${approvedIds.size} 条工资记录`
+  page.successMessage.value = `已审批并发放 ${approvedIds.size} 条工资记录`
   if (failures.length) {
-    actionError.value = `${failures.length} 条工资审核失败，失败记录已保留勾选，可重试。${userError(
+    actionError.value = `${failures.length} 条工资一键审批失败，失败记录已保留勾选，可重试。${userError(
       failures[0].error,
       '首条失败原因暂时无法获取。',
     )}`
   }
   const loaded = await reloadSalaryData(1)
   if (!loaded && !actionError.value) {
-    actionError.value = '批量审核已完成，但最新数据刷新失败，请点击重试。'
+    actionError.value = '一键审批已完成，但最新数据刷新失败，请点击重试。'
   }
 }
 
@@ -770,7 +791,7 @@ function toggleRow(record: SalaryRecord, checked: boolean) {
     selectedGenerationEmployeeIds.value = next
     return
   }
-  if (page.canReview.value && record.id && ['SUBMITTED', 'PENDING_REVIEW'].includes(record.status || '')) {
+  if (isReviewableRecord(record)) {
     const next = new Set(selectedApprovalRecordIds.value)
     if (checked) next.add(record.id); else next.delete(record.id)
     selectedApprovalRecordIds.value = next
@@ -783,7 +804,7 @@ function toggleAll(checked: boolean) {
     if (page.canEdit.value && row.status === 'PENDING_GENERATION' && row.employeeId) {
       if (checked) nextGenerationIds.add(row.employeeId)
       else nextGenerationIds.delete(row.employeeId)
-    } else if (page.canReview.value && row.id && ['SUBMITTED', 'PENDING_REVIEW'].includes(row.status || '')) {
+    } else if (isReviewableRecord(row)) {
       if (checked) nextApprovalIds.add(row.id)
       else nextApprovalIds.delete(row.id)
     }
@@ -1062,7 +1083,13 @@ onBeforeUnmount(() => {
           :disabled="salaryOperationBusy"
           @click="previewSelectedGeneration"
         ><Eye :size="16" />生成所选工资<span v-if="selectedGenerationEmployeeIds.size">（{{ selectedGenerationEmployeeIds.size }}）</span></button>
-        <button v-if="page.canReview.value" class="batch-button" :disabled="salaryOperationBusy" @click="batchApprove"><Check :size="16" />批量审核<span v-if="selectedApprovalRecordIds.size">（{{ selectedApprovalRecordIds.size }}）</span></button>
+        <button
+          v-if="page.canPay.value"
+          class="batch-button"
+          :disabled="salaryOperationBusy"
+          :title="selectedApprovalRecordIds.size ? '审批当前页已勾选的工资' : '审批当前页全部可处理工资'"
+          @click="batchApprove"
+        ><Check :size="16" />一键审批<span v-if="selectedApprovalRecordIds.size">（{{ selectedApprovalRecordIds.size }}）</span></button>
         <div ref="filterMenuRoot" class="salary-filter">
           <button
             ref="filterButton"
@@ -1118,7 +1145,7 @@ onBeforeUnmount(() => {
         :selected-row-key="selectedRowKey"
         :approval-checked-ids="selectedApprovalRecordIds"
         :generation-checked-employee-ids="selectedGenerationEmployeeIds"
-        :can-edit="page.canEdit.value" :can-review="page.canReview.value"
+        :can-edit="page.canEdit.value" :can-review="page.canReview.value" :can-pay="page.canPay.value"
         :deleting-id="workflow.deletingId.value"
         @page-change="requestSalaryPage" @select="selectRecord" @delete="workflow.doDelete" @toggle-row="toggleRow" @toggle-all="toggleAll"
       />
@@ -1182,9 +1209,9 @@ onBeforeUnmount(() => {
 
     <ActionConfirmDialog
       :open="batchApprovalOpen"
-      title="批量审核工资"
-      :message="`确认审核通过所选 ${batchApprovalRecords.length} 名员工的工资？`"
-      confirm-label="确认审核"
+      title="一键审批工资"
+      :message="`确认处理当前页所选 ${batchApprovalRecords.length} 名员工的工资？系统将自动完成需要的提交、审批和发放登记。范围：${page.selectedStoreName.value} · ${page.selectedMonth.value}。`"
+      confirm-label="确认一键审批"
       :busy="batchApproving"
       :error="batchApprovalError"
       @cancel="cancelBatchApproval"

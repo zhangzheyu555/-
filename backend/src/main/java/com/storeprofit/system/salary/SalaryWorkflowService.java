@@ -701,7 +701,7 @@ public class SalaryWorkflowService {
   }
 
   private void requirePendingReview(SalaryRecordResponse record) {
-    if (!STATUS_SUBMITTED.equals(record.status())) {
+    if (!List.of(STATUS_SUBMITTED, "PENDING_REVIEW").contains(record.status())) {
       throw new BusinessException("SALARY_STATUS_INVALID", "只有待审核的工资记录可以审核", HttpStatus.CONFLICT);
     }
   }

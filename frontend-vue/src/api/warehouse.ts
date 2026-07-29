@@ -170,6 +170,11 @@ export interface WarehouseRequisitionLine {
   requestedQuantity: number
   approvedQuantity: number
   shippedQuantity?: number
+  receivedQuantity?: number
+  returnedQuantity?: number
+  sourceAvailableReturnQuantity?: number
+  storeInventoryQuantity?: number
+  availableReturnQuantity?: number
   unitPrice?: number
   amount?: number
   warningText?: string

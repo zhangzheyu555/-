@@ -229,7 +229,10 @@ test('latest 200-point standard calculates 180/179 and red-line result while sav
   await page.getByRole('row', { name: /M-RED-01/ }).getByRole('checkbox').first().check()
   await page.getByLabel('M-RED-01扣分原因').fill('发现禁用原料')
   await page.getByRole('row', { name: /S-01/ }).getByLabel('问题：现场照片.png', { exact: true }).check()
-  await expect(page.getByText('不合格（命中红线）', { exact: true })).toBeVisible()
+  const resultCard = page.locator('.result-score-card')
+  await expect(resultCard).toContainText('不合格')
+  await expect(resultCard).toContainText('命中红线，一票否决')
+  await expect(resultCard).toContainText('红线优先于总分判定')
   await expect(page.getByText('179 / 200')).toBeVisible()
 
   const clausePicker = page.getByRole('combobox', { name: '搜索选择检查条款' })

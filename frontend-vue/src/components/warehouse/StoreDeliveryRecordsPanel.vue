@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { PackageCheck, RotateCcw } from 'lucide-vue-next'
-import type { WarehouseRequisition, WarehouseReturnOrder } from '../../api/warehouse'
+import type { WarehouseItem, WarehouseRequisition, WarehouseReturnOrder } from '../../api/warehouse'
+import { hasAvailableStoreReturn } from '../../utils/storeReturnAvailability'
 import StatusBadge from '../common/StatusBadge.vue'
 import WarehousePrintButtons from './WarehousePrintButtons.vue'
 
 const props = defineProps<{
   requisitions: WarehouseRequisition[]
   returns: WarehouseReturnOrder[]
+  items: WarehouseItem[]
   receivingId: string
   actioningId: string
   downloadingId: string
@@ -23,6 +25,33 @@ const emit = defineEmits<{
 
 const pendingReceiptCount = computed(() => props.requisitions.filter(isPendingReceipt).length)
 const processingReturnCount = computed(() => props.returns.filter((row) => ['SUBMITTED', 'APPROVED'].includes(row.status)).length)
+type RecordView = 'requisitions' | 'returns'
+const activeRecordView = ref<RecordView>('requisitions')
+let initialViewResolved = false
+
+watch(
+  () => `${props.requisitions.length}:${props.returns.length}`,
+  (counts, previousCounts = '0:0') => {
+    const [requisitionCount, returnCount] = counts.split(':').map(Number)
+    const previousReturnCount = Number(previousCounts.split(':')[1] || 0)
+
+    if (!initialViewResolved && (requisitionCount > 0 || returnCount > 0)) {
+      activeRecordView.value = processingReturnCount.value > 0 && pendingReceiptCount.value === 0
+        ? 'returns'
+        : 'requisitions'
+      initialViewResolved = true
+      return
+    }
+    if (initialViewResolved && returnCount > previousReturnCount) {
+      activeRecordView.value = 'returns'
+    }
+  },
+  { immediate: true },
+)
+
+function selectRecordView(view: RecordView) {
+  activeRecordView.value = view
+}
 
 function qty(value: number | undefined, unit?: string) {
   return `${Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}${unit || ''}`
@@ -37,7 +66,21 @@ function isPendingReceipt(row: WarehouseRequisition) {
 }
 
 function canReturn(row: WarehouseRequisition) {
-  return props.canCreateReturn && row.status === 'RECEIVED' && row.lines.some((line) => Number(line.shippedQuantity || 0) > 0)
+  return Boolean(
+    props.canCreateReturn
+    && row.status === 'RECEIVED'
+    && hasAvailableStoreReturn(row, props.returns, props.items),
+  )
+}
+
+function hasDeliveredLine(row: WarehouseRequisition) {
+  return row.lines.some((line) => Number(line.receivedQuantity ?? line.shippedQuantity ?? 0) > 0)
+}
+
+function hasNoReturnableItems(row: WarehouseRequisition) {
+  return row.status === 'RECEIVED'
+    && hasDeliveredLine(row)
+    && !hasAvailableStoreReturn(row, props.returns, props.items)
 }
 
 function requisitionStatusLabel(row: WarehouseRequisition) {
@@ -121,7 +164,48 @@ function returnLineText(row: WarehouseReturnOrder) {
       </div>
     </div>
 
-    <div class="store-delivery-section">
+    <div class="store-record-tabs" role="tablist" aria-label="配送与退货记录分类">
+      <button
+        id="store-requisition-records-tab"
+        class="store-record-tab"
+        :class="{ active: activeRecordView === 'requisitions' }"
+        type="button"
+        role="tab"
+        :aria-selected="activeRecordView === 'requisitions'"
+        aria-controls="store-requisition-records-panel"
+        :tabindex="activeRecordView === 'requisitions' ? 0 : -1"
+        @click="selectRecordView('requisitions')"
+        @keydown.right.prevent="selectRecordView('returns')"
+      >
+        <PackageCheck :size="17" />
+        <span>叫货与收货</span>
+        <b>{{ requisitions.length }} 单</b>
+      </button>
+      <button
+        id="store-return-records-tab"
+        class="store-record-tab"
+        :class="{ active: activeRecordView === 'returns', 'has-pending': processingReturnCount > 0 }"
+        type="button"
+        role="tab"
+        :aria-selected="activeRecordView === 'returns'"
+        aria-controls="store-return-records-panel"
+        :tabindex="activeRecordView === 'returns' ? 0 : -1"
+        @click="selectRecordView('returns')"
+        @keydown.left.prevent="selectRecordView('requisitions')"
+      >
+        <RotateCcw :size="17" />
+        <span>配送退货单</span>
+        <b>{{ returns.length }} 单</b>
+      </button>
+    </div>
+
+    <div
+      v-show="activeRecordView === 'requisitions'"
+      id="store-requisition-records-panel"
+      class="store-delivery-section store-record-panel"
+      role="tabpanel"
+      aria-labelledby="store-requisition-records-tab"
+    >
       <div class="store-delivery-section__title">
         <div>
           <h4>叫货与收货</h4>
@@ -170,6 +254,13 @@ function returnLineText(row: WarehouseReturnOrder) {
             >
               <RotateCcw :size="15" />发起配送退货
             </button>
+            <span
+              v-else-if="hasNoReturnableItems(row)"
+              class="store-delivery-return-unavailable"
+              title="该叫货单已全部退货，或门店当前已无可退库存"
+            >
+              <RotateCcw :size="15" />无可退物料
+            </span>
           </div>
         </article>
         <p v-if="!requisitions.length" class="empty-cell">还没有叫货或收货记录。</p>
@@ -220,7 +311,14 @@ function returnLineText(row: WarehouseReturnOrder) {
                   >
                     发起配送退货
                   </button>
-                  <span v-if="!isPendingReceipt(row) && !canReturn(row)" class="store-delivery-no-action">—</span>
+                  <span
+                    v-else-if="hasNoReturnableItems(row)"
+                    class="store-delivery-return-unavailable"
+                    title="该叫货单已全部退货，或门店当前已无可退库存"
+                  >
+                    无可退物料
+                  </span>
+                  <span v-else-if="!isPendingReceipt(row)" class="store-delivery-no-action">—</span>
                 </div>
               </td>
             </tr>
@@ -232,7 +330,13 @@ function returnLineText(row: WarehouseReturnOrder) {
       </div>
     </div>
 
-    <div class="store-delivery-section store-return-records">
+    <div
+      v-show="activeRecordView === 'returns'"
+      id="store-return-records-panel"
+      class="store-delivery-section store-return-records store-record-panel"
+      role="tabpanel"
+      aria-labelledby="store-return-records-tab"
+    >
       <div class="store-delivery-section__title">
         <div>
           <h4>配送退货单</h4>
@@ -336,11 +440,81 @@ function returnLineText(row: WarehouseReturnOrder) {
   font-size: 15px;
 }
 
+.store-record-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px 0;
+  border-top: 1px solid var(--ds-line);
+}
+
+.store-record-tab {
+  display: flex;
+  min-width: 0;
+  min-height: 48px;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 14px;
+  border: 1px solid var(--ds-line);
+  border-radius: 10px;
+  background: var(--ds-surface-subtle, #f7faf9);
+  color: var(--ds-muted);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.store-record-tab:hover {
+  border-color: var(--ds-primary);
+  color: var(--ds-primary-hover);
+}
+
+.store-record-tab:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--ds-primary) 24%, transparent);
+  outline-offset: 2px;
+}
+
+.store-record-tab.active {
+  border-color: var(--ds-primary);
+  background: #fff;
+  color: var(--ds-primary-hover);
+  box-shadow: 0 2px 8px rgba(31, 98, 94, 0.1);
+}
+
+.store-record-tab span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.store-record-tab b {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--ds-primary-soft, #e9f6f5);
+  color: var(--ds-primary-hover);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.store-record-tab.has-pending:not(.active) b {
+  background: var(--ds-warning-soft, #fff4df);
+  color: var(--ds-warning, #a45f00);
+}
+
 .store-delivery-section {
   display: grid;
   gap: 12px;
   padding: 18px 0;
   border-top: 1px solid var(--ds-line);
+}
+
+.store-record-panel {
+  border-top: 0;
+  padding-top: 6px;
 }
 
 .store-delivery-section__title {
@@ -406,6 +580,16 @@ function returnLineText(row: WarehouseReturnOrder) {
   color: var(--ds-muted);
 }
 
+.store-delivery-return-unavailable {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ds-muted);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .store-return-records {
   padding-bottom: 0;
 }
@@ -420,6 +604,24 @@ function returnLineText(row: WarehouseReturnOrder) {
   .store-delivery-summary {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .store-record-tabs {
+    gap: 6px;
+  }
+
+  .store-record-tab {
+    min-height: 52px;
+    padding: 9px 10px;
+  }
+
+  .store-record-tab span {
+    font-size: 13px;
+  }
+
+  .store-record-tab b {
+    padding: 3px 6px;
+    font-size: 11px;
   }
 
   .store-delivery-table-wrap,
@@ -500,6 +702,14 @@ function returnLineText(row: WarehouseReturnOrder) {
   .store-delivery-card__actions {
     display: grid;
     gap: 8px;
+  }
+
+  .store-delivery-card__actions .store-delivery-return-unavailable {
+    min-height: 44px;
+    justify-content: center;
+    border: 1px dashed var(--ds-line);
+    border-radius: 8px;
+    background: var(--ds-surface-subtle, #f7faf9);
   }
 
   .store-delivery-card .mini-button,

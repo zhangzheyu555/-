@@ -9,7 +9,7 @@ import { useBusinessScope } from './useBusinessScope'
 
 const PAGE_SIZE = 20
 const SALARY_FILTERS = new Set([
-  'ACTIVE', 'PENDING_GENERATION', 'PENDING_REVIEW', 'PENDING_PAYMENT',
+  'ACTIVE', 'PENDING_GENERATION', 'PENDING_REVIEW', 'PAID',
 ])
 
 /* ---- helpers (pure, no side-effects) ---- */
@@ -48,9 +48,9 @@ export function statusLabel(s?: string) {
     SUBMITTED: '待审核',
     PENDING_REVIEW: '待审核',
     REJECTED: '待审核',
-    APPROVED: '待发放',
-    PAID: '已归档',
-    LOCKED: '已归档',
+    APPROVED: '待审核',
+    PAID: '已发放',
+    LOCKED: '已发放',
   }
   return labels[s || 'DRAFT'] || '待审核'
 }
@@ -62,15 +62,28 @@ export function statusClass(s?: string) {
     SUBMITTED: 'warn',
     PENDING_REVIEW: 'warn',
     REJECTED: 'warn',
-    APPROVED: 'pending',
-    PAID: 'muted',
-    LOCKED: 'muted',
+    APPROVED: 'warn',
+    PAID: 'complete',
+    LOCKED: 'complete',
   }
   return map[s || 'DRAFT'] || 'warn'
 }
 
 export function isEditable(s?: string) {
   return !s || ['DRAFT', 'REJECTED'].includes(s)
+}
+
+export function isOneClickApprovable(
+  record: SalaryRecord,
+  canEdit: boolean,
+  canReview: boolean,
+  canPay: boolean,
+) {
+  if (!record.id || !canPay) return false
+  const status = String(record.status || '').toUpperCase()
+  if (['DRAFT', 'REJECTED'].includes(status)) return canEdit && canReview
+  if (['SUBMITTED', 'PENDING_REVIEW'].includes(status)) return canReview
+  return status === 'APPROVED'
 }
 
 const errorPatterns = [
@@ -337,7 +350,8 @@ export function useSalaryPage() {
         selectedStoreId.value = accessibleStores.value[0].id
     }
     if (/^\d{4}-(0[1-9]|1[0-2])$/.test(qMonth)) selectedMonth.value = qMonth
-    if (SALARY_FILTERS.has(qStatus)) statusFilter.value = qStatus
+    if (qStatus === 'PENDING_PAYMENT') statusFilter.value = 'PENDING_REVIEW'
+    else if (SALARY_FILTERS.has(qStatus)) statusFilter.value = qStatus
   }
 
   async function setListFiltersWithoutReload(status: string, searchKeyword: string) {

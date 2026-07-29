@@ -11,6 +11,7 @@ import {
   type ExpenseClaimPayload,
 } from '../../api/finance'
 import type { StoreInfo } from '../../api/operations'
+import { reportAppError } from '../../errors/appErrorDialog'
 import { normalizeExpenseStatus } from '../../utils/expenseStatus'
 import SearchableSingleSelect from '../common/SearchableSingleSelect.vue'
 import ModalFooter from '../ui/ModalFooter.vue'
@@ -32,7 +33,6 @@ const form = reactive<ExpenseClaimPayload>(emptyForm())
 const initialSnapshot = ref('')
 const file = ref<File | null>(null)
 const saving = ref(false)
-const error = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
 const fileType = ref('')
 const previewUrl = ref('')
@@ -105,7 +105,6 @@ function resetForm() {
   file.value = null
   fileType.value = ''
   previewFailed.value = false
-  error.value = ''
   createIdempotencyKey.value = claim ? '' : newIdempotencyKey()
   if (fileInput.value) fileInput.value.value = ''
 }
@@ -125,7 +124,6 @@ async function onFileChange(event: Event) {
   file.value = selected
   fileType.value = selected.type
   previewFailed.value = false
-  error.value = ''
   if (selected.type.startsWith('image/') || /\.(?:jpe?g|png|webp)$/i.test(selected.name)) {
     previewUrl.value = URL.createObjectURL(selected)
   }
@@ -137,7 +135,7 @@ async function onFileChange(event: Event) {
     releasePreview()
     file.value = null
     fileType.value = ''
-    error.value = validationError
+    showExpenseError(validationError, '报销凭证不可用')
     return
   }
 
@@ -190,7 +188,6 @@ function removeFile() {
   file.value = null
   fileType.value = ''
   previewFailed.value = false
-  error.value = ''
 }
 
 function markPreviewFailed() {
@@ -245,30 +242,29 @@ function onContinueEdit() {
 }
 
 async function save(shouldSubmit: boolean) {
-  error.value = ''
   const storeId = props.lockedStoreId || form.storeId
   if (!storeId) {
-    error.value = '请选择门店。'
+    showExpenseError('请选择门店。', '报销信息不完整')
     return
   }
   if (!form.month) {
-    error.value = '请选择报销月份。'
+    showExpenseError('请选择报销月份。', '报销信息不完整')
     return
   }
   if (!isValidDate(form.expenseDate)) {
-    error.value = '请选择有效的报销日期。'
+    showExpenseError('请选择有效的报销日期。', '报销信息不完整')
     return
   }
   if (!Number.isFinite(Number(form.amount)) || Number(form.amount) <= 0) {
-    error.value = '请输入大于 0 的报销金额。'
+    showExpenseError('请输入大于 0 的报销金额。', '报销信息不完整')
     return
   }
   if (!String(form.category || '').trim()) {
-    error.value = '请填写报销类别。'
+    showExpenseError('请填写报销类别。', '报销信息不完整')
     return
   }
   if (!String(form.reason || '').trim()) {
-    error.value = '请填写报销说明。'
+    showExpenseError('请填写报销说明。', '报销信息不完整')
     return
   }
 
@@ -316,7 +312,10 @@ async function save(shouldSubmit: boolean) {
     if (!props.claim) createIdempotencyKey.value = ''
     emit('saved', saved)
   } catch (reason) {
-    error.value = displayError(reason)
+    showExpenseError(
+      displayError(reason),
+      shouldSubmit ? '报销提交失败' : '报销保存失败',
+    )
   } finally {
     saving.value = false
   }
@@ -346,6 +345,13 @@ function primaryAttachmentId(claim?: ExpenseClaim | null) {
 function displayError(reason: unknown) {
   const message = reason instanceof Error ? reason.message : String(reason || '')
   return message || '报销保存失败，请稍后重试。'
+}
+
+function showExpenseError(message: string, title: string) {
+  reportAppError(message, {
+    title,
+    actionLabel: '返回填写',
+  })
 }
 
 function currentMonth() {
@@ -388,7 +394,6 @@ function isValidDate(value: string) {
       </header>
 
       <div class="drawer-body">
-        <div v-if="error" class="error-box compact-error">{{ error }}</div>
         <div v-if="props.lockedStoreId" class="locked-store-field">
           <span>报销门店</span>
           <strong>{{ props.lockedStoreName || storeOptions.find((store) => store.id === props.lockedStoreId)?.name || props.lockedStoreId }}</strong>
@@ -829,10 +834,6 @@ function isValidDate(value: string) {
   color: var(--muted);
   font-size: 14px;
   line-height: 1.6;
-}
-
-.compact-error {
-  margin: 0;
 }
 
 @media (max-width: 560px) {

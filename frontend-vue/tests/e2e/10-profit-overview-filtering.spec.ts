@@ -51,6 +51,16 @@ function dashboardRoute(requestUrls: string[], fail = false, sourceEntries = ent
   return async (route: Route) => {
     const url = new URL(route.request().url())
     if (url.pathname === '/api/auth/me') return route.fulfill(ok(bossSession))
+    if (url.pathname === '/api/stores') {
+      return route.fulfill(ok(sourceEntries.map((entry) => ({
+        id: entry.storeId,
+        code: entry.storeId,
+        name: entry.storeName,
+        brandId: entry.brandId,
+        brandName: entry.brandName,
+        status: 'ACTIVE',
+      }))))
+    }
     if (url.pathname !== '/api/finance/dashboard') {
       return url.pathname.startsWith('/api/') ? route.fulfill(ok([])) : route.continue()
     }
@@ -64,7 +74,11 @@ function dashboardRoute(requestUrls: string[], fail = false, sourceEntries = ent
     }
     const month = url.searchParams.get('month') || '2026-07'
     const brandId = url.searchParams.get('brandId')
-    const rows = sourceEntries.filter((entry) => !brandId || String(entry.brandId) === brandId)
+    const storeId = url.searchParams.get('storeId')
+    const rows = sourceEntries.filter((entry) => (
+      (!brandId || String(entry.brandId) === brandId)
+      && (!storeId || entry.storeId === storeId)
+    ))
     const income = rows.reduce((sum, entry) => sum + Number(entry.income), 0)
     const net = rows.reduce((sum, entry) => sum + Number(entry.net), 0)
     return route.fulfill({
@@ -97,6 +111,42 @@ function dashboardRoute(requestUrls: string[], fail = false, sourceEntries = ent
     })
   }
 }
+
+test('选择门店后再次打开选择框仍保留全部候选门店', async ({ page }) => {
+  await seedBoss(page)
+  await page.route('**/*', dashboardRoute([]))
+  await page.goto('/profit?month=2026-07')
+
+  const storeSearch = page.getByRole('combobox', { name: '搜索门店' })
+  await storeSearch.click()
+  await expect(page.getByRole('option', { name: /荆州之星店/ })).toBeVisible()
+  await expect(page.getByRole('option', { name: /花台店/ })).toBeVisible()
+  await expect(page.getByRole('option', { name: /新圩店/ })).toBeVisible()
+
+  await page.getByRole('option', { name: /新圩店/ }).click()
+  await expect(page).toHaveURL(/storeId=bw1/)
+  await storeSearch.click()
+
+  await expect(page.getByRole('option', { name: /荆州之星店/ })).toBeVisible()
+  await expect(page.getByRole('option', { name: /花台店/ })).toBeVisible()
+  await expect(page.getByRole('option', { name: /新圩店/ })).toBeVisible()
+})
+
+test('利润概览不再显示或请求库存减少记录', async ({ page }) => {
+  const inventoryReductionRequests: string[] = []
+  page.on('request', (request) => {
+    if (request.url().includes('/inventory-reductions')) {
+      inventoryReductionRequests.push(request.url())
+    }
+  })
+  await seedBoss(page)
+  await page.route('**/*', dashboardRoute([]))
+  await page.goto('/profit?month=2026-07&storeId=bw1')
+
+  await expect(page.getByRole('heading', { name: '利润概览' })).toBeVisible()
+  await expect(page.getByRole('region', { name: '库存减少记录' })).toHaveCount(0)
+  expect(inventoryReductionRequests).toEqual([])
+})
 
 test('brand cards filter the overview and preserve URL navigation state', async ({ page }) => {
   const requests: string[] = []

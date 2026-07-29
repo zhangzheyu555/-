@@ -74,7 +74,7 @@ function json(route: Route, data: unknown, status = 200) {
   })
 }
 
-function warehouseOverview() {
+function warehouseOverview(requisitions: Array<Record<string, unknown>> = [shippedRequisition, receivedRequisition]) {
   return {
     warehouse: supplyWarehouse,
     summary: {
@@ -104,15 +104,20 @@ function warehouseOverview() {
       alertText: '',
       active: true,
     }],
-    requisitions: [shippedRequisition, receivedRequisition],
+    requisitions,
     stockBatches: [],
     movements: [],
   }
 }
 
-async function prepare(page: Page) {
+interface PrepareOptions {
+  requisitions?: Array<Record<string, unknown>>
+  returns?: Array<Record<string, unknown>>
+}
+
+async function prepare(page: Page, options: PrepareOptions = {}) {
   const createBodies: unknown[] = []
-  const returnRows: Array<Record<string, unknown>> = []
+  const returnRows: Array<Record<string, unknown>> = [...(options.returns || [])]
   let downloadRequests = 0
   const consoleErrors: string[] = []
 
@@ -131,7 +136,7 @@ async function prepare(page: Page) {
     const pathname = new URL(request.url()).pathname
     if (pathname === '/api/auth/me') return json(route, storeManagerSession)
     if (pathname === '/api/warehouse/warehouses') return json(route, [supplyWarehouse])
-    if (pathname === '/api/warehouse/overview') return json(route, warehouseOverview())
+    if (pathname === '/api/warehouse/overview') return json(route, warehouseOverview(options.requisitions))
     if (pathname === '/api/warehouse/item-categories') return json(route, [])
     if (pathname === '/api/stores') return json(route, [{ id: 'STORE-1', name: '测试门店', status: 'ACTIVE' }])
     if (pathname === '/api/warehouse/returns' && request.method() === 'GET') {
@@ -196,6 +201,48 @@ async function prepare(page: Page) {
     consoleErrors,
   }
 }
+
+test('大量叫货记录不会把配送退货单入口推到页面底部', async ({ page }, testInfo: TestInfo) => {
+  test.skip(testInfo.project.name !== 'chromium', '长列表布局仅在 chromium 项目执行')
+  const requisitions = Array.from({ length: 20 }, (_, index) => ({
+    ...receivedRequisition,
+    id: `REQ-HISTORY-${String(index + 1).padStart(3, '0')}`,
+  }))
+  const existingReturn = {
+    id: 'RETURN-HISTORY-001',
+    returnNo: 'PSTH260728000000099',
+    sourceRequisitionId: requisitions[0]?.id,
+    status: 'SUBMITTED',
+    statusLabel: '待仓库审核',
+    totalAmount: 50,
+    reason: '包装破损',
+    returnDate: '2026-07-28',
+    lines: [{
+      id: 1,
+      itemId: 11,
+      itemName: '鲜牛奶',
+      quantity: 1,
+      unit: '箱',
+    }],
+  }
+  await prepare(page, { requisitions, returns: [existingReturn] })
+  await page.goto('/store/inventory/records')
+
+  const records = page.getByRole('region', { name: '配送与退货记录' })
+  const returnTab = records.getByRole('tab', { name: /配送退货单.*1/ })
+  await expect(returnTab).toBeVisible()
+  await expect(returnTab).toHaveAttribute('aria-selected', 'true')
+  const [recordsBox, returnTabBox] = await Promise.all([records.boundingBox(), returnTab.boundingBox()])
+  expect((returnTabBox?.y || 0) - (recordsBox?.y || 0), '退货入口应固定在记录卡片顶部').toBeLessThan(220)
+
+  await returnTab.click()
+  await expect(records.locator('.store-return-table-wrap').getByText('PSTH260728000000099', { exact: true })).toBeVisible()
+  await expect(records.locator('.store-delivery-table-wrap')).toBeHidden()
+
+  await records.getByRole('tab', { name: /叫货与收货.*20/ }).click()
+  await expect(records.locator('.store-delivery-table-wrap').getByText('REQ-HISTORY-020', { exact: true })).toBeVisible()
+  await expect(records.locator('.store-return-table-wrap')).toBeHidden()
+})
 
 test('门店把收货与叫货合并展示并完成配送退货和退货单下载', async ({ page }, testInfo: TestInfo) => {
   test.skip(testInfo.project.name !== 'chromium', '桌面配送退货流程仅在 chromium 项目执行')
@@ -276,4 +323,65 @@ test('配送退货弹窗在390px小屏完整可达且数量错误使用弹窗提
   ])
   expect(documentWidth).toBeLessThanOrEqual(viewportWidth)
   expect(log.consoleErrors).toEqual([])
+})
+
+test('已无可退物料的叫货单在列表外层直接阻止再次退货', async ({ page }, testInfo: TestInfo) => {
+  test.skip(testInfo.project.name !== 'chromium', '退货入口状态仅在 chromium 项目执行')
+  const exhaustedRequisition = {
+    ...receivedRequisition,
+    id: 'REQ-RETURN-EXHAUSTED',
+    lines: [{
+      ...receivedRequisition.lines[0],
+      receivedQuantity: 3,
+      returnedQuantity: 3,
+      sourceAvailableReturnQuantity: 0,
+      storeInventoryQuantity: 0,
+      availableReturnQuantity: 0,
+    }],
+  }
+  const completedReturn = {
+    id: 'RETURN-COMPLETED-001',
+    returnNo: 'PSTH260729000000001',
+    sourceRequisitionId: exhaustedRequisition.id,
+    returnStoreId: 'STORE-1',
+    returnStoreName: '测试门店',
+    status: 'RECEIVED',
+    statusLabel: '仓库已收货',
+    totalAmount: 0,
+    reason: '已完成退货',
+    returnDate: '2026-07-29',
+    lineCount: 1,
+    attachmentCount: 0,
+    lines: [{
+      id: 1,
+      itemId: 11,
+      itemName: '鲜牛奶',
+      quantity: 3,
+      unit: '箱',
+      unitPrice: 0,
+      returnPrice: 0,
+      amount: 0,
+    }],
+  }
+  await prepare(page, {
+    requisitions: [exhaustedRequisition],
+    returns: [completedReturn],
+  })
+  await page.goto('/store/inventory/records')
+
+  const records = page.getByRole('region', { name: '配送与退货记录' })
+  await records.getByRole('tab', { name: /叫货与收货.*1/ }).click()
+  const requisitionRow = records.locator('.store-delivery-table-wrap').getByRole('row').filter({
+    hasText: exhaustedRequisition.id,
+  })
+  await expect(requisitionRow.getByRole('button', { name: '发起配送退货', exact: true })).toHaveCount(0)
+  await expect(requisitionRow.getByText('无可退物料', { exact: true })).toBeVisible()
+  await expect(page.getByRole('dialog', { name: '发起配送退货' })).toHaveCount(0)
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  const requisitionCard = records.locator('.store-delivery-card').filter({
+    hasText: exhaustedRequisition.id,
+  })
+  await expect(requisitionCard.getByText('无可退物料', { exact: true })).toBeVisible()
+  await expect(requisitionCard.getByRole('button', { name: '发起配送退货', exact: true })).toHaveCount(0)
 })

@@ -72,6 +72,24 @@ async function prepare(page: Page, action: TodoAction) {
     if (url.pathname === '/api/boss/exam-summary') return route.fulfill(ok({
       activeExamCount: 0, assignedCount: 0, completedCount: 0, completionRate: 0, passedCount: 0, passRate: 0, overdueCount: 0, averageScore: 0, riskStores: [],
     }))
+    if (url.pathname === '/api/finance/dashboard') return route.fulfill(ok({
+      months: ['2026-07'],
+      brands: [{ id: 1, name: '合成品牌', sortOrder: 1 }],
+      summary: {
+        month: '2026-07',
+        storeCount: 1,
+        entryCount: 0,
+        sales: 0,
+        income: 0,
+        costSum: 0,
+        expenseSum: 0,
+        net: 0,
+        margin: 0,
+        riskStoreCount: 0,
+      },
+      entries: [],
+      trend: [],
+    }))
     if (url.pathname === '/api/finance/months') return route.fulfill(ok(['2026-07']))
     if (url.pathname === '/api/finance/entries') return route.fulfill(ok([]))
     if (url.pathname === '/api/todos') return route.fulfill(ok([]))
@@ -102,8 +120,12 @@ test('desktop role-todo actions preserve only whitelisted daily-loss, inspection
   expect(errors).toEqual([])
 })
 
-test('role-todo route mapper carries source ids for inspection and warehouse without accepting arbitrary parameters', async ({ browser }) => {
+test('role-todo route mapper carries exact risk source context without accepting arbitrary parameters', async ({ browser }) => {
   const scenarios = [
+    {
+      action: { target: 'report', params: { storeId: 's1', month: '2026-07', mode: 'single' } },
+      expected: /\/profit-table\?storeId=s1&month=2026-07&mode=single/,
+    },
     {
       action: { target: 'inspect', params: { storeId: 's1', month: '2026-07', inspectionId: 'ins-flow-1' } },
       expected: /\/operations\/inspection\/records\?storeId=s1&month=2026-07&recordId=ins-flow-1/,
@@ -111,6 +133,14 @@ test('role-todo route mapper carries source ids for inspection and warehouse wit
     {
       action: { target: 'warehouse', params: { storeId: 's1', month: '2026-07', requisitionId: 'req-flow-1' } },
       expected: /\/warehouse\/requests\?storeId=s1&month=2026-07&requisitionId=req-flow-1/,
+    },
+    {
+      action: { target: 'warehouse', params: { warehouseId: '1', month: '2026-07', itemId: '12', adjustmentId: '701' } },
+      expected: /\/warehouse\/alerts\?warehouseId=1&month=2026-07&itemId=12&adjustmentId=701/,
+    },
+    {
+      action: { target: 'dataHealth', params: { storageKey: 'migration_error:expenses' } },
+      expected: /\/data-entry\?import=1&storageKey=migration_error:expenses/,
     },
   ]
   for (const scenario of scenarios) {

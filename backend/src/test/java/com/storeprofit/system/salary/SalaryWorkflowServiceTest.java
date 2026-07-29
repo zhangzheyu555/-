@@ -268,6 +268,28 @@ class SalaryWorkflowServiceTest {
     verify(businessTodoService, never()).reconcileAfterFinanceMutation(boss, "2026-05");
   }
 
+  @Test
+  void approveAcceptsLegacyPendingReviewStatus() {
+    SalaryRecordResponse pendingReview = mock(SalaryRecordResponse.class);
+    SalaryRecordResponse approved = mock(SalaryRecordResponse.class);
+    when(pendingReview.id()).thenReturn("salary-legacy-review");
+    when(pendingReview.storeId()).thenReturn("store-1");
+    when(pendingReview.month()).thenReturn("2026-05");
+    when(pendingReview.status()).thenReturn("PENDING_REVIEW");
+    when(pendingReview.version()).thenReturn(3);
+    when(salaryRepository.record(1L, "salary-legacy-review")).thenReturn(Optional.of(pendingReview));
+    when(salaryQueryService.requireRecord(boss, "salary-legacy-review"))
+        .thenReturn(pendingReview, approved);
+    when(salaryRepository.updateStatus(
+        1L, "salary-legacy-review", "APPROVED", null, 1L, 3)).thenReturn(1);
+
+    assertThat(service.approve(boss, "salary-legacy-review")).isSameAs(approved);
+
+    verify(salaryRepository).updateStatus(
+        1L, "salary-legacy-review", "APPROVED", null, 1L, 3);
+    verify(businessTodoService).reconcileAfterFinanceMutation(boss, "2026-05");
+  }
+
   private SalaryRecordResponse deletableSalaryRecord(String status, int version) {
     SalaryRecordResponse record = mock(SalaryRecordResponse.class);
     when(record.storeId()).thenReturn("store-1");

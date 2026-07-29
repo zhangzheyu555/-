@@ -847,6 +847,29 @@ test('clicking one inventory alert focuses its corresponding material row', asyn
   expect(log.consoleErrors).toEqual([])
 })
 
+test('a risk deep link opens and focuses the exact inventory material', async ({ page }) => {
+  mockOverviewOverride = riskOverview()
+  const log = await prepare(page, baseSession)
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await page.goto('/warehouse/alerts?warehouseId=1&itemId=12&month=2026-07')
+
+  const inventory = page.locator('.inventory-main')
+  const expiringRow = inventory.locator('tbody tr[data-inventory-target="true"]')
+  await expect(expiringRow).toHaveCount(1)
+  await expect(expiringRow).toContainText('临期原料')
+  await expect(expiringRow).toBeFocused()
+  await expect(inventory.getByRole('checkbox', { name: '临期', exact: true })).toBeChecked()
+
+  await page.goto('/warehouse/alerts?warehouseId=1&itemId=13&adjustmentId=701&month=2026-07')
+  const adjustmentRow = inventory.locator('tbody tr[data-inventory-target="true"]')
+  await expect(adjustmentRow).toHaveCount(1)
+  await expect(adjustmentRow).toContainText('正常物料')
+  await expect(adjustmentRow).toBeFocused()
+  await expect(inventory.getByRole('checkbox', { name: '低库存', exact: true })).not.toBeChecked()
+  await expect(inventory.getByRole('checkbox', { name: '临期', exact: true })).not.toBeChecked()
+  expect(log.consoleErrors).toEqual([])
+})
+
 test('material category action icons remain fully visible before hover', async ({ page }) => {
   const log = await prepare(page, baseSession)
   await page.setViewportSize({ width: 1440, height: 900 })

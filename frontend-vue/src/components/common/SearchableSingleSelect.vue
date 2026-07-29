@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Check, ChevronDown, Search, X } from 'lucide-vue-next'
 
 export type SearchableSelectValue = string | number
@@ -51,10 +51,11 @@ const input = ref<HTMLInputElement | null>(null)
 const open = ref(false)
 const keyword = ref('')
 const activeIndex = ref(-1)
+const committedValue = ref<SearchableSelectValue | null>(props.modelValue ?? null)
 const listboxId = `searchable-single-select-${Math.random().toString(36).slice(2)}`
 
 const normalizedKeyword = computed(() => keyword.value.trim().toLocaleLowerCase('zh-CN'))
-const selectedOption = computed(() => props.options.find((option) => sameValue(option.value, props.modelValue)))
+const selectedOption = computed(() => props.options.find((option) => sameValue(option.value, committedValue.value)))
 const visibleOptions = computed(() => {
   const query = normalizedKeyword.value
   if (!query) return props.options
@@ -63,8 +64,8 @@ const visibleOptions = computed(() => {
 const hasEmptyOption = computed(() => props.emptyOptionLabel !== undefined)
 const displayValue = computed(() => (open.value
   ? keyword.value
-  : selectedOption.value?.label || emptyLabel.value || props.fallbackLabel || (props.modelValue == null ? '' : String(props.modelValue))))
-const emptyLabel = computed(() => sameValue(props.modelValue, props.emptyValue) ? props.emptyOptionLabel : '')
+  : selectedOption.value?.label || emptyLabel.value || props.fallbackLabel || (committedValue.value == null ? '' : String(committedValue.value))))
+const emptyLabel = computed(() => sameValue(committedValue.value, props.emptyValue) ? props.emptyOptionLabel : '')
 
 function sameValue(left: SearchableSelectValue | null | undefined, right: SearchableSelectValue | null | undefined) {
   return left !== null && left !== undefined && right !== null && right !== undefined && String(left) === String(right)
@@ -82,7 +83,7 @@ function openMenu() {
   if (!open.value) {
     open.value = true
     keyword.value = ''
-    activeIndex.value = visibleOptions.value.findIndex((option) => sameValue(option.value, props.modelValue))
+    activeIndex.value = visibleOptions.value.findIndex((option) => sameValue(option.value, committedValue.value))
     emit('open')
   }
   void nextTick(() => input.value?.focus())
@@ -98,16 +99,18 @@ function closeMenu() {
 
 function updateKeyword(event: Event) {
   keyword.value = (event.target as HTMLInputElement).value
-  activeIndex.value = visibleOptions.value.findIndex((option) => sameValue(option.value, props.modelValue))
+  activeIndex.value = visibleOptions.value.findIndex((option) => sameValue(option.value, committedValue.value))
 }
 
 function selectOption(option: SearchableSelectOption) {
   if (option.disabled) return
+  committedValue.value = option.value
   emit('update:modelValue', option.value)
   closeMenu()
 }
 
 function selectEmpty() {
+  committedValue.value = props.emptyValue
   emit('update:modelValue', props.emptyValue)
   closeMenu()
 }
@@ -155,6 +158,10 @@ function handleDocumentPointerDown(event: PointerEvent) {
 onMounted(() => document.addEventListener('pointerdown', handleDocumentPointerDown))
 onBeforeUnmount(() => document.removeEventListener('pointerdown', handleDocumentPointerDown))
 
+watch(() => props.modelValue, (value) => {
+  committedValue.value = value ?? null
+})
+
 defineExpose({ focus: openMenu, close: closeMenu })
 </script>
 
@@ -197,14 +204,14 @@ defineExpose({ focus: openMenu, close: closeMenu })
         v-if="hasEmptyOption && !normalizedKeyword"
         type="button"
         class="searchable-single-select__option"
-        :class="{ selected: sameValue(modelValue, emptyValue) }"
+        :class="{ selected: sameValue(committedValue, emptyValue) }"
         role="option"
-        :aria-selected="sameValue(modelValue, emptyValue) ? 'true' : 'false'"
+        :aria-selected="sameValue(committedValue, emptyValue) ? 'true' : 'false'"
         @mousedown.prevent
         @click="selectEmpty"
       >
         <span>{{ emptyOptionLabel }}</span>
-        <Check v-if="sameValue(modelValue, emptyValue)" :size="16" aria-hidden="true" />
+        <Check v-if="sameValue(committedValue, emptyValue)" :size="16" aria-hidden="true" />
       </button>
       <div v-if="loading" class="searchable-single-select__status" role="status">正在加载选项…</div>
       <template v-else-if="visibleOptions.length">
@@ -214,21 +221,21 @@ defineExpose({ focus: openMenu, close: closeMenu })
           :key="String(option.value)"
           type="button"
           class="searchable-single-select__option"
-          :class="{ selected: sameValue(option.value, modelValue), active: index === activeIndex }"
+          :class="{ selected: sameValue(option.value, committedValue), active: index === activeIndex }"
           :disabled="option.disabled"
           role="option"
-          :aria-selected="sameValue(option.value, modelValue) ? 'true' : 'false'"
+          :aria-selected="sameValue(option.value, committedValue) ? 'true' : 'false'"
           @mousedown.prevent
           @mouseenter="activeIndex = index"
           @click="selectOption(option)"
         >
           <span class="searchable-single-select__option-copy">
-            <slot name="option" :option="option" :selected="sameValue(option.value, modelValue)">
+            <slot name="option" :option="option" :selected="sameValue(option.value, committedValue)">
               <b>{{ option.label }}</b>
               <small v-if="option.description">{{ option.description }}</small>
             </slot>
           </span>
-          <Check v-if="sameValue(option.value, modelValue)" :size="16" aria-hidden="true" />
+          <Check v-if="sameValue(option.value, committedValue)" :size="16" aria-hidden="true" />
         </button>
       </template>
       <div v-else class="searchable-single-select__status" role="status">{{ emptyMessage }}</div>

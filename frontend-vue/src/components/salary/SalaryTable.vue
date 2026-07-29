@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ChevronLeft, ChevronRight, Eye, Loader2, Trash2 } from 'lucide-vue-next'
 import type { SalaryRecord } from '../../api/finance'
-import { isHourlySalaryRecord, money, statusClass, statusLabel, wholeNumber } from '../../composables/useSalaryPage'
+import {
+  isHourlySalaryRecord, isOneClickApprovable, money, statusClass, statusLabel, wholeNumber,
+} from '../../composables/useSalaryPage'
 
 const props = defineProps<{
   rows: SalaryRecord[]
@@ -14,6 +16,7 @@ const props = defineProps<{
   generationCheckedEmployeeIds: Set<string>
   canEdit: boolean
   canReview: boolean
+  canPay: boolean
   deletingId: string
 }>()
 
@@ -45,9 +48,7 @@ function isGenerationSelectable(row: SalaryRecord) {
 }
 
 function isApprovalSelectable(row: SalaryRecord) {
-  return props.canReview
-    && Boolean(row.id)
-    && ['SUBMITTED', 'PENDING_REVIEW'].includes(row.status || '')
+  return isOneClickApprovable(row, props.canEdit, props.canReview, props.canPay)
 }
 
 function isSelectable(row: SalaryRecord) {
