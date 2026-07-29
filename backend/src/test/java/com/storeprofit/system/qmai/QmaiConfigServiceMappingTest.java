@@ -86,13 +86,19 @@ class QmaiConfigServiceMappingTest {
   }
 
   @Test
-  void rejectsWebSaveWithoutChangingHistoricalDatabaseRecords() {
-    assertThatThrownBy(() -> service.save(1L, "ruguo", new QmaiConfigService.QmaiConfigForm(
-        "new-open-id", "new-grant-code", "new-open-key", null, null, null,
-        null, null, null), 7L, "老板"))
-        .isInstanceOfSatisfying(BusinessException.class,
-            ex -> assertThat(ex.getCode()).isEqualTo("QMAI_ENVIRONMENT_MANAGED"));
-    assertThat(jdbc.queryForObject("select count(*) from qmai_platform_config", Integer.class))
-        .isEqualTo(0);
+  void savesOnlyShopMappingsAndKeepsCredentialsOutsideDatabaseWrites() {
+    service.save(1L, "ruguo", new QmaiConfigService.QmaiConfigForm(
+        "ignored-open-id", "ignored-grant-code", "ignored-open-key", null, null,
+        "285275:茹果一店:s1,287952:茹果二店:s2", null, null, null), 7L, "老板");
+
+    assertThat(service.resolve(1L, "ruguo").shops())
+        .containsExactly("285275:茹果一店:s1", "287952:茹果二店:s2");
+    assertThat(jdbc.queryForList("select open_id, grant_code, open_key from qmai_platform_config"))
+        .singleElement()
+        .satisfies(row -> {
+          assertThat(row.get("OPEN_ID")).isEqualTo("");
+          assertThat(row.get("GRANT_CODE")).isEqualTo("");
+          assertThat(row.get("OPEN_KEY")).isEqualTo("");
+        });
   }
 }
