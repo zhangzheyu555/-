@@ -214,6 +214,116 @@ class SalaryWorkflowServiceTest {
   }
 
   @Test
+  void pendingReviewSaveUsesReviewPermissionKeepsStatusAndWritesAudit() {
+    EmployeeResponse employee = employee(
+        "employee-review", "store-1", "测试门店", "审核员工", "营业员",
+        new BigDecimal("3000.00"), "在职");
+    SalaryRecordResponse pending = pendingReviewRecord("SUBMITTED", 7);
+    SalaryRecordResponse saved = mock(SalaryRecordResponse.class);
+    SalaryRecordRequest reviewRequest = reviewSalaryRequest();
+    when(salaryQueryService.resolveStoreForWrite(
+        boss, "store-1", "保存工资记录", "2026-05"))
+        .thenReturn("store-1");
+    when(employeeRepository.record(1L, "employee-review")).thenReturn(Optional.of(employee));
+    when(salaryRepository.record(1L, "salary-review"))
+        .thenReturn(Optional.of(pending), Optional.of(saved));
+    when(salaryRepository.recordForEmployeeMonth(1L, "employee-review", "2026-05"))
+        .thenReturn(Optional.of(pending));
+    when(salaryRepository.updateWithVersion(
+        eq(1L), eq("salary-review"), any(SalaryRecordRequest.class), eq(7)))
+        .thenReturn(1);
+
+    assertThat(service.save(boss, "salary-review", reviewRequest)).isSameAs(saved);
+
+    ArgumentCaptor<SalaryRecordRequest> persisted = ArgumentCaptor.forClass(SalaryRecordRequest.class);
+    verify(accessControl).requireSalaryReview(
+        boss, "salary-review", "store-1", "2026-05");
+    verify(accessControl, never()).requireSalaryEdit(
+        any(AuthUser.class), any(), any(), any());
+    verify(salaryRepository).updateWithVersion(
+        eq(1L), eq("salary-review"), persisted.capture(), eq(7));
+    verify(salaryRepository, never()).upsert(
+        eq(1L), eq("salary-review"), any(SalaryRecordRequest.class));
+    assertThat(persisted.getValue().attendance()).isEqualTo("27天");
+    assertThat(persisted.getValue().normalHours()).isEqualByComparingTo("216.00");
+    assertThat(persisted.getValue().otHours()).isEqualByComparingTo("2.00");
+    assertThat(persisted.getValue().workHours()).isEqualByComparingTo("218.00");
+    assertThat(persisted.getValue().performance()).isEqualByComparingTo("50.00");
+    assertThat(persisted.getValue().gross()).isEqualByComparingTo("3050.00");
+    verify(salaryRepository).logAction(
+        eq(1L), eq(1L), eq("老板"), eq("salary_review_edit"), eq("salary-review"),
+        eq("store-1"), eq("2026-05"), contains("状态保持待审核"),
+        eq("SUBMITTED"), eq("SUBMITTED"));
+    verify(businessTodoService).reconcileAfterFinanceMutation(boss, "2026-05");
+  }
+
+  @Test
+  void pendingReviewSaveRejectsConcurrentApproval() {
+    EmployeeResponse employee = employee(
+        "employee-review", "store-1", "测试门店", "审核员工", "营业员",
+        new BigDecimal("3000.00"), "在职");
+    SalaryRecordResponse pending = pendingReviewRecord("PENDING_REVIEW", 9);
+    when(salaryQueryService.resolveStoreForWrite(
+        boss, "store-1", "保存工资记录", "2026-05"))
+        .thenReturn("store-1");
+    when(employeeRepository.record(1L, "employee-review")).thenReturn(Optional.of(employee));
+    when(salaryRepository.record(1L, "salary-review")).thenReturn(Optional.of(pending));
+    when(salaryRepository.recordForEmployeeMonth(1L, "employee-review", "2026-05"))
+        .thenReturn(Optional.of(pending));
+    when(salaryRepository.updateWithVersion(
+        eq(1L), eq("salary-review"), any(SalaryRecordRequest.class), eq(9)))
+        .thenReturn(0);
+
+    assertThatThrownBy(() -> service.save(boss, "salary-review", reviewSalaryRequest()))
+        .isInstanceOfSatisfying(BusinessException.class, exception -> {
+          assertThat(exception.getCode()).isEqualTo("VERSION_CONFLICT");
+          assertThat(exception.getStatus()).isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
+        })
+        .hasMessageContaining("刷新后重试");
+
+    verify(businessTodoService, never()).reconcileAfterFinanceMutation(boss, "2026-05");
+  }
+
+  @Test
+  void pendingReviewAttendanceUsesReviewPermission() {
+    EmployeeResponse employee = employee(
+        "employee-review", "store-1", "测试门店", "审核员工", "营业员",
+        new BigDecimal("3000.00"), "在职");
+    SalaryRecordResponse pending = pendingReviewRecord("SUBMITTED", 3);
+    SalaryRepository.AttendanceRow saved = new SalaryRepository.AttendanceRow(
+        new BigDecimal("27.00"), new BigDecimal("216.00"), new BigDecimal("2.00"),
+        new BigDecimal("218.00"), new BigDecimal("3.00"), "MANUAL", "CONFIRMED");
+    when(salaryRepository.recordForEmployeeMonth(1L, "employee-review", "2026-05"))
+        .thenReturn(Optional.of(pending));
+    when(salaryQueryService.resolveStoreForWrite(
+        boss, "store-1", "录入工资考勤", "2026-05"))
+        .thenReturn("store-1");
+    when(employeeRepository.record(1L, "employee-review")).thenReturn(Optional.of(employee));
+    when(salaryRepository.attendance(1L, "store-1", "employee-review", "2026-05"))
+        .thenReturn(Optional.of(saved));
+
+    SalaryRepository.AttendanceRow result = service.saveAttendance(
+        boss,
+        new SalaryAttendanceRequest(
+            "store-1", "employee-review", "2026-05",
+            new BigDecimal("27"), new BigDecimal("2"), new BigDecimal("216")));
+
+    assertThat(result).isSameAs(saved);
+    verify(accessControl).requireSalaryReview(
+        boss, "salary-review", "store-1", "2026-05");
+    verify(accessControl, never()).requireSalaryEdit(
+        any(AuthUser.class), any(), any(), any());
+    verify(salaryRepository).upsertAttendance(
+        1L, 1L, "store-1", "employee-review", "2026-05",
+        new BigDecimal("27.00"), new BigDecimal("216.00"),
+        new BigDecimal("2.00"), new BigDecimal("218.00"));
+    verify(salaryRepository).logAction(
+        eq(1L), eq(1L), eq("老板"), eq("salary_attendance_save"),
+        eq("employee-review-2026-05"), eq("store-1"), eq("2026-05"),
+        contains("审核中人工修改"));
+  }
+
+  @Test
   void deleteRemovesItemsBeforeEditableRecordAndKeepsAuditAndTodoReconciliation() {
     SalaryRecordResponse record = deletableSalaryRecord("DRAFT", 7);
     when(salaryRepository.record(1L, "salary-delete")).thenReturn(Optional.of(record));
@@ -308,6 +418,31 @@ class SalaryWorkflowServiceTest {
         BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal(lateNight), BigDecimal.ZERO,
         BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO
     );
+  }
+
+  private SalaryRecordRequest reviewSalaryRequest() {
+    return new SalaryRecordRequest(
+        "store-1", "2026-05", "employee-review", "审核员工", "营业员", "27天",
+        new BigDecimal("3050.00"), new BigDecimal("216.00"), new BigDecimal("2.00"),
+        new BigDecimal("218.00"), new BigDecimal("3.00"), "5月2日、9日休息",
+        new BigDecimal("3000.00"), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("50.00"),
+        BigDecimal.ZERO, BigDecimal.ZERO
+    );
+  }
+
+  private SalaryRecordResponse pendingReviewRecord(String status, int version) {
+    SalaryRecordResponse record = mock(SalaryRecordResponse.class);
+    when(record.id()).thenReturn("salary-review");
+    when(record.storeId()).thenReturn("store-1");
+    when(record.month()).thenReturn("2026-05");
+    when(record.employeeId()).thenReturn("employee-review");
+    when(record.status()).thenReturn(status);
+    when(record.version()).thenReturn(version);
+    when(record.gross()).thenReturn(new BigDecimal("3000.00"));
+    when(record.base()).thenReturn(new BigDecimal("3000.00"));
+    return record;
   }
 
   private SalaryRecordResponse salaryRecordWithLateNight(String gross, String lateNight) {
