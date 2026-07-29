@@ -50,6 +50,57 @@ function warehouseActionRoute(action: RoleTodoAction): RouteLocationRaw {
   return { path: '/warehouse', query: commonQuery }
 }
 
+function routeQueryValue(route: RouteLocationRaw, key: AllowedParam | 'import') {
+  if (typeof route === 'string' || !('query' in route) || !route.query) return ''
+  const raw = route.query[key]
+  const value = Array.isArray(raw) ? raw[0] : raw
+  return value === null || value === undefined ? '' : String(value).trim()
+}
+
+/**
+ * A route may survive a hot update or a long-lived browser session after its originating todo
+ * shape changed. Do not trust a module-only fallback route for context-sensitive work: it can open
+ * the right page while silently selecting the wrong store or record.
+ */
+export function hasExactRoleTodoRouteContext(route: RouteLocationRaw) {
+  if (typeof route === 'string' || !('path' in route)) return false
+  switch (route.path) {
+    case '/profit-table':
+      return Boolean(
+        routeQueryValue(route, 'storeId')
+        && routeQueryValue(route, 'month')
+        && routeQueryValue(route, 'mode') === 'single',
+      )
+    case '/operations/inspection/records':
+      return Boolean(routeQueryValue(route, 'recordId'))
+    case '/warehouse/alerts':
+      return Boolean(
+        routeQueryValue(route, 'warehouseId')
+        && (routeQueryValue(route, 'itemId') || routeQueryValue(route, 'adjustmentId')),
+      )
+    case '/warehouse/requests':
+      return Boolean(routeQueryValue(route, 'requisitionId'))
+    case '/warehouse/returns':
+      return Boolean(routeQueryValue(route, 'returnId'))
+    case '/warehouse/purchase':
+      return Boolean(routeQueryValue(route, 'purchaseOrderId'))
+    case '/expenses':
+      return Boolean(routeQueryValue(route, 'expenseId'))
+    case '/finance/salary':
+      return Boolean(routeQueryValue(route, 'salaryId') || (
+        routeQueryValue(route, 'storeId') && routeQueryValue(route, 'month')
+      ))
+    case '/daily-loss':
+      return Boolean(routeQueryValue(route, 'reportId') || (
+        routeQueryValue(route, 'storeId') && routeQueryValue(route, 'lossDate')
+      ))
+    case '/data-entry':
+      return routeQueryValue(route, 'import') === '1' && Boolean(routeQueryValue(route, 'storageKey'))
+    default:
+      return true
+  }
+}
+
 /**
  * Turns the server-issued todo action into a route with an explicit whitelist.  The browser never
  * accepts an arbitrary URL or arbitrary query object from a todo payload; source APIs remain the

@@ -4,6 +4,7 @@ import { AlertTriangle, ArrowRight, ClipboardCheck, Store, TrendingUp, WalletCar
 import { useRoute, useRouter } from 'vue-router'
 import { getProfitEntries, getProfitMonths, type ProfitEntry } from '../api/finance'
 import { getBusinessTodos, type BusinessTodo } from '../api/todos'
+import { reportAppError } from '../errors/appErrorDialog'
 import BossActionCard from '../components/boss/BossActionCard.vue'
 import BusinessTodoEvidence from '../components/boss/BusinessTodoEvidence.vue'
 import BossDoneReview from '../components/boss/BossDoneReview.vue'
@@ -20,7 +21,7 @@ import { routeForSource, useBossStore, type BossRiskGroup, type BossRoleProgress
 import { useAuthStore } from '../stores/auth'
 import { PERMISSIONS } from '../permissions/permissions'
 import type { RoleTodoItem } from '../api/todos'
-import { roleTodoActionRoute } from '../utils/roleTodoNavigation'
+import { hasExactRoleTodoRouteContext, roleTodoActionRoute } from '../utils/roleTodoNavigation'
 import { useForegroundReload } from '../composables/useForegroundReload'
 
 const route = useRoute()
@@ -40,6 +41,7 @@ const workflowError = ref('')
 const workflowLoading = ref(false)
 const workflowLoaded = ref(false)
 const activeTodoId = ref('')
+const riskOpeningId = ref('')
 const activeSection = ref<'action' | 'review' | 'exam' | 'risk' | 'progress' | 'done'>('action')
 const activeExamCount = ref(0)
 const actionConfirmation = reactive({
@@ -267,8 +269,31 @@ function openActionSource(item: RoleTodoItem) {
   void router.push(target || '/boss')
 }
 
-function openRiskSource(risk: BossRiskGroup) {
-  void router.push(risk.targetRoute)
+async function openRiskSource(risk: BossRiskGroup) {
+  if (riskOpeningId.value) return
+  riskOpeningId.value = risk.id
+  try {
+    let currentRisk = risk
+    if (!hasExactRoleTodoRouteContext(currentRisk.targetRoute)) {
+      const refreshed = await boss.load()
+      currentRisk = boss.highRiskReminders.find((item) => item.id === risk.id) || currentRisk
+      if (!refreshed || !hasExactRoleTodoRouteContext(currentRisk.targetRoute)) {
+        throw new Error(boss.error || `暂时无法定位“${risk.storeName || risk.title}”对应的风险数据，请刷新后重试。`)
+      }
+    }
+    await router.push(currentRisk.targetRoute)
+  } catch (error) {
+    if (!isAuthError(error)) {
+      reportAppError(error, {
+        title: '无法打开对应风险',
+        actionLabel: '重新定位',
+        action: () => openRiskSource(risk),
+        sourceKey: `boss-risk-navigation:${risk.id}`,
+      })
+    }
+  } finally {
+    riskOpeningId.value = ''
+  }
 }
 
 async function openRiskOverview() {
@@ -573,7 +598,11 @@ onMounted(() => {
             <BossExamOverview ref="examOverview" @summary-count="activeExamCount = $event" />
           </div>
           <div v-else-if="activeSection === 'risk'" id="risks" class="tab-panel" tabindex="-1">
-            <BossRiskSummary :risks="boss.highRiskReminders" @open="openRiskSource" />
+            <BossRiskSummary
+              :risks="boss.highRiskReminders"
+              :opening-id="riskOpeningId"
+              @open="openRiskSource"
+            />
           </div>
           <div v-else-if="activeSection === 'progress'" class="progress-tab-content">
             <BossFocusCards :focus="boss.focus" />

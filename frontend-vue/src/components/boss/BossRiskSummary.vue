@@ -5,6 +5,7 @@ import type { BossRiskGroup } from '../../stores/boss'
 
 defineProps<{
   risks: BossRiskGroup[]
+  openingId?: string
 }>()
 
 defineEmits<{
@@ -40,8 +41,13 @@ defineEmits<{
           <span>最早截止：{{ risk.earliestDueAt || '今天内' }}</span>
           <span v-if="risk.topStores.length">Top 门店：{{ risk.topStores.join('、') }}</span>
         </div>
-        <button class="mini-button" type="button" @click="$emit('open', risk)">
-          {{ risk.actionLabel }}
+        <button
+          class="mini-button"
+          type="button"
+          :disabled="openingId === risk.id"
+          @click="$emit('open', risk)"
+        >
+          {{ openingId === risk.id ? '正在定位' : (risk.actionLabel || '查看对应风险') }}
           <ArrowRight :size="14" />
         </button>
       </article>

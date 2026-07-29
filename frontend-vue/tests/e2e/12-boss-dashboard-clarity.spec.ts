@@ -27,7 +27,10 @@ const bossSession = {
   permissionVersion: 1,
 }
 
+let bossDashboardOverride: (() => unknown) | null = null
+
 test.beforeEach(async ({ page }) => {
+  bossDashboardOverride = null
   await page.addInitScript((session) => {
     localStorage.setItem('ai_profit_vue_token', 'TEST-BOSS-TOKEN')
     localStorage.setItem('ai_profit_vue_user', JSON.stringify(session))
@@ -38,6 +41,7 @@ test.beforeEach(async ({ page }) => {
     if (!path.startsWith('/api/')) return route.continue()
     if (path === '/api/auth/me') return route.fulfill(ok(bossSession))
     if (path === '/api/boss/todo-dashboard') {
+      if (bossDashboardOverride) return route.fulfill(ok(bossDashboardOverride()))
       return route.fulfill(ok({
         roleName: '老板',
         dataSource: 'TEST',
@@ -204,6 +208,62 @@ test('every risk card opens its exact source record with the original context', 
   expect(new URL(page.url()).searchParams.get('warehouseId')).toBe('1')
   expect(new URL(page.url()).searchParams.get('itemId')).toBe('12')
   expect(new URL(page.url()).searchParams.get('month')).toBe('2026-07')
+})
+
+test('a stale profit risk card refreshes its exact store and month before navigation', async ({ page }) => {
+  let dashboardRequests = 0
+  bossDashboardOverride = () => {
+    dashboardRequests += 1
+    return {
+      roleName: '老板',
+      dataSource: 'TEST',
+      updatedAt: '2026-07-29T08:00:00',
+      todayFocus: {
+        totalOpenCount: 1,
+        needsBossActionCount: 0,
+        roleWorkCount: 1,
+        highRiskCount: 1,
+        highRiskGroupCount: 1,
+        doneReviewCount: 0,
+      },
+      needsBossAction: [],
+      highRiskReminders: [{
+        groupKey: '利润表|财务|万达2店|2026-06',
+        sourceModule: '利润表',
+        ownerName: '财务',
+        storeName: '万达2店',
+        month: '2026-06',
+        count: 1,
+        highestRisk: '高风险',
+        highestPriority: 90,
+        topStores: ['万达2店'],
+        ...(dashboardRequests > 1 ? {
+          action: {
+            target: 'report',
+            label: '查看利润表',
+            params: {
+              storeId: 'rg4',
+              month: '2026-06',
+              mode: 'single',
+            },
+          },
+        } : {}),
+      }],
+      roleProgress: [],
+      doneReview: [],
+    }
+  }
+
+  await page.goto('/boss')
+  await page.getByRole('button', { name: /1 条风险提醒.*1 家风险门店/ }).click()
+  const wandaRisk = page.locator('.boss-risk-card').filter({ hasText: '万达2店' })
+  await wandaRisk.getByRole('button', { name: '查看对应利润表' }).click()
+
+  await expect(page).toHaveURL(/\/profit-table\?/)
+  expect(new URL(page.url()).searchParams.get('storeId')).toBe('rg4')
+  expect(new URL(page.url()).searchParams.get('month')).toBe('2026-06')
+  expect(new URL(page.url()).searchParams.get('mode')).toBe('single')
+  expect(dashboardRequests).toBe(2)
 })
 
 test('boss dashboard uses readable typography and one scroll owner', async ({ page }) => {
