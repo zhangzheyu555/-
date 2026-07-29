@@ -41,9 +41,10 @@ const trigger = ref<HTMLButtonElement | null>(null)
 const searchInput = ref<HTMLInputElement | null>(null)
 const panelOpen = ref(false)
 const keyword = ref('')
+const committedValues = ref<SearchableSelectValue[]>([...props.modelValue])
 const panelId = `searchable-multi-select-${Math.random().toString(36).slice(2, 9)}`
 const normalizedKeyword = computed(() => keyword.value.trim().toLocaleLowerCase('zh-CN'))
-const selectedKeys = computed(() => new Set(props.modelValue.map((value) => String(value))))
+const selectedKeys = computed(() => new Set(committedValues.value.map((value) => String(value))))
 const filteredOptions = computed(() => {
   const query = normalizedKeyword.value
   if (!query) return props.options
@@ -68,32 +69,37 @@ function isSelected(option: SearchableSelectOption) {
   return selectedKeys.value.has(String(option.value))
 }
 
+function commitSelection(next: SearchableSelectValue[]) {
+  committedValues.value = next
+  emit('update:modelValue', next)
+}
+
 function updateSelection(option: SearchableSelectOption, checked: boolean) {
   if (props.disabled || option.disabled) return
   const key = String(option.value)
-  const next = props.modelValue.filter((value) => String(value) !== key)
+  const next = committedValues.value.filter((value) => String(value) !== key)
   if (checked) next.push(option.value)
-  emit('update:modelValue', next)
+  commitSelection(next)
 }
 
 function toggleAllVisible() {
   if (props.disabled || !selectableFilteredOptions.value.length) return
   if (allVisibleSelected.value) {
     const keys = new Set(selectableFilteredOptions.value.map((option) => String(option.value)))
-    emit('update:modelValue', props.modelValue.filter((value) => !keys.has(String(value))))
+    commitSelection(committedValues.value.filter((value) => !keys.has(String(value))))
     return
   }
-  const next = [...props.modelValue]
+  const next = [...committedValues.value]
   const existing = new Set(next.map((value) => String(value)))
   for (const option of selectableFilteredOptions.value) {
     if (!existing.has(String(option.value))) next.push(option.value)
   }
-  emit('update:modelValue', next)
+  commitSelection(next)
 }
 
 function clearSelection() {
-  if (props.disabled || !props.modelValue.length) return
-  emit('update:modelValue', [])
+  if (props.disabled || !committedValues.value.length) return
+  commitSelection([])
 }
 
 function openPanel() {
@@ -138,6 +144,9 @@ function handleDocumentPointerDown(event: PointerEvent) {
 watch(() => props.disabled, (disabled) => {
   if (disabled) closePanel()
 })
+watch(() => props.modelValue, (values) => {
+  committedValues.value = [...values]
+}, { deep: true })
 
 onMounted(() => document.addEventListener('pointerdown', handleDocumentPointerDown))
 onBeforeUnmount(() => document.removeEventListener('pointerdown', handleDocumentPointerDown))
@@ -196,7 +205,7 @@ defineExpose({ open: openPanel, close: closePanel })
         <button type="button" :disabled="disabled || !selectableFilteredOptions.length" @click="toggleAllVisible">
           {{ allVisibleSelected ? '取消全选当前结果' : selectAllLabel }}
         </button>
-        <button type="button" :disabled="disabled || !modelValue.length" @click="clearSelection">{{ clearLabel }}</button>
+        <button type="button" :disabled="disabled || !committedValues.length" @click="clearSelection">{{ clearLabel }}</button>
       </div>
       <div v-if="loading" class="searchable-multi-select__status" role="status">正在加载选项…</div>
       <div v-else-if="filteredOptions.length" class="searchable-multi-select__list">
