@@ -108,7 +108,7 @@ public class SalaryQueryService {
     Map<String, Integer> statusCounts = new LinkedHashMap<>();
     statusCounts.put("PENDING_GENERATION", 0);
     statusCounts.put("PENDING_REVIEW", 0);
-    statusCounts.put("PENDING_PAYMENT", 0);
+    statusCounts.put("PAID", 0);
     for (SalaryRecordResponse row : scopedRows) {
       String businessStatus = activeBusinessStatus(row.status());
       if (businessStatus != null) {
@@ -147,9 +147,8 @@ public class SalaryQueryService {
         : workflowStatus.trim().toUpperCase(java.util.Locale.ROOT);
     return switch (normalized) {
       case "", "PENDING_GENERATION" -> "PENDING_GENERATION";
-      case "DRAFT", "REJECTED", "SUBMITTED", "PENDING_REVIEW" -> "PENDING_REVIEW";
-      case "APPROVED" -> "PENDING_PAYMENT";
-      case "PAID", "LOCKED" -> null;
+      case "DRAFT", "REJECTED", "SUBMITTED", "PENDING_REVIEW", "APPROVED" -> "PENDING_REVIEW";
+      case "PAID", "LOCKED" -> "PAID";
       default -> null;
     };
   }

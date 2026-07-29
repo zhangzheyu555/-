@@ -817,7 +817,7 @@ test('工资只显示三档业务状态，筛选按钮可展开下拉框，并�
   const filterMenu = page.getByRole('menu', { name: '工资状态筛选' })
   await expect(filterMenu).toBeVisible()
   await expect(filterButton).toHaveAttribute('aria-expanded', 'true')
-  await expect(filterMenu.getByRole('menuitemradio')).toHaveText(['全部', '待生成', '待审核', '待发放'])
+  await expect(filterMenu.getByRole('menuitemradio')).toHaveText(['全部', '待生成', '待审核', '已发放'])
   await filterMenu.getByRole('menuitemradio', { name: '待生成' }).click()
   await expect(filterMenu).toBeHidden()
   await expect(filterButton).toHaveAttribute('aria-expanded', 'false')
@@ -1153,7 +1153,7 @@ test('状态和关键词筛选可清除，员工总数与当前筛选结果不�
   await expect.poll(() => salaryQueries.at(-1)?.get('status')).toBe('ACTIVE')
 })
 
-test('批量审核只允许选择待审核工资，部分失败时保留失败记录供重试', async ({ page }) => {
+test('一键审批自动完成提交、审核和发放，部分失败时保留失败记录供重试', async ({ page }) => {
   const captured: CapturedRequests = {}
   const submittedOne = { ...salaryRecord, id: 'salary-submitted-1', employeeName: '待审甲', status: 'SUBMITTED' }
   const submittedTwo = {
@@ -1164,7 +1164,14 @@ test('批量审核只允许选择待审核工资，部分失败时保留失败�
     status: 'PENDING_REVIEW',
   }
   await prepare(page, captured, salaryRecord, salaryBusinessMetrics, undefined, [submittedOne, submittedTwo])
+  const submissionAttempts: string[] = []
   const approvalAttempts: string[] = []
+  const paidAttempts: string[] = []
+  await page.route(/\/api\/salaries\/[^/]+\/submit$/, async (route) => {
+    const id = decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-2) || '')
+    submissionAttempts.push(id)
+    return route.fulfill(ok({ ...salaryRecord, id, status: 'SUBMITTED' }))
+  })
   await page.route(/\/api\/salaries\/[^/]+\/approve$/, async (route) => {
     const id = decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-2) || '')
     approvalAttempts.push(id)
@@ -1179,22 +1186,33 @@ test('批量审核只允许选择待审核工资，部分失败时保留失败�
         }),
       })
     }
-    return route.fulfill(ok({ ...submittedOne, status: 'APPROVED' }))
+    return route.fulfill(ok({ ...submittedOne, id, status: 'APPROVED' }))
+  })
+  await page.route(/\/api\/salaries\/[^/]+\/mark-paid$/, async (route) => {
+    const id = decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-2) || '')
+    paidAttempts.push(id)
+    return route.fulfill(ok({ ...submittedOne, id, status: 'PAID' }))
   })
   await page.goto('/finance/salary?storeId=xls12&month=2026-07')
 
-  await expect(page.getByLabel('选择李店员')).toBeDisabled()
+  await expect(page.getByLabel('选择李店员')).toBeEnabled()
   await expect(page.getByLabel('选择待审甲')).toBeEnabled()
   await expect(page.getByLabel('选择待审乙')).toBeEnabled()
-  await page.getByLabel('选择当前页可操作员工').check()
-  const batchButton = page.getByRole('button', { name: /批量审核\s*（2）/ })
+  const batchButton = page.getByRole('button', { name: '一键审批', exact: true })
   await expect(batchButton).toBeEnabled()
   await batchButton.click()
-  await page.getByRole('alertdialog', { name: '批量审核工资' }).getByRole('button', { name: '确认审核' }).click()
+  const confirmation = page.getByRole('alertdialog', { name: '一键审批工资' })
+  await expect(confirmation).toContainText('当前页所选 3 名员工')
+  await expect(confirmation).toContainText('荆江之星 · 2026-07')
+  await confirmation.getByRole('button', { name: '确认一键审批' }).click()
 
-  await expect.poll(() => approvalAttempts).toEqual([submittedOne.id, submittedTwo.id])
-  await expect(page.getByText('已审核 1 条工资记录')).toBeVisible()
-  await expect(page.getByRole('alertdialog')).toContainText('1 条工资审核失败')
+  await expect.poll(() => submissionAttempts).toEqual([salaryRecord.id])
+  await expect.poll(() => approvalAttempts).toEqual([salaryRecord.id, submittedOne.id, submittedTwo.id])
+  await expect.poll(() => paidAttempts).toEqual([salaryRecord.id, submittedOne.id])
+  await expect(page.getByText('已审批并发放 2 条工资记录')).toBeVisible()
+  await expect(page.getByRole('alertdialog', { name: '操作未完成' }))
+    .toContainText('1 条工资一键审批失败')
+  await expect(page.getByLabel('选择李店员')).not.toBeChecked()
   await expect(page.getByLabel('选择待审甲')).not.toBeChecked()
   await expect(page.getByLabel('选择待审乙')).toBeChecked()
 })

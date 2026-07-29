@@ -226,7 +226,7 @@ class SalaryServiceTest {
     assertThat(result.statusCounts())
         .containsEntry("PENDING_GENERATION", 1)
         .containsEntry("PENDING_REVIEW", 1)
-        .containsEntry("PENDING_PAYMENT", 0)
+        .containsEntry("PAID", 0)
         .doesNotContainKey("DRAFT");
     assertThat(queryService.employeePage(boss(), "2026-05", null, null, "PENDING_GENERATION", "Bob", 1, 20).total())
         .isEqualTo(1);
@@ -274,21 +274,21 @@ class SalaryServiceTest {
     assertThat(all.total()).isEqualTo(8);
     assertThat(all.statusCounts()).containsExactly(
         org.assertj.core.api.Assertions.entry("PENDING_GENERATION", 1),
-        org.assertj.core.api.Assertions.entry("PENDING_REVIEW", 4),
-        org.assertj.core.api.Assertions.entry("PENDING_PAYMENT", 1)
+        org.assertj.core.api.Assertions.entry("PENDING_REVIEW", 5),
+        org.assertj.core.api.Assertions.entry("PAID", 2)
     );
-    assertThat(active.total()).isEqualTo(6);
+    assertThat(active.total()).isEqualTo(8);
     assertThat(active.rows()).extracting(SalaryRecordResponse::status)
-        .doesNotContain("PAID", "LOCKED");
-    assertThat(pendingReview.total()).isEqualTo(4);
+        .contains("PAID", "LOCKED");
+    assertThat(pendingReview.total()).isEqualTo(5);
     assertThat(pendingReview.rows()).extracting(SalaryRecordResponse::status)
-        .containsExactlyInAnyOrder("DRAFT", "REJECTED", "SUBMITTED", "PENDING_REVIEW");
+        .containsExactlyInAnyOrder("DRAFT", "REJECTED", "SUBMITTED", "PENDING_REVIEW", "APPROVED");
     assertThat(pendingPayment.total()).isEqualTo(1);
     assertThat(pendingPayment.rows()).extracting(SalaryRecordResponse::status)
         .containsExactly("APPROVED");
-    assertThat(paid.total()).isEqualTo(1);
+    assertThat(paid.total()).isEqualTo(2);
     assertThat(paid.rows()).extracting(SalaryRecordResponse::status)
-        .containsExactly("PAID");
+        .containsExactlyInAnyOrder("PAID", "LOCKED");
   }
 
   @Test
@@ -416,7 +416,7 @@ class SalaryServiceTest {
     assertThat(result.statusCounts()).containsExactly(
         org.assertj.core.api.Assertions.entry("PENDING_GENERATION", 0),
         org.assertj.core.api.Assertions.entry("PENDING_REVIEW", 1),
-        org.assertj.core.api.Assertions.entry("PENDING_PAYMENT", 0)
+        org.assertj.core.api.Assertions.entry("PAID", 0)
     );
   }
 

@@ -241,12 +241,15 @@ public class SalaryRepository {
     if (status != null && !status.isBlank()) {
       String normalizedStatus = status.trim().toUpperCase(java.util.Locale.ROOT);
       switch (normalizedStatus) {
-        case "ACTIVE" ->
-            sql.append(" and coalesce(sr.status, 'PENDING_GENERATION') not in ('PAID', 'LOCKED')");
+        case "ACTIVE" -> {
+          // “全部”展示三档业务状态，已发放记录也保留在当月工资名单中。
+        }
         case "PENDING_REVIEW" ->
-            sql.append(" and sr.status in ('DRAFT', 'REJECTED', 'SUBMITTED', 'PENDING_REVIEW')");
+            sql.append(" and sr.status in ('DRAFT', 'REJECTED', 'SUBMITTED', 'PENDING_REVIEW', 'APPROVED')");
         case "PENDING_PAYMENT" ->
             sql.append(" and sr.status = 'APPROVED'");
+        case "PAID" ->
+            sql.append(" and sr.status in ('PAID', 'LOCKED')");
         default -> {
           sql.append(" and coalesce(sr.status, 'PENDING_GENERATION') = :status");
           params.addValue("status", status.trim());
