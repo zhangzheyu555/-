@@ -13,6 +13,7 @@ import java.math.RoundingMode;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.dao.DuplicateKeyException;
@@ -53,22 +54,37 @@ public class SalaryWorkflowService {
 
   @Transactional
   public SalaryRecordResponse save(AuthUser user, String id, SalaryRecordRequest request) {
-    requireEditRole(
-        user,
-        id,
-        request == null ? null : request.storeId(),
-        request == null ? null : request.month()
-    );
-    SalaryRecordRequest normalized = normalizeRequest(user, request, false);
+    String targetId = normalizeId(id);
+    Optional<SalaryRecordResponse> existingRecord = salaryRepository.record(user.tenantId(), targetId);
+    boolean reviewEdit = existingRecord
+        .map(record -> isPendingReviewStatus(record.status()))
+        .orElse(false);
+    if (reviewEdit) {
+      SalaryRecordResponse existing = existingRecord.orElseThrow();
+      requireReviewRole(user, targetId, existing.storeId(), existing.month());
+    } else {
+      requireEditRole(
+          user,
+          targetId,
+          request == null ? null : request.storeId(),
+          request == null ? null : request.month()
+      );
+    }
+    SalaryRecordRequest normalized = normalizeRequest(user, request, reviewEdit);
+    if (reviewEdit) {
+      requireDeductionsWithinEarnings(normalized);
+    }
     salaryQueryService.requireStoreScope(user, normalized.storeId());
     if (!salaryRepository.storeExists(user.tenantId(), normalized.storeId())) {
       throw new BusinessException("STORE_NOT_FOUND", "门店不存在或不属于当前企业", HttpStatus.BAD_REQUEST);
     }
-    String targetId = normalizeId(id);
-    Optional<SalaryRecordResponse> existingRecord = salaryRepository.record(user.tenantId(), targetId);
     existingRecord.ifPresent(existing -> {
       salaryQueryService.requireStoreScope(user, existing.storeId());
-      requireEditableStatus(existing);
+      if (reviewEdit) {
+        requireReviewIdentityUnchanged(existing, normalized);
+      } else {
+        requireEditableStatus(existing);
+      }
     });
     salaryRepository.recordForEmployeeMonth(user.tenantId(), normalized.employeeId(), normalized.month())
         .filter(existing -> !targetId.equals(existing.id()))
@@ -82,22 +98,50 @@ public class SalaryWorkflowService {
         .map(existing -> preserveUnallocatedGrossDifference(existing, normalized))
         .orElse(normalized);
     try {
-      salaryRepository.upsert(user.tenantId(), targetId, persisted);
+      if (reviewEdit) {
+        SalaryRecordResponse existing = existingRecord.orElseThrow();
+        int updated = salaryRepository.updateWithVersion(
+            user.tenantId(), targetId, persisted, existing.version());
+        if (updated == 0) {
+          throw new BusinessException(
+              "VERSION_CONFLICT",
+              "工资记录已被其他用户修改或审核，请刷新后重试",
+              HttpStatus.CONFLICT
+          );
+        }
+      } else {
+        salaryRepository.upsert(user.tenantId(), targetId, persisted);
+      }
     } catch (DuplicateKeyException ex) {
       // The pre-check gives a clear result for sequential retries. The unique key remains the
       // authority for concurrent creates, which must return the same business conflict.
       throw duplicateSalary();
     }
-    salaryRepository.logAction(
-        user.tenantId(),
-        user.id(),
-        user.displayName(),
-        "salary_save",
-        targetId,
-        persisted.storeId(),
-        persisted.month(),
-        "工资记录已保存"
-    );
+    if (reviewEdit) {
+      salaryRepository.logAction(
+          user.tenantId(),
+          user.id(),
+          user.displayName(),
+          "salary_review_edit",
+          targetId,
+          persisted.storeId(),
+          persisted.month(),
+          reviewEditAuditDetail(persisted),
+          existingRecord.orElseThrow().status(),
+          existingRecord.orElseThrow().status()
+      );
+    } else {
+      salaryRepository.logAction(
+          user.tenantId(),
+          user.id(),
+          user.displayName(),
+          "salary_save",
+          targetId,
+          persisted.storeId(),
+          persisted.month(),
+          "工资记录已保存"
+      );
+    }
     reconcileTodos(user, persisted.month());
     return salaryRepository.record(user.tenantId(), targetId)
         .orElseThrow(() -> new BusinessException("SAVE_FAILED", "工资记录保存失败", HttpStatus.INTERNAL_SERVER_ERROR));
@@ -152,23 +196,32 @@ public class SalaryWorkflowService {
 
   @Transactional
   public SalaryRepository.AttendanceRow saveAttendance(AuthUser user, SalaryAttendanceRequest request) {
-    requireEditRole(
-        user,
-        request == null ? null : request.employeeId(),
-        request == null ? null : request.storeId(),
-        request == null ? null : request.month()
-    );
     if (request == null) {
+      requireEditRole(user, null, null, null);
       throw new BusinessException("BAD_REQUEST", "考勤记录不能为空", HttpStatus.BAD_REQUEST);
     }
     String month = SalaryQueryService.normalizeMonth(request.month());
+    String employeeId = SalaryQueryService.requireText(request.employeeId(), "EMPLOYEE_REQUIRED", "请选择员工");
+    Optional<SalaryRecordResponse> linkedRecord = salaryRepository.recordForEmployeeMonth(
+        user.tenantId(), employeeId, month);
+    boolean reviewEdit = linkedRecord
+        .map(record -> isPendingReviewStatus(record.status()))
+        .orElse(false);
+    if (reviewEdit) {
+      SalaryRecordResponse existing = linkedRecord.orElseThrow();
+      requireReviewRole(user, existing.id(), existing.storeId(), existing.month());
+    } else {
+      requireEditRole(user, employeeId, request.storeId(), month);
+    }
     String storeId = salaryQueryService.resolveStoreForWrite(
         user, request.storeId(), "录入工资考勤", month);
     if (storeId == null || storeId.isBlank()) {
       storeId = SalaryQueryService.requireText(request.storeId(), "STORE_REQUIRED", "请选择门店");
     }
     salaryQueryService.requireStoreScope(user, storeId);
-    String employeeId = SalaryQueryService.requireText(request.employeeId(), "EMPLOYEE_REQUIRED", "请选择员工");
+    if (reviewEdit) {
+      requireReviewIdentityUnchanged(linkedRecord.orElseThrow(), storeId, month, employeeId);
+    }
     boolean assignedToTargetStore = salaryRepository.recordExistsForEmployeeId(
         user.tenantId(), storeId, month, employeeId);
     EmployeeResponse employee = resolveEmployee(
@@ -196,7 +249,8 @@ public class SalaryWorkflowService {
     salaryRepository.logAction(
         user.tenantId(), user.id(), user.displayName(), "salary_attendance_save",
         employee.id() + "-" + month, storeId, month,
-        (hourlyEmployee ? "录入计时员工正常工时" : "录入出勤" + days.stripTrailingZeros().toPlainString() + "天，正常工时")
+        (reviewEdit ? "审核中人工修改；" : "")
+            + (hourlyEmployee ? "录入计时员工正常工时" : "录入出勤" + days.stripTrailingZeros().toPlainString() + "天，正常工时")
             + normalHours.stripTrailingZeros().toPlainString() + "小时，加班"
             + overtimeHours.stripTrailingZeros().toPlainString() + "小时，总工时"
             + totalHours.stripTrailingZeros().toPlainString() + "小时");
@@ -595,6 +649,16 @@ public class SalaryWorkflowService {
     }
   }
 
+  private void requireDeductionsWithinEarnings(SalaryRecordRequest request) {
+    if (componentTotal(request).compareTo(ZERO) < 0) {
+      throw new BusinessException(
+          "SALARY_DEDUCTION_EXCEEDS_GROSS",
+          "扣款不能超过工资明细合计",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+  }
+
   private BigDecimal nonNegativeAmount(BigDecimal value, String field) {
     BigDecimal normalized = amount(value);
     if (normalized.compareTo(ZERO) < 0) {
@@ -692,6 +756,45 @@ public class SalaryWorkflowService {
     if (!STATUS_DRAFT.equals(record.status()) && !STATUS_REJECTED.equals(record.status())) {
       throw new BusinessException("SALARY_STATUS_LOCKED", "已提交审核或已完成的工资记录不能直接修改", HttpStatus.CONFLICT);
     }
+  }
+
+  private boolean isPendingReviewStatus(String status) {
+    return List.of(STATUS_SUBMITTED, "PENDING_REVIEW").contains(status);
+  }
+
+  private void requireReviewIdentityUnchanged(
+      SalaryRecordResponse existing,
+      SalaryRecordRequest request
+  ) {
+    requireReviewIdentityUnchanged(
+        existing, request.storeId(), request.month(), request.employeeId());
+  }
+
+  private void requireReviewIdentityUnchanged(
+      SalaryRecordResponse existing,
+      String storeId,
+      String month,
+      String employeeId
+  ) {
+    if (!Objects.equals(existing.storeId(), storeId)
+        || !Objects.equals(existing.month(), month)
+        || !Objects.equals(existing.employeeId(), employeeId)) {
+      throw new BusinessException(
+          "SALARY_REVIEW_IDENTITY_LOCKED",
+          "审核中的工资不能更换门店、月份或员工，只能修改工资、工时和假期",
+          HttpStatus.CONFLICT
+      );
+    }
+  }
+
+  private String reviewEditAuditDetail(SalaryRecordRequest request) {
+    return "审核中人工修改工资记录：出勤"
+        + (request.attendance() == null || request.attendance().isBlank() ? "未填写" : request.attendance().trim())
+        + "，正常工时" + amount(request.normalHours()).stripTrailingZeros().toPlainString()
+        + "小时，加班" + amount(request.otHours()).stripTrailingZeros().toPlainString()
+        + "小时，总工时" + amount(request.workHours()).stripTrailingZeros().toPlainString()
+        + "小时，应发" + amount(request.gross()).stripTrailingZeros().toPlainString()
+        + "元；状态保持待审核";
   }
 
   /** Reads only enough tenant-scoped context to make a denied state change auditable. */

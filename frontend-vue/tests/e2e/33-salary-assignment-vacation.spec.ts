@@ -286,9 +286,16 @@ test('全门店视图的操作按钮保持可点击，支持跨店生成并用�
   await expect(previewDialog).toContainText('名单包含全部授权门店')
   await previewDialog.getByRole('button', { name: '关闭', exact: true }).click()
 
+  const oneClickApproval = page.getByRole('button', { name: '一键审批', exact: true })
+  await expect(oneClickApproval).toBeEnabled()
+  await expect(oneClickApproval).toHaveCSS('opacity', '1')
+  await oneClickApproval.click()
+  const approvalDialog = page.getByRole('alertdialog', { name: '一键审批工资' })
+  await expect(approvalDialog).toContainText('系统将自动完成需要的提交、审批和发放登记')
+  await approvalDialog.getByRole('button', { name: '取消', exact: true }).click()
+
   const expectations = [
     { button: '添加人员', message: '请先选择具体门店' },
-    { button: '批量审核', message: '请先选择待审核工资' },
     { button: '清除筛选', message: '当前没有可清除的筛选条件' },
   ]
 
@@ -1063,6 +1070,65 @@ test('草稿工资即使没有新增修改也允许主动保存并反馈结果',
     vacationNote: '7月1日休息',
   })
   await expect(page.getByText(/已保存 李店员 的工资与假期信息/)).toBeVisible()
+})
+
+test('审核人可人工修改待审核工资，保存后状态不变且未保存前不能直接通过', async ({ page }) => {
+  const captured: CapturedRequests = {}
+  const reviewRecord = {
+    ...salaryRecord,
+    id: 'salary-review',
+    status: 'SUBMITTED',
+  }
+  const reviewerSession = {
+    ...bossSession,
+    role: 'FINANCE',
+    roleLabel: '财务',
+    permissions: ['salary.read', 'salary.review', 'finance.profit.read'],
+    defaultWorkspace: '/finance',
+  }
+  await prepare(page, captured, reviewRecord)
+  await page.addInitScript((user) => {
+    localStorage.setItem('ai_profit_vue_user', JSON.stringify(user))
+  }, reviewerSession)
+  await page.route(/\/api\/auth\/me$/, (route) => route.fulfill(ok(reviewerSession)))
+  await page.goto('/finance/salary?storeId=xls12&month=2026-07')
+
+  await expect(page.getByText('审核中可人工修改', { exact: true })).toBeVisible()
+  await expect(page.getByLabel('出勤天数')).toBeEnabled()
+  await expect(page.getByLabel('绩效奖罚')).toBeEnabled()
+  await expect(page.getByLabel('假期余额（天）')).toBeEnabled()
+
+  await page.getByLabel('出勤天数').fill('27')
+  await page.getByLabel('加班小时').fill('2')
+  await page.getByLabel('绩效奖罚').fill('75')
+  await page.getByLabel('假期余额（天）').fill('3.5')
+
+  const approveButton = page.getByRole('button', { name: '审核通过' })
+  await expect(approveButton).toBeDisabled()
+  await expect(page.getByText('审核修改尚未保存，请先保存后再审核通过。')).toBeVisible()
+  await page.getByRole('button', { name: '保存审核修改' }).click()
+
+  await expect.poll(() => captured.attendance).toMatchObject({
+    storeId: 'xls12',
+    employeeId: 'EMP-001',
+    month: '2026-07',
+    attendanceDays: 27,
+    normalHours: 216,
+    overtimeHours: 2,
+  })
+  await expect.poll(() => captured.salaryUpdate).toMatchObject({
+    storeId: 'xls12',
+    employeeId: 'EMP-001',
+    month: '2026-07',
+    attendance: '27天',
+    normalHours: 216,
+    otHours: 2,
+    workHours: 218,
+    performance: 75,
+    vacationLeft: 3.5,
+  })
+  expect(captured.salaryUpdate).not.toHaveProperty('status')
+  await expect(page.getByText('已保存 李店员 的审核修改，状态仍为待审核')).toBeVisible()
 })
 
 test('工资修改必须先保存再提交，保存失败以弹窗提示且关闭后可直接重试', async ({ page }) => {

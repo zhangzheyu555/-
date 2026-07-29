@@ -1088,11 +1088,18 @@ class WarehouseMultiFacilityFlowTest {
     LocalDate start = LocalDate.of(2026, 7, 1);
     LocalDate end = LocalDate.of(2026, 7, 31);
 
-    assertThat(warehouseRepository.movementsFiltered(
+    List<WarehouseStockMovementResponse> inboundRows = warehouseRepository.movementsFiltered(
         TENANT_ID, regionalWarehouseId, start, end,
-        List.of("sd-store-1"), List.of(itemId), List.of("IN"), List.of(), 0, 50))
+        List.of("sd-store-1"), List.of(itemId), List.of("IN"), List.of(), 0, 50);
+    assertThat(inboundRows)
         .extracting(WarehouseStockMovementResponse::sourceId)
         .containsExactly("movement-in");
+    assertThat(inboundRows).singleElement().satisfies(row -> {
+      assertThat(row.itemCode()).isEqualTo("CUP-700");
+      assertThat(row.itemCategory()).isEqualTo("包装");
+      assertThat(row.itemSpec()).isEqualTo("1000个/件");
+      assertThat(row.itemUnit()).isEqualTo("件");
+    });
 
     assertThat(warehouseRepository.movementsFiltered(
         TENANT_ID, regionalWarehouseId, start, end,

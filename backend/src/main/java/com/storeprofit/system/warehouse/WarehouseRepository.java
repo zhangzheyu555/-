@@ -2441,7 +2441,10 @@ public class WarehouseRepository {
   ) {
     boolean facilityAware = hasWarehouseColumn("warehouse_stock_movement");
     String sql = """
-        select m.id, m.item_id, m.batch_id, i.name as item_name, m.movement_type, m.quantity_delta,
+        select m.id, m.item_id, m.batch_id, i.name as item_name,
+               i.code as item_code, coalesce(ic.name, i.category) as item_category,
+               i.spec as item_spec, coalesce(i.stock_unit, i.unit) as item_unit,
+               m.movement_type, m.quantity_delta,
                m.source_type, m.source_id, m.store_id, s.name as store_name, m.note,
                u.display_name as operator_name, m.created_at, b.batch_no,
         """ + (facilityAware ? """
@@ -2461,6 +2464,8 @@ public class WarehouseRepository {
         """) + """
         from warehouse_stock_movement m
         join warehouse_item i on i.tenant_id = m.tenant_id and i.id = m.item_id
+        left join warehouse_item_category ic
+          on ic.tenant_id = i.tenant_id and ic.id = i.category_id
         left join warehouse_stock_batch b on b.tenant_id = m.tenant_id and b.id = m.batch_id
         left join store_branch s on s.tenant_id = m.tenant_id and s.id = m.store_id
         left join auth_user u on u.tenant_id = m.tenant_id and u.id = m.operator_id
@@ -2987,6 +2992,10 @@ public class WarehouseRepository {
         rs.getLong("item_id"),
         rs.getObject("batch_id", Long.class),
         rs.getString("item_name"),
+        rs.getString("item_code"),
+        rs.getString("item_category"),
+        rs.getString("item_spec"),
+        rs.getString("item_unit"),
         movementType,
         movementTypeLabel(movementType),
         amount(rs.getBigDecimal("quantity_delta")),
@@ -3657,7 +3666,10 @@ public class WarehouseRepository {
           """;
     } else {
       select = """
-          select m.id, m.item_id, m.batch_id, i.name as item_name, m.movement_type, m.quantity_delta,
+          select m.id, m.item_id, m.batch_id, i.name as item_name,
+                 i.code as item_code, coalesce(ic.name, i.category) as item_category,
+                 i.spec as item_spec, coalesce(i.stock_unit, i.unit) as item_unit,
+                 m.movement_type, m.quantity_delta,
                  m.source_type, m.source_id, m.store_id, s.name as store_name, m.note,
                  u.display_name as operator_name, m.created_at, b.batch_no,
                  m.warehouse_id, facility.name as warehouse_name,
@@ -3681,6 +3693,8 @@ public class WarehouseRepository {
       from = """
           from warehouse_stock_movement m
           join warehouse_item i on i.tenant_id = m.tenant_id and i.id = m.item_id
+          left join warehouse_item_category ic
+            on ic.tenant_id = i.tenant_id and ic.id = i.category_id
           left join warehouse_stock_batch b on b.tenant_id = m.tenant_id and b.id = m.batch_id
           left join store_branch s on s.tenant_id = m.tenant_id and s.id = m.store_id
           left join auth_user u on u.tenant_id = m.tenant_id and u.id = m.operator_id
