@@ -39,7 +39,6 @@ class StoreControllerHttpAuthorizationTest {
         "status":"营业中",
         "note":"",
         "regionCode":"JINGZHOU",
-        "costAccountStoreId":"rg1",
         "version":0
       }
       """;
@@ -181,19 +180,20 @@ class StoreControllerHttpAuthorizationTest {
   }
 
   @Test
-  void bossCannotPhysicallyDeleteStoreThroughTheController() throws Exception {
+  void bossCanSoftDeleteAnInactiveStoreThroughTheController() throws Exception {
     AuthUser boss = user("BOSS", null);
     when(authService.requireUser("Bearer boss-token")).thenReturn(boss);
     when(repository.store(1L, "rg1")).thenReturn(Optional.of(new StoreResponse(
         "rg1", "RG1", "一店", 1L, "如果", "荆州", "店长", "2026-01-01", "停用", "")));
+    when(repository.softDeleteStore(1L, "rg1", 7L, 0L)).thenReturn(1);
     mockMvc.perform(delete("/api/stores/rg1")
+            .param("version", "0")
             .header("Authorization", "Bearer boss-token"))
-        .andExpect(status().isConflict())
+        .andExpect(status().isOk())
         .andExpect(header().exists("X-Request-Id"))
-        .andExpect(jsonPath("$.success").value(false))
-        .andExpect(jsonPath("$.code").value("STORE_DELETE_DISABLED"));
+        .andExpect(jsonPath("$.success").value(true));
 
-    verify(repository, org.mockito.Mockito.never()).deleteStore(1L, "rg1");
+    verify(repository).softDeleteStore(1L, "rg1", 7L, 0L);
   }
 
   @Test

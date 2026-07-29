@@ -7,6 +7,10 @@ public record WarehouseStockMovementResponse(
     Long itemId,
     Long batchId,
     String itemName,
+    String itemCode,
+    String itemCategory,
+    String itemSpec,
+    String itemUnit,
     String movementType,
     String movementTypeLabel,
     BigDecimal quantityDelta,
@@ -30,6 +34,10 @@ public record WarehouseStockMovementResponse(
       Long itemId,
       Long batchId,
       String itemName,
+      String itemCode,
+      String itemCategory,
+      String itemSpec,
+      String itemUnit,
       String movementType,
       String movementTypeLabel,
       BigDecimal quantityDelta,
@@ -42,7 +50,8 @@ public record WarehouseStockMovementResponse(
       String createdAt,
       String batchNo
   ) {
-    this(id, itemId, batchId, itemName, movementType, movementTypeLabel, quantityDelta,
+    this(id, itemId, batchId, itemName, itemCode, itemCategory, itemSpec, itemUnit,
+        movementType, movementTypeLabel, quantityDelta,
         null, null, null, null, null, null, sourceType, sourceId, storeId,
         storeName, note, operatorName, createdAt, batchNo);
   }

@@ -69,7 +69,9 @@ public class OrganizationRepository {
         left join store_branch cost_store
           on cost_store.id = coalesce(s.cost_account_store_id, s.id)
          and cost_store.tenant_id = s.tenant_id
+         and cost_store.deleted_at is null
         where s.tenant_id = ?
+          and s.deleted_at is null
         """);
     ArrayList<Object> params = new ArrayList<>();
     params.add(tenantId);
@@ -227,7 +229,7 @@ public class OrganizationRepository {
             note = ?,
             version = version + 1,
             updated_at = current_timestamp
-        where tenant_id = ? and id = ? and version = ?
+        where tenant_id = ? and id = ? and deleted_at is null and version = ?
         """,
         request.brandId(),
         blankToNull(request.code()),
@@ -259,7 +261,7 @@ public class OrganizationRepository {
         set status = ?,
             version = version + 1,
             updated_at = current_timestamp
-        where tenant_id = ? and id = ? and version = ?
+        where tenant_id = ? and id = ? and deleted_at is null and version = ?
         """, status, tenantId, storeId, expectedVersion);
   }
 
@@ -267,12 +269,20 @@ public class OrganizationRepository {
     return stores(tenantId).stream().filter(store -> store.id().equals(storeId)).findFirst();
   }
 
-  public int deleteStore(long tenantId, String storeId) {
-    return jdbcTemplate.update(
-        "delete from store_branch where tenant_id = ? and id = ?",
-        tenantId,
-        storeId
-    );
+  public int softDeleteStore(
+      long tenantId,
+      String storeId,
+      long deletedBy,
+      long expectedVersion
+  ) {
+    return jdbcTemplate.update("""
+        update store_branch
+        set deleted_at = current_timestamp,
+            deleted_by = ?,
+            version = version + 1,
+            updated_at = current_timestamp
+        where tenant_id = ? and id = ? and deleted_at is null and version = ?
+        """, deletedBy, tenantId, storeId, expectedVersion);
   }
 
   public boolean storeHasLinkedData(long tenantId, String storeId) {
@@ -358,7 +368,7 @@ public class OrganizationRepository {
         select e.id, e.name, e.phone, e.store_id, s.name as store_name, e.status
         from employee e
         join store_branch s on s.tenant_id = e.tenant_id and s.id = e.store_id
-        where e.tenant_id = ? and e.id = ?
+        where e.tenant_id = ? and e.id = ? and s.deleted_at is null
         """, (rs, rowNum) -> new ManagerReference(
         rs.getString("id"),
         rs.getString("name"),
@@ -369,25 +379,26 @@ public class OrganizationRepository {
     ), tenantId, employeeId.trim()).stream().findFirst();
   }
 
-  public List<StoreArchiveOptionsResponse.ManagerOption> activeManagers(
+  public List<StoreArchiveOptionsResponse.EmployeeOption> activeEmployeeOptions(
       long tenantId,
       DataScope dataScope
   ) {
     StringBuilder sql = new StringBuilder("""
-        select e.id, e.name, e.phone, e.store_id, s.name as store_name
+        select e.id, e.name, e.phone, e.position, e.store_id, s.name as store_name
         from employee e
         join store_branch s on s.tenant_id = e.tenant_id and s.id = e.store_id
-        where e.tenant_id = ? and e.status = '在职'
+        where e.tenant_id = ? and e.status = '在职' and s.deleted_at is null
         """);
     ArrayList<Object> params = new ArrayList<>();
     params.add(tenantId);
     appendStoreScope(sql, params, "e.store_id", dataScope);
-    sql.append(" order by e.name, e.id");
+    sql.append(" order by s.code, e.position, e.name, e.id");
     return jdbcTemplate.query(sql.toString(), (rs, rowNum) ->
-        new StoreArchiveOptionsResponse.ManagerOption(
+        new StoreArchiveOptionsResponse.EmployeeOption(
             rs.getString("id"),
             rs.getString("name"),
             rs.getString("phone"),
+            rs.getString("position"),
             rs.getString("store_id"),
             rs.getString("store_name")
         ), params.toArray());
@@ -606,6 +617,7 @@ public class OrganizationRepository {
     sql.append(" and exists (select 1 from store_branch scoped_store")
         .append(" where scoped_store.tenant_id = b.tenant_id")
         .append(" and scoped_store.brand_id = b.id")
+        .append(" and scoped_store.deleted_at is null")
         .append(" and scoped_store.id in (")
         .append(placeholders(dataScope.storeIds().size()))
         .append("))");

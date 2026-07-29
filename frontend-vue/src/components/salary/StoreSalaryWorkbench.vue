@@ -880,9 +880,12 @@ async function saveDetails(record: SalaryRecord, attendanceDays: number, overtim
       attendanceSaved = true
     }
     const savedRecord = await saveSalaryRecord(payload, record.id)
-    page.successMessage.value = attendanceChanged
-      ? `已保存 ${record.employeeName} 的考勤、工资与假期信息`
-      : `已保存 ${record.employeeName} 的工资与假期信息，原始工时保持不变`
+    const pendingReview = ['SUBMITTED', 'PENDING_REVIEW'].includes(String(record.status || '').toUpperCase())
+    page.successMessage.value = pendingReview
+      ? `已保存 ${record.employeeName} 的审核修改，状态仍为待审核`
+      : attendanceChanged
+        ? `已保存 ${record.employeeName} 的考勤、工资与假期信息`
+        : `已保存 ${record.employeeName} 的工资与假期信息，原始工时保持不变`
     const loaded = await reloadSalaryData(page.page.value)
     if (!loaded) {
       replaceVisibleRecord(savedRecord)

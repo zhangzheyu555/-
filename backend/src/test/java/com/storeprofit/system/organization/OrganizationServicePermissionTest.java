@@ -117,41 +117,43 @@ class OrganizationServicePermissionTest {
     when(repository.brandExists(1L, 1L)).thenReturn(true);
     when(repository.manager(1L, "e1")).thenReturn(java.util.Optional.of(
         new OrganizationRepository.ManagerReference(
-            "e1", "店长", "13800138000", "rg1", "一店", "在职")));
+            "e1", "店长", "13800138000", "rg2", "二店", "在职")));
     when(repository.updateStore(1L, normalized, null, 0L)).thenReturn(1);
 
     service.updateStore(user, request);
 
     verify(accessControl).requireStoreManage(user);
     verify(accessControl).requireStoreAccess(user, DataScopeDomains.STORE, "rg1", "维护门店档案");
+    verify(accessControl, never()).requireStoreAccess(
+        user, DataScopeDomains.STORE, "rg2", "选择门店负责人");
     verify(repository).updateStore(1L, normalized, null, 0L);
   }
 
   @Test
-  void deleteUsesManagePermissionAndExplicitStoreScopeButNeverDeletes() {
+  void softDeleteUsesManagePermissionAndExplicitStoreScope() {
     StoreResponse store = new StoreResponse(
         "rg1", "RG1", "一店", 1L, "如果", "荆州", "店长", "2026-01-01", "停用", "");
     when(repository.store(1L, "rg1")).thenReturn(java.util.Optional.of(store));
-    assertThatThrownBy(() -> service.deleteStore(user, "rg1"))
-        .isInstanceOf(BusinessException.class)
-        .satisfies(error -> assertThat(((BusinessException) error).getCode())
-            .isEqualTo("STORE_DELETE_DISABLED"));
+    when(repository.softDeleteStore(1L, "rg1", 7L, 0L)).thenReturn(1);
+
+    service.deleteStore(user, "rg1", 0L);
 
     verify(accessControl).requireStoreManage(user);
-    verify(accessControl).requireStoreAccess(user, DataScopeDomains.STORE, "rg1", "删除门店档案");
-    verify(repository, never()).deleteStore(1L, "rg1");
+    verify(accessControl).requireStoreAccess(user, DataScopeDomains.STORE, "rg1", "软删除门店档案");
+    verify(repository).softDeleteStore(1L, "rg1", 7L, 0L);
   }
 
   @Test
-  void deleteIsDisabledRegardlessOfWhetherBusinessDataExists() {
+  void softDeleteRequiresTheStoreToBeInactive() {
     StoreResponse store = new StoreResponse(
-        "rg1", "RG1", "一店", 1L, "如果", "荆州", "店长", "2026-01-01", "停用", "");
+        "rg1", "RG1", "一店", 1L, "如果", "荆州", "店长", "2026-01-01", "营业中", "");
     when(repository.store(1L, "rg1")).thenReturn(java.util.Optional.of(store));
-    assertThatThrownBy(() -> service.deleteStore(user, "rg1"))
+    assertThatThrownBy(() -> service.deleteStore(user, "rg1", 0L))
         .isInstanceOf(BusinessException.class)
-        .satisfies(error -> assertThat(((BusinessException) error).getCode()).isEqualTo("STORE_DELETE_DISABLED"));
+        .satisfies(error -> assertThat(((BusinessException) error).getCode())
+            .isEqualTo("STORE_SOFT_DELETE_REQUIRES_INACTIVE"));
 
-    verify(repository, never()).deleteStore(1L, "rg1");
+    verify(repository, never()).softDeleteStore(1L, "rg1", 7L, 0L);
   }
 
   @Test

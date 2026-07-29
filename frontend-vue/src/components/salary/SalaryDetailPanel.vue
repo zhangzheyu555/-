@@ -150,8 +150,11 @@ const commissionRate = computed(() => props.revenue > 0
   : '--')
 const busy = computed(() => Boolean(props.record && props.actioningId && props.actioningId === props.record.id))
 const isPendingGeneration = computed(() => props.record?.status === 'PENDING_GENERATION')
-const canEditRecord = computed(() => props.canEdit && (
-  isPendingGeneration.value || ['DRAFT', 'REJECTED'].includes(props.record?.status || '')
+const isPendingReview = computed(() => ['SUBMITTED', 'PENDING_REVIEW'].includes(props.record?.status || ''))
+const canEditRecord = computed(() => (
+  props.canEdit && (isPendingGeneration.value || ['DRAFT', 'REJECTED'].includes(props.record?.status || ''))
+) || (
+  props.canReview && isPendingReview.value
 ))
 const interactionBusy = computed(() => busy.value || props.saving)
 const editorDisabled = computed(() => !canEditRecord.value || interactionBusy.value)
@@ -231,6 +234,10 @@ function detailPayload(): SalaryRecordPayload {
         <section v-if="isPendingGeneration" class="pending-generation">
           <b>尚未生成工资</b>
           <span>先保存本月考勤和工时，再进入生成预览。</span>
+        </section>
+        <section v-else-if="isPendingReview" class="pending-generation">
+          <b>审核中可人工修改</b>
+          <span>审核人可调整出勤、工时、工资和假期；保存后仍保持待审核，并记录本次操作。</span>
         </section>
 
         <section class="editor-section">
@@ -323,7 +330,11 @@ function detailPayload(): SalaryRecordPayload {
 
         <div v-if="operationError" class="detail-operation-error" role="alert">{{ operationError }}</div>
         <p v-if="dirty && canEditRecord" class="save-reminder" role="status">
-          {{ isPendingGeneration ? '工时有未保存修改，请先保存后再进入生成预览。' : '工资明细有未保存修改，请先保存后再提交审核。' }}
+          {{ isPendingGeneration
+            ? '工时有未保存修改，请先保存后再进入生成预览。'
+            : isPendingReview
+              ? '审核修改尚未保存，请先保存后再审核通过。'
+              : '工资明细有未保存修改，请先保存后再提交审核。' }}
         </p>
       </div>
 
@@ -335,11 +346,11 @@ function detailPayload(): SalaryRecordPayload {
           :disabled="interactionBusy || (isPendingGeneration && !dirty) || Boolean(attendanceError) || Boolean(vacationError) || Boolean(adjustmentError)"
           :title="isPendingGeneration && !dirty ? '请先录入或修改工时' : ''"
           @click="isPendingGeneration ? emit('saveAttendance', record, isPartTime ? 0 : attendanceInput, effectiveOvertimeHours, effectiveNormalHours) : emit('saveDetails', record, isPartTime ? 0 : attendanceInput, effectiveOvertimeHours, effectiveNormalHours, attendanceChanged, detailPayload())"
-        ><Save :size="16" />{{ saving ? '正在保存…' : isPendingGeneration ? '保存工时' : '保存工资与假期' }}</button>
+        ><Save :size="16" />{{ saving ? '正在保存…' : isPendingGeneration ? '保存工时' : isPendingReview ? '保存审核修改' : '保存工资与假期' }}</button>
         <button v-if="canEditRecord && isPendingGeneration" type="button" class="secondary-action wide" :disabled="interactionBusy || dirty" :title="dirty ? '请先保存工时' : ''" @click="emit('preview', record)"><Clock3 :size="16" />进入生成预览</button>
         <template v-else>
-          <button v-if="canReview && ['SUBMITTED', 'PENDING_REVIEW'].includes(record.status || '')" type="button" class="secondary-action" :disabled="interactionBusy" @click="emit('reject', record)"><XCircle :size="16" />退回修改</button>
-          <button v-if="canReview && ['SUBMITTED', 'PENDING_REVIEW'].includes(record.status || '')" type="button" class="primary-action" :disabled="interactionBusy" @click="emit('approve', record)"><Check :size="16" />审核通过</button>
+          <button v-if="canReview && ['SUBMITTED', 'PENDING_REVIEW'].includes(record.status || '')" type="button" class="secondary-action" :disabled="interactionBusy || dirty" :title="dirty ? '请先保存审核修改' : ''" @click="emit('reject', record)"><XCircle :size="16" />退回修改</button>
+          <button v-if="canReview && ['SUBMITTED', 'PENDING_REVIEW'].includes(record.status || '')" type="button" class="primary-action" :disabled="interactionBusy || dirty" :title="dirty ? '请先保存审核修改' : ''" @click="emit('approve', record)"><Check :size="16" />审核通过</button>
           <button v-else-if="canEdit && ['DRAFT', 'REJECTED'].includes(record.status || '')" type="button" class="primary-action wide" :disabled="interactionBusy || dirty" :title="dirty ? '请先保存工资修改' : ''" @click="emit('submit', record)"><Send :size="16" />提交审核</button>
           <button v-else-if="canPay && record.status === 'APPROVED'" type="button" class="primary-action wide" :disabled="interactionBusy" @click="emit('markPaid', record)"><Clock3 :size="16" />确认发放</button>
           <button v-else-if="canEdit && record.status === 'PAID'" type="button" class="secondary-action wide" :disabled="interactionBusy" @click="emit('lock', record)"><Lock :size="16" />锁定工资记录</button>

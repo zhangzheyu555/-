@@ -60,13 +60,14 @@ public class OrganizationDataScopeRepositoryTest {
           open_date date, status varchar(40), note varchar(255), region_code varchar(40),
           supply_warehouse_id bigint, manager_employee_id varchar(120), cost_account_store_id varchar(64),
           version bigint not null default 0, created_at timestamp, updated_at timestamp,
+          deleted_at timestamp, deleted_by bigint,
           unique(tenant_id, code)
         )
         """);
     jdbc.execute("""
         create table employee (
           id varchar(120) not null primary key, tenant_id bigint not null, store_id varchar(64) not null,
-          name varchar(120) not null, phone varchar(40), status varchar(40) not null
+          name varchar(120) not null, phone varchar(40), position varchar(80), status varchar(40) not null
         )
         """);
     jdbc.update("""
@@ -81,10 +82,10 @@ public class OrganizationDataScopeRepositoryTest {
                ('other', 2, 3, '099', 'Other', 'C', 'Mallory', '2025-03-01', '营业中', null)
         """);
     jdbc.update("""
-        insert into employee(id, tenant_id, store_id, name, phone, status)
-        values ('e1', 1, 's1', 'Alice', '13800138000', '在职'),
-               ('e2', 1, 's2', 'Bob', '0716-1234567', '离职'),
-               ('other-e', 2, 'other', 'Mallory', '13900139000', '在职')
+        insert into employee(id, tenant_id, store_id, name, phone, position, status)
+        values ('e1', 1, 's1', 'Alice', '13800138000', '营业员', '在职'),
+               ('e2', 1, 's2', 'Bob', '0716-1234567', '店长', '离职'),
+               ('other-e', 2, 'other', 'Mallory', '13900139000', '店长', '在职')
         """);
     jdbc.update("""
         insert into warehouse_facility(
@@ -283,18 +284,25 @@ public class OrganizationDataScopeRepositoryTest {
   }
 
   @Test
-  void storeArchiveNeverPhysicallyDeletesEvenWhenTheStoreHasNoBusinessRows() {
+  void storeArchiveSoftDeleteHidesTheStoreButPreservesItsDatabaseRow() {
     AccessControlService accessControl = mock(AccessControlService.class);
     OrganizationService service = new OrganizationService(
         repository, null, accessControl, null, null, mock(AuditRepository.class));
     AuthUser boss = new AuthUser(7L, 1L, "default", "boss", "", "老板", "BOSS", null, true);
 
-    assertThatThrownBy(() -> service.deleteStore(boss, "s1"))
-        .isInstanceOf(BusinessException.class)
-        .satisfies(error -> assertThat(((BusinessException) error).getCode())
-            .isEqualTo("STORE_DELETE_DISABLED"));
+    jdbc.update("update store_branch set status = '停用' where tenant_id = 1 and id = 's1'");
+    service.deleteStore(boss, "s1", 0L);
 
-    assertThat(repository.store(1L, "s1")).isPresent();
+    assertThat(repository.store(1L, "s1")).isEmpty();
+    assertThat(repository.storeCount(1L)).isEqualTo(2);
+    assertThat(jdbc.queryForObject(
+        "select deleted_by from store_branch where tenant_id = 1 and id = 's1'",
+        Long.class
+    )).isEqualTo(7L);
+    assertThat(jdbc.queryForObject(
+        "select count(*) from store_branch where tenant_id = 1 and id = 's1' and deleted_at is not null",
+        Integer.class
+    )).isEqualTo(1);
   }
 
   @Test
@@ -313,10 +321,10 @@ public class OrganizationDataScopeRepositoryTest {
     StoreArchiveOptionsResponse options = service.storeOptions(boss);
     assertThat(options.regions()).extracting(StoreArchiveOptionsResponse.RegionOption::code)
         .containsExactly("JINGZHOU", "SHANDONG");
-    assertThat(options.managers()).extracting(StoreArchiveOptionsResponse.ManagerOption::employeeId)
+    assertThat(options.employees()).extracting(StoreArchiveOptionsResponse.EmployeeOption::employeeId)
         .containsExactly("e1");
-    assertThat(options.costAccounts()).extracting(StoreArchiveOptionsResponse.CostAccountOption::storeId)
-        .containsExactly("s1", "s2");
+    assertThat(options.employees()).extracting(StoreArchiveOptionsResponse.EmployeeOption::position)
+        .containsExactly("营业员");
     assertThat(options.statuses()).extracting(StoreArchiveOptionsResponse.StatusOption::value)
         .containsExactly("营业中", "停用", "停业");
 
@@ -328,8 +336,8 @@ public class OrganizationDataScopeRepositoryTest {
     assertThat(created.id()).isNotBlank();
     assertThat(created.managerEmployeeId()).isEqualTo("e1");
     assertThat(created.manager()).isEqualTo("Alice");
-    assertThat(created.costAccountStoreId()).isEqualTo("s1");
-    assertThat(created.costAccountStoreName()).isEqualTo("One");
+    assertThat(created.costAccountStoreId()).isEqualTo(created.id());
+    assertThat(created.costAccountStoreName()).isEqualTo("完整档案门店");
     assertThat(created.version()).isZero();
 
     StoreResponse updated = service.updateStore(boss, new StoreUpsertRequest(

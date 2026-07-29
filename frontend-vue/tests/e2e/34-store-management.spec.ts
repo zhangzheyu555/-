@@ -38,17 +38,28 @@ const options = {
     { code: 'JINGZHOU', name: '荆州总仓', supplyWarehouseId: 11 },
     { code: 'SHANDONG', name: '山东分仓', supplyWarehouseId: 12 },
   ],
-  managers: [
-    { employeeId: 'e1', name: '张三', phone: '13800138000', storeId: 'rg1', storeName: '营业门店' },
-    { employeeId: 'e2', name: '王五', phone: '0716-1234567', storeId: 'rg1', storeName: '营业门店' },
+  employees: [
+    {
+      employeeId: 'e1',
+      name: '张三',
+      phone: '13800138000',
+      position: '店长',
+      storeId: 'rg1',
+      storeName: '营业门店',
+    },
+    {
+      employeeId: 'e2',
+      name: '王五',
+      phone: '0716-1234567',
+      position: '营业员',
+      storeId: 'rg1',
+      storeName: '营业门店',
+    },
   ],
   statuses: [
     { value: '营业中', label: '营业中', active: true },
     { value: '停用', label: '停用', active: false },
     { value: '停业', label: '停业', active: false },
-  ],
-  costAccounts: [
-    { storeId: 'rg1', storeCode: 'RG001', storeName: '营业门店', status: '营业中' },
   ],
 }
 
@@ -68,8 +79,6 @@ type StoreRow = {
   regionCode?: string
   supplyWarehouseId?: number
   supplyWarehouseName?: string
-  costAccountStoreId?: string
-  costAccountStoreName?: string
   version: number
 }
 
@@ -78,6 +87,7 @@ interface State {
   createBodies: Array<Record<string, unknown>>
   updateBodies: Array<Record<string, unknown>>
   statusBodies: Array<Record<string, unknown>>
+  deleteRequests: Array<{ id: string; version: number }>
   consoleErrors: string[]
 }
 
@@ -97,8 +107,6 @@ function initialStores(): StoreRow[] {
       regionCode: 'JINGZHOU',
       supplyWarehouseId: 11,
       supplyWarehouseName: '荆州总仓',
-      costAccountStoreId: 'rg1',
-      costAccountStoreName: '营业门店',
       version: 0,
     },
   ]
@@ -110,6 +118,7 @@ function newState(): State {
     createBodies: [],
     updateBodies: [],
     statusBodies: [],
+    deleteRequests: [],
     consoleErrors: [],
   }
 }
@@ -140,15 +149,9 @@ async function fulfillApi(route: Route, state: State, session: Record<string, un
     if (body.name === '营业门店') {
       return route.fulfill(businessError(409, 'STORE_NAME_DUPLICATE', '门店名称已存在，请更换后再保存'))
     }
-    const manager = options.managers.find((item) => item.employeeId === body.managerEmployeeId)!
+    const manager = options.employees.find((item) => item.employeeId === body.managerEmployeeId)!
     const region = options.regions.find((item) => item.code === body.regionCode)!
     const brand = brands.find((item) => item.id === Number(body.brandId))!
-    const costAccountStoreId = body.costAccountStoreId === 'SELF'
-      ? 'store-generated-3'
-      : String(body.costAccountStoreId)
-    const costAccountStoreName = costAccountStoreId === 'store-generated-3'
-      ? String(body.name)
-      : state.stores.find((item) => item.id === costAccountStoreId)?.name || ''
     const created: StoreRow = {
       id: 'store-generated-3',
       code: String(body.code),
@@ -165,8 +168,6 @@ async function fulfillApi(route: Route, state: State, session: Record<string, un
       regionCode: region.code,
       supplyWarehouseId: region.supplyWarehouseId,
       supplyWarehouseName: region.name,
-      costAccountStoreId,
-      costAccountStoreName,
       version: 0,
     }
     state.stores.push(created)
@@ -176,17 +177,13 @@ async function fulfillApi(route: Route, state: State, session: Record<string, un
     const body = request.postDataJSON() as Record<string, unknown>
     state.updateBodies.push(body)
     const row = state.stores.find((store) => store.id === body.id)!
-    const manager = options.managers.find((item) => item.employeeId === body.managerEmployeeId)!
+    const manager = options.employees.find((item) => item.employeeId === body.managerEmployeeId)!
     const region = options.regions.find((item) => item.code === body.regionCode)!
     Object.assign(row, body, {
       manager: manager.name,
       area: region.name,
       supplyWarehouseId: region.supplyWarehouseId,
       supplyWarehouseName: region.name,
-      costAccountStoreId: body.costAccountStoreId === 'SELF' ? row.id : body.costAccountStoreId,
-      costAccountStoreName: body.costAccountStoreId === 'SELF'
-        ? body.name
-        : state.stores.find((item) => item.id === body.costAccountStoreId)?.name,
       version: row.version + 1,
     })
     return route.fulfill(ok(row))
@@ -200,6 +197,13 @@ async function fulfillApi(route: Route, state: State, session: Record<string, un
     row.version += 1
     return route.fulfill(ok(row))
   }
+  const deleteMatch = path.match(/^\/api\/stores\/([^/]+)$/)
+  if (deleteMatch && request.method() === 'DELETE') {
+    const id = decodeURIComponent(deleteMatch[1])
+    state.deleteRequests.push({ id, version: Number(url.searchParams.get('version')) })
+    state.stores = state.stores.filter((store) => store.id !== id)
+    return route.fulfill(ok(null))
+  }
   return route.fulfill(ok([]))
 }
 
@@ -209,15 +213,14 @@ async function fillRequiredArchive(page: Page, name = '新增测试店', code = 
   await dialog.getByLabel('门店名称').fill(name)
   await dialog.getByLabel('品牌').selectOption('1')
   await dialog.getByLabel('所属区域').selectOption('JINGZHOU')
-  await dialog.getByLabel('负责人').selectOption('e1')
-  await dialog.getByLabel('联系方式').fill('13800138000')
+  await dialog.getByRole('combobox', { name: '负责人' }).fill('王五')
+  await dialog.getByRole('option', { name: /王五/ }).click()
+  await dialog.getByLabel('联系方式').fill('0716-1234567')
   await dialog.getByLabel('经营状态').selectOption('营业中')
-  await dialog.getByRole('combobox', { name: '成本账归属' }).fill('本门店')
-  await dialog.getByRole('option', { name: /本门店独立成本账/ }).click()
   return dialog
 }
 
-test('dynamic dropdowns create a searchable store without exposing an internal id field', async ({ page }) => {
+test('employee archives create a store without exposing internal or cost-account fields', async ({ page }) => {
   const state = newState()
   await prepare(page, state)
   await page.setViewportSize({ width: 1280, height: 900 })
@@ -231,11 +234,18 @@ test('dynamic dropdowns create a searchable store without exposing an internal i
     '荆州总仓',
     '山东分仓',
   ])
-  await expect(dialog.getByLabel('负责人').locator('option')).toHaveText([
-    '请选择负责人',
-    '张三（营业门店）',
-    '王五（营业门店）',
-  ])
+  await expect(dialog.getByText('数据来自“员工档案”')).toBeVisible()
+  await expect(dialog.getByText('成本账归属')).toHaveCount(0)
+  await expect(page.getByRole('columnheader', { name: '成本账归属' })).toHaveCount(0)
+  await dialog.getByRole('combobox', { name: '负责人' }).click()
+  await expect(dialog.getByRole('option', { name: /张三.*店长.*营业门店/ })).toBeVisible()
+  await expect(dialog.getByRole('option', { name: /王五.*营业员.*营业门店/ })).toBeVisible()
+  await dialog.getByRole('combobox', { name: '负责人' }).fill('王五')
+  await dialog.getByRole('option', { name: /王五/ }).click()
+  const cancelBox = await dialog.getByRole('button', { name: '取消' }).boundingBox()
+  const submitBox = await dialog.getByRole('button', { name: '新增门店', exact: true }).boundingBox()
+  expect(cancelBox?.y).toBe(submitBox?.y)
+  expect(cancelBox?.height).toBe(submitBox?.height)
   await dialog.getByRole('button', { name: '新增门店', exact: true }).click()
 
   await expect.poll(() => state.createBodies.length).toBe(1)
@@ -243,46 +253,57 @@ test('dynamic dropdowns create a searchable store without exposing an internal i
     code: 'RG003',
     name: '新增测试店',
     regionCode: 'JINGZHOU',
-    managerEmployeeId: 'e1',
-    managerPhone: '13800138000',
+    managerEmployeeId: 'e2',
+    managerPhone: '0716-1234567',
     status: '营业中',
-    costAccountStoreId: 'SELF',
   })
   expect(state.createBodies[0]).not.toHaveProperty('id')
+  expect(state.createBodies[0]).not.toHaveProperty('costAccountStoreId')
   await expect(page.getByText('门店档案已新增。')).toBeVisible()
 
   await page.getByLabel('查询门店').fill('RG003')
-  await expect(page.getByRole('cell', { name: '新增测试店', exact: true })).toBeVisible()
+  await expect(page.getByRole('row', { name: /新增测试店.*RG003/ })).toBeVisible()
   await expect(page.getByText('营业门店', { exact: true })).toHaveCount(0)
-  await page.getByLabel('查询门店').fill('张三')
-  await expect(page.getByRole('cell', { name: '新增测试店', exact: true })).toBeVisible()
+  await page.getByLabel('查询门店').fill('王五')
+  await expect(page.getByRole('row', { name: /新增测试店.*王五/ })).toBeVisible()
   await expectNoWholePageOverflow(page, '1280px 门店管理页')
   expect(state.consoleErrors).toEqual([])
 })
 
-test('required fields, invalid contact, and duplicate name stay in the editor with clear errors', async ({ page }) => {
+test('validation and API failures use dialogs while the submit button remains clickable', async ({ page }) => {
   const state = newState()
   await prepare(page, state)
   await page.goto('/stores')
 
   await page.getByRole('button', { name: '新增门店', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: '新增门店档案' })
-  await expect(dialog.getByRole('button', { name: '新增门店', exact: true })).toBeDisabled()
+  const submit = dialog.getByRole('button', { name: '新增门店', exact: true })
+  await expect(submit).toBeEnabled()
+  await submit.click()
+  const missingDialog = page.getByRole('alertdialog', { name: '门店档案信息不完整' })
+  await expect(missingDialog).toContainText('门店编号')
+  await expect(missingDialog).toContainText('负责人')
+  await missingDialog.getByRole('button', { name: '返回填写' }).click()
   await fillRequiredArchive(page, '联系方式错误门店', 'RG009')
   await dialog.getByLabel('联系方式').fill('abc-123')
-  await expect(dialog.getByText('请输入手机号或合法联系电话')).toBeVisible()
-  await expect(dialog.getByRole('button', { name: '新增门店', exact: true })).toBeDisabled()
+  await expect(submit).toBeEnabled()
+  await submit.click()
+  const contactDialog = page.getByRole('alertdialog', { name: '门店档案信息不完整' })
+  await expect(contactDialog).toContainText('联系方式格式不正确')
+  await contactDialog.getByRole('button', { name: '返回填写' }).click()
   expect(state.createBodies).toHaveLength(0)
 
   await dialog.getByLabel('联系方式').fill('0716-1234567')
   await dialog.getByLabel('门店名称').fill('营业门店')
-  await dialog.getByRole('button', { name: '新增门店', exact: true }).click()
-  await expect(page.getByText('门店名称已存在，请更换后再保存')).toBeVisible()
+  await submit.click()
+  const duplicateDialog = page.getByRole('alertdialog', { name: '新增门店未完成' })
+  await expect(duplicateDialog).toContainText('门店名称已存在，请更换后再保存')
+  await duplicateDialog.getByRole('button', { name: '返回修改' }).click()
   await expect(dialog).toBeVisible()
   expect(state.stores).toHaveLength(1)
 })
 
-test('edit is immediate and stop or reenable uses a second confirmation without physical delete', async ({ page }) => {
+test('active stores explain the prerequisite and inactive stores can be soft deleted', async ({ page }) => {
   const state = newState()
   await prepare(page, state)
   await page.goto('/stores')
@@ -291,30 +312,36 @@ test('edit is immediate and stop or reenable uses a second confirmation without 
   await row.getByRole('button', { name: '编辑', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: /编辑门店档案/ })
   await dialog.getByLabel('门店名称').fill('营业门店（已编辑）')
-  await dialog.getByLabel('负责人').selectOption('e2')
-  await dialog.getByLabel('联系方式').fill('0716-1234567')
+  await dialog.getByRole('combobox', { name: '负责人' }).fill('张三')
+  await dialog.getByRole('option', { name: /张三/ }).click()
+  await dialog.getByLabel('联系方式').fill('13800138000')
   await dialog.getByRole('button', { name: '保存门店档案' }).click()
   await expect.poll(() => state.updateBodies.length).toBe(1)
-  await expect(page.getByRole('cell', { name: '营业门店（已编辑）', exact: true })).toBeVisible()
-  await expect(page.getByText('王五', { exact: true })).toBeVisible()
+  await expect(page.getByRole('row', { name: /营业门店（已编辑）.*张三/ })).toBeVisible()
+  await expect(page.getByText('张三', { exact: true })).toBeVisible()
 
   const editedRow = page.getByRole('row', { name: /营业门店（已编辑）/ })
-  await expect(editedRow.getByRole('button', { name: '删除' })).toHaveCount(0)
+  await editedRow.getByRole('button', { name: '删除', exact: true }).click()
+  await expect(page.getByRole('alertdialog', { name: /暂不能删除/ })).toContainText('请先停用门店')
+  await page.getByRole('button', { name: '我知道了', exact: true }).click()
+  expect(state.deleteRequests).toEqual([])
+
   await editedRow.getByRole('button', { name: '停用', exact: true }).click()
   await expect(page.getByText('停用后仍保留历史经营、财务、库存和业务单据')).toBeVisible()
   await page.getByRole('button', { name: '确认停用', exact: true }).click()
   await expect.poll(() => state.statusBodies).toEqual([{ status: '停用', version: 1 }])
   await expect(page.getByText('门店“营业门店（已编辑）”已停用。')).toBeVisible()
 
-  await page.getByRole('row', { name: /营业门店（已编辑）/ })
-    .getByRole('button', { name: '启用', exact: true }).click()
-  await page.getByRole('button', { name: '确认启用', exact: true }).click()
-  await expect.poll(() => state.statusBodies).toEqual([
-    { status: '停用', version: 1 },
-    { status: '营业中', version: 2 },
-  ])
-  await expect(page.getByText('门店“营业门店（已编辑）”已启用。')).toBeVisible()
-  expect(state.stores).toHaveLength(1)
+  const inactiveRow = page.getByRole('row', { name: /营业门店（已编辑）/ })
+  await inactiveRow.getByRole('button', { name: '删除', exact: true }).click()
+  const deleteDialog = page.getByRole('alertdialog', { name: /删除门店/ })
+  await expect(deleteDialog).toContainText('历史经营、财务、库存、工资和业务单据仍会完整保留')
+  await deleteDialog.getByRole('button', { name: '确认删除', exact: true }).click()
+
+  await expect.poll(() => state.deleteRequests).toEqual([{ id: 'rg1', version: 2 }])
+  await expect(page.getByText('门店“营业门店（已编辑）”已删除，历史业务资料仍完整保留。')).toBeVisible()
+  await expect(page.getByRole('row', { name: /营业门店（已编辑）/ })).toHaveCount(0)
+  expect(state.stores).toHaveLength(0)
   expect(state.consoleErrors).toEqual([])
 })
 

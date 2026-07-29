@@ -146,21 +146,14 @@ public class OrganizationService {
   public StoreArchiveOptionsResponse storeOptions(AuthUser user) {
     requireStoreManage(user);
     DataScope dataScope = resolvedStoreScope(user);
-    List<StoreArchiveOptionsResponse.CostAccountOption> costAccounts =
-        organizationRepository.stores(user.tenantId(), dataScope).stream()
-            .filter(store -> enabledStatus(store.status()))
-            .map(store -> new StoreArchiveOptionsResponse.CostAccountOption(
-                store.id(), store.code(), store.name(), store.status()))
-            .toList();
     return new StoreArchiveOptionsResponse(
         organizationRepository.activeStoreRegions(user.tenantId()),
-        organizationRepository.activeManagers(user.tenantId(), dataScope),
+        organizationRepository.activeEmployeeOptions(user.tenantId(), dataScope),
         List.of(
             new StoreArchiveOptionsResponse.StatusOption("营业中", "营业中", true),
             new StoreArchiveOptionsResponse.StatusOption("停用", "停用", false),
             new StoreArchiveOptionsResponse.StatusOption("停业", "停业", false)
-        ),
-        costAccounts
+        )
     );
   }
 
@@ -274,21 +267,6 @@ public class OrganizationService {
       throw new BusinessException(
           "STORE_MANAGER_INACTIVE", "所选负责人已停用或离职，请重新选择", HttpStatus.CONFLICT);
     }
-    requireRelatedStoreAccess(user, manager.storeId(), "选择门店负责人");
-
-    if (!request.id().equals(request.costAccountStoreId())) {
-      StoreResponse costAccount = organizationRepository.store(user.tenantId(), request.costAccountStoreId())
-          .orElseThrow(() -> new BusinessException(
-              "STORE_COST_ACCOUNT_NOT_FOUND",
-              "成本账归属不存在或不属于当前企业",
-              HttpStatus.BAD_REQUEST
-          ));
-      if (!enabledStatus(costAccount.status())) {
-        throw new BusinessException(
-            "STORE_COST_ACCOUNT_INACTIVE", "所选成本账归属已停用，请重新选择", HttpStatus.CONFLICT);
-      }
-      requireRelatedStoreAccess(user, costAccount.id(), "选择成本账归属");
-    }
     if (organizationRepository.storeCodeBelongsToAnotherStore(
         user.tenantId(), request.code(), request.id())) {
       throw duplicateStoreCodeException();
@@ -367,22 +345,48 @@ public class OrganizationService {
   }
 
   @Transactional
-  public void deleteStore(AuthUser user, String storeId) {
+  public void deleteStore(AuthUser user, String storeId, Long expectedVersion) {
     requireStoreManage(user);
     String normalizedStoreId = normalizeStoreId(storeId);
     StoreResponse existing = organizationRepository.store(user.tenantId(), normalizedStoreId)
         .orElseThrow(() -> new BusinessException("STORE_NOT_FOUND", "门店不存在或不属于当前企业", HttpStatus.NOT_FOUND));
     if (businessScopeResolver != null) {
       businessScopeResolver.resolve(
-          user, DataScopeDomains.STORE, normalizedStoreId, existing.brandId(), "删除门店档案");
+          user, DataScopeDomains.STORE, normalizedStoreId, existing.brandId(), "软删除门店档案");
     }
     if (accessControl != null) {
-      accessControl.requireStoreAccess(user, DataScopeDomains.STORE, normalizedStoreId, "删除门店档案");
+      accessControl.requireStoreAccess(user, DataScopeDomains.STORE, normalizedStoreId, "软删除门店档案");
     }
-    throw new BusinessException(
-        "STORE_DELETE_DISABLED",
-        "门店档案不支持物理删除，请停用门店；历史经营、财务、库存和业务单据将继续保留。",
-        HttpStatus.CONFLICT
+    if (enabledStatus(existing.status())) {
+      throw new BusinessException(
+          "STORE_SOFT_DELETE_REQUIRES_INACTIVE",
+          "请先停用门店，再执行软删除；历史经营、财务、库存和业务单据会继续保留。",
+          HttpStatus.CONFLICT
+      );
+    }
+    if (expectedVersion == null || expectedVersion < 0) {
+      throw new BusinessException(
+          "STORE_VERSION_REQUIRED",
+          "门店版本信息缺失，请刷新门店列表后重试",
+          HttpStatus.BAD_REQUEST
+      );
+    }
+    int updated = organizationRepository.softDeleteStore(
+        user.tenantId(), normalizedStoreId, user.id(), expectedVersion);
+    if (updated == 0) {
+      throw new BusinessException(
+          "STORE_VERSION_CONFLICT",
+          "门店档案已被其他人修改，请刷新后重试",
+          HttpStatus.CONFLICT
+      );
+    }
+    auditStore(
+        user,
+        "软删除门店档案",
+        normalizedStoreId,
+        "门店档案已软删除，历史经营、财务、库存和业务单据继续保留。",
+        existing,
+        null
     );
   }
 
@@ -427,13 +431,6 @@ public class OrganizationService {
     if (regionCode == null) {
       throw new BusinessException("STORE_REGION_REQUIRED", "请选择所属区域", HttpStatus.BAD_REQUEST);
     }
-    String costAccountStoreId = blankToNull(request.costAccountStoreId());
-    if (costAccountStoreId == null) {
-      throw new BusinessException("STORE_COST_ACCOUNT_REQUIRED", "请选择成本账归属", HttpStatus.BAD_REQUEST);
-    }
-    if ("SELF".equalsIgnoreCase(costAccountStoreId)) {
-      costAccountStoreId = storeId;
-    }
     return new StoreUpsertRequest(
         storeId,
         code,
@@ -448,7 +445,7 @@ public class OrganizationService {
         regionCode,
         request.supplyWarehouseId(),
         managerEmployeeId,
-        costAccountStoreId,
+        storeId,
         request.version()
     );
   }
@@ -478,15 +475,13 @@ public class OrganizationService {
 
   private void validateArchiveBeforeEnable(AuthUser user, StoreResponse store) {
     String managerEmployeeId = blankToNull(store.managerEmployeeId());
-    String costAccountStoreId = blankToNull(store.costAccountStoreId());
     if (managerEmployeeId == null
-        || costAccountStoreId == null
         || blankToNull(store.regionCode()) == null
         || store.supplyWarehouseId() == null
         || blankToNull(store.managerPhone()) == null) {
       throw new BusinessException(
           "STORE_ARCHIVE_INCOMPLETE",
-          "重新启用前请先完善所属区域、负责人、联系方式和成本账归属",
+          "重新启用前请先完善所属区域、负责人和联系方式",
           HttpStatus.CONFLICT
       );
     }
@@ -502,18 +497,6 @@ public class OrganizationService {
     if (!activeEmployeeStatus(manager.status())) {
       throw new BusinessException(
           "STORE_MANAGER_INACTIVE", "所选负责人已停用或离职，请先重新选择", HttpStatus.CONFLICT);
-    }
-    requireRelatedStoreAccess(user, manager.storeId(), "重新启用门店");
-    if (!store.id().equals(costAccountStoreId)) {
-      StoreResponse costAccount = organizationRepository.store(user.tenantId(), costAccountStoreId)
-          .orElseThrow(() -> new BusinessException(
-              "STORE_COST_ACCOUNT_NOT_FOUND", "成本账归属不存在，请先完善门店档案",
-              HttpStatus.BAD_REQUEST));
-      if (!enabledStatus(costAccount.status())) {
-        throw new BusinessException(
-            "STORE_COST_ACCOUNT_INACTIVE", "成本账归属已停用，请先重新选择", HttpStatus.CONFLICT);
-      }
-      requireRelatedStoreAccess(user, costAccount.id(), "重新启用门店");
     }
     if (warehouseTopologyService != null) {
       FacilityRow supply = warehouseTopologyService.resolveSupplyWarehouse(
