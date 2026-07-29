@@ -58,6 +58,8 @@ final class WarehouseMovementExcelWriter {
           storeNames, itemNames, directions);
       writeDetailSheet(workbook, headerStyle, quantityStyle, rows);
       writeSummarySheet(workbook, headerStyle, quantityStyle, rows);
+      workbook.setActiveSheet(1);
+      workbook.setSelectedTab(1);
 
       workbook.write(output);
       return output.toByteArray();
@@ -124,11 +126,11 @@ final class WarehouseMovementExcelWriter {
       text(row, 5, m.sourceWarehouseName());
       text(row, 6, m.targetWarehouseName());
       text(row, 7, m.storeName());
-      text(row, 8, ""); // itemCode — not in current response, leave blank
+      text(row, 8, m.itemCode());
       text(row, 9, m.itemName());
-      text(row, 10, ""); // category — not in current response
-      text(row, 11, ""); // spec
-      text(row, 12, ""); // unit
+      text(row, 10, m.itemCategory());
+      text(row, 11, m.itemSpec());
+      text(row, 12, m.itemUnit());
       text(row, 13, m.batchNo());
       number(row, 14, m.quantityDelta(), quantityStyle);
       number(row, 15, m.quantityDelta() != null && m.quantityDelta().signum() > 0 ? m.quantityDelta() : BigDecimal.ZERO, quantityStyle);
@@ -177,7 +179,7 @@ final class WarehouseMovementExcelWriter {
         totals[2] = totals[2].add(m.quantityDelta());
       }
       meta.putIfAbsent(key, new String[]{
-          m.storeId(), m.storeName(), String.valueOf(m.itemId()), m.itemName(), ""
+          m.storeId(), m.storeName(), String.valueOf(m.itemId()), m.itemName(), m.itemUnit()
       });
     }
 
