@@ -66,6 +66,7 @@ services:
       QMAI_SHOPS: ${QMAI_SHOPS:-}
       QMAI_BASE_URL: ${QMAI_BASE_URL:-https://openapi.qmai.cn}
       QMAI_VERSION: ${QMAI_VERSION:-1.0}
+      QMAI_OUTBOUND_MODE: ${QMAI_OUTBOUND_MODE:-DISABLED}
       INSPECTION_DETECT_URL: http://inspection-service:8000/detect
       INSPECTION_EXPORT_URL: http://inspection-service:8000/export
       INSPECTION_INTERNAL_SERVICE_ENABLED: "true"
@@ -77,6 +78,10 @@ services:
       WECHAT_MINI_APP_SECRET: ${WECHAT_MINI_APP_SECRET:-}
       WECHAT_MINI_PROGRAM_BASE_URL: ${WECHAT_MINI_PROGRAM_BASE_URL:-https://api.weixin.qq.com}
       DEEPSEEK_ENABLED: "false"
+      QMAI_RECIPE_ENABLED: ${QMAI_RECIPE_ENABLED:-true}
+      # QA profile defaults this feature off; use the canonical Spring property name
+      # so the explicit local environment switch can override that profile default.
+      APP_QMAI_RECIPE_ENABLED: ${QMAI_RECIPE_ENABLED:-true}
       APP_CORS_ALLOWED_ORIGINS: http://localhost:${DEV_GATEWAY_PORT:-8088},http://127.0.0.1:${DEV_GATEWAY_PORT:-8088},http://localhost:${DEV_FRONTEND_PORT:-5173},http://127.0.0.1:${DEV_FRONTEND_PORT:-5173}
       TZ: Asia/Shanghai
     ports:
