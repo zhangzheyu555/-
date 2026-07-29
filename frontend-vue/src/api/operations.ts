@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPut } from './http'
+import { apiDelete, apiGet, apiPost, apiPut } from './http'
 
 export interface OperationLog {
   id: number
@@ -53,8 +53,6 @@ export interface StoreInfo {
   supplyWarehouseId?: number
   supplyWarehouseName?: string
   managerEmployeeId?: string
-  costAccountStoreId?: string
-  costAccountStoreName?: string
   version?: number
 }
 
@@ -103,7 +101,6 @@ export interface StorePayload {
   status: string
   note?: string
   regionCode: string
-  costAccountStoreId: string
   version?: number
 }
 
@@ -113,10 +110,11 @@ export interface StoreArchiveOptions {
     name: string
     supplyWarehouseId: number
   }>
-  managers: Array<{
+  employees: Array<{
     employeeId: string
     name: string
     phone?: string
+    position?: string
     storeId: string
     storeName: string
   }>
@@ -124,12 +122,6 @@ export interface StoreArchiveOptions {
     value: string
     label: string
     active: boolean
-  }>
-  costAccounts: Array<{
-    storeId: string
-    storeCode: string
-    storeName: string
-    status: string
   }>
 }
 
@@ -187,4 +179,9 @@ export function updateStoreStatus(id: string, status: string, version: number) {
     `/api/stores/${encodeURIComponent(id)}/status`,
     { status, version },
   )
+}
+
+export function softDeleteStore(id: string, version: number) {
+  const query = new URLSearchParams({ version: String(version) })
+  return apiDelete<void>(`/api/stores/${encodeURIComponent(id)}?${query.toString()}`)
 }

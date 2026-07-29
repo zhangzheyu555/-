@@ -85,9 +85,10 @@ public class StoreController {
   @DeleteMapping("/{id}")
   public ApiResponse<Void> delete(
       @RequestHeader(value = "Authorization", required = false) String authorization,
-      @PathVariable String id
+      @PathVariable String id,
+      @RequestParam(required = false) Long version
   ) {
-    organizationService.deleteStore(authService.requireUser(authorization), id);
+    organizationService.deleteStore(authService.requireUser(authorization), id, version);
     return ApiResponse.ok();
   }
 }

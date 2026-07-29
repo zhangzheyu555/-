@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { Home, Pencil, Plus, Power, Search, X } from 'lucide-vue-next'
+import { Home, Pencil, Plus, Power, Search, Trash2, X } from 'lucide-vue-next'
 import {
   createStore,
   getBrands,
   getStoreArchiveOptions,
   getStores,
+  softDeleteStore,
   updateStore,
   updateStoreStatus,
   type BrandInfo,
@@ -18,15 +19,15 @@ import PageHeader from '../components/common/PageHeader.vue'
 import SearchableSingleSelect from '../components/common/SearchableSingleSelect.vue'
 import ActionConfirmDialog from '../components/ui/ActionConfirmDialog.vue'
 import { useForegroundReload } from '../composables/useForegroundReload'
+import { reportAppError } from '../errors/appErrorDialog'
 import { isBossRole } from '../permissions/roles'
 import { useAuthStore } from '../stores/auth'
 import { normalizeBrandName } from '../utils/brand'
 
 const EMPTY_OPTIONS: StoreArchiveOptions = {
   regions: [],
-  managers: [],
+  employees: [],
   statuses: [],
-  costAccounts: [],
 }
 
 function normalizeArchiveOptions(value: unknown): StoreArchiveOptions {
@@ -35,9 +36,8 @@ function normalizeArchiveOptions(value: unknown): StoreArchiveOptions {
     : {}
   return {
     regions: Array.isArray(candidate.regions) ? candidate.regions : [],
-    managers: Array.isArray(candidate.managers) ? candidate.managers : [],
+    employees: Array.isArray(candidate.employees) ? candidate.employees : [],
     statuses: Array.isArray(candidate.statuses) ? candidate.statuses : [],
-    costAccounts: Array.isArray(candidate.costAccounts) ? candidate.costAccounts : [],
   }
 }
 
@@ -47,11 +47,11 @@ const brands = ref<BrandInfo[]>([])
 const archiveOptions = ref<StoreArchiveOptions>(EMPTY_OPTIONS)
 const loading = ref(false)
 const saving = ref(false)
-const error = ref('')
 const notice = ref('')
 const editorOpen = ref(false)
 const editingStore = ref<StoreInfo | null>(null)
 const confirmTarget = ref<StoreInfo | null>(null)
+const deleteTarget = ref<StoreInfo | null>(null)
 const form = reactive<StorePayload>(emptyForm())
 const statusFilter = ref<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL')
 const searchQuery = ref('')
@@ -62,16 +62,6 @@ const editorTitle = computed(() => (
   editingStore.value ? `编辑门店档案：${editingStore.value.name}` : '新增门店档案'
 ))
 const contactIsValid = computed(() => validContact(form.managerPhone))
-const canSaveEditor = computed(() => Boolean(
-  form.code.trim()
-  && form.name.trim()
-  && Number(form.brandId) > 0
-  && form.regionCode
-  && form.managerEmployeeId
-  && contactIsValid.value
-  && form.status
-  && form.costAccountStoreId,
-))
 const filteredStores = computed(() => {
   const keyword = searchQuery.value.trim().toLowerCase()
   return stores.value.filter((store) => {
@@ -87,40 +77,21 @@ const filteredStores = computed(() => {
       store.supplyWarehouseName,
       store.manager,
       store.managerPhone,
-      store.costAccountStoreName,
     ].some((value) => String(value || '').toLowerCase().includes(keyword))
   })
 })
-const costAccountOptions = computed(() => archiveOptions.value.costAccounts.filter(
-  (option) => option.storeId !== editingStore.value?.id,
-))
-const searchableCostAccountOptions = computed(() => {
-  const options = [
-    {
-      value: 'SELF',
-      label: '本门店独立成本账',
-      description: '成本单独核算',
-      searchText: '本门店 独立 成本账',
-    },
-    ...costAccountOptions.value.map((account) => ({
-      value: account.storeId,
-      label: account.storeName,
-      description: [account.storeCode, account.status].filter(Boolean).join(' · '),
-      searchText: [account.storeName, account.storeCode, account.status].filter(Boolean).join(' '),
-    })),
-  ]
-  const current = form.costAccountStoreId
-  if (current && !options.some((option) => option.value === current)) {
-    const store = stores.value.find((candidate) => candidate.id === current)
-    options.push({
-      value: current,
-      label: store?.name || editingStore.value?.costAccountStoreName || current,
-      description: '当前历史成本账归属',
-      searchText: `${store?.name || editingStore.value?.costAccountStoreName || ''} ${current}`,
-    })
-  }
-  return options
-})
+const employeeSelectOptions = computed(() => archiveOptions.value.employees.map((employee) => ({
+  value: employee.employeeId,
+  label: employee.name,
+  description: `${employee.position || '员工'} · 当前档案：${employee.storeName}`,
+  searchText: [
+    employee.name,
+    employee.position,
+    employee.storeName,
+    employee.phone,
+    employee.employeeId,
+  ].filter(Boolean).join(' '),
+})))
 const confirmTitle = computed(() => {
   const store = confirmTarget.value
   if (!store) return ''
@@ -131,11 +102,23 @@ const confirmMessage = computed(() => {
   if (!store) return ''
   return isActiveStore(store)
     ? '停用后仍保留历史经营、财务、库存和业务单据，但该门店不能再创建新的业务单据。'
-    : '重新启用前系统会校验区域、负责人、联系方式和成本账归属；通过后恢复新业务权限。'
+    : '重新启用前系统会校验区域、负责人和联系方式；通过后恢复新业务权限。'
 })
 const confirmLabel = computed(() => (
   confirmTarget.value && isActiveStore(confirmTarget.value) ? '确认停用' : '确认启用'
 ))
+const deleteTitle = computed(() => {
+  const store = deleteTarget.value
+  if (!store) return ''
+  return isActiveStore(store) ? `暂不能删除：${store.name}` : `删除门店：${store.name}`
+})
+const deleteMessage = computed(() => {
+  const store = deleteTarget.value
+  if (!store) return ''
+  return isActiveStore(store)
+    ? '该门店仍处于营业状态。请先停用门店，确认不再产生新业务后，再执行软删除。'
+    : '删除后门店将从管理列表和业务选择项中隐藏；历史经营、财务、库存、工资和业务单据仍会完整保留。此操作暂不支持在页面恢复。'
+})
 
 function emptyForm(): StorePayload {
   return {
@@ -148,7 +131,6 @@ function emptyForm(): StorePayload {
     status: '',
     note: '',
     regionCode: '',
-    costAccountStoreId: '',
   }
 }
 
@@ -161,7 +143,6 @@ function validContact(value: string) {
 
 async function loadStores() {
   loading.value = true
-  error.value = ''
   try {
     const [storeRows, brandRows, optionRows] = await Promise.all([
       getStores(),
@@ -174,7 +155,12 @@ async function loadStores() {
     markFresh()
     return true
   } catch (loadError) {
-    error.value = loadError instanceof Error ? loadError.message : '门店管理加载失败'
+    reportAppError(loadError, {
+      title: '门店档案加载失败',
+      actionLabel: '重试',
+      action: loadStores,
+      sourceKey: 'stores:load',
+    })
     return false
   } finally {
     loading.value = false
@@ -182,9 +168,15 @@ async function loadStores() {
 }
 
 const { markFresh } = useForegroundReload(async () => {
-  if (!await loadStores()) throw new Error('门店档案暂时不可用')
+  await loadStores()
 }, {
-  canReload: () => !loading.value && !saving.value && !editorOpen.value && !confirmTarget.value,
+  canReload: () => (
+    !loading.value
+    && !saving.value
+    && !editorOpen.value
+    && !confirmTarget.value
+    && !deleteTarget.value
+  ),
 })
 
 function brandName(id: number) {
@@ -207,9 +199,6 @@ function payloadFromStore(store: StoreInfo): StorePayload {
     status: store.status || '',
     note: store.note || '',
     regionCode: store.regionCode || '',
-    costAccountStoreId: !store.costAccountStoreId || store.costAccountStoreId === store.id
-      ? 'SELF'
-      : store.costAccountStoreId,
     version: Number(store.version || 0),
   }
 }
@@ -217,7 +206,6 @@ function payloadFromStore(store: StoreInfo): StorePayload {
 function openEditor(store: StoreInfo) {
   editingStore.value = store
   Object.assign(form, payloadFromStore(store))
-  error.value = ''
   notice.value = ''
   editorOpen.value = true
 }
@@ -225,7 +213,6 @@ function openEditor(store: StoreInfo) {
 function openCreateEditor() {
   editingStore.value = null
   Object.assign(form, emptyForm())
-  error.value = ''
   notice.value = ''
   editorOpen.value = true
 }
@@ -234,24 +221,60 @@ function closeEditor() {
   if (saving.value) return
   editorOpen.value = false
   editingStore.value = null
-  error.value = ''
   Object.assign(form, emptyForm())
 }
 
-function managerChanged() {
-  const manager = archiveOptions.value.managers.find(
-    (option) => option.employeeId === form.managerEmployeeId,
+function managerChanged(employeeId: string | number) {
+  const normalizedEmployeeId = String(employeeId || '')
+  const employee = archiveOptions.value.employees.find(
+    (option) => option.employeeId === normalizedEmployeeId,
   )
-  if (manager?.phone) {
-    form.managerPhone = manager.phone
+  form.managerPhone = employee?.phone || ''
+}
+
+function validateEditor() {
+  const missingFields = [
+    !form.code.trim() && '门店编号',
+    !form.name.trim() && '门店名称',
+    !(Number(form.brandId) > 0) && '品牌',
+    !form.regionCode && '所属区域',
+    !form.managerEmployeeId && '负责人',
+    !form.managerPhone.trim() && '联系方式',
+    !form.status && '经营状态',
+  ].filter((field): field is string => Boolean(field))
+  if (missingFields.length) {
+    reportAppError(`请先完善：${missingFields.join('、')}。`, {
+      title: '门店档案信息不完整',
+      actionLabel: '返回填写',
+      sourceKey: `stores:validation:missing:${missingFields.join('|')}`,
+    })
+    return false
   }
+  if (!contactIsValid.value) {
+    reportAppError('联系方式格式不正确，请填写手机号或合法联系电话。', {
+      title: '门店档案信息不完整',
+      actionLabel: '返回填写',
+      sourceKey: 'stores:validation:contact',
+    })
+    return false
+  }
+  if (!archiveOptions.value.employees.some(
+    (employee) => employee.employeeId === form.managerEmployeeId,
+  )) {
+    reportAppError('所选负责人不在当前在职员工档案中，请重新选择。', {
+      title: '负责人不可用',
+      actionLabel: '返回选择',
+      sourceKey: 'stores:validation:employee',
+    })
+    return false
+  }
+  return true
 }
 
 async function saveEditor() {
-  if (!canSaveEditor.value || saving.value) return
+  if (saving.value || !validateEditor()) return
   const creating = !editingStore.value
   saving.value = true
-  error.value = ''
   notice.value = ''
   const basePayload = {
     code: form.code.trim(),
@@ -263,7 +286,6 @@ async function saveEditor() {
     status: form.status,
     note: form.note?.trim() || '',
     regionCode: form.regionCode,
-    costAccountStoreId: form.costAccountStoreId,
   }
   try {
     if (creating) {
@@ -281,7 +303,11 @@ async function saveEditor() {
     Object.assign(form, emptyForm())
     await loadStores()
   } catch (saveError) {
-    error.value = saveError instanceof Error ? saveError.message : '门店档案保存失败'
+    reportAppError(saveError, {
+      title: creating ? '新增门店未完成' : '门店档案保存失败',
+      actionLabel: '返回修改',
+      sourceKey: `stores:save:${creating ? 'create' : editingStore.value?.id || 'update'}`,
+    })
   } finally {
     saving.value = false
   }
@@ -289,15 +315,48 @@ async function saveEditor() {
 
 function requestToggle(store: StoreInfo) {
   confirmTarget.value = store
-  error.value = ''
   notice.value = ''
+}
+
+function requestDelete(store: StoreInfo) {
+  deleteTarget.value = store
+  notice.value = ''
+}
+
+function closeDeleteDialog() {
+  if (saving.value) return
+  deleteTarget.value = null
+}
+
+async function confirmSoftDelete() {
+  const store = deleteTarget.value
+  if (!store || saving.value) return
+  if (isActiveStore(store)) {
+    closeDeleteDialog()
+    return
+  }
+  saving.value = true
+  notice.value = ''
+  try {
+    await softDeleteStore(store.id, Number(store.version || 0))
+    deleteTarget.value = null
+    notice.value = `门店“${store.name}”已删除，历史业务资料仍完整保留。`
+    await loadStores()
+  } catch (actionError) {
+    reportAppError(actionError, {
+      title: '门店删除未完成',
+      actionLabel: '返回处理',
+      sourceKey: `stores:delete:${store.id}`,
+    })
+  } finally {
+    saving.value = false
+  }
 }
 
 async function confirmStoreAction() {
   const store = confirmTarget.value
   if (!store || saving.value) return
   saving.value = true
-  error.value = ''
   notice.value = ''
   const active = isActiveStore(store)
   const nextStatus = active ? '停用' : '营业中'
@@ -307,7 +366,11 @@ async function confirmStoreAction() {
     confirmTarget.value = null
     await loadStores()
   } catch (actionError) {
-    error.value = actionError instanceof Error ? actionError.message : '门店状态变更失败'
+    reportAppError(actionError, {
+      title: active ? '门店停用未完成' : '门店启用未完成',
+      actionLabel: '返回处理',
+      sourceKey: `stores:status:${store.id}:${nextStatus}`,
+    })
   } finally {
     saving.value = false
   }
@@ -327,7 +390,7 @@ onMounted(() => {
             v-if="canManageStores"
             class="primary-button"
             type="button"
-            :disabled="loading || saving"
+            :disabled="saving"
             @click="openCreateEditor"
           >
             <Plus :size="16" />新增门店
@@ -336,10 +399,6 @@ onMounted(() => {
       </template>
     </PageHeader>
 
-    <div v-if="error && !editorOpen" class="error-box page-load-error">
-      <span>{{ error }}</span>
-      <button class="ghost-button" type="button" :disabled="loading" @click="loadStores">重试</button>
-    </div>
     <div v-if="notice" class="success-box">{{ notice }}</div>
 
     <div class="metric-grid">
@@ -370,7 +429,7 @@ onMounted(() => {
         <div class="store-filters">
           <label class="store-search">
             <Search :size="15" />
-            <input v-model="searchQuery" aria-label="查询门店" placeholder="名称、编号、负责人或成本账" />
+            <input v-model="searchQuery" aria-label="查询门店" placeholder="名称、编号、负责人或联系方式" />
           </label>
           <label class="store-status-filter">
             状态筛选
@@ -394,7 +453,6 @@ onMounted(() => {
               <th>所属区域</th>
               <th>负责人</th>
               <th>联系方式</th>
-              <th>成本账归属</th>
               <th>状态</th>
               <th v-if="canManageStores">操作</th>
             </tr>
@@ -407,7 +465,6 @@ onMounted(() => {
               <td>{{ store.supplyWarehouseName || store.area || store.regionCode || '-' }}</td>
               <td>{{ store.manager || '-' }}</td>
               <td>{{ store.managerPhone || '-' }}</td>
-              <td>{{ store.costAccountStoreName || store.name }}</td>
               <td>
                 <span class="status-badge" :class="isActiveStore(store) ? 'ok' : 'warn'">
                   {{ store.status || '未设置' }}
@@ -421,11 +478,19 @@ onMounted(() => {
                   <button class="mini-button" type="button" :disabled="saving" @click="requestToggle(store)">
                     <Power :size="14" />{{ isActiveStore(store) ? '停用' : '启用' }}
                   </button>
+                  <button
+                    class="mini-button mini-button--danger"
+                    type="button"
+                    :disabled="saving"
+                    @click="requestDelete(store)"
+                  >
+                    <Trash2 :size="14" />删除
+                  </button>
                 </div>
               </td>
             </tr>
             <tr v-if="!filteredStores.length">
-              <td class="empty-table-row" :colspan="canManageStores ? 9 : 8">暂无符合条件的门店</td>
+              <td class="empty-table-row" :colspan="canManageStores ? 8 : 7">暂无符合条件的门店</td>
             </tr>
           </tbody>
         </table>
@@ -439,6 +504,7 @@ onMounted(() => {
           role="dialog"
           aria-modal="true"
           :aria-label="editorTitle"
+          novalidate
           @submit.prevent="saveEditor"
         >
           <header>
@@ -459,7 +525,6 @@ onMounted(() => {
           </header>
 
           <div class="store-form-scroll">
-            <div v-if="error" class="error-box">{{ error }}</div>
             <div class="store-form-grid">
               <label>
                 门店编号
@@ -489,16 +554,18 @@ onMounted(() => {
               </label>
               <label>
                 负责人
-                <select v-model="form.managerEmployeeId" required @change="managerChanged">
-                  <option value="" disabled>请选择负责人</option>
-                  <option
-                    v-for="manager in archiveOptions.managers"
-                    :key="manager.employeeId"
-                    :value="manager.employeeId"
-                  >
-                    {{ manager.name }}（{{ manager.storeName }}）
-                  </option>
-                </select>
+                <SearchableSingleSelect
+                  v-model="form.managerEmployeeId"
+                  :options="employeeSelectOptions"
+                  :disabled="saving"
+                  :fallback-label="editingStore?.manager || ''"
+                  placeholder="从在职员工档案中选择"
+                  search-placeholder="搜索姓名、岗位、门店或手机号"
+                  empty-message="没有可选的在职员工档案"
+                  aria-label="负责人"
+                  @update:model-value="managerChanged"
+                />
+                <small class="form-hint">数据来自“员工档案”，可搜索姓名、岗位和当前档案门店。</small>
               </label>
               <label>
                 联系方式
@@ -509,9 +576,6 @@ onMounted(() => {
                   autocomplete="tel"
                   placeholder="手机号或合法联系电话"
                 />
-                <small v-if="form.managerPhone && !contactIsValid" class="form-error">
-                  请输入手机号或合法联系电话
-                </small>
               </label>
               <label>
                 经营状态
@@ -527,17 +591,6 @@ onMounted(() => {
                 </select>
               </label>
               <label>
-                成本账归属
-                <SearchableSingleSelect
-                  v-model="form.costAccountStoreId"
-                  :options="searchableCostAccountOptions"
-                  :disabled="saving"
-                  placeholder="请选择成本账归属"
-                  search-placeholder="搜索门店名称、编号或状态"
-                  aria-label="成本账归属"
-                />
-              </label>
-              <label>
                 开业日期
                 <input v-model="form.openDate" type="date" />
               </label>
@@ -550,7 +603,7 @@ onMounted(() => {
 
           <footer>
             <button class="ghost-button" type="button" :disabled="saving" @click="closeEditor">取消</button>
-            <button class="primary-button" type="submit" :disabled="saving || !canSaveEditor">
+            <button class="primary-button" type="submit" :disabled="saving">
               {{ saving ? '保存中...' : editingStore ? '保存门店档案' : '新增门店' }}
             </button>
           </footer>
@@ -568,6 +621,19 @@ onMounted(() => {
       :busy="saving"
       @cancel="confirmTarget = null"
       @confirm="confirmStoreAction"
+    />
+    <ActionConfirmDialog
+      :open="Boolean(deleteTarget)"
+      :title="deleteTitle"
+      :message="deleteMessage"
+      :confirm-label="deleteTarget && isActiveStore(deleteTarget) ? '我知道了' : '确认删除'"
+      cancel-label="取消"
+      confirm-variant="danger"
+      :busy="saving"
+      :acknowledge-only="Boolean(deleteTarget && isActiveStore(deleteTarget))"
+      confirm-autofocus
+      @cancel="closeDeleteDialog"
+      @confirm="confirmSoftDelete"
     />
   </section>
 </template>
@@ -600,13 +666,6 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-.page-load-error {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
 }
 
 .store-filters {
@@ -671,6 +730,16 @@ onMounted(() => {
   gap: 5px;
 }
 
+.mini-button--danger {
+  border-color: rgba(220, 53, 69, .32);
+  color: var(--bad);
+}
+
+.mini-button--danger:hover:not(:disabled) {
+  border-color: var(--bad);
+  background: rgba(220, 53, 69, .06);
+}
+
 .store-editor-mask {
   position: fixed;
   z-index: var(--ds-z-modal, 1400);
@@ -700,14 +769,22 @@ onMounted(() => {
 }
 
 .store-editor footer {
+  display: grid;
+  grid-template-columns: minmax(88px, 112px) minmax(0, 1fr);
+  align-items: center;
   margin-top: auto;
-  justify-content: flex-end;
   border-top: 1px solid var(--line);
   border-bottom: 0;
 }
 
 .store-editor footer button {
+  width: 100%;
+  height: 44px;
+  min-height: 44px;
   min-width: 84px;
+  margin: 0;
+  align-items: center;
+  justify-content: center;
   white-space: nowrap;
 }
 
@@ -792,10 +869,11 @@ onMounted(() => {
   outline: 3px solid rgba(39, 107, 101, .16);
 }
 
-.form-error {
-  color: var(--bad);
+.form-hint {
+  color: var(--muted);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
+  line-height: 1.45;
 }
 
 @media (max-width: 720px) {
@@ -825,6 +903,11 @@ onMounted(() => {
 
   .store-form-grid .wide {
     grid-column: auto;
+  }
+
+  .store-editor footer {
+    grid-template-columns: 104px minmax(0, 1fr);
+    padding: 12px 16px;
   }
 }
 </style>
