@@ -179,6 +179,66 @@ test('boss action count is separated from role risk counts and every tab remains
   await expect(page.getByText('当前没有已处理复盘。')).toBeVisible()
 })
 
+test('risk summary follows the rendered reminders and unique real store names', async ({ page }) => {
+  bossDashboardOverride = () => ({
+    roleName: '老板',
+    dataSource: 'TEST',
+    updatedAt: '2026-07-29T12:00:00',
+    todayFocus: {
+      totalOpenCount: 9,
+      needsBossActionCount: 0,
+      roleWorkCount: 9,
+      highRiskCount: 99,
+      highRiskGroupCount: 99,
+      doneReviewCount: 0,
+    },
+    needsBossAction: [],
+    highRiskReminders: [{
+      groupKey: '利润表|财务|真实一店|2026-06',
+      sourceModule: '利润表',
+      ownerName: '财务',
+      storeName: '真实一店',
+      month: '2026-06',
+      count: 2,
+      highestRisk: '严重风险',
+      highestPriority: 96,
+      topStores: ['真实一店 2条'],
+    }, {
+      groupKey: '利润表|财务|真实一店|2026-04',
+      sourceModule: '利润表',
+      ownerName: '财务',
+      storeName: '真实一店',
+      month: '2026-04',
+      count: 3,
+      highestRisk: '严重风险',
+      highestPriority: 96,
+      topStores: ['真实一店 3条'],
+    }, {
+      groupKey: '督导巡店|督导|真实二店|2026-07',
+      sourceModule: '督导巡店',
+      ownerName: '督导',
+      storeName: '真实二店',
+      month: '2026-07',
+      count: 4,
+      highestRisk: '高风险',
+      highestPriority: 90,
+      topStores: ['真实二店 4条'],
+    }],
+    roleProgress: [],
+    doneReview: [],
+  })
+
+  await page.goto('/boss')
+
+  const riskMetric = page.getByRole('button', { name: /9 条风险提醒.*2 家风险门店/ })
+  await expect(riskMetric).toContainText('9')
+  await expect(riskMetric).toContainText('涉及 2 家风险门店')
+  await riskMetric.click()
+
+  await expect(page.getByRole('button', { name: /风险门店\s*2/ })).toHaveClass(/active/)
+  await expect(page.locator('.boss-risk-card')).toHaveCount(3)
+})
+
 test('every risk card opens its exact source record with the original context', async ({ page }) => {
   const openRisks = async () => {
     await page.goto('/boss')
