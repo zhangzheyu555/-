@@ -86,8 +86,6 @@ app:
     outbound-mode: ${QMAI_OUTBOUND_MODE:DISABLED}
     # QMAI-04 未完成专项验收，内部试用默认关闭；不得仅靠前端隐藏。
     recipe-enabled: ${QMAI_RECIPE_ENABLED:false}
-    # 仅由部署密钥系统注入的 Base64 AES 密钥；缺失时拒绝持久化凭证。
-    credential-encryption-key: ${QMAI_CREDENTIAL_ENCRYPTION_KEY:}
     # 已授权门店（shopCode:门店名:本系统storeId），逗号分隔
     shops: ${QMAI_SHOPS:}
     # 每天上海时间 05:00 只补取昨天的数据；月报由已落库的每日数据汇总。

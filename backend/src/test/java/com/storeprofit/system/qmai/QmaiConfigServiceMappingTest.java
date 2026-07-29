@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.storeprofit.system.common.BusinessException;
-import java.util.Base64;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -59,8 +58,10 @@ class QmaiConfigServiceMappingTest {
     jdbc.update("insert into store_branch values (2, 's3', '其他租户门店')");
 
     properties = new QmaiProperties();
-    properties.setCredentialEncryptionKey(
-        Base64.getEncoder().encodeToString(new byte[32]));
+    properties.setOpenId("environment-open-id");
+    properties.setGrantCode("environment-grant-code");
+    properties.setOpenKey("environment-open-key");
+    properties.setShops(java.util.List.of("285275:茹果一店:s1"));
     QmaiConfigRepository repository = new QmaiConfigRepository(jdbc);
     service = new QmaiConfigService(
         properties,
@@ -70,83 +71,28 @@ class QmaiConfigServiceMappingTest {
   }
 
   @Test
-  void canonicalConfigSaveReplacesNormalizedMappingMirror() {
-    service.save(1L, "ruguo", form(
-        "285275:茹果一店:s1,287952:茹果二店:s2"), 7L, "老板");
+  void alwaysUsesEnvironmentConfigurationAndNeverReadsDatabaseCredentials() {
+    jdbc.update("""
+        insert into qmai_platform_config (tenant_id, brand, open_id, grant_code, open_key)
+        values (1, 'ruguo', 'database-open-id', 'database-grant-code', 'database-open-key')
+        """);
 
-    assertThat(service.resolve(1L, "ruguo").shops())
-        .containsExactly("285275:茹果一店:s1", "287952:茹果二店:s2");
-    assertThat(jdbc.queryForList("""
-        select qmai_shop_id, qmai_shop_name, store_id
-        from qmai_store_mapping
-        where tenant_id = 1 and brand_code = 'ruguo'
-        order by qmai_shop_id
-        """))
-        .extracting(row -> row.get("QMAI_SHOP_ID") + ":" + row.get("STORE_ID"))
-        .containsExactly("285275:s1", "287952:s2");
+    QmaiConfigService.EffectiveConfig config = service.resolve(1L, "ruguo");
 
-    service.save(1L, "ruguo", new QmaiConfigService.QmaiConfigForm(
-        null, null, null, null, null, "287952:更新后的二店:s2",
-        null, null, null), 8L, "督导");
-
-    assertThat(service.resolve(1L, "ruguo").shops())
-        .containsExactly("287952:更新后的二店:s2");
-    assertThat(jdbc.queryForList("""
-        select qmai_shop_id, qmai_shop_name, store_id
-        from qmai_store_mapping
-        where tenant_id = 1 and brand_code = 'ruguo'
-        """))
-        .singleElement()
-        .satisfies(row -> {
-          assertThat(row.get("QMAI_SHOP_ID")).isEqualTo("287952");
-          assertThat(row.get("QMAI_SHOP_NAME")).isEqualTo("更新后的二店");
-          assertThat(row.get("STORE_ID")).isEqualTo("s2");
-        });
-    assertThat(service.resolve(1L, "ruguo").openId()).isEqualTo("open-id");
+    assertThat(config.openId()).isEqualTo("environment-open-id");
+    assertThat(config.grantCode()).isEqualTo("environment-grant-code");
+    assertThat(config.openKey()).isEqualTo("environment-open-key");
+    assertThat(config.source()).isEqualTo("ENV");
   }
 
   @Test
-  void invalidOrCrossTenantMappingIsRejectedBeforeCanonicalConfigChanges() {
-    service.save(1L, "ruguo", form("285275:茹果一店:s1"), 7L, "老板");
-
-    for (String invalid : java.util.List.of(
-        "285275:缺系统门店",
-        "285275:一店:s1,287952:二店:s1",
-        "285275:跨租户:s3")) {
-      assertThatThrownBy(() ->
-          service.save(1L, "ruguo", form(invalid), 7L, "老板"))
-          .isInstanceOfSatisfying(BusinessException.class,
-              ex -> assertThat(ex.getCode()).isEqualTo("QMAI_SHOP_MAPPING_INVALID"));
-    }
-
-    assertThat(service.resolve(1L, "ruguo").shops())
-        .containsExactly("285275:茹果一店:s1");
-    assertThat(jdbc.queryForObject("""
-        select count(*) from qmai_store_mapping
-        where tenant_id = 1 and brand_code = 'ruguo'
-        """, Integer.class)).isEqualTo(1);
-  }
-
-  @Test
-  void explicitEmptyDatabaseShopListNeverFallsBackToEnvironmentMappings() {
-    properties.setShops(java.util.List.of("999999:旧环境门店:s1"));
-    service.save(1L, "ruguo", form("285275:茹果一店:s1"), 7L, "老板");
-
-    service.save(1L, "ruguo", new QmaiConfigService.QmaiConfigForm(
-        null, null, null, null, null, "",
-        null, null, null), 7L, "老板");
-
-    assertThat(service.resolve(1L, "ruguo").shops()).isEmpty();
-    assertThat(jdbc.queryForObject("""
-        select count(*) from qmai_store_mapping
-        where tenant_id = 1 and brand_code = 'ruguo'
-        """, Integer.class)).isZero();
-  }
-
-  private QmaiConfigService.QmaiConfigForm form(String shops) {
-    return new QmaiConfigService.QmaiConfigForm(
-        "open-id", "grant-code", "open-key",
-        "https://openapi.qmai.cn", "1.0", shops,
-        "", "", "");
+  void rejectsWebSaveWithoutChangingHistoricalDatabaseRecords() {
+    assertThatThrownBy(() -> service.save(1L, "ruguo", new QmaiConfigService.QmaiConfigForm(
+        "new-open-id", "new-grant-code", "new-open-key", null, null, null,
+        null, null, null), 7L, "老板"))
+        .isInstanceOfSatisfying(BusinessException.class,
+            ex -> assertThat(ex.getCode()).isEqualTo("QMAI_ENVIRONMENT_MANAGED"));
+    assertThat(jdbc.queryForObject("select count(*) from qmai_platform_config", Integer.class))
+        .isEqualTo(0);
   }
 }

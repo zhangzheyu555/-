@@ -60,6 +60,12 @@ services:
       SPRING_DATA_REDIS_HOST: redis
       SPRING_DATA_REDIS_PORT: 6379
       SPRING_DATA_REDIS_PASSWORD: ${DEV_REDIS_PASSWORD:-ai_profit_dev_redis}
+      QMAI_OPEN_ID: ${QMAI_OPEN_ID:-}
+      QMAI_GRANT_CODE: ${QMAI_GRANT_CODE:-}
+      QMAI_OPEN_KEY: ${QMAI_OPEN_KEY:-}
+      QMAI_SHOPS: ${QMAI_SHOPS:-}
+      QMAI_BASE_URL: ${QMAI_BASE_URL:-https://openapi.qmai.cn}
+      QMAI_VERSION: ${QMAI_VERSION:-1.0}
       INSPECTION_DETECT_URL: http://inspection-service:8000/detect
       INSPECTION_EXPORT_URL: http://inspection-service:8000/export
       INSPECTION_INTERNAL_SERVICE_ENABLED: "true"

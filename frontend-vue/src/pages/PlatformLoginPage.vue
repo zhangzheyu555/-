@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ExternalLink, X } from 'lucide-vue-next'
 import PageHeader from '../components/common/PageHeader.vue'
 import SearchableSingleSelect from '../components/common/SearchableSingleSelect.vue'
-import { apiGet, apiPost, apiPut, http } from '../api/http'
+import { apiGet, apiPost, http } from '../api/http'
 import { downloadBlob } from '../api/reports'
 import { useAuthStore } from '../stores/auth'
 import { useForegroundReload } from '../composables/useForegroundReload'
@@ -54,21 +54,7 @@ const otherPlatforms = [
 ]
 
 const modalOpen = ref(false)
-const saving = ref(false)
 const error = ref('')
-const success = ref('')
-
-const form = reactive({
-  openId: '',
-  grantCode: '',
-  openKey: '',
-  baseUrl: '',
-  version: '',
-  shops: '',
-  consoleAccount: '',
-  consolePassword: '',
-  consoleToken: '',
-})
 let qmaiLoadSerial = 0
 let turnoverLoadSerial = 0
 
@@ -110,40 +96,11 @@ function openModal() {
     return
   }
   error.value = ''
-  success.value = ''
-  form.openId = ''
-  form.grantCode = ''
-  form.openKey = ''
-  form.baseUrl = qmai.value?.baseUrl || 'https://openapi.qmai.cn'
-  form.version = qmai.value?.version || '1.0'
-  form.shops = qmai.value?.shops || ''
-  form.consoleAccount = ''
-  form.consolePassword = ''
-  form.consoleToken = ''
   modalOpen.value = true
 }
 
 function closeModal() {
   modalOpen.value = false
-}
-
-async function submit() {
-  saving.value = true
-  error.value = ''
-  success.value = ''
-  try {
-    qmai.value = await apiPut<QmaiConfigView>(`/api/qmai/config?brand=${brand.value}`, { ...form })
-    success.value = '企迈凭证已保存。'
-    markFresh()
-    setTimeout(() => {
-      closeModal()
-      if (!isConsoleBrand.value) void loadTurnover()
-    }, 900)
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '保存失败，请稍后重试。'
-  } finally {
-    saving.value = false
-  }
 }
 
 /* ---------------- 企迈营业额展示 ---------------- */
@@ -929,7 +886,6 @@ async function loadLocalPlatformState() {
 
 const { markFresh } = useForegroundReload(loadLocalPlatformState, {
   canReload: () => !modalOpen.value
-    && !saving.value
     && !anyLoading.value
     && !recipeUsageLoading.value,
 })
@@ -963,7 +919,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="platform-grid">
-      <!-- 企迈：可点击配置 -->
+      <!-- 企迈：可查看服务器环境变量配置状态 -->
       <article
         class="content-card platform-card qmai-card"
         :class="{ clickable: canManage }"
@@ -975,7 +931,7 @@ onBeforeUnmount(() => {
         <ExternalLink :size="22" />
         <h3>企迈 · {{ brandLabel }}</h3>
         <span class="status-badge" :class="qmaiStatus === '正常' ? 'ok' : 'warn'">{{ qmaiStatus }}</span>
-        <p v-if="canManage" class="card-hint">点击配置账号</p>
+        <p v-if="canManage" class="card-hint">由服务器环境变量管理</p>
         <p v-else class="card-hint muted">无配置权限</p>
       </article>
 
@@ -1375,33 +1331,9 @@ onBeforeUnmount(() => {
         </header>
 
         <div class="modal-body">
-          <label>
-            openId（应用标识）
-            <input v-model="form.openId" type="text" :placeholder="qmai?.openIdMasked || '请输入 openId'" />
-          </label>
-          <label>
-            grantCode（门店授权码，选填）
-            <input v-model="form.grantCode" type="text"
-              :placeholder="qmai?.grantCodeMasked || '暂时没有可留空，拿到后再补'" />
-            <small class="field-hint">只有 id 和 secret 时可先留空；门店在企迈后台授权后会得到此码，拉营业额需要它。</small>
-          </label>
-          <label>
-            openKey（签名密钥）
-            <input v-model="form.openKey" type="password" autocomplete="new-password"
-              :placeholder="qmai?.openKeySet ? '已配置，留空则不修改' : '请输入 openKey'" />
-          </label>
-          <label>
-            网关地址
-            <input v-model="form.baseUrl" type="text" placeholder="https://openapi.qmai.cn" />
-          </label>
-          <label>
-            接口版本
-            <input v-model="form.version" type="text" placeholder="1.0" />
-          </label>
-          <label>
-            授权门店（门店编码:门店名:本系统storeId，逗号分隔多店）
-            <input v-model="form.shops" type="text" placeholder="S001:示范门店:1" />
-          </label>
+          <p class="msg muted">
+            企迈对接信息仅由服务器环境变量管理，不能在页面保存。请由系统管理员修改服务器 `.env` 后重启后端。
+          </p>
 
           <p
             v-if="qmai && !qmai.configured && qmai.statusText"
@@ -1411,15 +1343,10 @@ onBeforeUnmount(() => {
             当前状态：{{ qmai.statusText }}
           </p>
           <p v-if="error" class="msg error">{{ error }}</p>
-          <p v-if="success" class="msg success">{{ success }}</p>
-          <p v-if="qmai?.updatedAt" class="msg muted">上次更新：{{ qmai.updatedBy || '—' }} · {{ qmai.updatedAt }}</p>
         </div>
 
         <footer class="modal-foot">
-          <button class="btn ghost" @click="closeModal">取消</button>
-          <button class="btn primary" :disabled="saving" @click="submit">
-            {{ saving ? '保存中…' : '保存' }}
-          </button>
+          <button class="btn primary" @click="closeModal">知道了</button>
         </footer>
       </div>
     </div>
