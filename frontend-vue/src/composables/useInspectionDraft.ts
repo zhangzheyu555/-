@@ -240,7 +240,13 @@ export function useInspectionDraft(options: {
       ...(item.beforePhotoAttachmentIds || []),
       ...(item.afterPhotoAttachmentIds || []),
     ]))
-    const unlinkedCount = draft.photos.filter((photo) => !photo.attachmentId || !associatedIds.has(photo.attachmentId)).length
+    const missingAttachmentCount = draft.photos.filter((photo) => !photo.attachmentId).length
+    if (missingAttachmentCount > 0) return `还有 ${missingAttachmentCount} 张照片未完成附件上传`
+    const unlinkedCount = draft.photos.filter((photo) => (
+      photo.reviewStatus !== 'dismissed'
+      && photo.attachmentId
+      && !associatedIds.has(photo.attachmentId)
+    )).length
     return unlinkedCount > 0 ? `还有 ${unlinkedCount} 张照片未关联具体检查条款` : ''
   })
   const draftRows = computed(() => [

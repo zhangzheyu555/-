@@ -1,6 +1,7 @@
 package com.storeprofit.system.inspection;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.storeprofit.system.common.BusinessException;
@@ -66,6 +67,52 @@ class InspectionEvidencePhotoPolicyTest {
           assertThat(ex.getCode()).isEqualTo("INSPECTION_EVIDENCE_UNLINKED");
           assertThat(ex.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
         });
+  }
+
+  @Test
+  void allowsAValidUploadedPhotoWithoutClauseLinkAfterSupervisorDismissesTheModelIssue() {
+    String photosJson = """
+        [{
+          "attachmentId": 21,
+          "reviewStatus": "dismissed",
+          "detection": {
+            "decisionStatus": "REVOKED",
+            "review_status": "REVOKED",
+            "detectionKey": "DET-FALSE-POSITIVE-21"
+          }
+        }]
+        """;
+
+    assertThatCode(() -> InspectionEvidencePhotoPolicy.requireAllPhotosLinked(
+        photosJson, List.of(snapshot(List.of()))))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  void stillRejectsUnlinkedProblemPhotosAndIncompleteDismissalStates() {
+    String confirmedProblem = """
+        [{
+          "attachmentId": 22,
+          "reviewStatus": "accepted",
+          "detection": {"decisionStatus": "CONFIRMED"}
+        }]
+        """;
+    String incompleteDismissal = """
+        [{
+          "attachmentId": 23,
+          "reviewStatus": "dismissed",
+          "detection": {"decisionStatus": "PENDING"}
+        }]
+        """;
+
+    assertThatThrownBy(() -> InspectionEvidencePhotoPolicy.requireAllPhotosLinked(
+        confirmedProblem, List.of(snapshot(List.of()))))
+        .isInstanceOfSatisfying(BusinessException.class, ex ->
+          assertThat(ex.getCode()).isEqualTo("INSPECTION_EVIDENCE_UNLINKED"));
+    assertThatThrownBy(() -> InspectionEvidencePhotoPolicy.requireAllPhotosLinked(
+        incompleteDismissal, List.of(snapshot(List.of()))))
+        .isInstanceOfSatisfying(BusinessException.class, ex ->
+          assertThat(ex.getCode()).isEqualTo("INSPECTION_EVIDENCE_UNLINKED"));
   }
 
   private InspectionStandardSnapshot snapshot(List<Long> attachmentIds) {
