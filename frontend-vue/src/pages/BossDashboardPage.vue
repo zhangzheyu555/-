@@ -71,16 +71,19 @@ const workflowTodosInScope = computed(() => workflowTodos.value.filter((item) =>
 const pendingReviewTodos = computed(() => workflowTodosInScope.value.filter((item) => item.status === 'PENDING_REVIEW'))
 const riskReminderCount = computed(() => {
   const visibleReminderCount = boss.highRiskReminders.reduce(
-    (sum, item) => sum + Math.max(0, Number(item.count || 0)),
+    (sum, item) => sum + Math.max(1, Number(item.count || 0)),
     0,
   )
-  return Math.max(visibleReminderCount, Math.max(0, Number(boss.focus.highRiskCount || 0)))
+  return boss.highRiskReminders.length
+    ? visibleReminderCount
+    : Math.max(0, Number(boss.focus.highRiskCount || 0))
 })
 const riskStoreNames = computed(() => {
   const names = new Set<string>()
   for (const reminder of boss.highRiskReminders) {
-    addRiskStoreName(names, reminder.storeName)
-    reminder.topStores.forEach((name) => addRiskStoreName(names, name))
+    if (!addRiskStoreName(names, reminder.storeName)) {
+      reminder.topStores.forEach((name) => addRiskStoreName(names, name))
+    }
   }
   return Array.from(names)
 })
@@ -110,9 +113,13 @@ const supportTabs = computed(() => [
 ])
 
 function addRiskStoreName(names: Set<string>, rawName?: string) {
-  const name = String(rawName || '').trim()
-  if (!name || ['全部门店', '所有门店', '相关门店'].includes(name)) return
+  const name = String(rawName || '')
+    .trim()
+    .replace(/\s+\d+\s*条(?:风险提醒)?$/, '')
+    .trim()
+  if (!name || ['全部门店', '所有门店', '相关门店'].includes(name)) return false
   names.add(name)
+  return true
 }
 
 function isAuthError(err: unknown) {
