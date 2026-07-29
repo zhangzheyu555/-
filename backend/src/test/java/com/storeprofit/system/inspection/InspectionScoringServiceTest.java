@@ -318,6 +318,35 @@ class InspectionScoringServiceTest {
   }
 
   @Test
+  void supervisorDismissedFalsePositivePersistsAsAuditOnlyAndKeepsTheFullScore() {
+    String dismissedPhotos = """
+        [{
+          "attachmentId": 1009,
+          "fileName": "人工确认无问题.jpg",
+          "reviewStatus": "dismissed",
+          "detection": {
+            "image_id": "false-positive-photo",
+            "detections": [{"class_name":"floor_litter","confidence":0.93,"bbox":[0,0,10,10]}]
+          }
+        }]
+        """;
+
+    InspectionRecordResponse response = service.save(
+        user(), "insp-dismissed-full-score", request(fullScoreResults(), dismissedPhotos));
+
+    assertThat(response.score()).isEqualByComparingTo("200.00");
+    assertThat(response.resultCode()).isEqualTo("PASSED");
+    assertThat(saved.get().photosJson())
+        .contains("\"reviewStatus\":\"dismissed\"")
+        .contains("\"decisionStatus\":\"REVOKED\"");
+    assertThat(savedSnapshots.get()).allSatisfy(snapshot ->
+        assertThat(snapshot.photoAttachmentIds()).doesNotContain(1009L));
+    verify(recordRepository, never()).logAction(
+        anyLong(), anyLong(), anyString(), eq("inspection_detection_confirm"),
+        anyString(), anyString(), anyString(), anyString());
+  }
+
+  @Test
   void convertsLegacyDetectionOnceAndPersistsFourPointDeductionOnTwoPointClause() throws Exception {
     java.util.Map<String, Object> rawEvidence = new java.util.LinkedHashMap<>();
     rawEvidence.put("image_id", "img-1");

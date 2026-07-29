@@ -214,6 +214,56 @@ test('model suggestion shows a returned annotation and only the 200-point deduct
   })
 })
 
+test('a supervisor-dismissed false-positive photo can be saved unlinked with the full 200 score', async ({ page }) => {
+  let savedPayload: Record<string, unknown> | undefined
+
+  await page.route('**/api/**', async (route) => {
+    const request = route.request()
+    const pathname = new URL(request.url()).pathname
+    if (!pathname.startsWith('/api/')) return route.continue()
+    if (pathname === '/api/auth/me') return json(route, bossUser)
+    if (pathname === '/api/inspection/standards') return json(route, standard)
+    if (pathname === '/api/inspections/service-health') return json(route, { status: 'UP', configured: true, message: '识别服务正常' })
+    if (pathname === '/api/brands') return json(route, [{ id: 1, name: '茹菓' }])
+    if (pathname === '/api/stores') return json(route, [{ id: 'STORE-1', code: 'STORE-1', name: '测试门店', brandId: 1, brandName: '茹菓' }])
+    if (pathname === '/api/inspections' && request.method() === 'GET') return json(route, [])
+    if (pathname === '/api/storage/upload') return json(route, { id: 502, fileName: '模型误报现场.jpg', contentType: 'image/jpeg', fileSize: 32, url: '/api/storage/502/content' })
+    if (pathname === '/api/inspections/detect') return json(route, detectedSuggestion)
+    if (pathname === '/api/inspections' && request.method() === 'POST') {
+      savedPayload = request.postDataJSON() as Record<string, unknown>
+      return json(route, { id: 'INS-FULL-SCORE-200', ...savedPayload })
+    }
+    if (pathname.startsWith('/api/supervisor/todos')) return json(route, { items: [] })
+    return json(route, [])
+  })
+
+  await seedSession(page)
+  await page.goto('/operations/inspection/tasks')
+  await page.locator('.inspection-upload-box input[type="file"]').setInputFiles({
+    name: '模型误报现场.jpg',
+    mimeType: 'image/jpeg',
+    buffer: Buffer.from('inspection-dismissed-false-positive-image'),
+  })
+
+  await page.getByRole('button', { name: '人工确认无问题' }).click()
+  await expect(page.getByText('督导已确认无问题')).toBeVisible()
+  await expect(page.locator('.inspection-score-summary .total-score-card')).toContainText('200 / 200 分')
+  await expect(page.locator('.inspection-score-summary .deduction-score-card')).toContainText('扣 0 分')
+
+  await page.getByLabel('督导人').fill('测试督导')
+  await page.getByRole('button', { name: '保存巡检' }).first().click()
+
+  await expect.poll(() => savedPayload).toBeTruthy()
+  await expect(page.getByRole('alertdialog', { name: '无法保存巡检' })).toHaveCount(0)
+  expect(savedPayload?.score).toBe(200)
+  const photos = JSON.parse(String(savedPayload?.photosJson)) as Array<Record<string, unknown>>
+  expect(photos).toHaveLength(1)
+  expect(photos[0]?.attachmentId).toBe(502)
+  expect(photos[0]?.reviewStatus).toBe('dismissed')
+  expect((savedPayload?.itemResults as Array<Record<string, unknown>>)
+    .every((item) => !(item.photoAttachmentIds as unknown[]).includes(502))).toBe(true)
+})
+
 test('an unmatched model suggestion stays clickable and explains why it cannot be confirmed', async ({ page }) => {
   let confirmationRequested = false
   const unmatchedSuggestion = {

@@ -809,7 +809,10 @@ function recordClausePhotos(record: InspectionRecord, item: InspectionItemResult
 
 function recordUnlinkedPhotos(record: InspectionRecord) {
   const associatedIds = new Set(recordItemResults(record).flatMap((item) => numberArray(item.photoAttachmentIds)))
-  return recordPhotos(record).filter((photo) => !photo.attachmentId || !associatedIds.has(photo.attachmentId))
+  return recordPhotos(record).filter((photo) => (
+    photo.reviewStatus !== 'dismissed'
+    && (!photo.attachmentId || !associatedIds.has(photo.attachmentId))
+  ))
 }
 
 function recordPhotoIsExplicitlyLinked(record: InspectionRecord, photo: DraftPhoto) {

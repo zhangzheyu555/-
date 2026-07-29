@@ -215,13 +215,17 @@ public class AuthService {
 
   @Transactional
   public LoginResponse login(LoginRequest request, String sourceIp) {
-    return loginInternal(request);
+    return loginInternal(request, sourceIp);
   }
 
   private LoginResponse loginInternal(LoginRequest request) {
+    return loginInternal(request, "");
+  }
+
+  private LoginResponse loginInternal(LoginRequest request, String sourceIp) {
     long tenantId = request.tenantId() == null ? TenantDefaults.DEFAULT_TENANT_ID : request.tenantId();
     String username = request.username().trim();
-    loginAttemptGuard.acquire(tenantId, username);
+    loginAttemptGuard.acquirePassword(tenantId, username, sourceIp);
     AuthUser user = authRepository.findByUsername(tenantId, username).orElse(null);
     boolean passwordAccepted = user != null
         && user.enabled()
@@ -230,7 +234,7 @@ public class AuthService {
     if (!passwordAccepted) {
       throw new BusinessException("LOGIN_FAILED", "账号或密码错误", HttpStatus.UNAUTHORIZED);
     }
-    loginAttemptGuard.clear(tenantId, username);
+    loginAttemptGuard.clearAccount(tenantId, username);
     if (authRepository.passwordChangeRequired(user.tenantId(), user.id())) {
       authRepository.deleteTokensForUser(user.tenantId(), user.id());
       return LoginResponse.passwordChangeRequired(issuePasswordChangeGrant(user));
@@ -240,9 +244,15 @@ public class AuthService {
 
   @Transactional
   public LoginResponse weChatLogin(String code, Long tenantId) {
+    return weChatLogin(code, tenantId, "");
+  }
+
+  @Transactional
+  public LoginResponse weChatLogin(String code, Long tenantId, String sourceIp) {
     requireWeChatSupport();
     // 当前为单租户部署；未传租户时保持与账号密码登录相同的默认租户规则。
     long effectiveTenantId = tenantId == null ? TenantDefaults.DEFAULT_TENANT_ID : tenantId;
+    loginAttemptGuard.acquireWeChat(effectiveTenantId, sourceIp);
     WeChatMiniProgramService.Identity identity = weChatMiniProgramService.exchangeCode(code);
     long userId = weChatMiniProgramRepository.boundUserId(
         effectiveTenantId, weChatMiniProgramService.appId(), identity.openid()

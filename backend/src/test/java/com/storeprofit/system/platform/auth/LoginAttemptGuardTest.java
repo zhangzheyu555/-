@@ -3,6 +3,7 @@ package com.storeprofit.system.platform.auth;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.storeprofit.system.common.LoginProtectionUnavailableException;
 import com.storeprofit.system.common.RateLimitException;
 import java.time.Clock;
 import java.time.Duration;
@@ -11,6 +12,7 @@ import java.time.ZoneId;
 import java.util.Arrays;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 class LoginAttemptGuardTest {
   @Test
@@ -71,6 +73,32 @@ class LoginAttemptGuardTest {
 
     assertThatCode(() -> guard.acquire(1L, "boss"))
         .doesNotThrowAnyException();
+  }
+
+  @Test
+  void redisRequiredRejectsLoginWhenRedisIsUnavailable() {
+    StringRedisTemplate redis = new StringRedisTemplate();
+    LoginProtectionProperties properties = new LoginProtectionProperties();
+    properties.setStoreMode(LoginProtectionProperties.StoreMode.REDIS_REQUIRED);
+    LoginAttemptGuard guard = new LoginAttemptGuard(properties, redis, Clock.systemUTC());
+
+    assertThatThrownBy(() -> guard.acquirePassword(1L, "boss", "127.0.0.1"))
+        .isInstanceOf(LoginProtectionUnavailableException.class);
+  }
+
+  @Test
+  void localOnlyRejectsNewAccountWhenTrackingCapacityIsFull() {
+    LoginProtectionProperties properties = new LoginProtectionProperties();
+    properties.setStoreMode(LoginProtectionProperties.StoreMode.LOCAL_ONLY);
+    properties.setMaxTrackedAccounts(100);
+    LoginAttemptGuard guard = new LoginAttemptGuard(properties, null, Clock.systemUTC());
+
+    for (int index = 0; index < 100; index++) {
+      guard.acquirePassword(1L, "user-" + index, "127.0.0." + index);
+    }
+
+    assertThatThrownBy(() -> guard.acquirePassword(1L, "one-more-user", "127.0.0.1"))
+        .isInstanceOf(LoginProtectionUnavailableException.class);
   }
 
   private LoginAttemptGuard guard(Clock clock) {

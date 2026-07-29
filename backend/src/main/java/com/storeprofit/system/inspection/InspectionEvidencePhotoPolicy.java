@@ -62,14 +62,40 @@ final class InspectionEvidencePhotoPolicy {
     }
     for (Map<String, Object> photo : photos) {
       Long attachmentId = InspectionPhotoJsonCodec.attachmentId(photo);
-      if (attachmentId == null || attachmentId <= 0 || !linkedAttachmentIds.contains(attachmentId)) {
+      boolean validAttachment = attachmentId != null && attachmentId > 0;
+      boolean linkedToSnapshot = validAttachment && linkedAttachmentIds.contains(attachmentId);
+      if (!validAttachment || (!linkedToSnapshot && !isSupervisorDismissed(photo))) {
         throw new BusinessException(
             "INSPECTION_EVIDENCE_UNLINKED",
-            "每张巡检图片都必须绑定有效附件并至少关联一条人工确认的巡检条款",
+            "巡检图片必须绑定有效附件；确认有问题的图片还必须关联具体检查条款",
             HttpStatus.BAD_REQUEST
         );
       }
     }
+  }
+
+  private static boolean isSupervisorDismissed(Map<String, Object> photo) {
+    String reviewStatus = textValue(photo, "reviewStatus", "review_status");
+    if (!"DISMISSED".equalsIgnoreCase(reviewStatus)) {
+      return false;
+    }
+    Object rawDetection = photo.get("detection");
+    if (!(rawDetection instanceof Map<?, ?> detection)) {
+      return false;
+    }
+    String decisionStatus = textValue(detection, "decisionStatus", "decision_status", "review_status");
+    return "REVOKED".equalsIgnoreCase(decisionStatus)
+        || "DISMISSED".equalsIgnoreCase(decisionStatus);
+  }
+
+  private static String textValue(Map<?, ?> source, String... keys) {
+    for (String key : keys) {
+      Object value = source.get(key);
+      if (value != null && !String.valueOf(value).isBlank()) {
+        return String.valueOf(value).trim();
+      }
+    }
+    return null;
   }
 
   private static boolean containsAttachmentId(List<Map<String, Object>> photos, long attachmentId) {
