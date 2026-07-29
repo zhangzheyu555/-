@@ -3,7 +3,6 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { AlertTriangle, CheckCircle2, ClipboardList, ImagePlus, XCircle } from 'lucide-vue-next'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import PageHeader from '../components/common/PageHeader.vue'
-import SearchableSingleSelect from '../components/common/SearchableSingleSelect.vue'
 import ActionConfirmDialog from '../components/ui/ActionConfirmDialog.vue'
 import InspectionHistoricalEvidenceDialog from '../components/inspection/InspectionHistoricalEvidenceDialog.vue'
 import InspectionHistoricalEvidencePanel from '../components/inspection/InspectionHistoricalEvidencePanel.vue'
@@ -215,12 +214,13 @@ const {
     clearDraftReviewTimers()
   },
 })
-const createStoreSearchOptions = computed(() => createStoreOptions.value.map((store) => ({
-  value: store.id,
-  label: `${store.brandName ? `${store.brandName} · ` : ''}${store.name || store.id}`,
-  description: [store.code, store.area || store.regionCode, store.status].filter(Boolean).join(' · '),
-  searchText: [store.name, store.code, store.area, store.regionCode, store.status, store.brandName].filter(Boolean).join(' '),
-})))
+
+function storeOptionLabel(store: StoreInfo) {
+  return [store.brandName, store.name || store.id, store.code, store.area || store.regionCode, store.status]
+    .filter(Boolean)
+    .join(' · ')
+}
+
 const deductionFormBaselineSignature = ref('')
 
 function deductionFormMutationSignature() {
@@ -2182,19 +2182,36 @@ onUnmounted(() => {
           </label>
           <label>
             <span>门店</span>
-            <SearchableSingleSelect
+            <el-select
               v-model="draft.storeId"
-              :options="createStoreSearchOptions"
-              :disabled="!createStoreSearchOptions.length"
+              class="inspection-element-field"
+              filterable
+              :disabled="!createStoreOptions.length"
               placeholder="请选择巡检门店"
-              search-placeholder="搜索门店名称、编号或区域"
+              no-data-text="该品牌暂无门店"
+              no-match-text="没有匹配的门店"
               aria-label="巡检门店"
-              empty-message="该品牌暂无门店"
-            />
+            >
+              <el-option
+                v-for="store in createStoreOptions"
+                :key="store.id"
+                :label="storeOptionLabel(store)"
+                :value="store.id"
+              />
+            </el-select>
           </label>
           <label>
             <span>巡检日期</span>
-            <input v-model="draft.inspectionDate" type="date" />
+            <el-date-picker
+              v-model="draft.inspectionDate"
+              class="inspection-element-field"
+              type="date"
+              format="YYYY年MM月DD日"
+              value-format="YYYY-MM-DD"
+              :clearable="false"
+              placeholder="选择巡检日期"
+              aria-label="巡检日期"
+            />
           </label>
           <label>
             <span>督导人</span>
@@ -2746,8 +2763,23 @@ onUnmounted(() => {
   font-weight: 800;
 }
 
-.inspection-create-form :deep(.searchable-single-select) {
+.inspection-element-field {
   width: 100%;
+}
+
+.inspection-create-form :deep(.el-date-editor.el-input),
+.inspection-create-form :deep(.el-date-editor.el-input__wrapper) {
+  width: 100%;
+}
+
+.inspection-create-form :deep(input.el-select__input),
+.inspection-create-form :deep(.el-date-editor input.el-input__inner) {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .inspection-standard-note,
