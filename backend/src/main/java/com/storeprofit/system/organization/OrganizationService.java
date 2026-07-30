@@ -276,6 +276,23 @@ public class OrganizationService {
       throw new BusinessException(
           "STORE_NAME_DUPLICATE", "门店名称已存在，请更换后再保存", HttpStatus.CONFLICT);
     }
+    organizationRepository.managedStoreByEmployee(
+        user.tenantId(), manager.employeeId(), request.id()
+    ).ifPresent(managedStore -> {
+      throw new BusinessException(
+          "STORE_MANAGER_ALREADY_ASSIGNED",
+          "该员工已是门店“" + managedStore.storeName() + "”的负责人，请先为原门店更换负责人",
+          HttpStatus.CONFLICT
+      );
+    });
+    if (organizationRepository.employeeNameBelongsToAnotherEmployee(
+        user.tenantId(), request.id(), manager.name(), manager.employeeId())) {
+      throw new BusinessException(
+          "STORE_MANAGER_ARCHIVE_CONFLICT",
+          "目标门店已有同名员工档案，请先在员工档案中核对后再选择负责人",
+          HttpStatus.CONFLICT
+      );
+    }
     if (request.supplyWarehouseId() != null) {
       throw new BusinessException(
           "SUPPLY_WAREHOUSE_READ_ONLY", "供货仓由门店区域自动确定，不能手工指定", HttpStatus.BAD_REQUEST);
@@ -295,6 +312,7 @@ public class OrganizationService {
         supplyWarehouse == null ? request.area() : supplyWarehouse.name(),
         manager.name(), request.managerPhone(), request.openDate(), request.status(), request.note(),
         regionCode, null, manager.employeeId(), request.costAccountStoreId(), request.version());
+    StoreResponse saved;
     try {
       if (creating) {
         organizationRepository.insertStore(
@@ -315,6 +333,22 @@ public class OrganizationService {
               "STORE_VERSION_CONFLICT", "门店档案已被其他人修改，请刷新后重试", HttpStatus.CONFLICT);
         }
       }
+      saved = organizationRepository.store(user.tenantId(), request.id())
+          .orElseThrow(() -> new BusinessException(
+              "STORE_SAVE_FAILED", "门店档案保存失败，请稍后重试", HttpStatus.INTERNAL_SERVER_ERROR));
+      if (organizationRepository.assignEmployeeAsStoreManager(
+          user.tenantId(),
+          manager.employeeId(),
+          saved.id(),
+          saved.name(),
+          saved.brandName()
+      ) != 1) {
+        throw new BusinessException(
+            "STORE_MANAGER_CHANGED",
+            "所选负责人状态已变化，请刷新员工档案后重新选择",
+            HttpStatus.CONFLICT
+        );
+      }
     } catch (DataIntegrityViolationException exception) {
       if (organizationRepository.storeCodeBelongsToAnotherStore(
           user.tenantId(), request.code(), request.id())) {
@@ -325,11 +359,12 @@ public class OrganizationService {
         throw new BusinessException(
             "STORE_NAME_DUPLICATE", "门店名称已存在，请更换后再保存", HttpStatus.CONFLICT);
       }
-      throw exception;
+      throw new BusinessException(
+          "STORE_MANAGER_ARCHIVE_CONFLICT",
+          "负责人档案与目标门店现有员工发生冲突，请先在员工档案中核对",
+          HttpStatus.CONFLICT
+      );
     }
-    StoreResponse saved = organizationRepository.store(user.tenantId(), request.id())
-        .orElseThrow(() -> new BusinessException(
-            "STORE_SAVE_FAILED", "门店档案保存失败，请稍后重试", HttpStatus.INTERNAL_SERVER_ERROR));
     String action = creating
         ? "新增门店档案"
         : statusAction(existing, saved);
@@ -337,7 +372,7 @@ public class OrganizationService {
         user,
         action,
         request.id(),
-        "门店档案已保存，状态：" + saved.status(),
+        "门店档案已保存，负责人“" + manager.name() + "”的员工档案已同步为本店店长，状态：" + saved.status(),
         existing,
         saved
     );

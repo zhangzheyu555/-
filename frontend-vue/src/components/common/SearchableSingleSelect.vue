@@ -53,6 +53,8 @@ const keyword = ref('')
 const activeIndex = ref(-1)
 const committedValue = ref<SearchableSelectValue | null>(props.modelValue ?? null)
 const listboxId = `searchable-single-select-${Math.random().toString(36).slice(2)}`
+let suppressFocusOpen = false
+let focusReleaseTimer: ReturnType<typeof setTimeout> | undefined
 
 const normalizedKeyword = computed(() => keyword.value.trim().toLocaleLowerCase('zh-CN'))
 const selectedOption = computed(() => props.options.find((option) => sameValue(option.value, committedValue.value)))
@@ -79,14 +81,37 @@ function searchableText(option: SearchableSelectOption) {
 }
 
 function openMenu() {
-  if (props.disabled) return
+  if (props.disabled || suppressFocusOpen) return
   if (!open.value) {
     open.value = true
     keyword.value = ''
     activeIndex.value = visibleOptions.value.findIndex((option) => sameValue(option.value, committedValue.value))
     emit('open')
   }
-  void nextTick(() => input.value?.focus())
+  void nextTick(() => {
+    if (open.value && document.activeElement !== input.value) input.value?.focus()
+  })
+}
+
+function handleInputFocus() {
+  if (!suppressFocusOpen) openMenu()
+}
+
+function allowInputOpen() {
+  suppressFocusOpen = false
+  if (focusReleaseTimer) {
+    clearTimeout(focusReleaseTimer)
+    focusReleaseTimer = undefined
+  }
+}
+
+function preventImmediateFocusReopen() {
+  suppressFocusOpen = true
+  if (focusReleaseTimer) clearTimeout(focusReleaseTimer)
+  focusReleaseTimer = setTimeout(() => {
+    suppressFocusOpen = false
+    focusReleaseTimer = undefined
+  }, 120)
 }
 
 function closeMenu() {
@@ -104,12 +129,14 @@ function updateKeyword(event: Event) {
 
 function selectOption(option: SearchableSelectOption) {
   if (option.disabled) return
+  preventImmediateFocusReopen()
   committedValue.value = option.value
   emit('update:modelValue', option.value)
   closeMenu()
 }
 
 function selectEmpty() {
+  preventImmediateFocusReopen()
   committedValue.value = props.emptyValue
   emit('update:modelValue', props.emptyValue)
   closeMenu()
@@ -156,7 +183,10 @@ function handleDocumentPointerDown(event: PointerEvent) {
 }
 
 onMounted(() => document.addEventListener('pointerdown', handleDocumentPointerDown))
-onBeforeUnmount(() => document.removeEventListener('pointerdown', handleDocumentPointerDown))
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', handleDocumentPointerDown)
+  if (focusReleaseTimer) clearTimeout(focusReleaseTimer)
+})
 
 watch(() => props.modelValue, (value) => {
   committedValue.value = value ?? null
@@ -181,7 +211,8 @@ defineExpose({ focus: openMenu, close: closeMenu })
         :aria-controls="listboxId"
         :aria-activedescendant="activeIndex >= 0 ? `${listboxId}-option-${activeIndex}` : undefined"
         autocomplete="off"
-        @focus="openMenu"
+        @pointerdown="allowInputOpen"
+        @focus="handleInputFocus"
         @click="openMenu"
         @input="updateKeyword"
         @keydown="handleKeydown"
@@ -191,7 +222,7 @@ defineExpose({ focus: openMenu, close: closeMenu })
         class="searchable-single-select__clear-search"
         type="button"
         aria-label="清空搜索"
-        @mousedown.prevent
+        @pointerdown.prevent
         @click="keyword = ''"
       >
         <X :size="15" aria-hidden="true" />
@@ -207,7 +238,7 @@ defineExpose({ focus: openMenu, close: closeMenu })
         :class="{ selected: sameValue(committedValue, emptyValue) }"
         role="option"
         :aria-selected="sameValue(committedValue, emptyValue) ? 'true' : 'false'"
-        @mousedown.prevent
+        @pointerdown.prevent
         @click="selectEmpty"
       >
         <span>{{ emptyOptionLabel }}</span>
@@ -225,7 +256,7 @@ defineExpose({ focus: openMenu, close: closeMenu })
           :disabled="option.disabled"
           role="option"
           :aria-selected="sameValue(option.value, committedValue) ? 'true' : 'false'"
-          @mousedown.prevent
+          @pointerdown.prevent
           @mouseenter="activeIndex = index"
           @click="selectOption(option)"
         >

@@ -117,6 +117,8 @@ export interface StoreArchiveOptions {
     position?: string
     storeId: string
     storeName: string
+    responsibleStoreId?: string
+    responsibleStoreName?: string
   }>
   statuses: Array<{
     value: string

@@ -98,6 +98,8 @@ class StoreControllerHttpAuthorizationTest {
     when(repository.manager(1L, "e1")).thenReturn(Optional.of(
         new OrganizationRepository.ManagerReference(
             "e1", "店长", "13800138000", "rg1", "一店", "在职")));
+    when(repository.assignEmployeeAsStoreManager(
+        1L, "e1", "rg1", "一店", "如果")).thenReturn(1);
 
     mockMvc.perform(post("/api/stores")
             .header("Authorization", "Bearer boss-token")
@@ -109,6 +111,8 @@ class StoreControllerHttpAuthorizationTest {
         .andExpect(jsonPath("$.code").value("OK"));
 
     verify(repository).insertStore(1L, request, null);
+    verify(repository).assignEmployeeAsStoreManager(
+        1L, "e1", "rg1", "一店", "如果");
   }
 
   @Test

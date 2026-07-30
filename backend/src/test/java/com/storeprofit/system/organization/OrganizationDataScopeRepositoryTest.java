@@ -67,7 +67,9 @@ public class OrganizationDataScopeRepositoryTest {
     jdbc.execute("""
         create table employee (
           id varchar(120) not null primary key, tenant_id bigint not null, store_id varchar(64) not null,
-          name varchar(120) not null, phone varchar(40), position varchar(80), status varchar(40) not null
+          store_name varchar(160), brand_name varchar(120),
+          name varchar(120) not null, phone varchar(40), position varchar(80), status varchar(40) not null,
+          updated_at timestamp
         )
         """);
     jdbc.update("""
@@ -82,10 +84,12 @@ public class OrganizationDataScopeRepositoryTest {
                ('other', 2, 3, '099', 'Other', 'C', 'Mallory', '2025-03-01', '营业中', null)
         """);
     jdbc.update("""
-        insert into employee(id, tenant_id, store_id, name, phone, position, status)
-        values ('e1', 1, 's1', 'Alice', '13800138000', '营业员', '在职'),
-               ('e2', 1, 's2', 'Bob', '0716-1234567', '店长', '离职'),
-               ('other-e', 2, 'other', 'Mallory', '13900139000', '店长', '在职')
+        insert into employee(
+          id, tenant_id, store_id, store_name, brand_name, name, phone, position, status
+        )
+        values ('e1', 1, 's1', 'One', 'Alpha', 'Alice', '13800138000', '营业员', '在职'),
+               ('e2', 1, 's2', 'Two', 'Beta', 'Bob', '0716-1234567', '店长', '离职'),
+               ('other-e', 2, 'other', 'Other', 'Other', 'Mallory', '13900139000', '店长', '在职')
         """);
     jdbc.update("""
         insert into warehouse_facility(
@@ -339,6 +343,16 @@ public class OrganizationDataScopeRepositoryTest {
     assertThat(created.costAccountStoreId()).isEqualTo(created.id());
     assertThat(created.costAccountStoreName()).isEqualTo("完整档案门店");
     assertThat(created.version()).isZero();
+    assertThat(jdbc.queryForMap(
+        """
+        select store_id, store_name, brand_name, position
+        from employee
+        where tenant_id = 1 and id = 'e1'
+        """
+    )).containsEntry("STORE_ID", created.id())
+        .containsEntry("STORE_NAME", "完整档案门店")
+        .containsEntry("BRAND_NAME", "Alpha")
+        .containsEntry("POSITION", "店长");
 
     StoreResponse updated = service.updateStore(boss, new StoreUpsertRequest(
         created.id(), "NEW-020", "完整档案门店（已编辑）", 1L, null, null, "0716-1234567",
@@ -365,6 +379,69 @@ public class OrganizationDataScopeRepositoryTest {
         .isInstanceOf(BusinessException.class)
         .satisfies(error -> assertThat(((BusinessException) error).getCode())
             .isEqualTo("STORE_VERSION_CONFLICT"));
+  }
+
+  @Test
+  void managerOptionsIncludeEveryActiveEmployeeEvenWhenThePreviousStoreWasSoftDeleted() {
+    jdbc.update("""
+        insert into store_branch(
+          id, tenant_id, brand_id, code, name, area, manager, open_date, status, note, deleted_at
+        ) values (
+          'deleted-source', 1, 1, 'OLD-001', '已删除原门店', 'A', null,
+          '2025-01-01', '停用', null, current_timestamp
+        )
+        """);
+    jdbc.update("""
+        insert into employee(
+          id, tenant_id, store_id, store_name, brand_name, name, phone, position, status
+        ) values (
+          'e-deleted-source', 1, 'deleted-source', '已删除原门店', 'Alpha',
+          '仍在职员工', '13800138001', '营业员', '在职'
+        )
+        """);
+
+    assertThat(repository.activeEmployeeOptions(1L, DataScope.all()))
+        .extracting(StoreArchiveOptionsResponse.EmployeeOption::employeeId)
+        .containsExactlyInAnyOrder("e1", "e-deleted-source");
+  }
+
+  @Test
+  void oneActiveEmployeeCannotBeAssignedAsManagerOfTwoVisibleStores() {
+    AccessControlService accessControl = mock(AccessControlService.class);
+    OrganizationService service = new OrganizationService(
+        repository, null, accessControl, null, null, mock(AuditRepository.class));
+    AuthUser boss = new AuthUser(7L, 1L, "default", "boss", "", "老板", "BOSS", null, true);
+    jdbc.update("""
+        update store_branch
+        set manager_employee_id = 'e1', manager = 'Alice'
+        where tenant_id = 1 and id = 's1'
+        """);
+
+    StoreArchiveOptionsResponse.EmployeeOption managerOption =
+        repository.activeEmployeeOptions(1L, DataScope.all()).stream()
+            .filter(option -> "e1".equals(option.employeeId()))
+            .findFirst()
+            .orElseThrow();
+    assertThat(managerOption.responsibleStoreId()).isEqualTo("s1");
+    assertThat(managerOption.responsibleStoreName()).isEqualTo("One");
+
+    assertThatThrownBy(() -> service.createStore(boss, new StoreUpsertRequest(
+        null, "NEW-021", "另一家门店", 1L, null, null, "13800138000",
+        "2026-07-24", "营业中", "", "JINGZHOU", null,
+        "e1", null, null)))
+        .isInstanceOf(BusinessException.class)
+        .satisfies(error -> {
+          BusinessException conflict = (BusinessException) error;
+          assertThat(conflict.getCode()).isEqualTo("STORE_MANAGER_ALREADY_ASSIGNED");
+          assertThat(conflict.getMessage()).contains("One");
+          assertThat(conflict.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+        });
+
+    assertThat(repository.storeCount(1L)).isEqualTo(2);
+    assertThat(jdbc.queryForObject(
+        "select position from employee where tenant_id = 1 and id = 'e1'",
+        String.class
+    )).isEqualTo("营业员");
   }
 
   @Test

@@ -365,10 +365,15 @@ public class OrganizationRepository {
       return Optional.empty();
     }
     return jdbcTemplate.query("""
-        select e.id, e.name, e.phone, e.store_id, s.name as store_name, e.status
+        select e.id, e.name, e.phone, e.store_id,
+               coalesce(s.name, e.store_name, e.store_id) as store_name,
+               e.status
         from employee e
-        join store_branch s on s.tenant_id = e.tenant_id and s.id = e.store_id
-        where e.tenant_id = ? and e.id = ? and s.deleted_at is null
+        left join store_branch s
+          on s.tenant_id = e.tenant_id
+         and s.id = e.store_id
+         and s.deleted_at is null
+        where e.tenant_id = ? and e.id = ?
         """, (rs, rowNum) -> new ManagerReference(
         rs.getString("id"),
         rs.getString("name"),
@@ -384,15 +389,32 @@ public class OrganizationRepository {
       DataScope dataScope
   ) {
     StringBuilder sql = new StringBuilder("""
-        select e.id, e.name, e.phone, e.position, e.store_id, s.name as store_name
+        select e.id, e.name, e.phone, e.position, e.store_id,
+               coalesce(s.name, e.store_name, e.store_id) as store_name,
+               responsibility.responsible_store_id,
+               responsible_store.name as responsible_store_name
         from employee e
-        join store_branch s on s.tenant_id = e.tenant_id and s.id = e.store_id
-        where e.tenant_id = ? and e.status = '在职' and s.deleted_at is null
+        left join store_branch s
+          on s.tenant_id = e.tenant_id
+         and s.id = e.store_id
+         and s.deleted_at is null
+        left join (
+          select tenant_id, manager_employee_id, min(id) as responsible_store_id
+          from store_branch
+          where deleted_at is null and manager_employee_id is not null
+          group by tenant_id, manager_employee_id
+        ) responsibility
+          on responsibility.tenant_id = e.tenant_id
+         and responsibility.manager_employee_id = e.id
+        left join store_branch responsible_store
+          on responsible_store.tenant_id = responsibility.tenant_id
+         and responsible_store.id = responsibility.responsible_store_id
+        where e.tenant_id = ? and e.status = '在职'
         """);
     ArrayList<Object> params = new ArrayList<>();
     params.add(tenantId);
     appendStoreScope(sql, params, "e.store_id", dataScope);
-    sql.append(" order by s.code, e.position, e.name, e.id");
+    sql.append(" order by coalesce(s.code, e.store_name, e.store_id), e.position, e.name, e.id");
     return jdbcTemplate.query(sql.toString(), (rs, rowNum) ->
         new StoreArchiveOptionsResponse.EmployeeOption(
             rs.getString("id"),
@@ -400,8 +422,70 @@ public class OrganizationRepository {
             rs.getString("phone"),
             rs.getString("position"),
             rs.getString("store_id"),
-            rs.getString("store_name")
+            rs.getString("store_name"),
+            rs.getString("responsible_store_id"),
+            rs.getString("responsible_store_name")
         ), params.toArray());
+  }
+
+  public Optional<ManagedStoreReference> managedStoreByEmployee(
+      long tenantId,
+      String employeeId,
+      String excludingStoreId
+  ) {
+    if (employeeId == null || employeeId.isBlank()) {
+      return Optional.empty();
+    }
+    return jdbcTemplate.query("""
+        select id, name
+        from store_branch
+        where tenant_id = ?
+          and manager_employee_id = ?
+          and deleted_at is null
+          and id <> ?
+        order by code, id
+        limit 1
+        """, (rs, rowNum) -> new ManagedStoreReference(
+        rs.getString("id"),
+        rs.getString("name")
+    ), tenantId, employeeId.trim(), excludingStoreId).stream().findFirst();
+  }
+
+  public boolean employeeNameBelongsToAnotherEmployee(
+      long tenantId,
+      String storeId,
+      String employeeName,
+      String excludingEmployeeId
+  ) {
+    Integer count = jdbcTemplate.queryForObject("""
+        select count(*)
+        from employee
+        where tenant_id = ?
+          and store_id = ?
+          and name = ?
+          and id <> ?
+        """, Integer.class, tenantId, storeId, employeeName, excludingEmployeeId);
+    return count != null && count > 0;
+  }
+
+  public int assignEmployeeAsStoreManager(
+      long tenantId,
+      String employeeId,
+      String storeId,
+      String storeName,
+      String brandName
+  ) {
+    return jdbcTemplate.update("""
+        update employee
+        set store_id = ?,
+            store_name = ?,
+            brand_name = ?,
+            position = '店长',
+            updated_at = current_timestamp
+        where tenant_id = ?
+          and id = ?
+          and status = '在职'
+        """, storeId, storeName, brandName, tenantId, employeeId);
   }
 
   public List<StoreArchiveOptionsResponse.RegionOption> activeStoreRegions(long tenantId) {
@@ -661,5 +745,8 @@ public class OrganizationRepository {
       String storeName,
       String status
   ) {
+  }
+
+  public record ManagedStoreReference(String storeId, String storeName) {
   }
 }

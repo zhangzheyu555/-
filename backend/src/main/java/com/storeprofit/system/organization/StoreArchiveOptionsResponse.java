@@ -16,7 +16,9 @@ public record StoreArchiveOptionsResponse(
       String phone,
       String position,
       String storeId,
-      String storeName
+      String storeName,
+      String responsibleStoreId,
+      String responsibleStoreName
   ) {
   }
 

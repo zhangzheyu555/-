@@ -80,18 +80,47 @@ const filteredStores = computed(() => {
     ].some((value) => String(value || '').toLowerCase().includes(keyword))
   })
 })
-const employeeSelectOptions = computed(() => archiveOptions.value.employees.map((employee) => ({
-  value: employee.employeeId,
-  label: employee.name,
-  description: `${employee.position || '员工'} · 当前档案：${employee.storeName}`,
-  searchText: [
-    employee.name,
-    employee.position,
-    employee.storeName,
-    employee.phone,
-    employee.employeeId,
-  ].filter(Boolean).join(' '),
-})))
+const employeeSelectOptions = computed(() => archiveOptions.value.employees.map((employee) => {
+  const assignedElsewhere = Boolean(
+    employee.responsibleStoreId
+    && employee.responsibleStoreId !== editingStore.value?.id,
+  )
+  return {
+    value: employee.employeeId,
+    label: employee.name,
+    description: [
+      employee.position || '员工',
+      `当前档案：${employee.storeName}`,
+      assignedElsewhere && `已负责：${employee.responsibleStoreName || employee.responsibleStoreId}（不可重复指派）`,
+    ].filter(Boolean).join(' · '),
+    searchText: [
+      employee.name,
+      employee.position,
+      employee.storeName,
+      employee.phone,
+      employee.employeeId,
+      employee.responsibleStoreName,
+    ].filter(Boolean).join(' '),
+    disabled: assignedElsewhere,
+  }
+}))
+const selectedManager = computed(() => archiveOptions.value.employees.find(
+  (employee) => employee.employeeId === form.managerEmployeeId,
+))
+const managerAssignmentHint = computed(() => {
+  const employee = selectedManager.value
+  if (!employee) return ''
+  const targetName = form.name.trim() || editingStore.value?.name || '当前门店'
+  const alreadyThisStoreManager = Boolean(
+    editingStore.value
+    && employee.storeId === editingStore.value.id
+    && employee.position === '店长',
+  )
+  if (alreadyThisStoreManager) {
+    return `${employee.name}已是本店店长；保存不会修改其登录账号权限。`
+  }
+  return `保存门店后，${employee.name}的职务将调整为“店长”，员工档案归属更新为“${targetName}”；取消不会修改员工档案或登录账号权限。`
+})
 const confirmTitle = computed(() => {
   const store = confirmTarget.value
   if (!store) return ''
@@ -266,6 +295,18 @@ function validateEditor() {
       actionLabel: '返回选择',
       sourceKey: 'stores:validation:employee',
     })
+    return false
+  }
+  const manager = selectedManager.value
+  if (manager?.responsibleStoreId && manager.responsibleStoreId !== editingStore.value?.id) {
+    reportAppError(
+      `该员工已是门店“${manager.responsibleStoreName || manager.responsibleStoreId}”的负责人，请先为原门店更换负责人。`,
+      {
+        title: '负责人不可重复指派',
+        actionLabel: '返回选择',
+        sourceKey: `stores:validation:manager-assigned:${manager.employeeId}`,
+      },
+    )
     return false
   }
   return true
@@ -565,7 +606,12 @@ onMounted(() => {
                   aria-label="负责人"
                   @update:model-value="managerChanged"
                 />
-                <small class="form-hint">数据来自“员工档案”，可搜索姓名、岗位和当前档案门店。</small>
+                <small class="form-hint">
+                  已加载 {{ archiveOptions.employees.length }} 名在职员工；列表可滚动，也可搜索姓名、岗位、门店或手机号。
+                </small>
+                <small v-if="managerAssignmentHint" class="form-hint form-hint--assignment">
+                  {{ managerAssignmentHint }}
+                </small>
               </label>
               <label>
                 联系方式
@@ -874,6 +920,14 @@ onMounted(() => {
   font-size: 12px;
   font-weight: 500;
   line-height: 1.45;
+}
+
+.form-hint--assignment {
+  padding: 8px 10px;
+  border: 1px solid #b9ddd8;
+  border-radius: 7px;
+  background: #eef9f7;
+  color: #245e59;
 }
 
 @media (max-width: 720px) {

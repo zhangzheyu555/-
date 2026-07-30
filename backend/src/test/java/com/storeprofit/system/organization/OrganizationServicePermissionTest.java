@@ -119,6 +119,8 @@ class OrganizationServicePermissionTest {
         new OrganizationRepository.ManagerReference(
             "e1", "店长", "13800138000", "rg2", "二店", "在职")));
     when(repository.updateStore(1L, normalized, null, 0L)).thenReturn(1);
+    when(repository.assignEmployeeAsStoreManager(
+        1L, "e1", "rg1", "一店", "如果")).thenReturn(1);
 
     service.updateStore(user, request);
 
@@ -127,6 +129,8 @@ class OrganizationServicePermissionTest {
     verify(accessControl, never()).requireStoreAccess(
         user, DataScopeDomains.STORE, "rg2", "选择门店负责人");
     verify(repository).updateStore(1L, normalized, null, 0L);
+    verify(repository).assignEmployeeAsStoreManager(
+        1L, "e1", "rg1", "一店", "如果");
   }
 
   @Test
