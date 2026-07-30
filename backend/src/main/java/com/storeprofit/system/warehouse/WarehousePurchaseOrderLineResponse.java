@@ -11,6 +11,13 @@ public record WarehousePurchaseOrderLineResponse(
     BigDecimal receivedQuantity,
     BigDecimal unitCost,
     BigDecimal amount,
-    String note
+    String note,
+    String itemCode,
+    String spec,
+    String purchaseUnit,
+    String stockUnit,
+    String unitConversionText,
+    BigDecimal conversionFactor,
+    BigDecimal stockQuantity
 ) {
 }

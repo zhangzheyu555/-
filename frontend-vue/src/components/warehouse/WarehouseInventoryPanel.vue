@@ -141,7 +141,10 @@ function latestMovement(itemId: number) {
 }
 
 function documentLabel(row: WarehouseStockMovement | undefined) {
-  return row?.movementType === 'IN' ? '下载入库单' : '下载流水单'
+  const movementType = String(row?.movementType || '').trim().toUpperCase()
+  return movementType === 'IN' || movementType.endsWith('_IN')
+    ? '下载入库单'
+    : '下载流水单'
 }
 
 function qty(value: number | undefined, unit?: string) {

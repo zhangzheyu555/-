@@ -873,11 +873,16 @@ async function downloadDelivery(requisitionId: string) {
 
 async function downloadMovement(movementId: number, itemName: string, movementType = '') {
   try {
-    const prefix = movementType === 'IN' ? '入库单' : '库存流水单'
+    const prefix = isInboundMovementType(movementType) ? '入库单' : '库存流水单'
     await warehouse.downloadPdf('movement', `/api/warehouse/print/movements/${movementId}`, `${prefix}-${itemName}-${movementId}.pdf`)
   } catch {
     // store 已保留业务错误提示。
   }
+}
+
+function isInboundMovementType(movementType?: string) {
+  const normalized = String(movementType || '').trim().toUpperCase()
+  return normalized === 'IN' || normalized.endsWith('_IN')
 }
 
 async function downloadReturn(returnId: string, returnNo: string) {

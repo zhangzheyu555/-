@@ -119,7 +119,7 @@ public class WarehousePdfRenderer {
   }
 
   public byte[] movement(WarehouseMovementPrintRow row) {
-    boolean in = "IN".equals(row.movementType());
+    boolean in = isInboundMovement(row.movementType());
     if (in) {
       return renderReceipt(sheet -> sheet.receiptSlip(
           WarehouseDocumentNumbers.receipt(row.createdAt(), row.movementId()),
@@ -166,6 +166,14 @@ public class WarehousePdfRenderer {
       sheet.paragraph("说明：" + display(row.note()));
       sheet.signatures("操作人", "复核人");
     });
+  }
+
+  private boolean isInboundMovement(String movementType) {
+    if (movementType == null || movementType.isBlank()) {
+      return false;
+    }
+    String normalized = movementType.trim().toUpperCase(Locale.ROOT);
+    return "IN".equals(normalized) || normalized.endsWith("_IN");
   }
 
   private byte[] render(DrawAction drawAction) {

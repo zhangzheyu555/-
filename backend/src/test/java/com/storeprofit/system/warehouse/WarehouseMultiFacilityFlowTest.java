@@ -416,6 +416,123 @@ class WarehouseMultiFacilityFlowTest {
   }
 
   @Test
+  void purchaseDraftFallsBackToMaterialDefaultUnitPrice() {
+    jdbc.execute("alter table warehouse_purchase_order alter column version drop default");
+    jdbc.execute("alter table warehouse_purchase_order_line alter column received_quantity drop default");
+    jdbc.update("""
+        update warehouse_item
+        set purchase_unit = '箱',
+            stock_unit = '件',
+            unit = '件',
+            unit_conversion_text = '1箱=12件',
+            unit_price = 12
+        where tenant_id = 1 and id = ?
+        """, itemId);
+    Long supplierId = jdbc.queryForObject(
+        "select min(id) from warehouse_supplier where tenant_id = 1 and active = 1",
+        Long.class);
+
+    WarehousePurchaseOrderResponse draft = warehouseService.createPurchaseOrder(
+        centralManager,
+        new WarehousePurchaseOrderRequest(
+            supplierId,
+            "留空使用默认采购价",
+            List.of(new WarehousePurchaseOrderLineRequest(
+                itemId, new BigDecimal("20.00"), null, "默认采购价")),
+            centralWarehouseId,
+            "purchase-default-price-1"
+        )
+    );
+
+    assertThat(draft.totalAmount()).isEqualByComparingTo("240.00");
+    assertThat(draft.lines()).singleElement().satisfies(line -> {
+      assertThat(line.unitCost()).isEqualByComparingTo("12.00");
+      assertThat(line.amount()).isEqualByComparingTo("240.00");
+    });
+  }
+
+  @Test
+  void purchaseReceiptConvertsPurchaseUnitsIntoStockUnits() {
+    jdbc.execute("alter table warehouse_purchase_order alter column version drop default");
+    jdbc.execute("alter table warehouse_purchase_order_line alter column received_quantity drop default");
+    jdbc.execute("alter table warehouse_stock_batch alter column version drop default");
+    jdbc.update("""
+        update warehouse_item
+        set purchase_unit = '箱',
+            stock_unit = '件',
+            unit = '件',
+            unit_conversion_text = '1箱=12件',
+            unit_price = 12
+        where tenant_id = 1 and id = ?
+        """, itemId);
+    Long supplierId = jdbc.queryForObject(
+        "select min(id) from warehouse_supplier where tenant_id = 1 and active = 1",
+        Long.class);
+    BigDecimal initialOnHand = inventoryQuantity(
+        centralWarehouseId, itemId, "on_hand_quantity");
+
+    WarehousePurchaseOrderResponse draft = warehouseService.createPurchaseOrder(
+        centralManager,
+        new WarehousePurchaseOrderRequest(
+            supplierId,
+            "按箱采购、按件入库",
+            List.of(new WarehousePurchaseOrderLineRequest(
+                itemId, new BigDecimal("20.00"), new BigDecimal("12.00"), "20箱")),
+            centralWarehouseId,
+            "purchase-unit-conversion-1"
+        )
+    );
+    warehouseService.approvePurchaseOrder(centralManager, draft.id());
+    WarehousePurchaseOrderResponse received = warehouseService.receivePurchaseOrder(
+        centralManager,
+        draft.id(),
+        new WarehousePurchaseReceiveRequest(
+            "purchase-unit-conversion-receive-1",
+            List.of(new WarehousePurchaseReceiveLineRequest(
+                itemId,
+                "PURCHASE-20-BOXES",
+                "2026-07-30",
+                "2027-07-30",
+                new BigDecimal("20.00"),
+                "20箱换算240件"
+            )),
+            "数量换算验收"
+        )
+    );
+
+    assertThat(received.lines()).singleElement().satisfies(line ->
+        assertThat(line.receivedQuantity()).isEqualByComparingTo("20.00"));
+    assertThat(inventoryQuantity(centralWarehouseId, itemId, "on_hand_quantity"))
+        .isEqualByComparingTo(initialOnHand.add(new BigDecimal("240.00")));
+    assertThat(jdbc.queryForObject("""
+        select quantity
+        from warehouse_stock_batch
+        where tenant_id = 1 and warehouse_id = ? and item_id = ? and batch_no = ?
+        """, BigDecimal.class, centralWarehouseId, itemId, "PURCHASE-20-BOXES"))
+        .isEqualByComparingTo("240.00");
+    assertThat(jdbc.queryForObject("""
+        select unit_cost
+        from warehouse_stock_batch
+        where tenant_id = 1 and warehouse_id = ? and item_id = ? and batch_no = ?
+        """, BigDecimal.class, centralWarehouseId, itemId, "PURCHASE-20-BOXES"))
+        .isEqualByComparingTo("1.00");
+    assertThat(jdbc.queryForObject("""
+        select quantity_delta
+        from warehouse_stock_movement
+        where tenant_id = 1 and warehouse_id = ? and source_type = 'PURCHASE_ORDER'
+          and source_id = ? and item_id = ?
+        """, BigDecimal.class, centralWarehouseId, draft.id(), itemId))
+        .isEqualByComparingTo("240.00");
+    assertThat(jdbc.queryForObject("""
+        select unit_cost
+        from warehouse_stock_movement
+        where tenant_id = 1 and warehouse_id = ? and source_type = 'PURCHASE_ORDER'
+          and source_id = ? and item_id = ?
+        """, BigDecimal.class, centralWarehouseId, draft.id(), itemId))
+        .isEqualByComparingTo("1.00");
+  }
+
+  @Test
   void transferPreservesQuantityAndCostAndAllActionsAreIdempotent() {
     for (String column : List.of(
         "approved_quantity", "reserved_quantity", "shipped_quantity", "received_quantity",

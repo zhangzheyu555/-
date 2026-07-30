@@ -119,7 +119,7 @@ class WarehousePdfRendererTest {
   void inboundMovementUsesTheSameCompactReceiptTemplate() throws IOException {
     WarehouseMovementPrintRow row = new WarehouseMovementPrintRow(
         82L, 1L, "PL0066", 81L, "单杯保温袋（500个/件）", "件", "件",
-        "IN", new BigDecimal("120"), "PURCHASE_ORDER", "PO-1",
+        "PURCHASE_IN", new BigDecimal("120"), "PURCHASE_ORDER", "PO-1",
         null, null, "参考图备注", "仓库管理员", "2026-07-07 10:00:00",
         "BATCH-1", null, new BigDecimal("225")
     );

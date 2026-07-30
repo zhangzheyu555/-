@@ -46,7 +46,9 @@ const itemOptions = computed(() => enabledItems.value.map((item) => ({
   description: [
     item.code,
     item.categoryName || item.category,
-    item.stockUnit || item.unit,
+    `采购单位 ${purchaseUnit(item)}`,
+    `库存单位 ${stockUnit(item)}`,
+    item.unitConversionText,
     `当前库存 ${qty(item.stockQuantity, item.stockUnit || item.unit)}`,
   ].filter(Boolean).join(' · '),
   searchText: [
@@ -61,6 +63,20 @@ const itemOptions = computed(() => enabledItems.value.map((item) => ({
   ].filter(Boolean).join(' '),
 })))
 const selectedItem = computed(() => enabledItems.value.find((item) => item.id === Number(form.itemId)))
+const selectedPurchaseUnit = computed(() => purchaseUnit(selectedItem.value))
+const selectedStockUnit = computed(() => stockUnit(selectedItem.value))
+const selectedConversionFactor = computed(() => conversionFactor(selectedItem.value))
+const convertedQuantityPreview = computed(() => {
+  const quantity = Number(form.quantity)
+  const factor = selectedConversionFactor.value
+  if (!selectedItem.value || !Number.isFinite(quantity) || quantity <= 0 || !factor) return ''
+  if (selectedPurchaseUnit.value === selectedStockUnit.value && factor === 1) return ''
+  return `${qty(quantity, selectedPurchaseUnit.value)} → 入库 ${qty(quantity * factor, selectedStockUnit.value)}`
+})
+const defaultUnitPriceHint = computed(() => {
+  if (!selectedItem.value) return '留空时使用物料档案中的默认采购单价'
+  return `留空使用默认价 ${money(selectedItem.value.unitPrice)}/${selectedPurchaseUnit.value}`
+})
 const clientRequestId = ref('')
 const submittedActionId = ref('')
 type ReceiveDraft = {
@@ -84,8 +100,12 @@ watch(
 function submit() {
   const itemId = Number(form.itemId)
   const quantity = Number(form.quantity)
-  const unitCost = Number(form.unitCost || 0)
-  if (!itemId || quantity <= 0 || unitCost < 0) return
+  const hasUnitCost = String(form.unitCost).trim() !== ''
+  const unitCost = hasUnitCost
+    ? Number(form.unitCost)
+    : Number(selectedItem.value?.unitPrice)
+  if (!itemId || !Number.isFinite(quantity) || quantity <= 0) return
+  if (!Number.isFinite(unitCost) || unitCost < 0) return
   if (!clientRequestId.value) {
     clientRequestId.value = `purchase-${crypto.randomUUID().replace(/-/g, '')}`
   }
@@ -146,7 +166,48 @@ function money(value: number | undefined) {
 }
 
 function qty(value: number | undefined, unit?: string) {
-  return `${Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 1 })}${unit ? ` ${unit}` : ''}`
+  return `${Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}${unit ? ` ${unit}` : ''}`
+}
+
+function purchaseUnit(item?: WarehouseItem) {
+  return item?.purchaseUnit?.trim() || item?.unit?.trim() || '件'
+}
+
+function stockUnit(item?: WarehouseItem) {
+  return item?.stockUnit?.trim() || item?.unit?.trim() || '件'
+}
+
+function conversionFactor(item?: WarehouseItem) {
+  if (!item) return undefined
+  const fromUnit = purchaseUnit(item)
+  const toUnit = stockUnit(item)
+  if (fromUnit === toUnit) return 1
+  const text = String(item.unitConversionText || '').replace(/\s+/g, '')
+  const escapedFrom = fromUnit.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const escapedTo = toUnit.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const equation = text.match(new RegExp(`(\\d+(?:\\.\\d+)?)${escapedFrom}[=＝](\\d+(?:\\.\\d+)?)${escapedTo}`))
+  if (equation) {
+    const left = Number(equation[1])
+    const right = Number(equation[2])
+    return left > 0 && right > 0 ? right / left : undefined
+  }
+  const perUnit = text.match(new RegExp(`(\\d+(?:\\.\\d+)?)${escapedTo}(?:[/／]|每)${escapedFrom}`))
+  const value = Number(perUnit?.[1])
+  return value > 0 ? value : undefined
+}
+
+function linePurchaseUnit(line: WarehousePurchaseOrder['lines'][number]) {
+  return line.purchaseUnit || line.unit || '件'
+}
+
+function lineStockUnit(line: WarehousePurchaseOrder['lines'][number]) {
+  return line.stockUnit || line.unit || '件'
+}
+
+function showLineConversion(line: WarehousePurchaseOrder['lines'][number]) {
+  return line.stockQuantity !== undefined
+    && (linePurchaseUnit(line) !== lineStockUnit(line)
+      || Number(line.stockQuantity) !== Number(line.orderedQuantity))
 }
 </script>
 
@@ -179,12 +240,29 @@ function qty(value: number | undefined, unit?: string) {
           />
         </label>
         <label>
-          采购数量
-          <input v-model="form.quantity" type="number" min="0.01" step="0.01" required placeholder="请输入采购数量" />
+          <span>采购数量</span>
+          <input
+            v-model="form.quantity"
+            type="number"
+            min="0.01"
+            step="0.01"
+            required
+            aria-label="采购数量"
+            :placeholder="`请输入采购数量（${selectedPurchaseUnit}）`"
+          />
+          <small v-if="convertedQuantityPreview" class="field-hint conversion-preview">{{ convertedQuantityPreview }}</small>
         </label>
         <label>
-          采购单价
-          <input v-model="form.unitCost" type="number" min="0" step="0.01" placeholder="请输入采购单价" />
+          <span>采购单价</span>
+          <input
+            v-model="form.unitCost"
+            type="number"
+            min="0"
+            step="0.01"
+            aria-label="采购单价"
+            :placeholder="defaultUnitPriceHint"
+          />
+          <small class="field-hint">{{ defaultUnitPriceHint }}</small>
         </label>
         <label class="wide">
           备注
@@ -214,8 +292,19 @@ function qty(value: number | undefined, unit?: string) {
           </header>
           <div class="order-lines">
             <div v-for="line in order.lines" :key="line.id" class="order-line">
-              <span>{{ line.itemName }}</span>
-              <span>{{ qty(line.orderedQuantity, line.unit) }} × {{ money(line.unitCost) }}</span>
+              <div class="order-line-summary">
+                <strong>{{ line.itemName }}</strong>
+                <span v-if="line.itemCode || line.spec">
+                  {{ [line.itemCode, line.spec].filter(Boolean).join(' · ') }}
+                </span>
+              </div>
+              <div class="order-line-amount">
+                <span>{{ qty(line.orderedQuantity, linePurchaseUnit(line)) }} × {{ money(line.unitCost) }}</span>
+                <small v-if="showLineConversion(line)">
+                  入库换算：{{ qty(line.stockQuantity, lineStockUnit(line)) }}
+                  <template v-if="line.unitConversionText">（{{ line.unitConversionText }}）</template>
+                </small>
+              </div>
               <input
                 v-if="order.status === 'ORDERED'"
                 v-model="receiveDraft(order).batches[String(line.itemId)]"
@@ -324,6 +413,32 @@ function qty(value: number | undefined, unit?: string) {
 .order-line {
   color: var(--color-text-secondary, #607573);
   font-size: 13px;
+}
+
+.order-line-summary,
+.order-line-amount {
+  display: grid;
+  gap: 3px;
+}
+
+.order-line-summary strong {
+  color: var(--ink);
+}
+
+.order-line-amount {
+  justify-items: end;
+  text-align: right;
+}
+
+.order-line-amount small,
+.field-hint {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.conversion-preview {
+  color: var(--primary, #176f68);
 }
 
 .order-line input {

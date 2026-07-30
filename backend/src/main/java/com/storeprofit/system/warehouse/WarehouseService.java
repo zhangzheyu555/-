@@ -96,6 +96,15 @@ public class WarehouseService {
   ) {
   }
 
+  private record ResolvedPurchaseLine(
+      WarehouseItemResponse item,
+      BigDecimal orderedQuantity,
+      BigDecimal unitCost,
+      BigDecimal conversionFactor,
+      String note
+  ) {
+  }
+
   @Autowired
   public WarehouseService(
       WarehouseRepository warehouseRepository,
@@ -1461,11 +1470,21 @@ public class WarehouseService {
     }
     String id = "PO" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 6);
     BigDecimal total = BigDecimal.ZERO;
+    List<ResolvedPurchaseLine> resolvedLines = new ArrayList<>();
     for (WarehousePurchaseOrderLineRequest line : request.lines()) {
-      if (!warehouseRepository.itemExists(user.tenantId(), line.itemId())) {
-        throw new BusinessException("ITEM_NOT_FOUND", "采购物料不存在", HttpStatus.BAD_REQUEST);
-      }
-      total = total.add(positive(line.orderedQuantity(), "采购数量").multiply(amount(line.unitCost())));
+      WarehouseItemResponse item = warehouseRepository.item(user.tenantId(), line.itemId())
+          .orElseThrow(() -> new BusinessException("ITEM_NOT_FOUND", "采购物料不存在", HttpStatus.BAD_REQUEST));
+      BigDecimal orderedQuantity = positive(line.orderedQuantity(), "采购数量");
+      BigDecimal unitCost = purchaseUnitCost(line.unitCost(), item);
+      BigDecimal conversionFactor = purchaseUnitConversion(item);
+      total = total.add(orderedQuantity.multiply(unitCost).setScale(2, RoundingMode.HALF_UP));
+      resolvedLines.add(new ResolvedPurchaseLine(
+          item,
+          orderedQuantity,
+          unitCost,
+          conversionFactor,
+          line.note()
+      ));
     }
     if (facility == null) {
       warehouseRepository.insertPurchaseOrder(user.tenantId(), id, request.supplierId(), total, request.note(), user.id());
@@ -1477,13 +1496,20 @@ public class WarehouseService {
             .orElseThrow(() -> warehouseConcurrentUpdate());
       }
     }
-    for (WarehousePurchaseOrderLineRequest line : request.lines()) {
+    for (ResolvedPurchaseLine line : resolvedLines) {
       warehouseRepository.insertPurchaseOrderLine(
           user.tenantId(),
           id,
-          line.itemId(),
-          positive(line.orderedQuantity(), "采购数量"),
-          amount(line.unitCost()),
+          line.item().id(),
+          line.item().code(),
+          line.item().name(),
+          line.item().spec(),
+          purchaseUnit(line.item()),
+          stockUnit(line.item()),
+          line.item().unitConversionText(),
+          line.conversionFactor(),
+          line.orderedQuantity(),
+          line.unitCost(),
           line.note()
       );
     }
@@ -2110,34 +2136,45 @@ public class WarehouseService {
       if (ordered == null || !receivedItems.add(line.itemId())) {
         throw new BusinessException("PO_RECEIVE_LINE_INVALID", "采购入库明细与采购单不一致", HttpStatus.BAD_REQUEST);
       }
-      BigDecimal quantity = positive(line.quantity(), "采购入库数量");
-      if (quantity.compareTo(ordered.orderedQuantity()) != 0) {
+      BigDecimal purchaseQuantity = positive(line.quantity(), "采购入库数量");
+      if (purchaseQuantity.compareTo(ordered.orderedQuantity()) != 0) {
         throw new BusinessException("PO_RECEIVE_QUANTITY_MISMATCH", "采购入库数量必须与已审批数量一致", HttpStatus.BAD_REQUEST);
       }
+      BigDecimal conversionFactor = ordered.conversionFactor();
+      if (conversionFactor == null || conversionFactor.signum() <= 0) {
+        throw new BusinessException(
+            "ITEM_UNIT_CONVERSION_INVALID",
+            "采购单物料“" + ordered.itemName() + "”缺少有效单位换算，无法入库",
+            HttpStatus.BAD_REQUEST
+        );
+      }
+      BigDecimal stockQuantity = WarehouseUnitConversion.stockQuantity(purchaseQuantity, conversionFactor);
+      BigDecimal stockUnitCost = WarehouseUnitConversion.stockUnitCost(ordered.unitCost(), conversionFactor);
       LocalDate receivedDate = parseDate(line.receivedDate(), "到货日期");
       if (line.expiryDate() != null && !line.expiryDate().isBlank()
           && parseDate(line.expiryDate(), "到期日期").isBefore(receivedDate)) {
         throw new BusinessException("BAD_EXPIRY_DATE", "到期日期不能早于到货日期", HttpStatus.BAD_REQUEST);
       }
       WarehouseStockBatchRequest batchRequest = new WarehouseStockBatchRequest(
-          line.itemId(), line.batchNo(), line.receivedDate(), line.expiryDate(), quantity,
-          ordered.unitCost(), line.note(), requestKey, facility.id());
+          line.itemId(), line.batchNo(), line.receivedDate(), line.expiryDate(), stockQuantity,
+          stockUnitCost, line.note(), requestKey, facility.id());
       warehouseRepository.upsertBatch(user.tenantId(), facility.id(), batchRequest);
       Long batchId = warehouseRepository.batchId(
           user.tenantId(), facility.id(), line.itemId(), line.batchNo()).orElse(null);
       InventoryRow inventory = topologyRepository.lockInventory(
           user.tenantId(), facility.id(), line.itemId());
-      BigDecimal cost = weightedCost(inventory.onHand(), inventory.unitCost(), quantity, ordered.unitCost());
+      BigDecimal cost = weightedCost(
+          inventory.onHand(), inventory.unitCost(), stockQuantity, stockUnitCost);
       if (!topologyRepository.updateInventory(user.tenantId(), inventory,
-          inventory.onHand().add(quantity), inventory.reserved(), inventory.inTransit(), cost)) {
+          inventory.onHand().add(stockQuantity), inventory.reserved(), inventory.inTransit(), cost)) {
         throw warehouseConcurrentUpdate();
       }
       topologyRepository.insertMovement(user.tenantId(), facility.id(), line.itemId(), batchId,
-          "PURCHASE_IN", quantity, BigDecimal.ZERO, BigDecimal.ZERO, ordered.unitCost(),
+          "PURCHASE_IN", stockQuantity, BigDecimal.ZERO, BigDecimal.ZERO, stockUnitCost,
           "PURCHASE_ORDER", purchaseOrderId, null,
           line.note() == null ? "采购单入库" : line.note(), user.id());
       if (warehouseRepository.setPurchaseLineReceived(
-          user.tenantId(), purchaseOrderId, line.itemId(), quantity) != 1) {
+          user.tenantId(), purchaseOrderId, line.itemId(), purchaseQuantity) != 1) {
         throw warehouseConcurrentUpdate();
       }
     }
@@ -3435,6 +3472,45 @@ public class WarehouseService {
     } catch (Exception ex) {
       throw new BusinessException("BAD_DATE", label + "必须是 YYYY-MM-DD", HttpStatus.BAD_REQUEST);
     }
+  }
+
+  private BigDecimal purchaseUnitCost(BigDecimal requestedUnitCost, WarehouseItemResponse item) {
+    BigDecimal unitCost = amount(requestedUnitCost == null ? item.unitPrice() : requestedUnitCost);
+    if (unitCost.signum() < 0) {
+      throw new BusinessException("BAD_UNIT_COST", "采购单价不能小于 0", HttpStatus.BAD_REQUEST);
+    }
+    return unitCost;
+  }
+
+  private BigDecimal purchaseUnitConversion(WarehouseItemResponse item) {
+    return WarehouseUnitConversion.factor(
+            purchaseUnit(item),
+            stockUnit(item),
+            item.unitConversionText()
+        )
+        .orElseThrow(() -> new BusinessException(
+            "ITEM_UNIT_CONVERSION_INVALID",
+            "物料“" + item.name() + "”的采购单位与库存单位不同，请先完善单位换算（例如 1箱=12件）",
+            HttpStatus.BAD_REQUEST
+        ));
+  }
+
+  private String purchaseUnit(WarehouseItemResponse item) {
+    return unitOrFallback(item.purchaseUnit(), item.unit());
+  }
+
+  private String stockUnit(WarehouseItemResponse item) {
+    return unitOrFallback(item.stockUnit(), item.unit());
+  }
+
+  private String unitOrFallback(String preferred, String fallback) {
+    if (preferred != null && !preferred.isBlank()) {
+      return preferred.trim();
+    }
+    if (fallback != null && !fallback.isBlank()) {
+      return fallback.trim();
+    }
+    return "件";
   }
 
   private BigDecimal positive(BigDecimal value, String label) {

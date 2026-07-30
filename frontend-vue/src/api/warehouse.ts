@@ -255,7 +255,14 @@ export interface WarehousePurchaseOrderLine {
   id: number
   itemId: number
   itemName: string
+  itemCode?: string
+  spec?: string
   unit?: string
+  purchaseUnit?: string
+  stockUnit?: string
+  unitConversionText?: string
+  conversionFactor?: number
+  stockQuantity?: number
   orderedQuantity: number
   receivedQuantity: number
   unitCost: number
@@ -288,7 +295,7 @@ export interface WarehousePurchaseOrderCreatePayload {
   lines: Array<{
     itemId: number
     orderedQuantity: number
-    unitCost: number
+    unitCost?: number
     note?: string
   }>
 }

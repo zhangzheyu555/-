@@ -14,6 +14,7 @@ import com.storeprofit.system.warehouse.WarehouseRepository.WarehouseMovementPri
 import com.storeprofit.system.warehouse.WarehouseRepository.WarehouseReceiptPrintRow;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Locale;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -122,7 +123,7 @@ public class WarehousePrintService {
       requirePrintFacility(user, warehouseRepository.movementWarehouseId(user.tenantId(), movementId), "下载库存流水单");
     }
     byte[] bytes = pdfRenderer.movement(row);
-    String action = "IN".equals(row.movementType()) ? "下载入库单" : "下载库存流水单";
+    String action = isInboundMovement(row.movementType()) ? "下载入库单" : "下载库存流水单";
     warehouseRepository.logAction(
         user.tenantId(),
         user.id(),
@@ -219,7 +220,7 @@ public class WarehousePrintService {
   }
 
   private void requireMovementAccess(AuthUser user, WarehouseMovementPrintRow row) {
-    if ("IN".equals(row.movementType())) {
+    if (isInboundMovement(row.movementType())) {
       requireReceiptAccess(user);
       return;
     }
@@ -358,7 +359,7 @@ public class WarehousePrintService {
   }
 
   private String movementFilename(WarehouseMovementPrintRow row) {
-    if ("IN".equals(row.movementType())) {
+    if (isInboundMovement(row.movementType())) {
       return "入库单-" + WarehouseDocumentNumbers.receipt(
           row.createdAt(),
           row.movementId()
@@ -366,6 +367,14 @@ public class WarehousePrintService {
     }
     String prefix = "库存流水单";
     return prefix + "-" + dateCompact(row.createdAt()) + "-" + safeName(row.itemName()) + "-" + safeName(row.sourceId()) + ".pdf";
+  }
+
+  private boolean isInboundMovement(String movementType) {
+    if (movementType == null || movementType.isBlank()) {
+      return false;
+    }
+    String normalized = movementType.trim().toUpperCase(Locale.ROOT);
+    return "IN".equals(normalized) || normalized.endsWith("_IN");
   }
 
   private String returnFilename(WarehouseReturnResponse order) {

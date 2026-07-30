@@ -102,6 +102,13 @@ function purchaseOrder(state: PurchaseState) {
       itemId: 11,
       itemName: '鲜牛奶',
       unit: '箱',
+      itemCode: 'MILK-01',
+      spec: '12件/箱',
+      purchaseUnit: '箱',
+      stockUnit: '件',
+      unitConversionText: '1箱=12件',
+      conversionFactor: 12,
+      stockQuantity: 144,
       orderedQuantity: 12,
       receivedQuantity: state.status === 'RECEIVED' ? 12 : 0,
       unitCost: 50,
@@ -128,7 +135,11 @@ function overview(warehouseId: number, state: PurchaseState) {
       id: 11,
       code: 'MILK-01',
       name: '鲜牛奶',
-      unit: '箱',
+      unit: '件',
+      purchaseUnit: '箱',
+      stockUnit: '件',
+      unitConversionText: '1箱=12件',
+      spec: '12件/箱',
       stockQuantity: warehouseId === 1 ? 20 : 0,
       storeStockQuantity: 2,
       warehouseAvailableQuantity: warehouseId === 1 ? 18 : 0,
@@ -149,11 +160,11 @@ function overview(warehouseId: number, state: PurchaseState) {
           itemName: '鲜牛奶',
           warehouseId: 1,
           warehouseName: '荆州总仓',
-          unit: '箱',
+          unit: '件',
           batchNo: 'JZ-BATCH-001',
           receivedDate: '2026-07-13',
-          quantity: 12,
-          unitCost: 50,
+          quantity: 144,
+          unitCost: 4.1667,
           status: 'ACTIVE',
         }]
       : [],
@@ -264,8 +275,9 @@ test('荆州总仓外部采购按草稿、审批、按单入库顺序完成', as
   await expect(form.getByRole('combobox', { name: '供应商' })).toHaveCount(0)
   const product = form.getByRole('combobox', { name: '采购商品', exact: true })
   await product.fill('MILK-01')
-  await form.getByRole('option', { name: /鲜牛奶.*MILK-01.*箱/ }).click()
+  await form.getByRole('option', { name: /鲜牛奶.*MILK-01.*采购单位 箱.*库存单位 件.*1箱=12件/ }).click()
   await form.getByLabel('采购数量').fill('12')
+  await expect(form.getByText('12 箱 → 入库 144 件')).toBeVisible()
   await form.getByLabel('采购单价').fill('50')
   await form.getByLabel('备注').fill('荆州补货测试')
   await form.getByRole('button', { name: '创建采购草稿' }).click()
@@ -280,6 +292,7 @@ test('荆州总仓外部采购按草稿、审批、按单入库顺序完成', as
   expect(state.createBodies[0]?.clientRequestId).toMatch(/^purchase-/)
   await expect(page.getByText('PO-JZ-001', { exact: true })).toBeVisible()
   await expect(page.getByText('草稿', { exact: true })).toBeVisible()
+  await expect(page.getByText(/入库换算：144 件.*1箱=12件/)).toBeVisible()
 
   await page.getByRole('button', { name: '审批采购单' }).click()
   await expect.poll(() => state.approveCalls).toBe(1)
@@ -294,6 +307,30 @@ test('荆州总仓外部采购按草稿、审批、按单入库顺序完成', as
   })
   await expect(page.getByText('已入库', { exact: true })).toBeVisible()
   await page.screenshot({ path: '../output/playwright/warehouse-purchase-flow.png', fullPage: true })
+  expect(state.consoleErrors).toEqual([])
+})
+
+test('采购单价留空时提交物料默认价，并展示采购到库存换算', async ({ page }) => {
+  const state = newState()
+  await prepare(page, state)
+  await page.goto('/warehouse/purchase')
+
+  const form = page.locator('.receive-form')
+  const product = form.getByRole('combobox', { name: '采购商品', exact: true })
+  await product.fill('MILK-01')
+  await form.getByRole('option', { name: /鲜牛奶.*MILK-01.*采购单位 箱.*库存单位 件.*1箱=12件/ }).click()
+  await expect(form.getByText('留空使用默认价 ¥50.00/箱')).toBeVisible()
+  await form.getByLabel('采购数量').fill('20')
+  await expect(form.getByText('20 箱 → 入库 240 件')).toBeVisible()
+  await form.getByRole('button', { name: '创建采购草稿' }).click()
+
+  await expect.poll(() => state.createBodies.length).toBe(1)
+  const lines = state.createBodies[0]?.lines as Array<Record<string, unknown>>
+  expect(lines).toEqual([{
+    itemId: 11,
+    orderedQuantity: 20,
+    unitCost: 50,
+  }])
   expect(state.consoleErrors).toEqual([])
 })
 

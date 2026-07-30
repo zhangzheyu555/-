@@ -2152,16 +2152,46 @@ public class WarehouseRepository {
         """, (rs, rowNum) -> rs.getString(1), tenantId, requestKey.trim()).stream().findFirst();
   }
 
-  public void insertPurchaseOrderLine(long tenantId, String purchaseOrderId, long itemId, BigDecimal orderedQuantity, BigDecimal unitCost, String note) {
+  public void insertPurchaseOrderLine(
+      long tenantId,
+      String purchaseOrderId,
+      long itemId,
+      String itemCode,
+      String itemName,
+      String spec,
+      String purchaseUnit,
+      String stockUnit,
+      String unitConversionText,
+      BigDecimal conversionFactor,
+      BigDecimal orderedQuantity,
+      BigDecimal unitCost,
+      String note
+  ) {
     BigDecimal quantity = amount(orderedQuantity);
     BigDecimal cost = amount(unitCost);
+    BigDecimal lineAmount = quantity.multiply(cost).setScale(2, RoundingMode.HALF_UP);
+    if (purchaseLineSnapshotsAvailable()) {
+      jdbcTemplate.update("""
+          insert into warehouse_purchase_order_line(
+            tenant_id, purchase_order_id, item_id,
+            item_code_snapshot, item_name_snapshot, spec_snapshot,
+            purchase_unit_snapshot, stock_unit_snapshot, unit_conversion_snapshot, conversion_factor,
+            ordered_quantity, received_quantity, unit_cost, amount, note
+          )
+          values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+          """, tenantId, purchaseOrderId, itemId,
+          blankToNull(itemCode), blankToNull(itemName), blankToNull(spec),
+          blankToNull(purchaseUnit), blankToNull(stockUnit), blankToNull(unitConversionText), conversionFactor,
+          quantity, cost, lineAmount, blankToNull(note));
+      return;
+    }
     jdbcTemplate.update("""
         insert into warehouse_purchase_order_line(
-          tenant_id, purchase_order_id, item_id, ordered_quantity, received_quantity, unit_cost, amount, note
+          tenant_id, purchase_order_id, item_id,
+          ordered_quantity, received_quantity, unit_cost, amount, note
         )
         values (?, ?, ?, ?, 0, ?, ?, ?)
-        """, tenantId, purchaseOrderId, itemId, quantity, cost,
-        quantity.multiply(cost).setScale(2, RoundingMode.HALF_UP), blankToNull(note));
+        """, tenantId, purchaseOrderId, itemId, quantity, cost, lineAmount, blankToNull(note));
   }
 
   public List<WarehousePurchaseOrderResponse> purchaseOrders(long tenantId) {
@@ -2496,7 +2526,8 @@ public class WarehouseRepository {
 
   public Optional<WarehouseReceiptPrintRow> receiptPrintRow(long tenantId, long batchId) {
     return jdbcTemplate.query("""
-        select b.id as batch_id, b.item_id, i.code as item_code, i.name as item_name, i.spec, i.unit,
+        select b.id as batch_id, b.item_id, i.code as item_code, i.name as item_name, i.spec,
+               coalesce(nullif(i.stock_unit, ''), nullif(i.unit, ''), '件') as unit,
                b.batch_no, b.received_date, b.expiry_date,
                coalesce(m.quantity_delta, b.quantity) as received_quantity,
                b.unit_cost, b.note,
@@ -2505,7 +2536,7 @@ public class WarehouseRepository {
         from warehouse_stock_batch b
         join warehouse_item i on i.tenant_id = b.tenant_id and i.id = b.item_id
         left join warehouse_stock_movement m on m.tenant_id = b.tenant_id
-          and m.movement_type = 'IN'
+          and m.movement_type in ('IN', 'PURCHASE_IN', 'RETURN_IN', 'TRANSFER_IN')
           and (
             m.batch_id = b.id
             or (m.item_id = b.item_id and m.source_id = b.batch_no)
@@ -2519,7 +2550,8 @@ public class WarehouseRepository {
 
   public Optional<WarehouseMovementPrintRow> movementPrintRow(long tenantId, long movementId) {
     return jdbcTemplate.query("""
-        select m.id as movement_id, m.item_id, m.batch_id, i.code as item_code, i.name as item_name, i.spec, i.unit,
+        select m.id as movement_id, m.item_id, m.batch_id, i.code as item_code, i.name as item_name, i.spec,
+               coalesce(nullif(i.stock_unit, ''), nullif(i.unit, ''), '件') as unit,
                m.movement_type, m.quantity_delta, m.source_type, m.source_id, m.store_id,
                s.name as store_name, m.note, u.display_name as operator_name, m.created_at,
                b.batch_no, b.expiry_date, b.unit_cost
@@ -2528,7 +2560,8 @@ public class WarehouseRepository {
         left join warehouse_stock_batch b on b.tenant_id = m.tenant_id
           and (
             b.id = m.batch_id
-            or (m.movement_type = 'IN' and b.item_id = m.item_id and b.batch_no = m.source_id)
+            or (m.movement_type in ('IN', 'PURCHASE_IN', 'RETURN_IN', 'TRANSFER_IN')
+                and b.item_id = m.item_id and b.batch_no = m.source_id)
           )
         left join store_branch s on s.tenant_id = m.tenant_id and s.id = m.store_id
         left join auth_user u on u.tenant_id = m.tenant_id and u.id = m.operator_id
@@ -2632,14 +2665,38 @@ public class WarehouseRepository {
   }
 
   private List<WarehousePurchaseOrderLineResponse> purchaseOrderLines(long tenantId, String purchaseOrderId) {
-    return jdbcTemplate.query("""
-        select l.id, l.item_id, i.name as item_name, i.unit, l.ordered_quantity,
-               l.received_quantity, l.unit_cost, l.amount, l.note
+    String sql = purchaseLineSnapshotsAvailable() ? """
+        select l.id, l.item_id,
+               coalesce(l.item_code_snapshot, i.code) as item_code,
+               coalesce(l.item_name_snapshot, i.name) as item_name,
+               coalesce(l.spec_snapshot, i.spec) as spec,
+               coalesce(nullif(l.purchase_unit_snapshot, ''), nullif(i.purchase_unit, ''),
+                        nullif(i.unit, ''), '件') as purchase_unit,
+               coalesce(nullif(l.stock_unit_snapshot, ''), nullif(i.stock_unit, ''),
+                        nullif(i.unit, ''), '件') as stock_unit,
+               coalesce(l.unit_conversion_snapshot, i.unit_conversion_text) as unit_conversion_text,
+               l.conversion_factor,
+               l.ordered_quantity, l.received_quantity, l.unit_cost, l.amount, l.note
         from warehouse_purchase_order_line l
         join warehouse_item i on i.tenant_id = l.tenant_id and i.id = l.item_id
         where l.tenant_id = ? and l.purchase_order_id = ?
         order by l.id
-        """, this::mapPurchaseLine, tenantId, purchaseOrderId);
+        """ : """
+        select l.id, l.item_id,
+               i.code as item_code,
+               i.name as item_name,
+               i.spec as spec,
+               coalesce(nullif(i.purchase_unit, ''), nullif(i.unit, ''), '件') as purchase_unit,
+               coalesce(nullif(i.stock_unit, ''), nullif(i.unit, ''), '件') as stock_unit,
+               i.unit_conversion_text,
+               cast(null as decimal(18,8)) as conversion_factor,
+               l.ordered_quantity, l.received_quantity, l.unit_cost, l.amount, l.note
+        from warehouse_purchase_order_line l
+        join warehouse_item i on i.tenant_id = l.tenant_id and i.id = l.item_id
+        where l.tenant_id = ? and l.purchase_order_id = ?
+        order by l.id
+        """;
+    return jdbcTemplate.query(sql, this::mapPurchaseLine, tenantId, purchaseOrderId);
   }
 
   private List<WarehouseDeliveryLineResponse> deliveryLines(long tenantId, String deliveryId) {
@@ -2945,16 +3002,35 @@ public class WarehouseRepository {
   }
 
   private WarehousePurchaseOrderLineResponse mapPurchaseLine(ResultSet rs, int rowNum) throws SQLException {
+    BigDecimal orderedQuantity = amount(rs.getBigDecimal("ordered_quantity"));
+    String purchaseUnit = rs.getString("purchase_unit");
+    String stockUnit = rs.getString("stock_unit");
+    String conversionText = rs.getString("unit_conversion_text");
+    BigDecimal conversionFactor = rs.getBigDecimal("conversion_factor");
+    if (conversionFactor == null || conversionFactor.signum() <= 0) {
+      conversionFactor = WarehouseUnitConversion.factor(purchaseUnit, stockUnit, conversionText)
+          .orElse(null);
+    }
+    BigDecimal stockQuantity = conversionFactor == null
+        ? null
+        : WarehouseUnitConversion.stockQuantity(orderedQuantity, conversionFactor);
     return new WarehousePurchaseOrderLineResponse(
         rs.getLong("id"),
         rs.getLong("item_id"),
         rs.getString("item_name"),
-        rs.getString("unit"),
-        amount(rs.getBigDecimal("ordered_quantity")),
+        purchaseUnit,
+        orderedQuantity,
         amount(rs.getBigDecimal("received_quantity")),
         amount(rs.getBigDecimal("unit_cost")),
         amount(rs.getBigDecimal("amount")),
-        rs.getString("note")
+        rs.getString("note"),
+        rs.getString("item_code"),
+        rs.getString("spec"),
+        purchaseUnit,
+        stockUnit,
+        conversionText,
+        conversionFactor,
+        stockQuantity
     );
   }
 
@@ -3342,6 +3418,10 @@ public class WarehouseRepository {
         && hasColumn("warehouse_item_requisition_target", "target_type");
     requisitionPolicyTablesAvailable = available;
     return available;
+  }
+
+  private boolean purchaseLineSnapshotsAvailable() {
+    return hasColumn("warehouse_purchase_order_line", "conversion_factor");
   }
 
   private boolean hasColumn(String tableName, String columnName) {
