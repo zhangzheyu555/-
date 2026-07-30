@@ -49,10 +49,32 @@ function preview(photo: InspectionDraftPhoto, event: MouseEvent) {
     <p class="inspection-evidence-note">以下图片未在任何条款的图片关联中出现，系统不会自动归因或影响扣分；请由老板或督导人工选择历史条款。</p>
     <div class="inspection-evidence-list unlinked-evidence-list">
       <article v-for="photo in props.unlinkedPhotos" :key="`unlinked-${photo.attachmentId || photo.fileName}`" class="inspection-evidence-item">
-        <span class="inspection-evidence-thumb" :aria-label="`${photo.fileName || '未关联证据'} 尚未关联历史条款，不能预览原图`">
-          <XCircle :size="18" />
+        <button
+          v-if="photo.attachmentId"
+          class="inspection-evidence-thumb"
+          type="button"
+          :disabled="props.photoState(photo).status !== 'ready'"
+          :aria-label="`预览 ${photo.fileName || '未关联证据'}`"
+          @click="preview(photo, $event)"
+        >
+          <img
+            v-if="props.photoState(photo).status === 'ready' && props.photoState(photo).url"
+            :src="props.photoState(photo).url"
+            :alt="`${photo.fileName || '未关联证据'} 缩略图`"
+            @error="emit('imageError', photo)"
+          />
+          <LoaderCircle v-else-if="props.photoState(photo).status === 'loading'" class="spin" :size="18" />
+          <XCircle v-else :size="18" />
+        </button>
+        <span v-else class="inspection-evidence-thumb" :aria-label="`${photo.fileName || '未关联证据'} 原图未入库`"><XCircle :size="18" /></span>
+        <span>
+          <b>{{ photo.fileName || '现场照片' }}</b>
+          <small class="evidence-unlinked">{{ props.unlinkedMessage(photo) }}</small>
+          <small
+            v-if="photo.attachmentId && props.photoMessage(photo)"
+            :class="`evidence-${props.photoState(photo).status}`"
+          >{{ props.photoMessage(photo) }}</small>
         </span>
-        <span><b>{{ photo.fileName || '现场照片' }}</b><small class="evidence-unlinked">{{ props.unlinkedMessage(photo) }}</small></span>
         <button
           v-if="props.canSupplement"
           class="evidence-associate"
@@ -75,7 +97,7 @@ function preview(photo: InspectionDraftPhoto, event: MouseEvent) {
     <div class="inspection-detail-detections">
       <article v-for="photo in props.pendingAiPhotos" :key="`ai-${props.detectionKey(photo.detection) || photo.attachmentId || photo.fileName}`" class="inspection-detail-detection ai-pending-card">
         <button
-          v-if="props.isExplicitlyLinked(photo)"
+          v-if="photo.attachmentId"
           class="inspection-evidence-thumb"
           type="button"
           :disabled="props.photoState(photo).status !== 'ready'"
@@ -91,14 +113,15 @@ function preview(photo: InspectionDraftPhoto, event: MouseEvent) {
           <LoaderCircle v-else-if="props.photoState(photo).status === 'loading'" class="spin" :size="18" />
           <XCircle v-else :size="18" />
         </button>
-        <span v-else class="inspection-evidence-thumb" :aria-label="`${photo.fileName || 'AI识别图片'} 尚未关联历史条款，不能预览原图`"><XCircle :size="18" /></span>
+        <span v-else class="inspection-evidence-thumb" :aria-label="`${photo.fileName || 'AI识别图片'} 原图未入库`"><XCircle :size="18" /></span>
         <div>
           <span>模型识别结果 · {{ photo.fileName || '现场图片' }}</span>
           <b>{{ props.detectionClauseLabel(photo.detection) }}</b>
           <small>{{ props.detectionCount(photo.detection) ? `识别到 ${props.detectionCount(photo.detection)} 个疑似问题` : '未识别到明确问题' }} · 置信度 {{ props.detectionConfidenceText(photo.detection) }}</small>
           <small class="inspection-model-only-hint">{{ props.aiStatus(photo) }}</small>
-          <small v-if="props.isExplicitlyLinked(photo) && props.photoMessage(photo)" :class="`evidence-${props.photoState(photo).status}`">{{ props.photoMessage(photo) }}</small>
-          <small v-else-if="!props.isExplicitlyLinked(photo)" class="evidence-unlinked">待人工关联历史条款，不能预览原图</small>
+          <small v-if="!photo.attachmentId" class="evidence-unlinked">原图未入库，需补传</small>
+          <small v-else-if="props.photoMessage(photo)" :class="`evidence-${props.photoState(photo).status}`">{{ props.photoMessage(photo) }}</small>
+          <small v-else-if="!props.isExplicitlyLinked(photo)" class="evidence-unlinked">待人工关联历史条款，原图已保留</small>
         </div>
         <div class="inspection-detail-decision">
           <span class="decision-pending">{{ props.aiStatus(photo) }}</span>

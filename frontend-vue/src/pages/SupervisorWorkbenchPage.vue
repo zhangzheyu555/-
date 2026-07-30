@@ -775,9 +775,12 @@ function normalizeRecordPhoto(value: Record<string, unknown>, sourcePhotoIndex?:
   ) ? value as InspectionDetectionResult : undefined
   const detection = nestedDetection || directDetection
   const decision = detectionDecisionStatus(detection)
-  const reviewStatus: DraftPhoto['reviewStatus'] = decision === 'CONFIRMED'
-    ? 'accepted'
-    : ['REVOKED', 'DISMISSED'].includes(decision) ? 'dismissed' : 'pending'
+  const persistedReviewStatus = textValue(value.reviewStatus ?? value.review_status).toLowerCase()
+  const reviewStatus: DraftPhoto['reviewStatus'] = ['accepted', 'dismissed', 'pending'].includes(persistedReviewStatus)
+    ? persistedReviewStatus as DraftPhoto['reviewStatus']
+    : decision === 'CONFIRMED'
+      ? 'accepted'
+      : ['REVOKED', 'DISMISSED'].includes(decision) ? 'dismissed' : 'pending'
   return {
     attachmentId: positiveNumber(value.attachmentId ?? value.attachment_id),
     sourcePhotoIndex,
@@ -809,9 +812,11 @@ function recordClausePhotos(record: InspectionRecord, item: InspectionItemResult
 
 function recordUnlinkedPhotos(record: InspectionRecord) {
   const associatedIds = new Set(recordItemResults(record).flatMap((item) => numberArray(item.photoAttachmentIds)))
+  // Every uploaded photo remains part of the inspection evidence set. A supervisor
+  // dismissing an AI suggestion changes only the model decision; it must never hide
+  // or discard the original photo because a later manual review may still find an issue.
   return recordPhotos(record).filter((photo) => (
-    photo.reviewStatus !== 'dismissed'
-    && (!photo.attachmentId || !associatedIds.has(photo.attachmentId))
+    !photo.attachmentId || !associatedIds.has(photo.attachmentId)
   ))
 }
 
@@ -866,6 +871,7 @@ function unlinkedEvidenceActionLabel(photo: DraftPhoto) {
 
 function unlinkedPhotoMessage(photo: DraftPhoto) {
   if (historicalPhotoNeedsOriginalUpload(photo) || !photo.attachmentId) return '原图未入库，需补传'
+  if (photo.reviewStatus === 'dismissed') return '督导确认无问题，照片已保留，可继续人工复核'
   return hasValidUnlinkedHistoricalEvidence(photo) ? '待人工关联历史条款' : '待核验并关联历史条款'
 }
 
@@ -912,12 +918,12 @@ function replaceDetailPhotoState(key: string, state: DetailPhotoPreview) {
 async function loadDetailPhotoPreviews(record: InspectionRecord) {
   releaseDetailPhotoPreviews()
   const generation = detailPhotoPreviewGeneration
-  // Do not fetch an original image merely because a historical metadata entry has
-  // an attachmentId. A Blob is requested only after this exact id is persisted in
-  // a snapshot clause's photoAttachmentIds collection.
+  // Load every persisted inspection photo, including photos whose AI suggestion was
+  // dismissed or that have not yet been linked to a clause. These originals remain
+  // available for later manual review; clause association controls scoring, not storage.
   const uniquePhotos = Array.from(new Map(
-    recordItemResults(record)
-      .flatMap((item) => recordClausePhotos(record, item))
+    recordPhotos(record)
+      .filter(hasPersistedAttachment)
       .map((photo) => [String(photo.attachmentId), photo]),
   ).values())
   detailPhotoPreviews.value = Object.fromEntries(

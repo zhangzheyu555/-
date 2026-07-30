@@ -264,6 +264,71 @@ test('a supervisor-dismissed false-positive photo can be saved unlinked with the
     .every((item) => !(item.photoAttachmentIds as unknown[]).includes(502))).toBe(true)
 })
 
+test('a photo is retained when the model finds no issue so it remains available for manual review', async ({ page }) => {
+  let savedPayload: Record<string, unknown> | undefined
+  const noIssueSuggestion = {
+    ...detectedSuggestion,
+    image_id: 'IMG-NO-ISSUE-1',
+    imageId: 'IMG-NO-ISSUE-1',
+    passed: true,
+    auto_status: '未发现明显问题',
+    detection_count: 0,
+    detections: [],
+    detection_summary: '模型未发现明显问题',
+    deduction_project: '',
+    deduction_content: '',
+    detectionKey: 'DET-NO-ISSUE-1',
+    clauseId: undefined,
+    clauseCode: undefined,
+    clauseTitle: undefined,
+    issueCode: undefined,
+    issueName: undefined,
+    standardDeduction: 0,
+    clauseDeduction: 0,
+    scaleAdjustmentDeduction: 0,
+    finalDeduction: 0,
+    confidence: 0,
+  }
+
+  await page.route('**/api/**', async (route) => {
+    const request = route.request()
+    const pathname = new URL(request.url()).pathname
+    if (!pathname.startsWith('/api/')) return route.continue()
+    if (pathname === '/api/auth/me') return json(route, bossUser)
+    if (pathname === '/api/inspection/standards') return json(route, standard)
+    if (pathname === '/api/inspections/service-health') return json(route, { status: 'UP', configured: true, message: '识别服务正常' })
+    if (pathname === '/api/brands') return json(route, [{ id: 1, name: '茹菓' }])
+    if (pathname === '/api/stores') return json(route, [{ id: 'STORE-1', code: 'STORE-1', name: '测试门店', brandId: 1, brandName: '茹菓' }])
+    if (pathname === '/api/inspections' && request.method() === 'GET') return json(route, [])
+    if (pathname === '/api/storage/upload') return json(route, { id: 503, fileName: '模型未识别现场.jpg', contentType: 'image/jpeg', fileSize: 32, url: '/api/storage/503/content' })
+    if (pathname === '/api/inspections/detect') return json(route, noIssueSuggestion)
+    if (pathname === '/api/inspections' && request.method() === 'POST') {
+      savedPayload = request.postDataJSON() as Record<string, unknown>
+      return json(route, { id: 'INS-NO-ISSUE-PHOTO', ...savedPayload })
+    }
+    if (pathname.startsWith('/api/supervisor/todos')) return json(route, { items: [] })
+    return json(route, [])
+  })
+
+  await seedSession(page)
+  await page.goto('/operations/inspection/tasks')
+  await page.locator('.inspection-upload-box input[type="file"]').setInputFiles({
+    name: '模型未识别现场.jpg',
+    mimeType: 'image/jpeg',
+    buffer: Buffer.from('inspection-model-no-issue-image'),
+  })
+
+  await page.getByRole('button', { name: '确认未发现问题' }).click()
+  await page.getByLabel('督导人').fill('测试督导')
+  await page.getByRole('button', { name: '保存巡检' }).first().click()
+
+  await expect.poll(() => savedPayload).toBeTruthy()
+  const photos = JSON.parse(String(savedPayload?.photosJson)) as Array<Record<string, unknown>>
+  expect(photos).toHaveLength(1)
+  expect(photos[0]?.attachmentId).toBe(503)
+  expect(photos[0]?.fileName).toBe('模型未识别现场.jpg')
+})
+
 test('an unmatched model suggestion stays clickable and explains why it cannot be confirmed', async ({ page }) => {
   let confirmationRequested = false
   const unmatchedSuggestion = {
@@ -449,9 +514,9 @@ test('record detail keeps effective deductions separate from unmatched AI eviden
     if (pathname === '/api/storage/attachments/502') {
       attachmentAuthorization['502'] = request.headers().authorization
       return route.fulfill({
-        status: 403,
-        contentType: 'application/json',
-        body: JSON.stringify({ success: false, code: 'FORBIDDEN', message: '无查看权限' }),
+        status: 200,
+        contentType: 'image/png',
+        body: Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360f8cfc0000003010100c9fea9f70000000049454e44ae426082', 'hex'),
       })
     }
     if (pathname.startsWith('/api/supervisor/todos')) return json(route, { items: [] })
@@ -481,22 +546,25 @@ test('record detail keeps effective deductions separate from unmatched AI eviden
   await effectiveThumb.click()
   await expect(page.getByRole('dialog', { name: '现场图片预览' })).toBeVisible()
   await expect(page.getByRole('dialog').getByRole('img', { name: effectiveImageName })).toBeVisible()
+  await page.getByRole('button', { name: '关闭图片预览' }).click()
 
   const pendingCard = page.locator('.ai-pending-card')
   await expect(pendingCard).toContainText(unmatchedImageName)
   await expect(pendingCard).toContainText('未匹配正式条款，未计入本次得分')
   await expect(page.getByText('AI 待确认识别结果（不计分）')).toBeVisible()
   await expect(snapshot.getByText('扣 0 分')).toHaveCount(0)
-  // An unlinked AI suggestion is intentionally not fetched: the original image is only read
-  // after its attachment ID is explicitly persisted against a historical clause.  The linked
-  // evidence above still proves the protected attachment request carries Authorization.
-  expect(attachmentAuthorization['502']).toBeUndefined()
-  await expect(pendingCard).toContainText('待人工关联历史条款，不能预览原图')
+  await expect.poll(() => attachmentAuthorization['502']).toBe('Bearer TEST-INSPECTION-TOKEN')
+  const unmatchedThumb = pendingCard.getByRole('button', { name: `预览 ${unmatchedImageName}` })
+  await expect(unmatchedThumb.locator('img')).toBeVisible()
+  await expect(pendingCard).toContainText('待人工关联历史条款，原图已保留')
+  await unmatchedThumb.click()
+  await expect(page.getByRole('dialog', { name: '现场图片预览' }).getByRole('img', { name: unmatchedImageName })).toBeVisible()
+  await page.getByRole('button', { name: '关闭图片预览' }).click()
 
   await page.setViewportSize({ width: 1280, height: 720 })
   await expect(page.getByText('历史巡检条款快照（1条）')).toBeVisible()
   await expect(hygieneRow).toContainText('实得 0 / 4')
   await expect(pendingCard).toContainText('未匹配正式条款，未计入本次得分')
-  await expect(pendingCard).toContainText('待人工关联历史条款，不能预览原图')
+  await expect(pendingCard).toContainText('待人工关联历史条款，原图已保留')
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true)
 })

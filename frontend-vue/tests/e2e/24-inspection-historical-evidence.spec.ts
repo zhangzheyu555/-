@@ -131,25 +131,38 @@ test('老板手工关联已入库证据后，历史条款显示受认证缩略�
   await seed(page)
   await page.goto(`/operations/inspection/records?recordId=${recordId}`)
   await expect(page.getByText('未关联现场证据').first()).toBeVisible()
-  await expect(page.getByRole('button', { name: '预览 微信原图.jpg' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '预览 微信原图.jpg' })).toBeVisible()
   await page.locator('.unlinked-evidence-list').getByRole('button', { name: '关联已有证据' }).click()
 
   const dialog = page.getByRole('dialog', { name: '补传并关联证据' })
+  const clauseDropdown = dialog.getByRole('button', { name: /选择关联条款/ })
+  await expect(clauseDropdown).toBeVisible()
+  await expect(clauseDropdown).toHaveAttribute('aria-expanded', 'false')
+  await clauseDropdown.click()
   await expect(dialog.getByText('微信原图.jpg')).toBeVisible()
   await expect(dialog.locator('.evidence-candidate input')).toBeChecked()
   const clauseSearch = dialog.getByRole('searchbox', { name: '搜索并选择历史条款' })
+  const clauseSelectionSummary = dialog.locator('.searchable-multi-select__summary')
   await clauseSearch.fill('H-01')
   await dialog.getByRole('checkbox', { name: /H-01.*历史条款/ }).check()
-  await expect(dialog.getByText('已选择 1 条', { exact: true })).toBeVisible()
+  await expect(clauseSelectionSummary.getByText('已选择 1 条', { exact: true })).toBeVisible()
   await clauseSearch.fill('H-02')
   await dialog.getByRole('checkbox', { name: /H-02.*历史条款/ }).check()
-  await expect(dialog.getByText('已选择 2 条', { exact: true })).toBeVisible()
+  await expect(clauseSelectionSummary.getByText('已选择 2 条', { exact: true })).toBeVisible()
   await dialog.getByRole('button', { name: '清空已选条款', exact: true }).click()
-  await expect(dialog.getByText('已选择 0 条', { exact: true })).toBeVisible()
+  await expect(clauseSelectionSummary.getByText('已选择 0 条', { exact: true })).toBeVisible()
   await clauseSearch.fill('历史卫生扣分')
   await dialog.getByRole('button', { name: '全选当前结果', exact: true }).click()
-  await expect(dialog.getByText('已选择 2 条', { exact: true })).toBeVisible()
-  await dialog.getByRole('button', { name: '确认关联' }).click()
+  await expect(clauseSelectionSummary.getByText('已选择 2 条', { exact: true })).toBeVisible()
+  const completeButton = dialog.getByRole('button', { name: '完成', exact: true })
+  await expect(completeButton).toBeVisible()
+  const completeButtonBox = await completeButton.boundingBox()
+  const viewport = page.viewportSize()
+  expect(completeButtonBox).not.toBeNull()
+  expect(viewport).not.toBeNull()
+  expect((completeButtonBox?.y || 0) + (completeButtonBox?.height || 0))
+    .toBeLessThanOrEqual(viewport?.height || 0)
+  await completeButton.click()
   await expect.poll(() => submitted).toEqual({ attachmentIds: [701], clauseIds: [41], historicalSnapshotIds: [41] })
 
   await expect(page.getByText('已将所选证据关联到历史条款；历史评分和整改状态未改动。')).toBeVisible()
@@ -158,6 +171,71 @@ test('老板手工关联已入库证据后，历史条款显示受认证缩略�
   await preview.click()
   await expect(page.getByRole('dialog', { name: '现场图片预览' }).locator('img')).toHaveAttribute('src', /^blob:/)
   await expect(page.locator('.inspection-detail-grid').getByText('196 / 200', { exact: true })).toBeVisible()
+})
+
+test('模型未识别问题且督导确认无问题的照片仍保留在历史记录中并可预览', async ({ page }) => {
+  const recordId = 'INS-HISTORICAL-DISMISSED-PHOTO'
+  const fileName = '模型未识别但人工可复核.jpg'
+  const currentRecord = () => ({
+    ...baseRecord(
+      recordId,
+      JSON.stringify([{
+        attachmentId: 705,
+        fileName,
+        contentType: 'image/jpeg',
+        reviewStatus: 'dismissed',
+        detection: {
+          imageId: 'IMG-NO-ISSUE-HISTORY',
+          detection_count: 0,
+          detections: [],
+        },
+      }]),
+      [{ ...clause(46, 'H-06'), issueFound: false, actualScore: 4, deductionScore: 0 }],
+    ),
+    score: 200,
+  })
+
+  await page.route((url) => url.pathname.startsWith('/api/'), async (route) => {
+    const request = route.request()
+    const pathname = new URL(request.url()).pathname
+    if (pathname === '/api/auth/me') return json(route, boss)
+    if (pathname === '/api/inspections' && request.method() === 'GET') return json(route, [currentRecord()])
+    if (pathname === `/api/inspections/${recordId}` && request.method() === 'GET') return json(route, currentRecord())
+    if (pathname === `/api/inspections/${recordId}/evidence/attachments`) {
+      return json(route, {
+        recordId,
+        storeId: 'STORE-1',
+        candidates: [{
+          attachmentId: 705,
+          photoIndex: 0,
+          fileName,
+          contentType: 'image/jpeg',
+          status: 'UNLINKED',
+          linkedClauseIds: [],
+        }],
+      })
+    }
+    if (pathname === '/api/storage/attachments/705') {
+      return route.fulfill({ status: 200, contentType: 'image/png', body: tinyPng })
+    }
+    if (pathname === '/api/inspection/standards') return json(route, { id: 1, version: '测试标准', fullScore: 200, passScore: 180, valid: true, saveAllowed: true, items: [] })
+    if (pathname === '/api/inspections/service-health') return json(route, { status: 'UP', configured: true, message: '识别服务正常' })
+    if (pathname === '/api/brands') return json(route, [{ id: 1, name: '茹菓' }])
+    if (pathname === '/api/stores') return json(route, [{ id: 'STORE-1', name: '测试门店', brandId: 1, brandName: '茹菓' }])
+    if (pathname.startsWith('/api/supervisor/todos')) return json(route, { items: [] })
+    return json(route, [])
+  })
+
+  await seed(page)
+  await page.goto(`/operations/inspection/records?recordId=${recordId}`)
+
+  await expect(page.getByText('未关联现场证据').first()).toBeVisible()
+  await expect(page.getByText(fileName, { exact: true })).toBeVisible()
+  await expect(page.getByText('督导确认无问题，照片已保留，可继续人工复核')).toBeVisible()
+  const preview = page.getByRole('button', { name: `预览 ${fileName}` })
+  await expect(preview).toBeVisible()
+  await preview.click()
+  await expect(page.getByRole('dialog', { name: '现场图片预览' }).locator('img')).toHaveAttribute('src', /^blob:/)
 })
 
 test('缺失的旧 attachmentId 必须按 photoIndex 打开补传模式，不会误关联其他未关联图片', async ({ page }) => {
@@ -213,8 +291,9 @@ test('缺失的旧 attachmentId 必须按 photoIndex 打开补传模式，不会
   const uploadButtonBox = await dialog.locator('.upload-original-button').boundingBox()
   expect(uploadButtonBox?.height, '补传图片按钮的点击高度').toBeGreaterThanOrEqual(44)
   await uploadInput.setInputFiles({ name: '微信重新选择原图.png', mimeType: 'image/png', buffer: tinyPng })
+  await dialog.getByRole('button', { name: /选择关联条款/ }).click()
   await dialog.getByRole('checkbox', { name: /H-02 历史条款/ }).check()
-  const confirmButton = dialog.getByRole('button', { name: '补传并关联', exact: true })
+  const confirmButton = dialog.getByRole('button', { name: '完成', exact: true })
   const confirmButtonBox = await confirmButton.boundingBox()
   expect(confirmButtonBox?.height, '补传确认按钮的点击高度').toBeGreaterThanOrEqual(44)
   await confirmButton.click()
@@ -333,7 +412,7 @@ test('候选证据空列表为中性提示，读取失败按状态说明且底�
   await expect(dialog.getByRole('button', { name: '取消', exact: true })).toHaveCSS('writing-mode', 'horizontal-tb')
   await expect(dialog.getByRole('button', { name: '取消', exact: true })).toHaveText('取消')
   const mobileCancelBox = await dialog.getByRole('button', { name: '取消', exact: true }).boundingBox()
-  const mobileSubmitBox = await dialog.getByRole('button', { name: '补传并关联', exact: true }).boundingBox()
+  const mobileSubmitBox = await dialog.getByRole('button', { name: '完成', exact: true }).boundingBox()
   expect(mobileCancelBox).not.toBeNull()
   expect(mobileSubmitBox).not.toBeNull()
   expect(Math.abs((mobileCancelBox?.width || 0) - (mobileSubmitBox?.width || 0))).toBeLessThanOrEqual(1)

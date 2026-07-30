@@ -367,6 +367,8 @@ function clauseLabel(item: InspectionItemResult) {
             :key="String(record.id)"
             :model-value="selectedHistoricalClauseValues"
             :options="historicalClauseOptions"
+            compact
+            placeholder="选择关联条款"
             search-placeholder="搜索历史条款编号、名称、分类或扣分原因"
             aria-label="搜索并选择历史条款"
             selected-noun="条"
@@ -385,10 +387,10 @@ function clauseLabel(item: InspectionItemResult) {
         <div>
           <button class="secondary-button" type="button" data-testid="historical-evidence-cancel" :disabled="submitting" @click.stop="requestClose">取消</button>
           <button v-if="mode === 'existing'" class="primary-button" type="button" :disabled="!canAssociate" @click="associateExisting">
-            <LoaderCircle v-if="submitting" class="spin" :size="16" />{{ submitting ? '正在关联…' : '确认关联' }}
+            <LoaderCircle v-if="submitting" class="spin" :size="16" />{{ submitting ? '正在完成…' : '完成' }}
           </button>
           <button v-else class="primary-button" type="button" :disabled="!canUpload" @click="uploadAndAssociate">
-            <LoaderCircle v-if="submitting" class="spin" :size="16" />{{ submitting ? '正在补传…' : '补传并关联' }}
+            <LoaderCircle v-if="submitting" class="spin" :size="16" />{{ submitting ? '正在完成…' : '完成' }}
           </button>
         </div>
       </footer>
@@ -398,7 +400,7 @@ function clauseLabel(item: InspectionItemResult) {
 
 <style scoped>
 .historical-evidence-backdrop { position: fixed; inset: 0; z-index: var(--ds-z-modal, 1400); display: grid; place-items: center; padding: 20px; background: rgba(15, 23, 42, .48); }
-.historical-evidence-dialog { display: grid; width: min(760px, 100%); max-height: min(760px, calc(100vh - 40px)); overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--ds-surface, #fff); box-shadow: 0 24px 64px rgba(15, 23, 42, .28); }
+.historical-evidence-dialog { display: flex; width: min(760px, 100%); max-height: min(760px, calc(100vh - 40px)); flex-direction: column; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--ds-surface, #fff); box-shadow: 0 24px 64px rgba(15, 23, 42, .28); }
 .historical-evidence-dialog > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 20px 22px 14px; border-bottom: 1px solid var(--line); }
 .dialog-kicker { color: var(--primary-dark); font-size: 12px; font-weight: 800; }
 .historical-evidence-dialog h3, .historical-evidence-dialog h4, .historical-evidence-dialog p { margin: 0; }
@@ -412,7 +414,7 @@ function clauseLabel(item: InspectionItemResult) {
 .evidence-mode-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 14px 22px 0; padding: 4px; border-radius: 9px; background: var(--ds-surface-muted); }
 .evidence-mode-tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-weight: 800; }
 .evidence-mode-tabs button.active { background: #fff; color: var(--primary-dark); box-shadow: 0 1px 3px rgba(15, 23, 42, .12); }
-.historical-evidence-body { display: grid; gap: 16px; overflow: auto; padding: 16px 22px 20px; }
+.historical-evidence-body { display: grid; min-height: 0; flex: 1 1 auto; gap: 16px; overflow: auto; padding: 16px 22px 20px; overscroll-behavior: contain; }
 .evidence-step { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
 .step-heading { display: flex; align-items: flex-start; gap: 10px; }
 .step-heading > span { display: grid; width: 23px; height: 23px; flex: 0 0 auto; place-items: center; border-radius: 50%; background: var(--primary-soft); color: var(--primary-dark); font-size: 12px; font-weight: 900; }
@@ -432,7 +434,7 @@ function clauseLabel(item: InspectionItemResult) {
 .upload-original-button { display: inline-flex; width: fit-content; align-items: center; gap: 7px; min-height: 44px; padding: 0 12px; border: 1px solid var(--primary); border-radius: 8px; background: var(--primary-soft); color: var(--primary-dark); font-size: 13px; font-weight: 800; cursor: pointer; }
 .upload-original-button input { display: none; }
 .selected-original { padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--ds-surface-muted); }
-.historical-evidence-dialog > footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 22px; border-top: 1px solid var(--line); background: var(--ds-surface, #fff); }
+.historical-evidence-dialog > footer { position: relative; z-index: 50; display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 22px; border-top: 1px solid var(--line); background: var(--ds-surface, #fff); box-shadow: 0 -8px 20px rgba(15, 23, 42, .04); }
 .footer-disabled-reason { margin: 0; color: var(--bad); font-size: 12px; font-weight: 700; line-height: 1.45; }
 .historical-evidence-dialog > footer > p { color: var(--muted); font-size: 12px; line-height: 1.45; }
 .historical-evidence-dialog > footer > div { display: grid; grid-template-columns: repeat(2, 148px); gap: 12px; flex: 0 0 auto; align-items: center; justify-content: flex-end; }

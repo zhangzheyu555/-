@@ -179,9 +179,10 @@ test('Android 原图补传遇到弱网失败后保留选择并可再次提交', 
     mimeType: 'image/png',
     buffer: Buffer.from('android-network-retry-image'),
   })
+  await dialog.getByRole('button', { name: /选择关联条款/ }).click()
   await dialog.getByRole('checkbox', { name: /H-RETRY/ }).check()
 
-  const submit = dialog.getByRole('button', { name: '补传并关联', exact: true })
+  const submit = dialog.getByRole('button', { name: '完成', exact: true })
   const submitBox = await submit.boundingBox()
   expect(submitBox?.height, 'Android 补传确认按钮的点击高度').toBeGreaterThanOrEqual(44)
   await submit.click()

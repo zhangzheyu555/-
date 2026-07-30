@@ -129,7 +129,7 @@ test('移动设备：历史巡检缺失原图可补传并关联，控件可触�
   const uploadButton = dialog.locator('.upload-original-button')
   const closeButton = dialog.getByTestId('historical-evidence-close')
   const cancelButton = dialog.getByRole('button', { name: '取消', exact: true })
-  const submitButton = dialog.getByRole('button', { name: '补传并关联', exact: true })
+  const submitButton = dialog.getByRole('button', { name: '完成', exact: true })
 
   await expect(dialog.getByText('从微信重新选择原图补传')).toBeVisible()
   await expect(uploadInput).toHaveAttribute('accept', 'image/*')
@@ -138,7 +138,7 @@ test('移动设备：历史巡检缺失原图可补传并关联，控件可触�
     ['关闭补传弹窗', closeButton],
     ['选择图片原图', uploadButton],
     ['取消', cancelButton],
-    ['补传并关联', submitButton],
+    ['完成', submitButton],
   ] as const) {
     const box = await control.boundingBox()
     expect(box?.height, `${name} 的移动端触控高度`).toBeGreaterThanOrEqual(44)
@@ -152,6 +152,7 @@ test('移动设备：历史巡检缺失原图可补传并关联，控件可触�
   await expectNoWholePageOverflow(page, 'historical evidence upload dialog on mobile')
 
   await uploadInput.setInputFiles({ name: '微信重新选择原图.png', mimeType: 'image/png', buffer: tinyPng })
+  await dialog.getByRole('button', { name: /选择关联条款/ }).click()
   await dialog.getByRole('checkbox', { name: /H-02.*历史卫生条款/ }).check()
   await expect(submitButton).toBeEnabled()
   await expectNoWholePageOverflow(page, 'selected historical evidence upload on mobile')
