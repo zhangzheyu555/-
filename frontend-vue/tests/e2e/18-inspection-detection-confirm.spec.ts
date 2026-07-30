@@ -264,7 +264,7 @@ test('a supervisor-dismissed false-positive photo can be saved unlinked with the
     .every((item) => !(item.photoAttachmentIds as unknown[]).includes(502))).toBe(true)
 })
 
-test('a photo is retained when the model finds no issue so it remains available for manual review', async ({ page }) => {
+test('a model-cleared photo is retained and becomes evidence when the supervisor records a manual issue', async ({ page }) => {
   let savedPayload: Record<string, unknown> | undefined
   const noIssueSuggestion = {
     ...detectedSuggestion,
@@ -319,6 +319,11 @@ test('a photo is retained when the model finds no issue so it remains available 
   })
 
   await page.getByRole('button', { name: '确认未发现问题' }).click()
+  const clausePicker = page.getByRole('combobox', { name: '搜索选择检查条款' })
+  await clausePicker.fill('M-01')
+  await page.getByRole('option').filter({ hasText: 'M-01 · M-01 检查条款' }).click()
+  await page.getByLabel('问题描述').fill('模型未识别，但督导人工确认现场存在问题')
+  await page.getByRole('button', { name: '添加', exact: true }).click()
   await page.getByLabel('督导人').fill('测试督导')
   await page.getByRole('button', { name: '保存巡检' }).first().click()
 
@@ -327,6 +332,11 @@ test('a photo is retained when the model finds no issue so it remains available 
   expect(photos).toHaveLength(1)
   expect(photos[0]?.attachmentId).toBe(503)
   expect(photos[0]?.fileName).toBe('模型未识别现场.jpg')
+  const itemResults = savedPayload?.itemResults as Array<Record<string, unknown>>
+  const manualIssue = itemResults.find((item) => item.standardItemId === 2)
+  expect(manualIssue?.deductionReason).toBe('模型未识别，但督导人工确认现场存在问题')
+  expect(manualIssue?.photoAttachmentIds).toEqual([503])
+  expect(manualIssue?.beforePhotoAttachmentIds).toEqual([503])
 })
 
 test('an unmatched model suggestion stays clickable and explains why it cannot be confirmed', async ({ page }) => {

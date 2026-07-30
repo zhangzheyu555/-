@@ -1654,6 +1654,23 @@ function releaseDraftPhotos() {
   })
 }
 
+function unlinkedManualEvidenceAttachmentIds() {
+  const linkedAttachmentIds = new Set(draft.itemResults.flatMap((item) => [
+    ...item.photoAttachmentIds,
+    ...(item.beforePhotoAttachmentIds || []),
+    ...(item.afterPhotoAttachmentIds || []),
+  ]))
+
+  return draft.photos
+    .filter((photo) => (
+      photo.detectionStatus === 'success'
+      && photo.reviewStatus === 'dismissed'
+      && photo.attachmentId
+      && !linkedAttachmentIds.has(photo.attachmentId)
+    ))
+    .map((photo) => photo.attachmentId!)
+}
+
 function addDeduction() {
   errorMessage.value = ''
   actionMessage.value = ''
@@ -1699,6 +1716,11 @@ function addDeduction() {
     return
   }
 
+  const manualEvidenceAttachmentIds = unlinkedManualEvidenceAttachmentIds()
+  manualEvidenceAttachmentIds.forEach((attachmentId) => {
+    toggleItemPhoto(target, attachmentId, true)
+  })
+
   const standardScore = Math.max(0, safeNumber(target.standardScore))
   const appliedDeduction = Math.min(score, standardScore)
   target.actualScore = roundScore(standardScore - appliedDeduction)
@@ -1720,6 +1742,7 @@ function addDeduction() {
     issue: deductionForm.issue.trim(),
     deduct: appliedDeduction,
     redline: isRedLine,
+    photoAttachmentIds: manualEvidenceAttachmentIds,
   }
   if (isRedLine) draft.redlines.push(detail)
   else draft.deductions.push(detail)
@@ -1747,6 +1770,11 @@ function restoreDeduction(detail: DeductionDetail) {
   target.actualScore = Math.min(safeNumber(target.standardScore), roundScore(safeNumber(target.actualScore) + safeNumber(detail.deduct)))
   const remaining = [...draft.deductions, ...draft.redlines]
     .filter((item) => Number(item.standardId) === standardItemId)
+  if (remaining.length === 0) {
+    for (const attachmentId of detail.photoAttachmentIds || []) {
+      toggleItemPhoto(target, attachmentId, false)
+    }
+  }
   const reasons = String(target.deductionReason || '').split('；').filter(Boolean)
   const removedReasonIndex = reasons.indexOf(String(detail.issue || ''))
   if (removedReasonIndex >= 0) reasons.splice(removedReasonIndex, 1)
